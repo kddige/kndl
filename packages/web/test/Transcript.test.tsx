@@ -86,3 +86,15 @@ test("a Turn that stopped has no badge; one aborted, cut at its limit or failed 
   expect(cut).toContain("Hit the output limit")
   expect(failed).toContain("Failed")
 })
+
+test("a failed Turn says why, as the Provider or Harness said it", async () => {
+  const [failed] = await turns([
+    ...turn("t-1", {
+      reason: "error",
+      durationMs: 1,
+      errorMessage: "OpenAI API error (429): You exceeded your current quota",
+    }),
+  ])
+  expect(failed).toContain("Failed")
+  expect(failed).toContain("OpenAI API error (429): You exceeded your current quota")
+})

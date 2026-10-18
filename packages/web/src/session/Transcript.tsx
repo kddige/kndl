@@ -239,6 +239,11 @@ const styles = stylex.create({
     color: color.textSubtle,
     fontSize: text.xs,
   },
+  failure: {
+    flexBasis: "100%",
+    color: color.dangerSubtleText,
+    overflowWrap: "anywhere",
+  },
   working: {
     display: "inline-flex",
     alignItems: "center",
@@ -625,6 +630,10 @@ function TurnFooter({ turn }: { turn: TurnView }) {
           {/* What the Harness reported it cost, as it is. */}
           {usage.cost !== undefined && ` · ${dollars(usage.cost)}`}
         </span>
+      )}
+      {turn.end.reason === "error" && turn.end.errorMessage !== undefined && (
+        // Why it failed, as the Provider or Harness said it.
+        <span {...stylex.props(styles.failure)}>{turn.end.errorMessage}</span>
       )}
     </div>
   )

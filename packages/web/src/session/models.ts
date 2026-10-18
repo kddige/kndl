@@ -3,6 +3,7 @@
 // their ProvidersState lists (ADR 0029), which only they are sent.
 
 import {
+  defaultProviderModel,
   findModel,
   type ModelName,
   type ModelOption,
@@ -185,16 +186,6 @@ export const providerNames: Record<ModelProvider, string> = {
   "minimax-cn": "MiniMax CN",
   "qwen-token-plan-cn": "Qwen Token Plan CN",
   "xiaomi-token-plan-cn": "Xiaomi Token Plan CN",
-}
-
-/**
- * The Model a new pi Session runs when none is picked, as the Hub picks it: Claude's first when
- * the Creator has Claude's, else the first.
- */
-export function defaultProviderModel(
-  models: ReadonlyArray<ProviderModel>,
-): ProviderModel | undefined {
-  return models.find((model) => model.provider === "anthropic") ?? models[0]
 }
 
 /**

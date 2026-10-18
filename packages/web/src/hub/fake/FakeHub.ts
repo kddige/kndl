@@ -35,6 +35,9 @@ import {
   formatPairingCode,
   deliveryBlocked,
   driveRefusal,
+  defaultProviderModel,
+  findProviderModel,
+  thinkingLevelRefusal,
   installationFailureText,
   installationsDiffer,
   installationsCantStartText,
@@ -343,6 +346,10 @@ const noCredentialText =
   "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
 
 /** Why a pi Session can't be created without a Model to run on (ADR 0029). */
+/** What runs a fake Session's agent, as the Hub names it in what it says of its start. */
+const harnessName = (session: { readonly summary: { readonly harness?: string } }) =>
+  session.summary.harness === "Pi" ? "pi" : "Claude Code"
+
 const noModelsText =
   "Connect a Provider on your Account page first: a Session runs on its Creator's own Models."
 
@@ -853,7 +860,7 @@ export class FakeHub implements HubTransport {
     if (!session) return
     const { starting: _, restarting: __, ...summary } = session.summary
     session.summary = { ...summary, currentTurn: null, lastOutput: output }
-    this.#setState(session, "Asleep", `Claude Code exited with code ${exitCode}`)
+    this.#setState(session, "Asleep", `${harnessName(session)} exited with code ${exitCode}`)
   }
 
   /**
@@ -1953,11 +1960,11 @@ export class FakeHub implements HubTransport {
     if (models.length === 0) return noModelsText
     const found =
       asked.model === undefined
-        ? models[0]
-        : models.find((each) => providerModelName(each) === asked.model)
+        ? defaultProviderModel(models)
+        : findProviderModel(models, asked.model)
     if (found === undefined) return modelNotFoundText(asked.model ?? "")
-    if (asked.thinkingLevel !== undefined && !found.thinkingLevels.includes(asked.thinkingLevel))
-      return `${found.label} has no thinking level '${asked.thinkingLevel}'.`
+    const refusal = thinkingLevelRefusal(found, asked.thinkingLevel)
+    if (refusal !== undefined) return refusal
     return {
       model: providerModelName(found),
       ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
@@ -2178,7 +2185,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `Claude Code could not start: ${session.summary.creator.name} has no Claude setup token on this Hub.`,
+        message: `${harnessName(session)} could not start: ${session.summary.creator.name} has no Claude setup token on this Hub.`,
       })
       this.#summaryChanged(session)
       return
@@ -2189,7 +2196,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `Claude Code could not start: ${cantStartText(session.summary.repo, needed)}`,
+        message: `${harnessName(session)} could not start: ${cantStartText(session.summary.repo, needed)}`,
         valuesNeeded: true,
       })
       this.#summaryChanged(session)
@@ -2201,7 +2208,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `Claude Code could not start: ${installationsCantStartText(session.summary.repo, failing)}`,
+        message: `${harnessName(session)} could not start: ${installationsCantStartText(session.summary.repo, failing)}`,
         installationsFailed: failing,
       })
       this.#summaryChanged(session)
@@ -2952,7 +2959,7 @@ export class FakeHub implements HubTransport {
   ): FakeSession | undefined {
     const session = this.#sessionFor(socket, message)
     if (!session) return undefined
-    const refused = driveRefusal(this.#you, session.summary.creator)
+    const refused = driveRefusal(this.#you, session.summary.creator, session.summary.harness)
     if (refused === undefined) return session
     this.#fail(socket, message._tag, refused.refusal, message.sessionId)
     return undefined
