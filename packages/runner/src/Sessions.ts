@@ -49,7 +49,7 @@ import { Workspaces } from "./Workspace.ts"
 /** The terminal size a Session starts with, until a viewer resizes it. */
 export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
 
-/** How long a stopped Claude Code gets to exit after SIGTERM before its tmux session is killed. */
+/** How long a stopped Harness gets to exit after SIGTERM before its tmux session is killed. */
 export const StopGracePeriod = Duration.seconds(10)
 
 /**
@@ -61,14 +61,14 @@ export class Sessions extends Context.Service<
   {
     /**
      * Takes back the Sessions an earlier Runner left running, as after a restart (#157). Each
-     * one whose Claude Code still runs in its Sandbox keeps running, its terminal streamed again.
-     * The Session token its Claude Code holds, read back from it, is held for it alone at the
+     * one whose Harness still runs in its Sandbox keeps running, its terminal streamed again.
+     * The Session token its Harness holds, read back from it, is held for it alone at the
      * mod relay until the Hub gives it a new mod token (ModTokenReissued). Any other Sandbox left
      * running is stopped: the Hub has its Session Asleep once the Runner says hello without it.
      * Run once, at startup, before the hello.
      */
     readonly adopt: Effect.Effect<void>
-    /** The Sessions whose Claude Code is running, for {@link RunnerHello}. */
+    /** The Sessions whose Harness is running, for {@link RunnerHello}. */
     readonly running: Effect.Effect<ReadonlyArray<SessionId>>
     /** Those kept running across a restart, waiting for a new mod token, for the hello. */
     readonly withoutModToken: Effect.Effect<ReadonlyArray<SessionId>>
@@ -86,7 +86,7 @@ interface Running {
   readonly pane: Pane
   /** Set when the Hub asked the Session to stop, so its exit is reported as `Requested`. */
   stopping: boolean
-  /** Completes with the exit code once Claude Code has exited, or its tmux session is gone. */
+  /** Completes with the exit code once the Harness has exited, or its tmux session is gone. */
   readonly exited: Deferred.Deferred<number | undefined>
 }
 
@@ -131,11 +131,14 @@ export const SessionsLive = Layer.effect(
 
     const running = new Map<SessionId, Running>()
     /**
-     * The Session token and the setup token each Session's Claude Code was started with, kept out
-     * of what it printed before it exited.
+     * The Session token, and the setup token when it had one, each Session's Harness was started
+     * with, kept out of what it printed before it exited.
      */
     const launchSecrets = new Map<SessionId, ReadonlyArray<string>>()
-    /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
+    /**
+     * What each started Session's Sandbox runs, as its start or, after a restart, `keep` said: its
+     * Environment version, and where Claude Code and pi's Node.js are, for a relaunch.
+     */
     const sandboxStarts = new Map<SessionId, SandboxStarted>()
     /**
      * What each started Session runs now (ADR 0029), for a relaunch to start it again, or to switch
@@ -148,7 +151,7 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Gives the Session a Session token for the mod relay, standing for its mod token. Its mod and
-     * Claude Code's MCP traffic hold the token in place of the mod token.
+     * its Harness's MCP traffic hold the token in place of the mod token.
      */
     const admit = (sessionId: SessionId, modToken: string) =>
       relay.admit({ sessionId, modToken: Redacted.make(modToken) })
@@ -181,7 +184,7 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Attaches to the Session's tmux session, streams its terminal to the Hub, and starts with a
-     * snapshot. When Claude Code exits on its own, reports it and cleans up. Watches its
+     * snapshot. When its Harness exits on its own, reports it and cleans up. Watches its
      * Sandbox's Open ports too, until it stops (ADR 0016).
      */
     const watch = (sessionId: SessionId) =>
@@ -216,7 +219,7 @@ export const SessionsLive = Layer.effect(
               running.delete(sessionId)
               yield* Scope.close(paneScope, Exit.void)
               yield* Deferred.succeed(exited, exitCode)
-              // Interrupted means the Runner is shutting down: Claude Code runs on, and is taken
+              // Interrupted means the Runner is shutting down: the Harness runs on, and is taken
               // back when the Runner comes back (adopt).
               if (Exit.hasInterrupts(exit) || session.stopping) return
               yield* background(exitedOnItsOwn(sessionId, exitCode))
@@ -228,7 +231,7 @@ export const SessionsLive = Layer.effect(
         yield* ports.watch(sessionId)
       })
 
-    // What Claude Code printed before it exited is read from its dead pane, which tmux keeps
+    // What the Harness printed before it exited is read from its dead pane, which tmux keeps
     // (`remain-on-exit`), before the tmux session is killed: otherwise why it exited is lost (#105).
     const exitedOnItsOwn = (sessionId: SessionId, exitCode: number | undefined) =>
       serialized(sessionId)(
@@ -433,7 +436,7 @@ export const SessionsLive = Layer.effect(
         )
       })
 
-    /** Tells the Hub the Session's Claude Code started, with the Environment version it runs. */
+    /** Tells the Hub the Session's Harness started, with the Environment version it runs. */
     const started = (sessionId: SessionId) => {
       const environmentVersion = sandboxStarts.get(sessionId)?.environmentVersion
       return hub.send(

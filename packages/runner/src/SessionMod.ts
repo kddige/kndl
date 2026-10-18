@@ -41,8 +41,7 @@ export class SessionModError extends Data.TaggedError("SessionModError")<{
  * Copies the Runner's mod, its plugins under `modDir`, into the Session's `mod/`, in place of the
  * copy there, with the {@link gatewayPlugin} plugin for the MCP servers of its Installations, if
  * any, and the {@link piExtension}, when it is built, and returns where the Sandbox sees the new
- * copy. Run only while the Session's Claude Code is
- * stopped.
+ * copy. Run only while the Session's Harness is stopped.
  *
  * Each copy has a new name: the Sandbox may still hold the last one's paths, and a directory
  * replaced under a mount stays stale. `mod/` itself stays, as the Sandbox mounts it.
