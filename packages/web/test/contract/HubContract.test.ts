@@ -8,6 +8,8 @@
 // it. The fake Hub plays that itself (its `reply` option); for the real one, `scriptedMod` does.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { ProviderApis } from "@kndl/hub/src/ConnectedProviders.ts"
+import { ModelCatalog } from "@kndl/hub/src/ModelCatalog.ts"
 import { issueRunnerToken, openRunner } from "@kndl/hub/src/testChannels.ts"
 import {
   cookieFrom,
@@ -26,6 +28,7 @@ import {
   Participant,
   type PromptId,
   ProtocolVersion,
+  type ProviderModel,
   type RunnerId,
   type SessionEvent,
   type SessionId,
@@ -36,6 +39,8 @@ import { Schema } from "effect"
 import { HubClient } from "../../src/hub/client.ts"
 import { attachmentPath, attachmentsPath, hubPaths } from "../../src/hub/config.ts"
 import { FakeHub } from "../../src/hub/fake/FakeHub.ts"
+import { claudeModels, connectable, providerModels } from "../../src/hub/fake/providers.ts"
+import { fakeModels } from "../../src/hub/fake/script.ts"
 import type { HubTransport } from "../../src/hub/transport.ts"
 
 /** A signed-in client of either Hub, with a new Session that has started, its Claude Code idle. */
@@ -53,7 +58,16 @@ interface Scene {
 interface SceneOptions {
   readonly modSteers?: boolean
   readonly modAttaches?: boolean
+  /**
+   * Its Runner runs pi too, and relaunches a Session on the other Harness (ADR 0030), and its
+   * Creator has Models: Claude's and OpenAI's, as the fake Hub's Alice has them. The Session still
+   * starts on Claude Code, which the Creator's Account page runs Claude's Models on.
+   */
+  readonly pi?: boolean
 }
+
+/** The Models a Creator with Claude's and OpenAI's has, as the fake Hub lists Alice's. */
+const creatorModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels("openai")]
 
 /** The question Claude asks when a prompt says "ask" (#193). */
 const question = {
@@ -112,7 +126,7 @@ async function started(client: HubClient): Promise<SessionId> {
 
 const fake: Adapter = {
   name: "the fake Hub",
-  scene: async ({ modSteers = true, modAttaches = true } = {}) => {
+  scene: async ({ modSteers = true, modAttaches = true, pi = false } = {}) => {
     // Claude works on every prompt until it is stopped, asking or delegating first if told to.
     const working = { kind: "pause", steps: 1e6 } as const
     const hub = new FakeHub({
@@ -136,6 +150,8 @@ const fake: Adapter = {
             : [working],
     })
     cleanups.push(() => hub.dispose())
+    // The Runner the Session starts on, the first online one, runs pi too.
+    if (pi) hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
     const client = startClient(hub)
     const sessionId = await started(client)
     if (!modSteers) hub.modFromBeforeSteering(sessionId)
@@ -336,15 +352,50 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
   }
 }
 
+/**
+ * Sign in with ChatGPT, as the fake Hub plays it: a page to open, then the address the browser
+ * landed on, pasted, which must hold a code. Every token here is made up.
+ */
+const chatGptSignIn: ProviderApis["Service"]["signIn"] = async (_provider, interaction) => {
+  interaction.notify({
+    type: "auth_url",
+    url: "https://auth.openai.com/oauth/authorize?client_id=made-up",
+    instructions: "Complete sign-in in your browser.",
+  })
+  const pasted = await interaction.prompt({
+    type: "manual_code",
+    message: "Paste the final redirect URL here:",
+    placeholder: "http://localhost:1455/auth/callback",
+  })
+  if (!pasted.includes("code=")) throw new Error("Paste the full callback URL from the browser")
+  return {
+    type: "oauth",
+    access: "made-up-access",
+    refresh: "made-up-refresh",
+    expires: Date.now() + 3_600_000,
+  }
+}
+
 const real: Adapter = {
   name: "the real Hub",
-  scene: async ({ modSteers = true, modAttaches = true } = {}) => {
-    const hub = await startHub({ config: { devLogin: true } })
+  scene: async ({ modSteers = true, modAttaches = true, pi = false } = {}) => {
+    const hub = await startHub({
+      config: { devLogin: true },
+      providerApis: ProviderApis.layerTest({ signIn: chatGptSignIn }),
+      ...(pi && { modelCatalog: ModelCatalog.fixed(creatorModels) }),
+    })
     // Last, once its clients and mod are gone: its shutdown waits for their connections.
     cleanups.push(() => hub.stop())
     const cookie = cookieFrom(await devSignIn(hub, "alice"))
     await seedEnvironment(hub, repo, "dev:alice")
-    const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+    const runner = await openRunner(
+      hub,
+      (await issueRunnerToken(hub)).token,
+      [],
+      undefined,
+      true,
+      pi ? { models: fakeModels, relaunches: true, harnesses: ["ClaudeCode", "Pi"] } : {},
+    )
     cleanups.push(() => runner.close())
     const transports: Array<ReturnType<typeof realTransport>> = []
     const newClient = () => {
@@ -775,6 +826,104 @@ for (const adapter of [fake, real]) {
       expect(session.ofTag("TurnStarted")[1]?.attachments).toEqual([
         { id, name: "spec.pdf", mediaType: "application/pdf", size: pdf.byteLength },
       ])
+    })
+
+    // Connected providers (ADR 0029), and switching a Session's Harness (ADR 0030).
+
+    test("the Creator's ProvidersState names each Provider as the Hub does, and their claudeHarness", async () => {
+      const { client } = await adapter.scene()
+      await eventually(() => expect(client.getState().providers).toBeDefined())
+      expect(client.getState().providers?.connectable).toEqual(connectable)
+      expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode")
+
+      expect((await client.setClaudeHarness("Pi")).claudeHarness).toBe("Pi")
+      expect(client.getState().providers?.claudeHarness).toBe("Pi")
+    })
+
+    test("a refused answer to a sign-in leaves it running, to end as the Hub says", async () => {
+      const { client } = await adapter.scene()
+      const refused: Array<CommandFailed> = []
+      cleanups.push(client.onCommandFailed((failure) => refused.push(failure)))
+      const ended = client.startSignIn("openai")
+      const steps = () => client.getState().signIn?.steps.map((step) => step._tag)
+      await eventually(() => expect(steps()).toEqual(["OpenUrl", "Paste"]))
+      const landed = "http://localhost:1455/auth/callback?code=made-up&state=x"
+      expect(client.answerSignIn(landed)).toBe(true)
+      // Sent before the Hub took the first: it isn't waiting for another.
+      expect(client.answerSignIn(landed)).toBe(true)
+
+      expect((await ended).outcome).toBe("Connected")
+      expect(client.getState().signIn?.ended).toEqual({ outcome: "Connected" })
+      expect(refused).toEqual([
+        expect.objectContaining({
+          command: "AnswerSignIn",
+          message: "This sign-in isn't waiting for an answer.",
+        }),
+      ])
+      await eventually(() =>
+        expect(client.getState().providers?.connected.map((each) => each.provider)).toContain(
+          "openai",
+        ),
+      )
+    })
+
+    test("Cancel ends a sign-in as cancelled", async () => {
+      const { client } = await adapter.scene()
+      const ended = client.startSignIn("openai")
+      await eventually(() => expect(client.getState().signIn?.steps).toHaveLength(2))
+      expect(client.cancelSignIn()).toBe(true)
+      expect((await ended).outcome).toBe("Cancelled")
+      expect(client.getState().signIn?.ended).toEqual({ outcome: "Cancelled" })
+    })
+
+    test("a switch to the other Harness waits for the Turn to end, and the Session runs on it then", async () => {
+      const scene = await adapter.scene({ pi: true })
+      const session = await turnRunning(scene)
+      const harness = () => session.summary()?.harness ?? "ClaudeCode"
+      expect(harness()).toBe("ClaudeCode")
+
+      scene.client.setSessionModel(scene.sessionId, { model: "openai/gpt-6-sol" })
+      await eventually(() => expect(session.ofTag("ModelSwitched")).toHaveLength(1))
+      expect(session.ofTag("ModelSwitched")[0]).toMatchObject({
+        model: "openai/gpt-6-sol",
+        modelLabel: "GPT-6-Sol",
+        harness: "Pi",
+      })
+      // The running Turn goes on, on Claude Code: the Session is set to pi's Model.
+      await eventually(() =>
+        expect(session.summary()).toMatchObject({ model: "openai/gpt-6-sol", modelPending: true }),
+      )
+      expect(harness()).toBe("ClaudeCode")
+
+      // Another of pi's Models: the setting was pi's already, so the switch names no Harness.
+      scene.client.setSessionModel(scene.sessionId, { model: "anthropic/claude-opus-5-5" })
+      await eventually(() => expect(session.ofTag("ModelSwitched")).toHaveLength(2))
+      expect(session.ofTag("ModelSwitched")[1]).toMatchObject({
+        model: "anthropic/claude-opus-5-5",
+        modelLabel: "Claude Opus 5.5",
+      })
+      expect(session.ofTag("ModelSwitched")[1]).not.toHaveProperty("harness")
+      // The same setting again is no switch.
+      scene.client.setSessionModel(scene.sessionId, { model: "anthropic/claude-opus-5-5" })
+
+      scene.client.stopTurn(scene.sessionId)
+      await eventually(() => expect(harness()).toBe("Pi"))
+      expect(session.summary()?.model).toBe("anthropic/claude-opus-5-5")
+      expect(session.summary()?.modelPending).toBeUndefined()
+      expect(session.ofTag("ModelSwitched")).toHaveLength(2)
+      expect(session.failures).toEqual([])
+    })
+
+    test("a model of the other Harness that a Session's Creator doesn't have is refused", async () => {
+      const scene = await adapter.scene({ pi: true })
+      const session = watch(scene.client, scene.sessionId)
+      await eventually(() => expect(session.summary()).toBeDefined())
+      scene.client.setSessionModel(scene.sessionId, { model: "openai/gpt-0" })
+      await eventually(() =>
+        expect(session.refusals("SetSessionModel")).toEqual(["Model 'openai/gpt-0' not found"]),
+      )
+      expect(session.summary()?.model).toBeUndefined()
+      expect(session.ofTag("ModelSwitched")).toEqual([])
     })
 
     test("a prompt names only files its sender uploaded to the Session (#276)", async () => {

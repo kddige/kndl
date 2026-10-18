@@ -180,6 +180,8 @@ const keyNames: Partial<Record<ProviderId, string>> = {
   meta: "Meta Model API key",
   huggingface: "Hugging Face token",
   "moonshotai-cn": "Moonshot AI API key",
+  opencode: "OpenCode API key",
+  "opencode-go": "OpenCode API key",
 }
 
 export const connectable: ReadonlyArray<ConnectableProvider> = ProviderIds.map((provider) => {

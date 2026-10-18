@@ -350,9 +350,8 @@ const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 const noCredentialText =
   "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
 
-/** What runs a fake Session's agent, as the Hub names it in what it says of its start. */
-const harnessName = (session: { readonly summary: { readonly harness?: string } }) =>
-  session.summary.harness === "Pi" ? "pi" : "Claude Code"
+/** A Harness as the Hub names it in what it says, Claude Code for a Session that says none. */
+const harnessName = (harness: Harness | undefined) => (harness === "Pi" ? "pi" : "Claude Code")
 
 /**
  * Whether a model switch from a Session running on `now` to a model of `to` stops its agent, as
@@ -875,7 +874,11 @@ export class FakeHub implements HubTransport {
     if (!session) return
     const { starting: _, restarting: __, ...summary } = session.summary
     session.summary = { ...summary, currentTurn: null, lastOutput: output }
-    this.#setState(session, "Asleep", `${harnessName(session)} exited with code ${exitCode}`)
+    this.#setState(
+      session,
+      "Asleep",
+      `${harnessName(session.summary.harness)} exited with code ${exitCode}`,
+    )
   }
 
   /**
@@ -1109,7 +1112,12 @@ export class FakeHub implements HubTransport {
       case "AnswerSignIn": {
         const signIn = this.#signIn
         if (signIn?.requestId !== message.requestId || signIn.waitsFor === null) {
-          this.#refuse(socket, message._tag, message.requestId, "No sign-in is waiting for that.")
+          this.#refuse(
+            socket,
+            message._tag,
+            message.requestId,
+            "This sign-in isn't waiting for an answer.",
+          )
           break
         }
         // GitHub Copilot's choice of GitHub: its code follows, whichever.
@@ -1133,7 +1141,7 @@ export class FakeHub implements HubTransport {
       }
       case "CancelSignIn":
         if (this.#signIn?.requestId === message.requestId) this.#endSignIn("Cancelled")
-        else this.#refuse(socket, message._tag, message.requestId, "No sign-in is in progress.")
+        else this.#refuse(socket, message._tag, message.requestId, "This sign-in isn't running.")
         break
       case "RevokeCliToken": {
         const kept = this.#cliTokens.filter((token) => token.id !== message.cliTokenId)
@@ -1946,6 +1954,8 @@ export class FakeHub implements HubTransport {
 
   disconnected(socket: FakeSocket): void {
     this.#sockets.delete(socket)
+    // As the Hub does: a sign-in ends with the connection that started it.
+    if (this.#signIn?.socket === socket) this.#endSignIn("Cancelled")
     for (const sessionId of socket.joined) {
       const session = this.sessions.get(sessionId)
       if (session) this.#presence(session)
@@ -2053,17 +2063,30 @@ export class FakeHub implements HubTransport {
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
     }
-    // The Harness asked for, else the model's (ADR 0030); with neither, pi when its Runner runs it
-    // (ADR 0029).
-    const harness: Harness =
-      asked.harness ??
-      (asked.model !== undefined
-        ? harnessOfModel(asked.model)
-        : runner.harnesses?.includes("Pi") === true
-          ? "Pi"
-          : "ClaudeCode")
-    if (harness === "Pi" && runner.harnesses?.includes("Pi") !== true) {
-      const message = `${runner.name} doesn't run pi.`
+    // As the Hub picks it (newSessionHarness): the model's (ADR 0030), which a Harness asked for
+    // must agree with; without a model, the one asked for, or Claude Code on a Runner without pi;
+    // with neither, Claude Code when the Creator's default Model is Claude's and their Account page
+    // runs Claude's Models there, and pi otherwise (ADR 0029).
+    const runsPi = runner.harnesses?.includes("Pi") === true
+    let harness: Harness
+    if (asked.model !== undefined) {
+      harness = harnessOfModel(asked.model)
+      if (asked.harness !== undefined && asked.harness !== harness) {
+        const message = `${asked.model} runs on ${harnessName(harness)}, not ${harnessName(asked.harness)}.`
+        socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
+        return
+      }
+    } else if (asked.harness !== undefined || !runsPi) {
+      harness = asked.harness ?? "ClaudeCode"
+    } else {
+      const first = defaultProviderModel(this.#providersState().models)
+      harness =
+        first?.provider === "anthropic" && this.providers.claudeHarness === "ClaudeCode"
+          ? "ClaudeCode"
+          : "Pi"
+    }
+    if (harness === "Pi" && !runsPi) {
+      const message = `${runner.name} doesn't run pi: update it, or start a Claude Code Session there.`
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
     }
@@ -2250,7 +2273,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `${harnessName(session)} could not start: ${session.summary.creator.name} has no Claude setup token on this Hub.`,
+        message: `${harnessName(session.summary.harness)} could not start: ${session.summary.creator.name} has no Claude setup token on this Hub.`,
       })
       this.#summaryChanged(session)
       return
@@ -2261,7 +2284,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `${harnessName(session)} could not start: ${cantStartText(session.summary.repo, needed)}`,
+        message: `${harnessName(session.summary.harness)} could not start: ${cantStartText(session.summary.repo, needed)}`,
         valuesNeeded: true,
       })
       this.#summaryChanged(session)
@@ -2273,7 +2296,7 @@ export class FakeHub implements HubTransport {
       this.#append(session, {
         _tag: "SessionStateChanged",
         state: "Asleep",
-        message: `${harnessName(session)} could not start: ${installationsCantStartText(session.summary.repo, failing)}`,
+        message: `${harnessName(session.summary.harness)} could not start: ${installationsCantStartText(session.summary.repo, failing)}`,
         installationsFailed: failing,
       })
       this.#summaryChanged(session)
