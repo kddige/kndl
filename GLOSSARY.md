@@ -55,8 +55,12 @@ _Avoid_: track, branch, ring
 ## Models
 
 **Harness**:
-The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: pi, wherever the Runner runs it, or Claude Code (ADR 0029). Each Session keeps the one it started with.
+The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: pi or Claude Code (ADR 0029). A Session runs on the one its Model belongs to, and switches between Turns when its Creator picks a Model of the other, with a Handoff (ADR 0030).
 _Avoid_: driver, engine, agent, backend
+
+**Handoff**:
+What a Session's agent is told, when the Session switches Harness, of the Turns that Harness hasn't seen: who prompted what, the tools the agent called and what it answered, shortened, the newest within a budget. The agent's reasoning, tool results and Attachments don't carry over, and the agent can read further back in the Session's history when it needs to. Switching back to a Harness resumes its own conversation, with a Handoff of what happened since.
+_Avoid_: summary, transcript, migration, context transfer
 
 **Provider**:
 A company whose Models a Session can run on, such as Anthropic or OpenAI.
@@ -67,7 +71,7 @@ A Member's own account at one Provider, connected on the Hub by signing in with 
 _Avoid_: integration, linked account, API key (alone), Installation
 
 **Model**:
-One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it between Turns, in a pi Session to any Provider's, and the conversation carries over.
+One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it between Turns, to any of their Models: within one Harness the conversation carries over whole, and to a Model of the other Harness through a Handoff.
 _Avoid_: engine, LLM, backend
 
 **Thinking level**:

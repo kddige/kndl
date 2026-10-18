@@ -60,6 +60,7 @@ A Claude Code Session whose Creator has no Claude credential doesn't wake, and n
 - **A newer Environment version** makes the Sandbox afresh from its Build at the next wake, on the same Workspace and disks. **Restart** on the **Environment changed** banner does that at once.
 - **A Runner behind the Hub** wakes no Session. Prompts wait until the Runner runs the Hub's commit.
 - **Subagents** stop with their Session and are marked Interrupted. A message to one resumes it.
+- **A Model of the other Harness**, picked while the Session was Asleep, wakes it on that Harness, which resumes its own conversation, or starts one, and is handed what it hasn't seen ([Switching Harness](/concepts/architecture/#switching-harness)).
 
 ## When a start fails
 

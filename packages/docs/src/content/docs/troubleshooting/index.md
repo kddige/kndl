@@ -100,6 +100,9 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | New Session asks for your Claude credential, or a Session sleeps for want of one | [Sessions](/troubleshooting/sessions/#you-have-no-claude-credential) |
 | **Connect a Provider first**, or a Session sleeps for want of Models | [Sessions](/troubleshooting/sessions/#you-have-no-models) |
 | A Turn says **Failed** in a pi Session | [Sessions](/troubleshooting/sessions/#a-turn-fails-on-a-providers-model) |
+| `… doesn't run both Claude Code and pi: …`, or another refusal as you switch | [Sessions](/troubleshooting/sessions/#switching-between-claude-code-and-pi-is-refused) |
+| `pi could not start on …: the Sandbox could not be readied for pi: …` | [Sessions](/troubleshooting/sessions/#a-switch-to-pi-puts-the-session-to-sleep) |
+| `… started without a handoff of what happened on …` | [Sessions](/troubleshooting/sessions/#the-agent-doesnt-know-what-happened-before-a-switch) |
 | New Sessions run Claude Code, or `This Runner doesn't run pi Sessions` | [Sessions](/troubleshooting/sessions/#new-sessions-run-claude-code) |
 | `Only …, who started this Session, can drive it` | [Sessions](/troubleshooting/sessions/#only-someone-else-can-drive-this-session) |
 | A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |

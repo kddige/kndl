@@ -1,6 +1,6 @@
 # pi as kndl's Harness: the design
 
-How ADR 0029 is built. The contracts are code: `packages/protocol/src/Provider.ts`, `Harness` in `Model.ts`, `SwitchModel` and `switchesModels` in `Mod.ts`, `harness`/`harnesses` on `StartSession`, `RunnerHello`, `RunnerSummary`, `SessionSummary` and `CreateSession`, and the Hub's `ModelCatalog` service. Read those before this.
+How ADR 0029 is built, and ADR 0030, which switches a Session between pi and Claude Code. The contracts are code: `packages/protocol/src/Provider.ts`, `Harness` and `harnessOfModel` in `Model.ts`, `SwitchModel`, `switchesModels`, `DeliverHandoff`, `takesHandoffs` and `ModHistory` in `Mod.ts`, `harness`/`harnesses` on `StartSession`, `RelaunchSession`, `RunnerHello`, `RunnerSummary`, `SessionSummary`, `CreateSession` and `ModelSwitched`, and the Hub's `ModelCatalog` service. Read those before this.
 
 Pinned versions: pi and pi-ai **1.3.0** (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`), everywhere they're used: the Hub, the Runner's pi bundle, the mod's pi extension. The Claude Code binary stays the one kndl pins (`PinnedClaudeVersion`).
 
@@ -85,12 +85,56 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
 
 ## Sessions and the Harness
 
-- **Which Harness:** `CreateSession.harness` absent means pi when the Runner's hello lists `"Pi"` in `harnesses`, else Claude Code. This is issue 5: new Sessions are pi. The web has no picker, and only `?harness=claude-code` in the URL forces Claude Code. The Session keeps its Harness for life.
-- **Models:** a pi Session's model is `<provider>/<id>` (`providerModelName`), checked against `ModelCatalog.modelsFor(creator)`. A Claude Code Session's model is checked against the Runner's models, as before.
+- **A model names its Harness** (`harnessOfModel`, ADR 0030): a `<provider>/<id>` name (`providerModelName`) is pi's, and anything else is Claude Code's: an alias such as `opus`, or no model, which is Claude Code's default. A pi Session always names its model. `SessionSummary.harness` is what runs the Session now; one that says none runs Claude Code.
+- **Which Harness a new Session gets** (`newSessionHarness` in `SessionRelay.ts`):
+  - With a `model`, the model's. A `harness` that disagrees is refused: `<model> runs on pi, not Claude Code.`
+  - Without one, the `harness` asked for, else Claude Code on a Runner whose hello doesn't list `"Pi"` in `harnesses`. pi asked for there is refused: `<runner> doesn't run pi: update it, or start a Claude Code Session there.`
+  - Without either, on a Runner that runs pi: Claude Code when the Creator's default Model (`defaultProviderModel`: Claude's first) is Claude's and their `claudeHarness` is `ClaudeCode`; else pi, on that Model.
+- **Models:** a pi Session's model is checked against `ModelCatalog.modelsFor(creator)`, and a Claude Code Session's against the Runner's models, as before.
   - A new pi Session without a model gets the first of the Creator's Models, Claude's first when they have a Claude credential.
   - A Creator with no Models can't start a pi Session. The refusal says to connect a Provider on the Account page.
-- **Switching:** when a pi Session's model changes, the Hub sends `SwitchModel` once no Turn runs, to a mod that `switchesModels`. Claude Code Sessions relaunch as before.
+- **Switching within a Harness:** when a pi Session's model changes to another of pi's, the Hub sends `SwitchModel` once no Turn runs, to a mod that `switchesModels`. A Claude Code Session relaunches as before. A model of the other Harness switches the Session's Harness: below.
 - **The Claude credential:** a pi Session's Runner still fetches it. A refusal doesn't fail the start: Claude's Models just aren't available in that Session.
+
+## Switching Harness (ADR 0030)
+
+A Session moves between pi and Claude Code when its Creator picks a model of the other Harness. Each Harness keeps its own conversation, and is handed, as text, the Turns it hasn't seen. Nothing translates one Harness's transcript into the other's.
+
+- **The picker** (`ModelPicker.tsx`) is one list, in a Session and in New Session, grouped by what runs each model (`providerGroupLabel`):
+  - **Anthropic · Claude Code:** **Default · <label>**, then the Runner's Claude Code models. Offered where the Runner runs Claude Code and the Creator has a Claude credential, and always in a Session on Claude Code, or a New Session where pi isn't offered.
+  - **Anthropic · pi:** Claude's Models through the Claude bridge, `anthropic/<id>`.
+  - **Each other Provider's**, by its name, in the order of the Creator's Models. pi's groups are offered where the Runner runs pi (every candidate Runner, in New Session).
+  - Picking the other Harness's model asks first, **Switch to pi?** or **Switch to Claude Code?**, with `Switching to <Harness> continues in its own conversation, with a handoff of this one. The next prompt waits until it's up.`, and `It interrupts the running agent.` while agents run. A switch within pi doesn't ask; one within Claude Code asks only while agents run, as before.
+- **What the Hub keeps:**
+  - `session_conversations (session_id, harness, conversation_id, seen_seq)`: each Harness's conversation, from its mod's last hello, and `seen_seq`, the last entry of the Session's log it ran through or was handed, null for none.
+  - `sessions.harness`, the Harness it runs now, and `sessions.handoff_from`, the one it switched from, until the new one has been handed what it hasn't seen.
+  - `participants.claude_harness`: which Harness runs Claude's Models in the Member's new Sessions, null for Claude Code.
+- **The sequence:**
+  1. **`SetSessionModel`.** The Hub checks the model with the Harness it names (`check`), and, for the other Harness, that the Runner runs both (`switchRefusal`) and that the Creator has what it runs on (`whyNotRunnable`). It stores the setting, `modelPending` while the Session runs, and logs `ModelSwitched` with `harness`, the Harness it moves to.
+  2. **Settling** (`settleHarness`), as the Session is relaunched or woken on the new Harness: the old Harness is recorded as having seen the log up to its last entry, unless it was still to be handed what it hadn't, and `harness` and `handoff_from` are set. An Asleep Session settles at once, and wakes on the new Harness.
+  3. **`RelaunchSession`**, once no Turn runs (`deliverNext`), with `harness`, `resume` when the new Harness has a conversation, a fresh mod token, the model and thinking level, and the same MCP servers. The outbox is cleared, as the old mod's commands are stale.
+  4. **The Runner** (`relaunch` in `Sessions.ts`) stops the running Harness, and readies the same Sandbox for the other as its start would (`Sandboxes.readyFor`): Claude Code's state seeded, and for pi, Node.js working and pi's state directory made. A Sandbox kept across a Runner restart from before pi's mount is refused: `the Sandbox could not be readied for pi: its Sandbox was made before pi, so it runs pi once it sleeps and wakes`. It launches the Harness on the conversation named, or a new UUID, and answers as a start does: `SessionStarted`, or `SessionStartFailed`, which puts the Session to sleep with `<Harness> could not start on <runner>: …`.
+  5. **The new mod's hello.** The Hub records its conversation under the Harness, then hands off (`handOff`): it clears `handoff_from`, reads the log after that Harness's `seen_seq` (all of it, for a Harness new to the Session), moves `seen_seq` to the last entry, and queues `DeliverHandoff { sessionId, from, text, earlierBefore? }`, then the next prompt. A mod whose hello doesn't say `takesHandoffs` gets none, and the Session's history says `<Harness> started without a handoff of what happened on <Harness>: its mod doesn't take one.`
+- **Switching back** resumes that Harness's own conversation, and hands it only what happened after its `seen_seq`.
+- **The handoff** (`buildHandoff` in the Hub's `Handoff.ts`) is built from the Session's log alone, oldest first:
+  - Each main-loop Turn: `## Turn <seq>, <yyyy-mm-dd hh:mm> UTC: <who> prompted`; the prompt, with a steered prompt as `<name> added, while it ran: …` and Attachments as `(N attachments, not carried over)`; `Tools called:`, each `- <tool>: <input>`; `Answer (<model>):` and the answer; and how it ended, when not with its answer: stopped, at the output limit, or in an error, with its reason. Who is a Participant's name, `subagent <agentId>` for a Turn an agent's result started, or `someone at the terminal`.
+  - Each model switch among them: `## <time>: <name> switched the model to <label>, on <Harness>.`
+  - Left out: a subagent's own events, tool results, reasoning, and the Attachments themselves.
+  - Clipped: a prompt or answer at 4,000 characters (`MaxTurnTextLength`), a tool call at 200 (`MaxToolCallLength`), and a Turn's tool calls at 30 (`MaxToolCalls`), each saying how much more there was.
+  - **The budget:** 64,000 characters (`HandoffBudget`, about 16,000 tokens), filled with the newest items that fit. When Turns are left out, `earlierBefore` is the `seq` of the earliest one kept. With no Turn to hand over, nothing is sent.
+- **The mod frames it** (`handoffNote` in `packages/mod/src/Handoff.ts`), alike in both Harnesses, as `<context-handoff>…</context-handoff>`: that the Session ran on the other Harness, maybe on another model; that this is what the agent hasn't seen, shortened; that reasoning, tool state and attached files didn't carry over; that it is context for the next prompt, not a request; and how to read the Turns it left out, with the history tool and `before=<earlierBefore>`.
+  - **Claude Code** (`hub-link-commands`) appends it as a user note (`$.session.append`), which Claude reads ahead of the next prompt, starting no Turn. One Claude Code won't append waits, and goes as hidden context with the next prompt, the Hub's or one typed at the terminal (`prompt.submit`).
+  - **pi** (`History.ts`) adds it as a custom message, `kndl-handoff` (`pi.sendMessage`), at once while idle, starting no run, so the next request carries it ahead of the prompt. pi's terminal draws it as one line, `kndl: context handoff from Claude Code, for the next prompt`, and the whole text when expanded.
+- **`GET /mod/history?before=<seq>&limit=<n>`** (`ModRoutes.ts`), on the mod token, answers `ModHistory { turns, earlierBefore? }`: the main loop's Turns before `before` (the latest, without it), oldest first, at most `limit` (20 by default, 50 at most), each a `HistoryTurn { seq, by, prompt, tools, answer, model? }` clipped as the handoff's. `earlierBefore` is there when earlier Turns are left. A Session the Hub doesn't know is `404`.
+- **The `session_history` tool**, in both mods, reads it as text: `before`, a Turn number, and `limit`, 10 by default and 50 at most, read leniently, as models pass numbers as strings. In Claude Code it is `mcp__hub-link-commands__session_history`, registered with `$.tool.register`, not deferred, so it is in the tool list from the first request.
+- **What runs Claude's Models** in a Member's new Sessions is theirs to choose, in the Account page's Anthropic section once they have a Claude credential: **Run Claude's Models with**, **Claude Code** or **pi**. The web sends `SetClaudeHarness { requestId, harness }`, which the Hub answers with `ProvidersState`, whose `claudeHarness` is the choice: `ClaudeCode` unless they chose pi.
+- **New Session** (`CreateSessionDialog.tsx`) preselects, until a model is picked:
+  - Claude Code's default, where a Runner it may start on doesn't run pi;
+  - the Creator's first Model, on pi, where Claude Code isn't offered, as without a Claude credential;
+  - Claude's first Model, on pi, when their `claudeHarness` is `Pi` and they have Claude's Models;
+  - else Claude Code's default. `?harness=claude-code` in the address keeps it there, and offers Claude Code without a Claude credential, so the dialog says to add one.
+
+  It sends `harness: ClaudeCode` only for Claude Code's default, where a Runner might run pi: any other model names its Harness.
 
 ## The Runner
 
@@ -102,7 +146,8 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
   - pi's state lives in `PI_CODING_AGENT_DIR=/var/lib/kndl/claude/pi`, on the Session's `claude` volume, so it survives sleep.
   - `PI_OFFLINE=1` skips pi's startup network calls. pi's own telemetry is off.
 - **pi's environment:** `KNDL_URL`, `KNDL_MOD_TOKEN`, `KNDL_SESSION_ID`, `KNDL_CONVERSATION_ID` (as the mod's), and `KNDL_HARNESS=Pi`. When the Creator has a Claude credential, also `CLAUDE_CODE_OAUTH_TOKEN`, `IS_SANDBOX=1`, `CLAUDE_CONFIG_DIR` and `KNDL_CLAUDE_CODE` (the guest path of the pinned `claude`), for the Claude bridge.
-- **Resuming:** `--session-id` creates the conversation or resumes it. A new pi Session's conversation id is a UUID the Runner picks, as for Claude Code.
+- **Resuming:** `--session-id` creates the conversation or resumes it. A new pi Session's conversation id is a UUID the Runner picks, as for Claude Code, and so is pi's first conversation in a Session switched to it.
+- **Switching:** a `RelaunchSession` whose `harness` isn't what the Session runs stops that Harness and starts the other in the same Sandbox ([Switching Harness](#switching-harness-adr-0030)). Both launches set `KNDL_HARNESS`, so a Runner that restarts reads back which one each kept Session runs.
 
 ## The pi extension (`packages/mod/pi/`)
 
@@ -112,7 +157,7 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
   - For Claude's Models, the Claude bridge provider (`anthropic`), when the credential is there.
   - Register the Session's MCP servers, which the Runner names in `KNDL_MCP_SERVERS` (Installation ids and server names, nothing secret), as `kndl-<server>` at `${KNDL_URL}/gateway/<installationId>`. Their `Authorization` header is `Bearer ${KNDL_MOD_TOKEN}`, which pi fills in from its environment as it connects, so the token is never written down.
   - Add the Repo's `.claude/skills` to pi's skills (`resources_discover`), beside `.pi/skills` and `.agents/skills`.
-  - Say hello: `conversationId` is pi's session id, `model` is `<provider>/<id>`, and the flags are `steers`, `attaches` and `switchesModels`.
+  - Say hello: `conversationId` is pi's session id, `model` is `<provider>/<id>`, and the flags are `steers`, `attaches`, `switchesModels` and `takesHandoffs`.
 - **Events** (as hub-link reports them for Claude Code):
   - `TurnStarted` and `TurnEnded`, the latter with pi-ai's stop reason, the Turn's usage summed with its cost, and, for an error, the Provider's reason (`errorMessage`, one line, at most 500 characters, with tokens and key-shaped strings redacted).
   - `TextDelta`, and `ToolCallStarted`/`ToolCallEnded`.
@@ -122,16 +167,18 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
   - `DeliverIntoTurn`: a steer. `StopTurn`: abort.
   - `SwitchModel`: `setModel` and `setThinkingLevel`. A model it doesn't have, as one of a Provider connected after pi started, makes it ask `/mod/providers` again and register the Gateway providers again, once. Only Models that go through kndl (the Gateway's or the Claude bridge's) are taken: never pi's built-in ones, which would call a Provider directly. One it still can't run is reported as `ModelSwitchFailed`, and the Hub puts the Session's model back, with a note in its history.
   - `DeliverAgentMessage` and `StopAgent`: Subagents, below. `DeliverAnswer`: the question tool.
+  - `DeliverHandoff`: the context handoff, as a `kndl-handoff` message ([Switching Harness](#switching-harness-adr-0030)).
   - `PresenceChanged`: a widget line.
 - **Tools:**
   - `attachment(id)` returns the image or PDF (ADR 0024).
   - `ask_user_question` has the Question schema, and becomes an Open question.
+  - `session_history({ before?, limit? })` reads the Session's earlier Turns from `GET /mod/history` ([Switching Harness](#switching-harness-adr-0030)).
   - `agent`, `message_agent` and `stop_agent`: Subagents, below.
 - **Subagents** (`Subagents.ts`, ADR 0014's amendment): each is a child pi `AgentSession` in-process, on any of the Creator's Models, the parent's by default, with the parent's tools but `agent`, `message_agent`, `stop_agent` and `ask_user_question`.
   - **In the background.** `agent({ description, prompt, model?, wait? })` returns at once with the agent's id, reporting `AgentStarted` with `background: true`, then `AgentStatusChanged` Running. The parent's Turn can end while it runs. Its runs' events carry its `agentId`, with its own `turnId` and usage on its own `TurnEnded`. With `wait: true` it is a foreground agent: `background: false`, the call returns its final answer, and the Turn's stop stops it.
   - **Its result starts a Turn.** When a run the model didn't wait for ends (Done or Stopped; a failed run is Done), the main loop is given a custom message (`kndl-agent`) in the shape of Claude Code's task notification: `<task-notification>` with `<task-id>` (the agent's id), `<status>` (`completed`, `stopped` or `failed`), `<summary>`, `<note>` and `<result>`, which the web shows. It is sent with `triggerTurn`, so it starts a pi run, reported as a `TurnStarted` from `FromAgent { agentId }`, with the message as its text. One that comes while pi runs waits in the extension until pi settles, then goes, one run each, oldest first: never into a run, and not into pi's own follow-up queue, which its terminal empties when the person stops a run there, and which an aborted run leaves waiting.
   - **Messages and stops.** `message_agent({ agentId, message, wait? })` steers a running agent (read at its next step) or resumes one that has ended, a new run on its own session, whose result comes as above, or to the call with `wait`. `stop_agent({ agentId })` aborts a running one and returns what it had said, so its end isn't delivered again. The Creator's `DeliverAgentMessage` (with their name, as a prompt is) and `StopAgent` do the same, and a run they cause ends in a message to the main loop; one the extension can't do is `AgentCommandFailed`.
-  - **Kept on disk.** Each agent's pi session is a file, `$PI_CODING_AGENT_DIR/kndl/agents/<agentId>.jsonl`, opened with `SessionManager.open`, beside `index.json`: `{ agents: [{ agentId, description, model, status, reported }] }`, written whole on each change, keeping entries another pi on the directory wrote. At `session_shutdown`, a running agent is aborted and reported Interrupted, before the link stops; the index keeps it Running. At `session_start`, the index is read: an agent still Running there becomes Interrupted, and the main loop is given a note for it with its next prompt (`nextTurn`), a task notification with `<status>interrupted</status>`. Agents are opened lazily, on their saved conversation and model, when messaged. The Hub marks Running agents Interrupted itself when pi stops, as for Claude Code, so a hard kill is covered too.
+  - **Kept on disk.** Each agent's pi session is a file, `$PI_CODING_AGENT_DIR/kndl/agents/<agentId>.jsonl`, opened with `SessionManager.open`, beside `index.json`: `{ agents: [{ agentId, description, model, status, reported }] }`, written whole on each change, keeping entries another pi on the directory wrote. At `session_shutdown`, a running agent is aborted and reported Interrupted, before the link stops; the index keeps it Running. At `session_start`, the index is read: an agent still Running there becomes Interrupted, and the main loop is given a note for it with its next prompt (`nextTurn`), a task notification with `<status>interrupted</status>`. Agents are opened lazily, on their saved conversation and model, when messaged. The Hub marks Running agents Interrupted itself when pi stops, as for Claude Code, so a hard kill is covered too. A switch to Claude Code stops pi the same way. The agents stay pi's: Claude Code's mod can't resume them, and a switch back to pi can.
   - **The parent's tools.** A child runs pi's built-in tools by name, and the others (the attachment tool, MCP servers') through the parent: the extension keeps the context of its tools' last call, whose `tools` are the parent's, live. Before any such call, as when the Creator resumes an agent right after pi starts, they are described as `getAllTools()` lists them, and found when the agent calls one.
   - **Claude.** `createChild` gives each child session, new or resumed, the Claude bridge's `followClaudeSession` as an extension factory, and binds it, so the bridge learns its directory and prompt.
 

@@ -21,7 +21,7 @@ kndl is early: v1 is being built, and things change quickly.
 ## How it works
 
 - The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI. It is invite-only: its **Owner** invites everyone else.
-- A **Runner**, on each machine that runs Sessions, starts each Session's agent in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing the agent runs touches the host. The agent is [pi](https://pi.dev), or Claude Code for a Session started on it.
+- A **Runner**, on each machine that runs Sessions, starts each Session's agent in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing the agent runs touches the host. The agent is [pi](https://pi.dev) or Claude Code, whichever runs the Session's model, and a Session switches between them when its model does, handing the other what it hasn't seen.
 - Each Session runs on its **Creator**'s own accounts: the **Providers** they connected on the Hub, with a subscription sign-in or an API key, and their Claude setup token for Claude's Models. The Hub keeps the Providers' credentials and adds them to model calls on the way out, so they never enter a Sandbox. Claude's token is the exception: Claude Code holds it in the Sandbox and talks to Anthropic directly.
 - Only the Creator drives a Session: prompts it, answers it, stops it, controls it and uses its terminal. Everyone else with access to its Repo watches it live, subagents included.
 

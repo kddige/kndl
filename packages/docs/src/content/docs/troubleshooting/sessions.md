@@ -132,7 +132,7 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 ## You have no Models
 
-**What you see.** New Session says **Connect a Provider first**, its **Model** button says **No Models: connect a Provider**, or a Session went to sleep with:
+**What you see.** New Session says **Connect a Provider first**, its **Model** list says **No Models yet. Connect a Provider on your Account page.**, or a Session went to sleep with:
 
 ```
 Put to sleep: it runs on the Models of alice, who started it, and they have none
@@ -154,15 +154,53 @@ The Session's Creator hasn't connected OpenAI: they connect it on the Account pa
 
 **Fix.** The Creator [connects the Provider again](/guides/connect-your-providers/#replace-or-disconnect-it), or [switches the Session's Model](/guides/manage-a-session/#choose-the-model-and-thinking-level), and sends the prompt again.
 
+## Switching between Claude Code and pi is refused
+
+**What you see.** Picking a Model the other Harness runs shows one of:
+
+| Refusal | Fix |
+|---|---|
+| `build-box doesn't run both Claude Code and pi: update it to switch this Session to Claude Code.` (or `… to pi.`) | The Session's Runner runs one Harness alone, or hasn't said which it runs since the Hub started. Wait until it's online, or see [New Sessions run Claude Code](#new-sessions-run-claude-code). |
+| `You have no Claude credential: add your setup token on the Account page.` | [Add your Claude credential](/guides/add-your-claude-credential/), then pick the Model again. |
+| `You have no Models to run a pi Session on: connect a Provider on the Account page.` | [Connect a Provider](/guides/connect-your-providers/), then pick the Model again. |
+
+**Why.** A switch stops one [Harness](/reference/glossary/#harness) and starts the other on the Session's Runner, so the Runner must run both, and you must have what the other runs on.
+
+**Fix.** As the table says. The Session stays on the Model it ran on meanwhile.
+
+## A switch to pi puts the Session to sleep
+
+**What you see.** After you pick one of pi's Models, the Session goes Asleep, and its transcript says:
+
+```
+The Session is Asleep: pi could not start on build-box: the Sandbox could not be readied for pi: its Sandbox was made before pi, so it runs pi once it sleeps and wakes
+```
+
+**Why.** The Session's Sandbox was started before its Runner had pi, and was kept across a Runner restart.
+
+**Fix.** Press **Wake now**. The Session wakes on pi, with a [Handoff](/reference/glossary/#handoff) of what happened on Claude Code.
+
+## The agent doesn't know what happened before a switch
+
+**What you see.** After a switch between Claude Code and pi, the Session's history says:
+
+```
+pi started without a handoff of what happened on Claude Code: its mod doesn't take one.
+```
+
+**Why.** The mod the Runner loaded into the Session is from before [Handoffs](/reference/glossary/#handoff), so it takes none.
+
+**Fix.** Tell the agent what it needs in your next prompt. A Runner on the Hub's commit, with its mod built (`bun run mod:build` in a checkout), loads a mod that takes them.
+
 ## New Sessions run Claude Code
 
-**What you see.** New Session's **Model** offers Claude Code's models, or New Session says **Add your setup token first**, though the address has no `?harness=claude-code`. Or a start fails with:
+**What you see.** New Session's **Model** lists only **Anthropic · Claude Code**, or New Session says **Add your setup token first** though you connected a Provider. Or a start fails with:
 
 ```
 … This Runner doesn't run pi Sessions: its log says why.
 ```
 
-**Why.** The Runner can't run pi, so it runs Claude Code Sessions alone. With **Any online Runner**, New Session starts pi only when every online Runner runs it. A Runner gets pi as it starts: see [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads).
+**Why.** The Runner can't run pi, so it runs Claude Code Sessions alone. With **Any online Runner**, New Session offers pi's Models only when every online Runner runs pi. A Runner gets pi as it starts: see [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads).
 
 **Fix.** On the Runner's machine, find why in its log:
 

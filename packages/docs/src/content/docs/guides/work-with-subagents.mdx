@@ -61,9 +61,11 @@ When a resumed agent is done, its result starts a Turn, as when it was started. 
 
 ## After sleep or a restart
 
-Subagents run inside the Session's pi or Claude Code, so they stop when it does: when the Session sleeps or restarts, when its Environment changes, or when its Runner is lost. A Claude Code Session's agents also stop when its model changes. While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
+Subagents run inside the Session's pi or Claude Code, so they stop when it does: when the Session sleeps or restarts, when its Environment changes, or when its Runner is lost. A Claude Code Session's agents also stop when its model changes, and every agent stops when the Session [switches between Claude Code and pi](/guides/manage-a-session/#switch-between-claude-code-and-pi). While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
 
 Agents that were running show as Interrupted. Every agent's conversation is kept with the Session, so any of them, Done, Stopped or Interrupted, can be resumed after the Session wakes: resume one to carry on. The Session's agent is told, with its next prompt, which agents were interrupted.
+
+An agent resumes only on the Harness that started it: pi's agents while the Session runs pi, Claude Code's while it runs Claude Code. A [Handoff](/reference/glossary/#handoff) to the other Harness carries the Turns the agents' results started, not their own work.
 
 ## Merge a worktree agent's work
 
