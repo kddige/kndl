@@ -30,7 +30,7 @@ import { ClaudeSessionIdPattern } from "./ClaudeConfig.ts"
 import { ClaudeTokenVariable } from "./ClaudeEnvironment.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { HarnessVariable, harnessEnvironment, ModEnvironment } from "./HarnessEnvironment.ts"
-import { HubClaudeCredential } from "./HubClaudeCredential.ts"
+import { HubClaudeCredential, retryingTimeouts } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
@@ -382,7 +382,8 @@ export const SessionsLive = Layer.effect(
      * Readies the Session's Harness to start, before its Sandbox does, and gives what starts it
      * there ({@link launch}). Claude Code needs its Creator's setup token (ADR 0026): a refusal
      * fails the start. pi needs the Runner's pi bundle, and takes the setup token if the Hub gives
-     * it, for its Claude bridge: without it, Claude's Models aren't there, but pi runs.
+     * it, for its Claude bridge: without it, Claude's Models aren't there, but pi runs. A Hub that
+     * was only slow to answer is asked again, so it doesn't cost pi Claude's Models.
      */
     const launcherFor = (request: StartSession | RelaunchSession, harness: Harness) =>
       Effect.gen(function* () {
@@ -407,7 +408,7 @@ export const SessionsLive = Layer.effect(
           return yield* Effect.fail(
             new Error("This Runner doesn't run pi Sessions: its log says why."),
           )
-        const credential = yield* hubClaudeCredential.fetch(sessionId).pipe(
+        const credential = yield* retryingTimeouts(hubClaudeCredential.fetch(sessionId)).pipe(
           Effect.map((given): ClaudeCredential | undefined => given),
           Effect.catch((error) =>
             Effect.as(
