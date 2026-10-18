@@ -169,6 +169,7 @@ A Session moves between pi and Claude Code when its Creator picks a model of the
   - `DeliverAgentMessage` and `StopAgent`: Subagents, below. `DeliverAnswer`: the question tool.
   - `DeliverHandoff`: the context handoff, as a `kndl-handoff` message ([Switching Harness](#switching-harness-adr-0030)).
   - `PresenceChanged`: a widget line.
+- **A stopped reply** stays in what a Gateway model reads, as Claude Code keeps it. pi-ai leaves pi's `aborted` messages out of every request, so the extension's `context` handler (`StoppedReplies.ts`) puts each back in the request's copy of the conversation: its text and its tool calls that ran, with their results, then `[Request interrupted by user]`. Its reasoning and its calls with no result are left out, so no result is left without its call. A subagent's session does the same. The Claude bridge's requests are left as they are: it keeps the reply in Claude Code's session. A reply that ended in an error stays out, as pi-ai leaves it: no one stopped it, and the next request, pi's retry among them, starts from the last whole reply.
 - **Tools:**
   - `attachment(id)` returns the image or PDF (ADR 0024).
   - `ask_user_question` has the Question schema, and becomes an Open question.

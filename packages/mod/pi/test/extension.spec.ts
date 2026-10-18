@@ -463,6 +463,39 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
   }, 30_000)
 
+  test("the next request has the stopped reply as the model's, then that it was stopped, then the new prompt", async () => {
+    hub.scripts.push(textReply("Here's the rest.", { input: 30, output: 4 }))
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: "q-after-stop",
+      text: "and now?",
+      sender: ada,
+    })
+    await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    const input = hub.gatewayRequests[requests]?.body.input as Array<Record<string, unknown>>
+    const reply = input.findIndex(
+      (item) =>
+        item.type === "message" &&
+        item.role === "assistant" &&
+        JSON.stringify(item.content).includes("Thinking about it"),
+    )
+    expect(reply).toBeGreaterThan(0)
+    expect(input[reply - 1]).toEqual({
+      role: "user",
+      content: [{ type: "input_text", text: "[Ada Lovelace] go on" }],
+    })
+    expect(input[reply]).toMatchObject({
+      content: [{ type: "output_text", text: "Thinking about it" }],
+    })
+    expect(input.slice(reply + 1)).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "[Request interrupted by user]" }] },
+      { role: "user", content: [{ type: "input_text", text: "[Ada Lovelace] and now?" }] },
+    ])
+  }, 30_000)
+
   test("the model's question is the Session's Open question: the Creator's answer closes it, and the model reads it (#193)", async () => {
     const asked = [
       {

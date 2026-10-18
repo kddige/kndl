@@ -13,12 +13,14 @@ import {
   Type,
 } from "@earendil-works/pi-ai"
 import type { TranscriptContext } from "@earendil-works/pi-ai"
+import { transformMessages } from "@earendil-works/pi-ai/api/transform-messages"
 import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { ModCommand, ModEvent } from "@kndl/protocol"
 import { Schema } from "effect"
 import { capturedPrompts } from "./claude/Bridge.ts"
 import { sessionCwdFor } from "./claude/SessionCwd.ts"
+import { StopMarker } from "./StoppedReplies.ts"
 import { childModel, childTools, createChild, Subagents } from "./Subagents.ts"
 import type { ChildSession } from "./Subagents.ts"
 
@@ -382,6 +384,27 @@ describe("messaging and stopping an agent", () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(delivered).toEqual([])
     await expect(agents.stop("id1")).rejects.toThrow("The agent isn't running.")
+  })
+
+  test("a stopped agent, messaged again, reads what it had said and that it was stopped", async () => {
+    const { agents } = tracker()
+    let resumedWith: TranscriptContext | undefined
+    faux.setResponses([
+      fauxAssistantMessage("Half of the answer", { stopReason: "aborted" }),
+      (context) => {
+        resumedWith = context
+        return fauxAssistantMessage("The rest.")
+      },
+    ])
+    await agents.start({ ...start, wait: true })
+    await agents.message("id1", "go on", { wait: true })
+    // What its Provider is sent, past pi-ai's transform, which drops a stopped reply as pi holds it.
+    const sent = JSON.stringify(
+      transformMessages(resumedWith?.messages ?? [], faux.getModel("small") as never),
+    )
+    const order = ["Half of the answer", StopMarker, "go on"].map((text) => sent.indexOf(text))
+    expect(order.every((at) => at >= 0)).toBe(true)
+    expect(order).toEqual(order.toSorted((a, b) => a - b))
   })
 
   test("the Creator's StopAgent stops it, and the main loop is told", async () => {

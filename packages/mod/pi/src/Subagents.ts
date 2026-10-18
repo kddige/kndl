@@ -44,6 +44,7 @@ import { deliveredPrompt, isRecord } from "../../src/HubMessages.ts"
 import type { Command } from "../../src/HubMessages.ts"
 import { followClaudeSession } from "./claude/Claude.ts"
 import { questionTool } from "./Questions.ts"
+import { keepStoppedReplies } from "./StoppedReplies.ts"
 import { modelName, Turns } from "./Turns.ts"
 import type { AgentResultMessage } from "./Turns.ts"
 
@@ -149,7 +150,8 @@ export interface ChildSpec {
 /**
  * A subagent's pi session: its conversation in its own file, new or resumed, with pi's system
  * prompt, context files and skills as pi finds them, and none of its extensions, which are the
- * parent's to run (this one among them), but the Claude bridge's following of its session.
+ * parent's to run (this one among them), but the Claude bridge's following of its session, and
+ * the keeping of its stopped replies in what its model reads (StoppedReplies.ts).
  */
 export const createChild = async (spec: ChildSpec): Promise<AgentSession> => {
   const settingsManager = SettingsManager.inMemory(spec.settings)
@@ -159,7 +161,10 @@ export const createChild = async (spec: ChildSpec): Promise<AgentSession> => {
     settingsManager,
     noExtensions: true,
     // The Claude bridge follows each session it runs Claude for: a subagent's too, resumed or not.
-    extensionFactories: [{ name: "kndl-claude", factory: followClaudeSession }],
+    extensionFactories: [
+      { name: "kndl-claude", factory: followClaudeSession },
+      { name: "kndl-stopped-replies", factory: keepStoppedReplies },
+    ],
     appendSystemPrompt: [subagentNote],
   })
   await resourceLoader.reload()

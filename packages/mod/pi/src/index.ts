@@ -13,7 +13,8 @@
 // - The model: the system prompt says the Session is shared, and a tool opens attachments; others
 //   ask the people questions (Questions.ts), start, message and stop subagents, which run in the
 //   background, kept on disk, and whose results start Turns of their own (Subagents.ts), and read
-//   the Session's earlier Turns (History.ts).
+//   the Session's earlier Turns (History.ts). A reply someone stopped stays in what a Gateway
+//   model reads, as Claude Code keeps it (StoppedReplies.ts).
 // - The person at the terminal: a line above the editor shows the link and who watches.
 //
 // pi loads this bundle with its own copies of its packages (`@earendil-works/*` stay external);
@@ -44,6 +45,7 @@ import { presenceLine, watching } from "./Presence.ts"
 import { builtinCatalog, fetchProviders, gatewayProviders } from "./Providers.ts"
 import { Questions, questionToolDefinition } from "./Questions.ts"
 import { claudeSkills, installationServers, McpServersVariable } from "./RepoSetup.ts"
+import { keepStoppedReplies } from "./StoppedReplies.ts"
 import {
   agentToolDefinitions,
   childModel,
@@ -192,6 +194,8 @@ export default async function kndl(pi: ExtensionAPI) {
   /** The Models a subagent may run on: the Creator's, as the Hub listed them last. */
   let agentModels = modelNames(providers)
   registerClaude(pi, providers.models, { log })
+  // pi-ai leaves a stopped reply out of every request: put it back, for the Gateway's Models.
+  keepStoppedReplies(pi)
 
   // The Session's MCP servers, at the Gateway, and the Repo's Claude Code skills (RepoSetup.ts).
   for (const server of installationServers(process.env[McpServersVariable], env.hubUrl, log)) {
