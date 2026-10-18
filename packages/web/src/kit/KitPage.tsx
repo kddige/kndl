@@ -28,6 +28,7 @@ import {
   InlineEdit,
   Input,
   KeyIcon,
+  LockIcon,
   LogView,
   Markdown,
   Menu,
@@ -48,6 +49,7 @@ import {
   PlugIcon,
   PlusIcon,
   Popover,
+  PropertyRow,
   RestartIcon,
   ServerIcon,
   UpdateIcon,
@@ -58,11 +60,19 @@ import {
   SegmentedControl,
   Select,
   SessionStatus,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsRow,
+  SettingsSection,
   setTheme,
   Sidebar,
   Slider,
   Spinner,
   SteerIcon,
+  StickyApplyBar,
   StopIcon,
   Switch,
   Tab,
@@ -189,6 +199,21 @@ const styles = stylex.create({
     backgroundColor: color.bg,
   },
   phoneFrame: { maxWidth: "24rem" },
+  // The settings template's parts, at their column's width.
+  settingsFrame: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s8,
+    maxWidth: "48rem",
+    // Keeps the apply bar in place here, rather than floating over the kit page, with room for
+    // its shadow.
+    overflow: "hidden",
+    padding: space.s4,
+    margin: `calc(${space.s4} * -1)`,
+  },
+  dot: { width: "0.5rem", height: "0.5rem", borderRadius: radius.full },
+  online: { backgroundColor: color.success },
+  offline: { backgroundColor: color.neutral },
   brand: { flex: 1, fontWeight: weight.semibold },
   footerNote: { paddingInline: space.s2, color: color.textSecondary, fontSize: text.sm },
   warningIcon: { display: "inline-flex", color: color.warning },
@@ -1118,6 +1143,133 @@ function PageHeaders() {
   )
 }
 
+function SettingsTemplate() {
+  const [open, setOpen] = useState(true)
+  return (
+    <Section
+      title="Settings template"
+      note="SettingsPage puts a page's title, its one primary action and these sections in one 48rem column. Every section heading is 14px semibold; an overline only labels a group inside one."
+    >
+      <div {...stylex.props(styles.settingsFrame)}>
+        <SettingsSection
+          title="Runners"
+          note="Click a row, or choose Monitor in its menu, to open its detail."
+        >
+          <SettingsList label="Runners">
+            <SettingsRow
+              label="studio"
+              icon={<span {...stylex.props(styles.dot, styles.online)} />}
+              name="studio"
+              meta={["2026.10.2", "4 Sessions"]}
+              menu={
+                <>
+                  <MenuItem onClick={() => setOpen((was) => !was)}>
+                    {open ? "Close studio's Monitor" : "Monitor studio"}
+                  </MenuItem>
+                  <MenuItem>Re-pair studio</MenuItem>
+                  <MenuSeparator />
+                  <MenuItem intent="danger">Remove studio</MenuItem>
+                </>
+              }
+              onToggle={() => setOpen((was) => !was)}
+              detail={open && <p {...stylex.props(styles.sectionNote)}>The Monitor opens here.</p>}
+            />
+            <SettingsRow
+              label="ci-box"
+              icon={<span {...stylex.props(styles.dot, styles.offline)} />}
+              name="ci-box"
+              meta={["5d2b9e07c41a", "Last seen 3h ago"]}
+              badges={
+                <>
+                  <Badge>offline</Badge>
+                  <Badge intent="warning">behind the Hub</Badge>
+                </>
+              }
+              action={<Button size="sm">Update</Button>}
+              menu={<MenuItem>Re-pair ci-box</MenuItem>}
+            />
+            <SettingsRow
+              label="GITHUB_TOKEN"
+              icon={<KeyIcon />}
+              name={<span {...stylex.props(styles.mono)}>GITHUB_TOKEN</span>}
+              meta="Linked by kddige/kndl"
+              badges={<Badge icon={<LockIcon width={12} height={12} />}>Sensitive</Badge>}
+              rows={<SettingsRow label="as GH_TOKEN" name="as GH_TOKEN" meta="At build" />}
+              rowsLabel="Links of GITHUB_TOKEN"
+            />
+          </SettingsList>
+        </SettingsSection>
+        <SettingsSection title="Properties" note="A label and what it does, then its control.">
+          <SettingsList label="Properties">
+            <PropertyRow label="Memory (MiB)" description="4 GiB">
+              {({ labelId, descriptionId }) => (
+                <Input
+                  size="sm"
+                  defaultValue="4096"
+                  aria-labelledby={labelId}
+                  aria-describedby={descriptionId}
+                />
+              )}
+            </PropertyRow>
+            <PropertyRow label="Channel" description="Releases only: a tested kndl, about weekly.">
+              <Button size="sm" intent="ghost">
+                Switch to dev
+              </Button>
+            </PropertyRow>
+            <PropertyRow
+              label="Run Claude's Models with"
+              description="New Sessions start on it; the Model picker can switch."
+            >
+              <SegmentedControl
+                label="Run Claude's Models with"
+                options={[
+                  { value: "ClaudeCode", label: "Claude Code" },
+                  { value: "Pi", label: "pi" },
+                ]}
+                value="ClaudeCode"
+                onValueChange={() => {}}
+              />
+            </PropertyRow>
+          </SettingsList>
+        </SettingsSection>
+        <SettingsSection title="Connect a Provider">
+          <SettingsGroup label="API keys">
+            <SettingsList label="API keys">
+              <SettingsRow
+                label="OpenAI"
+                name="OpenAI"
+                action={<Button size="sm">Add API key</Button>}
+              />
+              <SettingsItem>
+                <p {...stylex.props(styles.sectionNote)}>A list item that isn't a row.</p>
+              </SettingsItem>
+            </SettingsList>
+          </SettingsGroup>
+        </SettingsSection>
+        <SettingsSection title="Empty and loading">
+          <SettingsEmpty
+            title="No Runners yet"
+            description="A Runner is a machine that runs Sessions."
+            action={
+              <Button size="sm" icon={<PlusIcon />}>
+                Add a Runner
+              </Button>
+            }
+          />
+          <SettingsLoading label="Loading Runners" />
+        </SettingsSection>
+        <StickyApplyBar
+          onDiscard={() => {}}
+          secondary={<Button>Test build</Button>}
+          apply={<Button intent="primary">Apply</Button>}
+        >
+          <span {...stylex.props(styles.sectionNote)}>It changes the build: run a Test build.</span>
+        </StickyApplyBar>
+      </div>
+    </Section>
+  )
+}
+
 function Disclosures() {
   return (
     <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
@@ -1305,6 +1457,7 @@ export function KitPage() {
         <Disclosures />
         <SidebarKit />
         <PageHeaders />
+        <SettingsTemplate />
 
         <Section title="Markdown" note="The agent's answers. A small, safe subset: no raw HTML.">
           <div {...stylex.props(styles.panel)}>

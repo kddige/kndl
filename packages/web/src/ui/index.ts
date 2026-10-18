@@ -62,6 +62,18 @@ export { NavItem, type NestedNavItems, NavSection, NavSlot, Sidebar } from "./Si
 export { Slider, type SliderProps, type SliderStep } from "./Slider.tsx"
 export { Spinner, type SpinnerSize } from "./Spinner.tsx"
 export { Tab, TabList, TabPanel, Tabs } from "./Tabs.tsx"
+export {
+  PropertyRow,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+  StickyApplyBar,
+} from "./Settings.tsx"
 export { setTheme, themes, type ThemeMode } from "./theme.ts"
 export { toast, type ToastAction, type ToastIntent, type ToastOptions } from "./Toast.tsx"
 export { Tooltip } from "./Tooltip.tsx"

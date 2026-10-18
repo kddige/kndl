@@ -198,6 +198,16 @@ export function KeyIcon(props: IconProps) {
   )
 }
 
+/** Kept secret: a Sensitive Variable. */
+export function LockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.25" y="7" width="9.5" height="6.75" rx="1.25" />
+      <path d="M5.25 7V5a2.75 2.75 0 0 1 5.5 0v2" />
+    </Icon>
+  )
+}
+
 /** A Runner: a machine that runs Sessions. */
 export function ServerIcon(props: IconProps) {
   return (

@@ -56,6 +56,32 @@ export function dialog(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="dialog"]:not([data-type])')
 }
 
+/**
+ * Opens the menu behind the button named `trigger`, such as a row's "Actions for studio", and
+ * chooses its item named `item`. Throws if the menu has no such item, or it's disabled.
+ */
+export async function menuItem(
+  trigger: string,
+  item: string,
+  within: ParentNode = document,
+): Promise<void> {
+  await step(() => button(trigger, within).click())
+  await settle(10)
+  const found = menuItems().find((el) => el.textContent?.trim() === item)
+  if (found === undefined) {
+    const names = menuItems().map((el) => el.textContent?.trim())
+    throw new Error(`no "${item}" in the menu of "${trigger}": ${names.join(", ")}`)
+  }
+  if (found.hasAttribute("data-disabled")) throw new Error(`"${item}" is disabled`)
+  await step(() => found.click())
+  await settle(10)
+}
+
+/** The items of the menu that's open, by their text. */
+export function menuItems(): Array<HTMLElement> {
+  return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]
+}
+
 /** Finds the one button whose accessible name (text or aria-label) is `name`. */
 export function button(name: string, within: ParentNode = document): HTMLButtonElement {
   const matches = [...within.querySelectorAll("button")].filter(
