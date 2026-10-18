@@ -1,5 +1,7 @@
 import {
   type BranchChoice,
+  type Harness,
+  harnessOfModel,
   branchNameProblem,
   newBranchProblem,
   repoKey,
@@ -91,6 +93,9 @@ const distinctRepos = (names: ReadonlyArray<string>) => [
 ]
 
 const runsPi = (runner: RunnerSummary) => runner.harnesses?.includes("Pi") === true
+/** A Runner from before pi runs Claude Code alone. */
+const runsClaudeCode = (runner: RunnerSummary) =>
+  runner.harnesses === undefined || runner.harnesses.includes("ClaudeCode")
 
 const capitalized = (words: string) => words.charAt(0).toUpperCase() + words.slice(1)
 
@@ -119,6 +124,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const claudeCredential = useHubState((state) => state.claudeCredential)
   // Their Models, for a pi Session; undefined until the Hub says.
   const providerModels = useHubState((state) => state.providers?.models)
+  // Which Harness runs Claude's Models in their new Sessions, as their Account page says (ADR 0030).
+  const claudeHarness = useHubState((state) => state.providers?.claudeHarness) ?? "ClaudeCode"
   const claudeCodeAsked = useClaudeCodeAsked()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -135,7 +142,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const [branchesAsked, setBranchesAsked] = useState(0)
   const [runner, setRunner] = useState<string>(anyRunner)
   // Claude Code's own default unless one is picked (#128).
-  const [modelChoice, setModelChoice] = useState<ModelSetting>({})
+  // None until one is picked: Claude's on the Harness the Account page says (ADR 0030).
+  const [modelChoice, setModelChoice] = useState<ModelSetting | null>(null)
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -164,18 +172,41 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   // The Runners it may start on: the one chosen, or any online one.
   const candidates =
     runner === anyRunner ? online : (runners ?? []).filter((candidate) => candidate.id === runner)
-  // The Hub makes a pi Session where the Runner runs pi (ADR 0029): with any Runner, that's sure
-  // only when every online one does. Unless the URL asks for Claude Code.
-  const pi = !claudeCodeAsked && candidates.length > 0 && candidates.every(runsPi)
-  // Claude Code is asked for whenever it is what's offered and the Hub might make it pi.
-  const askClaudeCode = !pi && candidates.some(runsPi)
+  // The Harnesses it can run on: those every Runner it may start on runs. Its Creator picks any of
+  // their Models (ADR 0030): pi's, and Claude Code's on their setup token, without which they're
+  // offered only where nothing else is, so the dialog can say to add one.
+  const piOffered = candidates.length > 0 && candidates.every(runsPi)
+  const claudeCodeOffered =
+    !piOffered ||
+    (candidates.every(runsClaudeCode) && (claudeCredential !== null || claudeCodeAsked))
+  // Until one is picked: Claude's Models on the Harness the Creator's Account page says, unless the
+  // URL asks for Claude Code.
+  const defaultHarness: Harness = !piOffered
+    ? "ClaudeCode"
+    : !claudeCodeOffered
+      ? "Pi"
+      : !claudeCodeAsked &&
+          claudeHarness === "Pi" &&
+          providerModels?.some((model) => model.provider === "anthropic") === true
+        ? "Pi"
+        : "ClaudeCode"
+  // A choice another Runner picked since can't run goes back to the default.
+  const chosenHarness = modelChoice === null ? defaultHarness : harnessOfModel(modelChoice.model)
+  const harness = (chosenHarness === "Pi" ? piOffered : claudeCodeOffered)
+    ? chosenHarness
+    : defaultHarness
+  const pi = harness === "Pi"
   // The models it can run: the chosen Runner's, or for any Runner, what every online one has.
   const models = sharedModels(candidates.map((candidate) => candidate.models))
   // A choice the Runner picked since doesn't have is dropped, not sent to be refused. A pi
   // Session's is always one of the Creator's Models, named: the Hub's pick until one is picked.
+  const keptChoice = modelChoice !== null && chosenHarness === harness ? modelChoice : {}
   const modelSetting = pi
-    ? fitProviderSetting(providerModels, modelChoice)
-    : fitSetting(models, modelChoice)
+    ? fitProviderSetting(providerModels, keptChoice)
+    : fitSetting(models, keptChoice)
+  // A model says its Harness, but no model says nothing: Claude Code's default is asked for where
+  // the Hub might make it pi.
+  const askClaudeCode = !pi && modelSetting.model === undefined && candidates.some(runsPi)
   // A Session runs on its Creator's own accounts, with no fallback (ADR 0026): without one, it
   // can't start, and the dialog says so before the form is filled in. Claude Code needs their
   // setup token; pi, one of their Models.
@@ -277,7 +308,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     setNewWorkBranch(true)
     setBranches(null)
     setRunner(anyRunner)
-    setModelChoice({})
+    setModelChoice(null)
     setTouched(false)
     setBusy(false)
     setError(null)
@@ -552,27 +583,20 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         <Field
           label="Model"
           description={
-            pi
-              ? "One of your Models, from the Providers on your Account page. You can change it later."
-              : "Claude Code's default unless you pick one. You can change it later."
+            piOffered && claudeCodeOffered
+              ? "Any of your Models, on Claude Code or pi. You can change it later."
+              : pi
+                ? "One of your Models, from the Providers on your Account page. You can change it later."
+                : "Claude Code's default unless you pick one. You can change it later."
           }
         >
-          {pi ? (
-            <ModelPicker
-              harness="Pi"
-              models={providerModels}
-              value={modelSetting}
-              onChange={setModelChoice}
-              appearance="field"
-            />
-          ) : (
-            <ModelPicker
-              models={models}
-              value={modelSetting}
-              onChange={setModelChoice}
-              appearance="field"
-            />
-          )}
+          <ModelPicker
+            {...(claudeCodeOffered && { claudeCode: { models } })}
+            {...(piOffered && { pi: { models: providerModels } })}
+            value={modelSetting}
+            onChange={setModelChoice}
+            appearance="field"
+          />
         </Field>
         {error && (
           <p role="alert" {...stylex.props(styles.error)}>

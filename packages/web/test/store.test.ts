@@ -814,10 +814,17 @@ describe("Connected providers (ADR 0029)", () => {
         connected: [],
         connectable: [],
         models: [],
-        claudeHarness: "ClaudeCode",
+        claudeHarness: "Pi",
       }),
     )
-    expect(none.providers).toEqual({ connected: [], connectable: [], models: [] })
+    // With which Harness runs Claude's Models in new Sessions (ADR 0030).
+    expect(state.providers?.claudeHarness).toBe("ClaudeCode")
+    expect(none.providers).toEqual({
+      connected: [],
+      connectable: [],
+      models: [],
+      claudeHarness: "Pi",
+    })
   })
 
   test("a sign-in's steps go to the sign-in in progress, in order; another's are dropped", () => {

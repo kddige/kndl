@@ -9,6 +9,7 @@ import {
   type ClaudeCredentialInfo,
   claudeCredentialProblem,
   type CliTokenInfo,
+  type Harness,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
@@ -26,6 +27,7 @@ import {
   Input,
   KeyIcon,
   PageHeader,
+  SegmentedControl,
   ServerIcon,
   Spinner,
   toast,
@@ -91,6 +93,17 @@ const styles = stylex.create({
   term: { color: color.textMuted, fontSize: text.sm },
   detail: { margin: 0, fontSize: text.base, fontWeight: weight.medium },
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
+  // Which Harness runs Claude's Models (ADR 0030), set apart from the token above it.
+  choice: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s2,
+    paddingTop: space.s4,
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
+  choiceLabel: { fontSize: text.base, fontWeight: weight.medium },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
   tokens: {
@@ -204,12 +217,15 @@ function ClaudeSection() {
           }}
         />
       ) : (
-        <SavedCredential
-          credential={credential}
-          warning={warning}
-          onReplace={() => setReplacing(true)}
-          onRemove={() => setRemoving(true)}
-        />
+        <>
+          <SavedCredential
+            credential={credential}
+            warning={warning}
+            onReplace={() => setReplacing(true)}
+            onRemove={() => setRemoving(true)}
+          />
+          <ClaudeHarnessChoice />
+        </>
       )}
       <RemoveDialog
         open={removing}
@@ -254,6 +270,53 @@ function SavedCredential({
         </Button>
       </div>
     </>
+  )
+}
+
+/**
+ * Which Harness runs Claude's Models in the person's new Sessions (ADR 0030): Claude Code, the
+ * default, or pi. Set as it is chosen; the Model picker can still choose the other.
+ */
+function ClaudeHarnessChoice() {
+  const hub = useHub()
+  const saved = useHubState((state) => state.providers?.claudeHarness)
+  // Shown as chosen until the Hub answers; a refusal shows what is saved again.
+  const [choosing, setChoosing] = useState<Harness | null>(null)
+  if (saved === undefined) return null
+  const choose = (harness: Harness) => {
+    setChoosing(harness)
+    hub.setClaudeHarness(harness).then(
+      () => setChoosing(null),
+      (cause: unknown) => {
+        setChoosing(null)
+        toast.show({
+          title: "Couldn't change what runs Claude's Models",
+          description: cause instanceof Error ? cause.message : String(cause),
+          intent: "warning",
+        })
+      },
+    )
+  }
+  return (
+    <div {...stylex.props(styles.choice)}>
+      {/* Shown, and the control's own name. */}
+      <span aria-hidden="true" {...stylex.props(styles.choiceLabel)}>
+        Run Claude's Models with
+      </span>
+      <SegmentedControl
+        label="Run Claude's Models with"
+        options={[
+          { value: "ClaudeCode", label: "Claude Code" },
+          { value: "Pi", label: "pi" },
+        ]}
+        value={choosing ?? saved}
+        onValueChange={choose}
+      />
+      <p {...stylex.props(styles.note)}>
+        Claude Code: Claude's own tools, on your plan's limits. pi: the same tools and Subagents as
+        your other Providers. New Sessions start on it; the Model picker can switch.
+      </p>
+    </div>
   )
 }
 

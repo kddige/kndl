@@ -1,5 +1,6 @@
 import {
   findModel,
+  harnessOfModel,
   type ProviderModel,
   providerModelName,
   type RunnerModels,
@@ -10,23 +11,22 @@ import { useState } from "react"
 import {
   Button,
   ChevronDownIcon,
-  Menu,
-  MenuRadioGroup,
-  MenuRadioItem,
   type MenuSide,
   Popover,
   SearchSelect,
+  type SearchSelectGroup,
   Slider,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   groupByProvider,
+  harnessNames,
   type ModelSetting,
   modelName,
   modelOf,
+  providerGroupLabel,
   providerModelLabel,
   providerModelOf,
-  providerNames,
   thinkingLevelNames,
   thinkingLevelNotes,
   thinkingLevelsOf,
@@ -76,8 +76,11 @@ const styles = stylex.create({
   },
 })
 
-/** The radio value of the `default` row: no model set, Claude Code's default. */
-const defaultRow = "default"
+/**
+ * The value of Claude Code's `Default` row: no model set, Claude Code's default. Parentheses are
+ * in no model name, so it is no alias's.
+ */
+const defaultRow = "(default)"
 
 /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
 type Appearance = "bar" | "field"
@@ -102,133 +105,115 @@ export type HarnessModels =
       readonly models: ReadonlyArray<ProviderModel> | undefined
     }
 
-interface PickerProps {
+export interface ModelPickerProps {
+  /**
+   * Claude Code's models, when the Session can run on it: its Runner runs Claude Code, and its
+   * Creator has a Claude credential. `models` is undefined until the Runner has said them, when
+   * only Claude Code's default is offered.
+   */
+  readonly claudeCode?: { readonly models: RunnerModels | undefined }
+  /**
+   * The Creator's Models through pi, when its Runner runs pi (ADR 0029), from their
+   * ProvidersState: undefined until the Hub has sent it.
+   */
+  readonly pi?: { readonly models: ReadonlyArray<ProviderModel> | undefined }
+  /** The setting: a `provider/id` model is pi's, anything else Claude Code's (ADR 0030). */
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
   disabled?: boolean
-  /** Which way the menus open: up, from the composer at the bottom of the page. */
+  /** Which way the lists open: up, from the composer at the bottom of the page. */
   side?: MenuSide
   appearance?: Appearance
 }
 
-export type ModelPickerProps = PickerProps & HarnessModels
-
 /**
  * The model a Session runs and its thinking level, as two small buttons side by side, as claude.ai
  * and ChatGPT pick them (#128): one named by the model opens the models, the other named by the
- * level opens a slider over the levels it takes. The thinking button is left out for a model that
- * takes no level. A Claude Code Session's are its Runner's; a pi Session's, its Creator's Models,
- * by Provider, each with its own levels.
+ * level opens a slider over the levels it takes, and is left out for a model that takes none.
+ *
+ * One list for every Session (ADR 0030), grouped by what runs each model: Claude Code's, from its
+ * Runner, then Claude's through pi, then each other Provider's, valued as `openai/gpt-6-sol`. A
+ * Provider can list hundreds (OpenRouter), so it opens with a search. Picking another Harness's
+ * model is allowed: the Session switches Harness with a handoff, which its caller says first.
  */
-export function ModelPicker(props: ModelPickerProps) {
-  return props.harness === "Pi" ? (
-    <PiModelPicker {...props} models={props.models} />
-  ) : (
-    <ClaudeCodeModelPicker {...props} models={props.models} />
-  )
-}
-
-function ClaudeCodeModelPicker({
-  models,
+export function ModelPicker({
+  claudeCode,
+  pi,
   value,
   onChange,
   disabled = false,
   side = "bottom",
   appearance = "bar",
-}: PickerProps & { models: RunnerModels | undefined }) {
-  const current = modelOf(models, value)
-  const levels = thinkingLevelsOf(models)
-  // A model the Runner doesn't list takes no level here: the Hub would refuse one for it.
-  const takesLevel = current?.reasoning === true && levels.length > 0
-  const name = modelName(models, value)
+}: ModelPickerProps) {
+  const runnerModels = claudeCode?.models
+  const providerModels = pi?.models
+  const harness = harnessOfModel(value.model)
+  const onPi = harness === "Pi"
+  const runnerModel = onPi ? undefined : modelOf(runnerModels, value)
+  const providerModel = onPi ? providerModelOf(providerModels, value) : undefined
+  // A model that isn't listed takes no level here: the Hub would refuse one for it.
+  const levels = onPi
+    ? (providerModel?.thinkingLevels ?? [])
+    : runnerModel?.reasoning === true
+      ? thinkingLevelsOf(runnerModels)
+      : []
+  const name = onPi ? providerModelLabel(providerModels, value) : modelName(runnerModels, value)
 
+  const groups: Array<SearchSelectGroup> = [
+    ...(claudeCode === undefined
+      ? []
+      : [
+          {
+            label: providerGroupLabel("anthropic", "ClaudeCode"),
+            options: [
+              {
+                value: defaultRow,
+                label:
+                  runnerModels === undefined
+                    ? "Default"
+                    : `Default · ${runnerModels.default.label}`,
+              },
+              ...(runnerModels?.models ?? []).map((option) => ({
+                value: option.alias,
+                label: option.label,
+                keywords: `${option.alias} ${option.id}`,
+              })),
+            ],
+          },
+        ]),
+    ...groupByProvider(providerModels ?? []).map((group) => ({
+      label: providerGroupLabel(group.provider, "Pi"),
+      options: group.models.map((model) => ({
+        value: providerModelName(model),
+        label: model.label,
+        keywords: model.id,
+      })),
+    })),
+  ]
+  const picked = onPi
+    ? providerModel && providerModelName(providerModel)
+    : value.model === undefined
+      ? defaultRow
+      : (runnerModel?.alias ?? value.model)
+
+  // A level the model picked doesn't take is dropped: the Hub refuses it with one.
   const chooseModel = (row: string) => {
-    const model = row === defaultRow ? models?.default : models && findModel(models, row)
+    const level = value.thinkingLevel
+    let takesLevel: boolean
+    if (row !== defaultRow && harnessOfModel(row) === "Pi") {
+      const model = providerModels?.find((each) => providerModelName(each) === row)
+      takesLevel = level !== undefined && model?.thinkingLevels.includes(level) === true
+    } else {
+      const model =
+        row === defaultRow ? runnerModels?.default : runnerModels && findModel(runnerModels, row)
+      takesLevel =
+        level !== undefined &&
+        model?.reasoning === true &&
+        thinkingLevelsOf(runnerModels).includes(level)
+    }
     onChange({
       ...(row !== defaultRow && { model: row }),
-      // A model that takes no level drops the one set; the Hub refuses it with one.
-      ...(value.thinkingLevel !== undefined &&
-        model?.reasoning === true && { thinkingLevel: value.thinkingLevel }),
-    })
-  }
-  const chooseLevel = (thinkingLevel: ThinkingLevel | undefined) =>
-    onChange({
-      ...(value.model !== undefined && { model: value.model }),
-      ...(thinkingLevel !== undefined && { thinkingLevel }),
-    })
-
-  return (
-    <div {...stylex.props(styles.pickers, appearance === "field" && styles.fieldPickers)}>
-      <Menu
-        side={side}
-        align="start"
-        sx={styles.popup}
-        trigger={
-          <Button
-            {...look(appearance)}
-            disabled={disabled}
-            aria-label={`Model: ${name}`}
-            sx={styles.trigger}
-          >
-            <span {...stylex.props(styles.label)}>{name}</span>
-            <ChevronDownIcon />
-          </Button>
-        }
-      >
-        <MenuRadioGroup
-          value={value.model === undefined ? defaultRow : (current?.alias ?? value.model)}
-          onValueChange={chooseModel}
-          label="Model"
-        >
-          <MenuRadioItem
-            value={defaultRow}
-            label={models === undefined ? "Default" : `Default · ${models.default.label}`}
-          />
-          {models?.models.map((option) => (
-            <MenuRadioItem key={option.alias} value={option.alias} label={option.label} />
-          ))}
-        </MenuRadioGroup>
-      </Menu>
-      {takesLevel && (
-        <ThinkingPicker
-          levels={levels}
-          value={value.thinkingLevel}
-          onChange={chooseLevel}
-          disabled={disabled}
-          side={side}
-          appearance={appearance}
-        />
-      )}
-    </div>
-  )
-}
-
-/**
- * A pi Session's picker (ADR 0029): its Creator's Models, a group for each Provider, valued as
- * `openai/gpt-6-sol`, with no default row, since a pi Session always runs a Model it names. A
- * Provider can list hundreds (OpenRouter), so it opens with a search. A Model that doesn't take
- * the level set drops it.
- */
-function PiModelPicker({
-  models,
-  value,
-  onChange,
-  disabled = false,
-  side = "bottom",
-  appearance = "bar",
-}: PickerProps & { models: ReadonlyArray<ProviderModel> | undefined }) {
-  const current = providerModelOf(models, value)
-  const levels = current?.thinkingLevels ?? []
-  const name = providerModelLabel(models, value)
-
-  const chooseModel = (row: string) => {
-    const model = models?.find((each) => providerModelName(each) === row)
-    onChange({
-      model: row,
-      ...(value.thinkingLevel !== undefined &&
-        model?.thinkingLevels.includes(value.thinkingLevel) === true && {
-          thinkingLevel: value.thinkingLevel,
-        }),
+      ...(takesLevel && level !== undefined && { thinkingLevel: level }),
     })
   }
   const chooseLevel = (thinkingLevel: ThinkingLevel | undefined) =>
@@ -247,26 +232,20 @@ function PiModelPicker({
             {...look(appearance)}
             disabled={disabled}
             aria-label={`Model: ${name}`}
+            title={`${name}, on ${harnessNames[harness]}`}
             sx={styles.trigger}
           >
             <span {...stylex.props(styles.label)}>{name}</span>
             <ChevronDownIcon />
           </Button>
         }
-        groups={groupByProvider(models ?? []).map((group) => ({
-          label: providerNames[group.provider],
-          options: group.models.map((model) => ({
-            value: providerModelName(model),
-            label: model.label,
-            keywords: model.id,
-          })),
-        }))}
-        value={current === undefined ? undefined : providerModelName(current)}
+        groups={groups}
+        value={picked}
         onValueChange={chooseModel}
         searchLabel="Search Models"
         noMatch={(query) => `No Models match "${query}".`}
         empty={
-          models === undefined
+          pi !== undefined && providerModels === undefined
             ? "Loading your Models…"
             : "No Models yet. Connect a Provider on your Account page."
         }

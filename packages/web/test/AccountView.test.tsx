@@ -132,6 +132,48 @@ test("shows a saved token, replaces it, and removes it after asking", async () =
   expect(saved()).toBeNull()
 })
 
+// Which Harness runs Claude's Models in new Sessions (ADR 0030), chosen on the Anthropic card.
+
+const harnessChoice = () =>
+  section()?.querySelector<HTMLElement>(
+    '[role="radiogroup"][aria-label="Run Claude\'s Models with"]',
+  )
+const harnessRadios = () => [
+  ...(harnessChoice()?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []),
+]
+const chosenHarness = () =>
+  harnessRadios()
+    .filter((radio) => radio.getAttribute("aria-checked") === "true")
+    .map((radio) => radio.textContent)
+
+test("the Anthropic card chooses which Harness runs Claude's Models in new Sessions", async () => {
+  const { hub } = await openAccount({
+    claudeCredential: { kind: "OAuthToken", last4: "c3d4", addedAt: 1_760_000_000_000 },
+  })
+  await eventually(() =>
+    expect(harnessRadios().map((radio) => radio.textContent)).toEqual(["Claude Code", "pi"]),
+  )
+  // Claude Code unless chosen otherwise, said in one line.
+  expect(chosenHarness()).toEqual(["Claude Code"])
+  expect(section()?.textContent).toContain(
+    "Claude Code: Claude's own tools, on your plan's limits. pi: the same tools and Subagents as your other Providers.",
+  )
+
+  await step(() => harnessRadios()[1]?.click())
+  await eventually(() => expect(chosenHarness()).toEqual(["pi"]))
+  expect(
+    hub.received.flatMap((message) =>
+      message._tag === "SetClaudeHarness" ? [message.harness] : [],
+    ),
+  ).toEqual(["Pi"])
+})
+
+test("without a Claude credential, the Anthropic card has no Harness to choose", async () => {
+  await openAccount()
+  await eventually(() => expect(secretField()).not.toBeNull())
+  expect(harnessChoice()).toBeNull()
+})
+
 const tokensSection = () => document.querySelector('section[aria-labelledby="cli-tokens"]')
 const tokenList = () => tokensSection()?.querySelector('[aria-label="Your CLI tokens"]')
 const listedMachines = () =>

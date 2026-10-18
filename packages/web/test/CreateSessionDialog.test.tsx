@@ -259,10 +259,11 @@ test("leaves a branch git would refuse out of the Environment setup's search", a
   expect(document.body.textContent).not.toContain("starts once it's applied")
 })
 
-// On a Runner that runs pi, New Session makes a pi Session (ADR 0029): on one of its Creator's
-// Models, unless the URL asks for Claude Code.
+// On a Runner that runs pi as well as Claude Code (ADR 0030), New Session offers every Model of
+// either: Claude's on the Harness the Creator's Account page says, unless they pick another, or the
+// URL asks for Claude Code. A model says its Harness, so only Claude Code's default needs it said.
 
-/** Opens New Session at `path` on a fake Hub whose only online Runner is pi-box, which runs pi. */
+/** Opens New Session at `path` on a fake Hub whose only online Runner is pi-box, which runs both. */
 async function openOnPi(options: ConstructorParameters<typeof FakeHub>[0] = {}, path = "/runners") {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, ...options })
   hub.patchRunner("r-studio", { isOnline: false })
@@ -294,33 +295,85 @@ const menuGroups = () =>
     (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
   )
 const menuRow = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('[role="option"], [role="menuitemradio"]')].find(
+  [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
     (row) => row.textContent === label,
   ) as HTMLElement
 
-test("on a pi Runner, offers your Models by Provider, and starts a pi Session on the one picked", async () => {
-  const { dialog, hub, router, start } = await openOnPi()
-  // Claude's first, as the Hub would pick.
-  await eventually(() => expect(modelButton(dialog)?.textContent).toBe("Claude Opus 5.5"))
-  expect(dialog.textContent).toContain("One of your Models")
+/** Fills in the Repo, waits for its branch, picks `model` if given, and starts the Session. */
+async function startWith(
+  opened: Awaited<ReturnType<typeof openOnPi>>,
+  model?: string,
+): Promise<Record<string, unknown>> {
+  const { dialog, hub, start } = opened
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
-
-  await step(() => modelButton(dialog)?.click())
-  await settle()
-  expect(menuGroups()).toEqual(["Anthropic", "OpenAI"])
-  await step(() => menuRow("GPT-6-Sol").click())
-  await settle()
-  expect(modelButton(dialog)?.textContent).toBe("GPT-6-Sol")
-
+  if (model !== undefined) {
+    await step(() => modelButton(dialog)?.click())
+    await settle()
+    await step(() => menuRow(model).click())
+    await settle()
+    expect(modelButton(dialog)?.textContent).toBe(model)
+  }
   await step(() => start.click())
   await eventually(() => expect(hub.received.some((m) => m._tag === "CreateSession")).toBe(true))
-  const sent = hub.received.find((m) => m._tag === "CreateSession")
-  expect(sent).toMatchObject({ model: "openai/gpt-6-sol" })
-  // The Hub makes it pi on its own: no Harness is asked for.
-  expect(sent && "harness" in sent).toBe(false)
+  return hub.received.find((m) => m._tag === "CreateSession") as Record<string, unknown>
+}
+
+test("on a Runner that runs both, offers every Model by what runs it, Claude Code's default first", async () => {
+  const opened = await openOnPi()
+  const { dialog, router } = opened
+  // Claude's Models run on Claude Code unless the Account page says pi.
+  await eventually(() => expect(modelButton(dialog)?.textContent).toBe("Opus 5.5"))
+  await step(() => modelButton(dialog)?.click())
+  await settle()
+  expect(menuGroups()).toEqual(["Anthropic · Claude Code", "Anthropic · pi", "OpenAI"])
+  await step(() => menuRow("Default · Opus 5.5").click())
+  await settle()
+
+  // Its default is Claude Code's only by saying so: the Hub would otherwise run pi there.
+  const sent = await startWith(opened)
+  expect(sent).toMatchObject({ harness: "ClaudeCode" })
+  expect("model" in sent).toBe(false)
   await eventually(() => expect(router.state.location.pathname).toStartWith("/sessions/s-new-"))
   await settle(200)
+})
+
+test("starts a pi Session on another Provider's Model, saying no Harness: the model says it", async () => {
+  const opened = await openOnPi()
+  const sent = await startWith(opened, "GPT-6-Sol")
+  expect(sent).toMatchObject({ model: "openai/gpt-6-sol" })
+  expect("harness" in sent).toBe(false)
+  await eventually(() =>
+    expect(opened.router.state.location.pathname).toStartWith("/sessions/s-new-"),
+  )
+  await settle(200)
+})
+
+test("starts a Claude Code Session on one of its models, saying no Harness", async () => {
+  const opened = await openOnPi()
+  const sent = await startWith(opened, "Sonnet 5.5")
+  expect(sent).toMatchObject({ model: "sonnet" })
+  expect("harness" in sent).toBe(false)
+  await settle(200)
+})
+
+test("with pi chosen for Claude on the Account page, preselects Claude through pi", async () => {
+  const opened = await openOnPi({ claudeHarness: "Pi" })
+  await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Claude Opus 5.5"))
+  expect(modelButton(opened.dialog)?.getAttribute("title")).toBe("Claude Opus 5.5, on pi")
+  const sent = await startWith(opened)
+  expect(sent).toMatchObject({ model: "anthropic/claude-opus-5-5" })
+  expect("harness" in sent).toBe(false)
+  await settle(200)
+})
+
+test("without a Claude credential, offers only pi's Models, the first Provider's first", async () => {
+  const opened = await openOnPi({ claudeCredential: null })
+  await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("GPT-6-Sol"))
+  expect(opened.dialog.textContent).not.toContain("Add your setup token first")
+  await step(() => modelButton(opened.dialog)?.click())
+  await settle()
+  expect(menuGroups()).toEqual(["OpenAI"])
 })
 
 test("on a pi Runner without Models, says to connect a Provider on the Account page", async () => {
@@ -334,21 +387,11 @@ test("on a pi Runner without Models, says to connect a Provider on the Account p
   await eventually(() => expect(router.state.location.pathname).toBe("/account"))
 })
 
-test("?harness=claude-code makes a Claude Code Session on a pi Runner, with Claude Code's models", async () => {
-  const { dialog, hub, start } = await openOnPi({}, "/runners?harness=claude-code")
-  await eventually(() => expect(modelButton(dialog)?.textContent).toBe("Opus 5.5"))
-  await type(dialog, "Repo", "kddige/kndl")
-  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
-  await step(() => modelButton(dialog)?.click())
-  await settle()
-  await step(() => menuRow("Sonnet 5.5").click())
-  await settle()
-  await step(() => start.click())
-  await eventually(() => expect(hub.received.some((m) => m._tag === "CreateSession")).toBe(true))
-  expect(hub.received.find((m) => m._tag === "CreateSession")).toMatchObject({
-    harness: "ClaudeCode",
-    model: "sonnet",
-  })
+test("?harness=claude-code preselects Claude Code, whatever the Account page says", async () => {
+  const opened = await openOnPi({ claudeHarness: "Pi" }, "/runners?harness=claude-code")
+  await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Opus 5.5"))
+  const sent = await startWith(opened)
+  expect(sent).toMatchObject({ harness: "ClaudeCode" })
   await settle(200)
 })
 

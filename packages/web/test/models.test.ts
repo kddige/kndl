@@ -6,6 +6,7 @@ import {
   modelName,
   modelSwitchedText,
   otherTurnModel,
+  providerGroupLabel,
   sharedModels,
   thinkingLevelNames,
   thinkingLevelsOf,
@@ -62,6 +63,42 @@ test("modelSwitchedText says who switched to what", () => {
   expect(modelSwitchedText({ _tag: "ModelSwitched", by: alice, thinkingLevel: "max" })).toBe(
     "Alice Kim switched to the default model, Max",
   )
+})
+
+test("modelSwitchedText says which Harness a switch moved the Session to (ADR 0030)", () => {
+  expect(
+    modelSwitchedText({
+      _tag: "ModelSwitched",
+      by: alice,
+      model: "anthropic/claude-opus-5-5",
+      modelLabel: "Claude Opus 5.5",
+      harness: "Pi",
+    }),
+  ).toBe("Alice Kim switched to Claude Opus 5.5 on pi")
+  expect(
+    modelSwitchedText({
+      _tag: "ModelSwitched",
+      by: alice,
+      model: "opus",
+      modelLabel: "Opus 5.5",
+      thinkingLevel: "high",
+      harness: "ClaudeCode",
+    }),
+  ).toBe("Alice Kim switched to Opus 5.5 on Claude Code, High")
+  expect(
+    modelSwitchedText({
+      _tag: "ModelSwitched",
+      by: alice,
+      modelLabel: "Opus 5.5",
+      harness: "ClaudeCode",
+    }),
+  ).toBe("Alice Kim switched to the default model (Opus 5.5) on Claude Code")
+})
+
+test("providerGroupLabel names Claude's groups by what runs them, and others by their Provider", () => {
+  expect(providerGroupLabel("anthropic", "ClaudeCode")).toBe("Anthropic · Claude Code")
+  expect(providerGroupLabel("anthropic", "Pi")).toBe("Anthropic · pi")
+  expect(providerGroupLabel("openai", "Pi")).toBe("OpenAI")
 })
 
 test("otherTurnModel names a Turn's model only when it isn't the Session's", () => {

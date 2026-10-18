@@ -1243,7 +1243,7 @@ describe("Connected providers (ADR 0029)", () => {
     )
   })
 
-  test("a pi Runner makes a pi Session on one of the Creator's Models, unless Claude Code is asked for", async () => {
+  test("on a Runner that runs both, the model says the Harness; Claude Code's default is asked for by name", async () => {
     const { client } = await online()
     const branch = { _tag: "Existing", name: "main", newWorkBranch: true } as const
     const pi = await client.createSession({
@@ -1254,21 +1254,29 @@ describe("Connected providers (ADR 0029)", () => {
       thinkingLevel: "high",
     })
     expect(pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol", thinkingLevel: "high" })
-    await expect(
-      client.createSession({
-        repo: "kddige/kndl",
-        branch,
-        runnerId: RunnerId.make("r-pi"),
-        model: "sonnet",
-      }),
-    ).rejects.toThrow("Model 'sonnet' not found")
+    // A Claude Code alias is Claude Code's (ADR 0030).
+    const sonnet = await client.createSession({
+      repo: "kddige/kndl",
+      branch,
+      runnerId: RunnerId.make("r-pi"),
+      model: "sonnet",
+    })
+    expect(sonnet).toMatchObject({ harness: "ClaudeCode", model: "sonnet" })
     const claudeCode = await client.createSession({
       repo: "kddige/kndl",
       branch,
       runnerId: RunnerId.make("r-pi"),
       harness: "ClaudeCode",
-      model: "sonnet",
     })
-    expect(claudeCode).toMatchObject({ harness: "ClaudeCode", model: "sonnet" })
+    expect(claudeCode).toMatchObject({ harness: "ClaudeCode" })
+    expect(claudeCode.model).toBeUndefined()
+  })
+
+  test("sets which Harness runs Claude's Models in new Sessions, which the store keeps (ADR 0030)", async () => {
+    const { client } = await online()
+    await eventually(() => expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode"))
+    const answered = await client.setClaudeHarness("Pi")
+    expect(answered.claudeHarness).toBe("Pi")
+    expect(client.getState().providers?.claudeHarness).toBe("Pi")
   })
 })

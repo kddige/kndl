@@ -871,6 +871,14 @@ export class HubClient {
     )
   }
 
+  /**
+   * Sets which Harness runs Claude's Models in the person's new Sessions (ADR 0030): Claude Code,
+   * on their setup token, or pi. Sessions already started keep theirs.
+   */
+  setClaudeHarness(harness: Harness): Promise<ProvidersState> {
+    return this.#request({ _tag: "SetClaudeHarness", harness }, "ProvidersState")
+  }
+
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────
 
   /** Revokes one of the signed-in person's CLI tokens: the CLI it was for is refused at once. */

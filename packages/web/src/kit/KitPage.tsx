@@ -55,6 +55,7 @@ import {
   SearchIcon,
   SearchSelect,
   type SearchSelectGroup,
+  SegmentedControl,
   Select,
   SessionStatus,
   setTheme,
@@ -752,12 +753,34 @@ function Toggles() {
   const [atBuild, setAtBuild] = useState(true)
   const [docker, setDocker] = useState(false)
   const [lines, setLines] = useState(2)
+  const [harness, setHarness] = useState<"ClaudeCode" | "Pi">("ClaudeCode")
   const log = BUILD_LOG.split("\n").slice(0, lines).join("\n")
   return (
     <Section
-      title="Checkbox, Switch, LogView"
-      note="A Switch turns a setting on at once; a Checkbox is a choice in a form."
+      title="Checkbox, Switch, SegmentedControl, LogView"
+      note="A Switch turns a setting on at once, as a SegmentedControl picks one of a few; a Checkbox is a choice in a form."
     >
+      <Row label="segmented">
+        <SegmentedControl
+          label="Run Claude's Models with"
+          options={[
+            { value: "ClaudeCode", label: "Claude Code" },
+            { value: "Pi", label: "pi" },
+          ]}
+          value={harness}
+          onValueChange={setHarness}
+        />
+        <SegmentedControl
+          label="Disabled"
+          options={[
+            { value: "a", label: "Disabled" },
+            { value: "b", label: "Off" },
+          ]}
+          value="a"
+          onValueChange={() => {}}
+          disabled
+        />
+      </Row>
       <div {...stylex.props(styles.grid)}>
         <Checkbox label="At build" checked={atBuild} onCheckedChange={setAtBuild} />
         <Checkbox label="Disabled, ticked" checked disabled />

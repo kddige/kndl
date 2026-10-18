@@ -1,6 +1,8 @@
 import {
   type AgentId,
   type AttachmentId,
+  type Harness,
+  harnessOfModel,
   MaxSessionNameLength,
   type PromptId,
   type SessionId,
@@ -60,6 +62,9 @@ import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
 import {
+  fitProviderSetting,
+  harnessNames,
+  isClaudeModel,
   knownModelLabel,
   type ModelSetting,
   modelName,
@@ -258,23 +263,34 @@ function LoadedSession({
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
   }
 
-  // Its model and thinking level (#128): a Claude Code Session's from what its Runner said its
-  // Claude Code has; a pi Session's from its Creator's Models (ADR 0029), which only they are sent,
-  // so anyone else knows its Model by the name the transcript last gave it.
+  // Its model and thinking level (#128): Claude Code's from what its Runner said its Claude Code
+  // has; pi's from its Creator's Models (ADR 0029), which only they are sent, so anyone else knows
+  // a pi Session's Model by the name the transcript last gave it. Its Creator may pick any Model its
+  // Runner can run, on either Harness (ADR 0030).
   const pi = summary.harness === "Pi"
-  const models = useHubState(
-    (hubState) => hubState.runners?.find((runner) => runner.id === summary.runnerId)?.models,
+  const harness = summary.harness ?? "ClaudeCode"
+  const runner = useHubState((hubState) =>
+    hubState.runners?.find((candidate) => candidate.id === summary.runnerId),
   )
+  const models = runner?.models
+  // A Runner from before pi runs Claude Code alone.
+  const runnerHarnesses = runner?.harnesses ?? ["ClaudeCode"]
   const yours = useHubState((hubState) => hubState.you?.id === summary.creator.id)
-  const providerModels = useHubState((hubState) =>
-    pi && yours ? hubState.providers?.models : undefined,
-  )
+  const providerModels = useHubState((hubState) => (yours ? hubState.providers?.models : undefined))
+  // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
+  const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
   const knownLabel = useHubState((hubState) =>
     pi ? knownModelLabel(hubState.joined[summary.id]?.log ?? [], summary.model) : undefined,
   )
   const harnessModels = pi
     ? ({ harness: "Pi", models: providerModels } as const)
     : ({ harness: "ClaudeCode", models } as const)
+  const offered = {
+    ...(((runnerHarnesses.includes("ClaudeCode") && hasClaudeCredential) || !pi) && {
+      claudeCode: { models },
+    }),
+    ...((runnerHarnesses.includes("Pi") || pi) && { pi: { models: providerModels } }),
+  }
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
@@ -285,13 +301,21 @@ function LoadedSession({
   // A switch shows in the picker from the pick, while it is asked about and then sent, until the
   // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
   const [picked, setPicked] = useState<PickedSetting | null>(null)
-  const shownSetting = picked !== null && picked.from === setting ? picked.to : setting
+  const shownSetting =
+    picked !== null && picked.from === setting
+      ? picked.to
+      : // The picker reads no model as Claude Code's default: a pi Session's is its Hub's pick.
+        pi && setting.model === undefined
+        ? fitProviderSetting(providerModels, setting)
+        : setting
   useEffect(() => {
     if (!picked?.sent) return
     const timer = setTimeout(() => setPicked(null), switchSentMs)
     return () => clearTimeout(timer)
   }, [picked])
-  // A pi Session switches between Turns without stopping anything (ADR 0029), so it doesn't ask.
+  // The other Harness's Model switches the Session to it (ADR 0030), which is said first, once. A
+  // pi Session switches between Turns without stopping anything (ADR 0029), so it doesn't ask;
+  // Claude Code restarts, which asks while agents run.
   const pick = (next: ModelSetting) => {
     const from = setting
     setPicked({ from, to: next, sent: false })
@@ -299,34 +323,43 @@ function LoadedSession({
       setPicked(
         command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
       )
-    if (pi) go()
-    else
-      interrupting({
-        title: "Switch the model?",
+    const cancel = () => setPicked(null)
+    const to = harnessOfModel(next.model)
+    if (to !== harness)
+      setConfirming({
+        title: `Switch to ${harnessNames[to]}?`,
+        description: harnessSwitchText(to, runningAgents),
         action: "Switch",
         go,
-        cancel: () => setPicked(null),
+        cancel,
       })
+    else if (pi) go()
+    else interrupting({ title: "Switch the model?", action: "Switch", go, cancel })
   }
+  // A Turn that ran on another Model than the Session's is named, as one from before a switch,
+  // of Harness too: by its Runner's name for it, or its Creator's Model's.
   const nameTurnModel = useCallback(
     (model: string) =>
       pi
         ? otherProviderTurnModel(providerModels, setting, model)
-        : otherTurnModel(models, setting, model),
+        : otherTurnModel(models, setting, model, providerModels),
     [pi, models, providerModels, setting],
   )
   const settingName = pi
     ? providerModelLabel(providerModels, setting, knownLabel)
     : modelName(models, setting)
-  // Who answers: Claude, on Claude Code; on pi, the Model a Turn ran, by name, or the Session's.
+  // Who answers: Claude, on Claude Code, unless a Turn from before a switch ran another Provider's
+  // Model; on pi, the Model a Turn ran, by name, or the Session's.
   const nameReplier = useCallback(
     (turnModel: string | undefined) =>
       !pi
-        ? "Claude"
+        ? turnModel === undefined || isClaudeModel(turnModel)
+          ? "Claude"
+          : (otherTurnModel(models, setting, turnModel, providerModels) ?? "Claude")
         : turnModel === undefined
           ? settingName
           : (otherProviderTurnModel(providerModels, setting, turnModel) ?? settingName),
-    [pi, providerModels, setting, settingName],
+    [pi, models, providerModels, setting, settingName],
   )
 
   const you = useHubState((hubState) => hubState.you)
@@ -523,9 +556,12 @@ function LoadedSession({
           setConfirming(null)
         }}
         title={confirming?.title}
-        description={`${
-          runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
-        }; stopping ${pi ? "the Session" : "Claude Code"} interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`}
+        description={
+          confirming?.description ??
+          `${
+            runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
+          }; stopping ${pi ? "the Session" : "Claude Code"} interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`
+        }
         footer={
           <>
             <DialogClose>Cancel</DialogClose>
@@ -644,7 +680,7 @@ function LoadedSession({
                   picker={
                     drives ? (
                       <ModelPicker
-                        {...harnessModels}
+                        {...offered}
                         value={shownSetting}
                         onChange={pick}
                         disabled={archived}
@@ -696,9 +732,26 @@ function command(sent: boolean): boolean {
   return sent
 }
 
-/** Something that stops the Session's Claude Code, confirmed first while agents run. */
+/**
+ * What a switch to the other Harness does (ADR 0030), said once before it is sent: its own
+ * conversation, a handoff, a relaunch the next prompt waits for, and the agents it interrupts.
+ */
+function harnessSwitchText(to: Harness, runningAgents: number): string {
+  const agents =
+    runningAgents === 0
+      ? ""
+      : ` It interrupts ${runningAgents === 1 ? "the running agent" : `${runningAgents} running agents`}.`
+  return `Switching to ${harnessNames[to]} continues in its own conversation, with a handoff of this one. The next prompt waits until it's up.${agents}`
+}
+
+/**
+ * Something that stops the Session's Claude Code, confirmed first while agents run; or a switch of
+ * Harness, always confirmed.
+ */
 interface Interruption {
   readonly title: string
+  /** What the dialog says; absent, which running agents it interrupts. */
+  readonly description?: string
   /** Its button's label. */
   readonly action: string
   readonly go: () => void

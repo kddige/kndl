@@ -1,8 +1,10 @@
 // The model and thinking level pickers (#128): what they offer, what choosing sends, and that a
-// model without thinking levels has no thinking picker.
+// model without thinking levels has no thinking picker. One picker for every Session (ADR 0030):
+// Claude Code's models, Claude's through pi, and each other Provider's, grouped by what runs them.
 
 import { afterEach, expect, test } from "bun:test"
 import type { ProviderModel, RunnerModels } from "@kndl/protocol"
+import type { ModelPickerProps } from "../src/session/ModelPicker.tsx"
 import type { ModelSetting } from "../src/session/models.ts"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
@@ -20,14 +22,24 @@ const { ModelPicker, ModelSettingLabel } = await import("../src/session/ModelPic
 const { fakeModels } = await import("../src/hub/fake/script.ts")
 const { claudeModels, providerModels } = await import("../src/hub/fake/providers.ts")
 
-/** Renders the picker, keeping what it is changed to, and records each change. */
-async function picker(initial: ModelSetting = {}, models: RunnerModels = fakeModels) {
+/** Claude's Models and OpenAI's, as the Hub lists them for someone with both. */
+const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels("openai")]
+
+/**
+ * Renders the picker, keeping what it is changed to, and records each change: Claude Code's
+ * models alone, as on a Runner that runs only Claude Code, unless `offered` says otherwise.
+ */
+async function picker(
+  initial: ModelSetting = {},
+  models: RunnerModels = fakeModels,
+  offered: Partial<ModelPickerProps> = { claudeCode: { models } },
+) {
   const changes: Array<ModelSetting> = []
   function Harness() {
     const [value, setValue] = useState<ModelSetting>(initial)
     return (
       <ModelPicker
-        models={models}
+        {...offered}
         value={value}
         onChange={(next) => {
           changes.push(next)
@@ -47,17 +59,37 @@ const trigger = (within: ParentNode, kind: "Model" | "Thinking") =>
     el.getAttribute("aria-label")?.startsWith(`${kind}: `),
   ) ?? null
 
-/** The radio rows of the open menu, by their text. */
-const radios = () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-const radio = (start: string) => {
-  const found = radios().find((row) => row.textContent?.startsWith(start))
-  if (!found) throw new Error(`no "${start}" row in ${radios().map((row) => row.textContent)}`)
+/** The open list's rows, by their text. */
+const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+const option = (label: string) => {
+  const found = options().find((row) => row.textContent === label)
+  if (!found) throw new Error(`no "${label}" row in ${options().map((row) => row.textContent)}`)
   return found
 }
-const checked = () =>
-  radios()
-    .filter((row) => row.getAttribute("aria-checked") === "true")
+const selected = () =>
+  options()
+    .filter((row) => row.getAttribute("aria-selected") === "true")
     .map((row) => row.textContent)
+
+/** The open list's groups: each one's name and its rows. */
+const groups = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="group"]')].map((group) => [
+    document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+    [...group.querySelectorAll('[role="option"]')].map((row) => row.textContent),
+  ])
+
+/** The open list's search field. */
+const search = () => document.querySelector<HTMLInputElement>('input[aria-label="Search Models"]')
+
+async function typeSearch(text: string): Promise<void> {
+  const field = search()
+  if (!field) throw new Error("no search field")
+  await step(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, text)
+    field.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await settle()
+}
 
 /** The open thinking popover's slider input, which takes the keys. */
 const slider = () => document.querySelector<HTMLInputElement>('[role="dialog"] input[type="range"]')
@@ -78,22 +110,27 @@ async function press(key: string): Promise<void> {
   await settle()
 }
 
-test("the model button names the model, and its menu lists names only, or only the default without them", async () => {
+test("the model button names the model, and its list has names only, or only the default without them", async () => {
   const { container } = await picker({ model: "sonnet", thinkingLevel: "high" })
   expect(trigger(container, "Model")?.textContent).toBe("Sonnet 5.5")
   expect(trigger(container, "Model")?.getAttribute("aria-label")).toBe("Model: Sonnet 5.5")
 
   await click(trigger(container, "Model"))
-  // The default row and the Runner's five models, with no lines under them.
-  expect(radios().map((row) => row.textContent)).toEqual([
-    "Default · Opus 5.5",
-    "Opus 5.5",
-    "Fable 5.1",
-    "Sonnet 5.5",
-    "Haiku 4.5",
-    "Opus 5.5 (1M context)",
+  // The default row and the Runner's five models, with no lines under them, under what runs them.
+  expect(groups()).toEqual([
+    [
+      "Anthropic · Claude Code",
+      [
+        "Default · Opus 5.5",
+        "Opus 5.5",
+        "Fable 5.1",
+        "Sonnet 5.5",
+        "Haiku 4.5",
+        "Opus 5.5 (1M context)",
+      ],
+    ],
   ])
-  expect(checked()).toEqual(["Sonnet 5.5"])
+  expect(selected()).toEqual(["Sonnet 5.5"])
   await cleanup?.()
 
   // Claude Code's default names its model; the thinking button says none is set.
@@ -102,35 +139,37 @@ test("the model button names the model, and its menu lists names only, or only t
   expect(trigger(unset.container, "Thinking")?.textContent).toBe("Thinking")
   expect(trigger(unset.container, "Thinking")?.getAttribute("aria-label")).toBe("Thinking: Default")
   await click(trigger(unset.container, "Model"))
-  expect(checked()).toEqual(["Default · Opus 5.5"])
+  expect(selected()).toEqual(["Default · Opus 5.5"])
   await cleanup?.()
 
   // Without the Runner's list, only Claude Code's default is offered, and no thinking level.
-  const view = await render(<ModelPicker models={undefined} value={{}} onChange={() => {}} />)
+  const view = await render(
+    <ModelPicker claudeCode={{ models: undefined }} value={{}} onChange={() => {}} />,
+  )
   cleanup = view.unmount
   expect(trigger(view.container, "Thinking")).toBeNull()
   await click(button("Model: Default model", view.container))
-  expect(radios().map((row) => row.textContent)).toEqual(["Default"])
+  expect(options().map((row) => row.textContent)).toEqual(["Default"])
 })
 
 test("choosing a model sends it, keeping the thinking level", async () => {
   const { container, changes } = await picker({ thinkingLevel: "high" })
   await click(trigger(container, "Model"))
-  await click(radio("Sonnet 5.5"))
+  await click(option("Sonnet 5.5"))
   expect(changes).toEqual([{ model: "sonnet", thinkingLevel: "high" }])
   expect(trigger(container, "Model")?.textContent).toBe("Sonnet 5.5")
   expect(trigger(container, "Thinking")?.textContent).toBe("High")
 
   // The default row sets no model at all: Claude Code's own.
   await click(trigger(container, "Model"))
-  await click(radio("Default"))
+  await click(option("Default · Opus 5.5"))
   expect(changes.at(-1)).toEqual({ thinkingLevel: "high" })
 })
 
 test("a model that takes no thinking level drops it, and has no thinking button", async () => {
   const { container, changes } = await picker({ model: "sonnet", thinkingLevel: "max" })
   await click(trigger(container, "Model"))
-  await click(radio("Haiku 4.5"))
+  await click(option("Haiku 4.5"))
   expect(changes).toEqual([{ model: "haiku" }])
   expect(trigger(container, "Thinking")).toBeNull()
 })
@@ -138,12 +177,12 @@ test("a model that takes no thinking level drops it, and has no thinking button"
 /** The open thinking popover. */
 const thinkingPopover = () => document.querySelector<HTMLElement>('[role="dialog"]')
 
-test("the menu's rows are a group named Model", async () => {
+test("the list opens with a search, and the button says which Harness runs the Model", async () => {
   const { container } = await picker()
+  expect(trigger(container, "Model")?.getAttribute("title")).toBe("Opus 5.5, on Claude Code")
   await click(trigger(container, "Model"))
-  const group = radio("Opus 5.5").closest('[role="group"]')
-  const labelledBy = group?.getAttribute("aria-labelledby") ?? ""
-  expect(document.getElementById(labelledBy)?.textContent).toBe("Model")
+  expect(document.querySelector('[role="listbox"]')).not.toBeNull()
+  expect(search()?.getAttribute("aria-label")).toBe("Search Models")
 })
 
 test("with no level set, the thinking slider says the Model thinks as it usually does, and is on no level", async () => {
@@ -259,62 +298,9 @@ test("Use the default unsets the level", async () => {
 
 // A pi Session's picker (ADR 0029): its Creator's Models, from their ProvidersState.
 
-/** Claude's Models and OpenAI's, as the Hub lists them for someone with both. */
-const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels("openai")]
-
-/** Renders a pi Session's picker, as `picker` does a Claude Code one's. */
-async function piPicker(initial: ModelSetting) {
-  const changes: Array<ModelSetting> = []
-  function Harness() {
-    const [value, setValue] = useState<ModelSetting>(initial)
-    return (
-      <ModelPicker
-        harness="Pi"
-        models={piModels}
-        value={value}
-        onChange={(next) => {
-          changes.push(next)
-          setValue(next)
-        }}
-      />
-    )
-  }
-  const view = await render(<Harness />)
-  cleanup = view.unmount
-  return { changes, container: view.container }
-}
-
-/** The open list's groups: each one's name and its rows. */
-const groups = () =>
-  [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="group"]')].map((group) => [
-    document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
-    [...group.querySelectorAll('[role="option"]')].map((row) => row.textContent),
-  ])
-
-/** The open list's rows, by their text. */
-const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
-const option = (label: string) => {
-  const found = options().find((row) => row.textContent === label)
-  if (!found) throw new Error(`no "${label}" row in ${options().map((row) => row.textContent)}`)
-  return found
-}
-const selected = () =>
-  options()
-    .filter((row) => row.getAttribute("aria-selected") === "true")
-    .map((row) => row.textContent)
-
-/** The open list's search field. */
-const search = () => document.querySelector<HTMLInputElement>('input[aria-label="Search Models"]')
-
-async function typeSearch(text: string): Promise<void> {
-  const field = search()
-  if (!field) throw new Error("no search field")
-  await step(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, text)
-    field.dispatchEvent(new Event("input", { bubbles: true }))
-  })
-  await settle()
-}
+/** Renders a pi Session's picker, as on a Runner that runs only pi. */
+const piPicker = (initial: ModelSetting) =>
+  picker(initial, fakeModels, { pi: { models: piModels } })
 
 test("a pi Session's picker lists its Creator's Models by Provider, and sends the one chosen as provider/id", async () => {
   const { container, changes } = await piPicker({
@@ -326,7 +312,7 @@ test("a pi Session's picker lists its Creator's Models by Provider, and sends th
 
   await click(trigger(container, "Model"))
   expect(groups()).toEqual([
-    ["Anthropic", ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Haiku 4.5"]],
+    ["Anthropic · pi", ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Haiku 4.5"]],
     ["OpenAI", ["GPT-6-Sol", "GPT-6-Sol mini", "GPT-4.1"]],
   ])
   // A pi Session always runs a Model of its own: there is no default row.
@@ -369,7 +355,7 @@ test("a pi Session's picker opens with a search, which narrows its Models by eve
   await typeSearch("sol mini")
   expect(groups()).toEqual([["OpenAI", ["GPT-6-Sol mini"]]])
   await typeSearch("anthropic haiku")
-  expect(groups()).toEqual([["Anthropic", ["Claude Haiku 4.5"]]])
+  expect(groups()).toEqual([["Anthropic · pi", ["Claude Haiku 4.5"]]])
   await typeSearch("gpt-4.1")
   expect(groups()).toEqual([["OpenAI", ["GPT-4.1"]]])
 
@@ -391,7 +377,7 @@ test("a pi Session's picker opens with a search, which narrows its Models by eve
 test("a pi Session's picker says so when its Creator has no Models", async () => {
   const changes: Array<ModelSetting> = []
   const view = await render(
-    <ModelPicker harness="Pi" models={[]} value={{}} onChange={(next) => changes.push(next)} />,
+    <ModelPicker pi={{ models: [] }} value={{}} onChange={(next) => changes.push(next)} />,
   )
   cleanup = view.unmount
   await click(trigger(view.container, "Model"))
@@ -419,4 +405,69 @@ test("someone watching a pi Session sees its Model's label as it is known", asyn
   )
   cleanup = unknown.unmount
   expect(unknown.container.textContent).toBe("gpt-6-sol")
+})
+
+// One picker for every Session (ADR 0030): on a Runner that runs both Harnesses, Claude Code's
+// models, Claude's through pi, then each other Provider's, and a pick of either Harness's.
+
+/** Renders the picker of a Session whose Runner runs both, for a Creator with both. */
+const bothPicker = (initial: ModelSetting) =>
+  picker(initial, fakeModels, {
+    claudeCode: { models: fakeModels },
+    pi: { models: piModels },
+  })
+
+test("on a Runner that runs both, the list groups Claude by what runs it, then each other Provider", async () => {
+  const { container } = await bothPicker({ model: "sonnet" })
+  await click(trigger(container, "Model"))
+  expect(groups().map(([name]) => name)).toEqual([
+    "Anthropic · Claude Code",
+    "Anthropic · pi",
+    "OpenAI",
+  ])
+  // Claude Code's labels and pi's tell the two Sonnets apart; the one picked is Claude Code's.
+  expect(selected()).toEqual(["Sonnet 5.5"])
+
+  // Typing a Harness's name narrows the list to its groups.
+  await typeSearch("claude code")
+  expect(groups().map(([name]) => name)).toEqual(["Anthropic · Claude Code"])
+  // The same Model, either way, is found in both.
+  await typeSearch("sonnet")
+  expect(groups()).toEqual([
+    ["Anthropic · Claude Code", ["Sonnet 5.5"]],
+    ["Anthropic · pi", ["Claude Sonnet 5.5"]],
+  ])
+})
+
+test("picking the other Harness's Model sends it, with the level only if that Model takes it", async () => {
+  const { container, changes } = await bothPicker({ model: "sonnet", thinkingLevel: "high" })
+  await click(trigger(container, "Model"))
+  await click(option("GPT-6-Sol"))
+  expect(changes).toEqual([{ model: "openai/gpt-6-sol", thinkingLevel: "high" }])
+  expect(trigger(container, "Model")?.getAttribute("title")).toBe("GPT-6-Sol, on pi")
+  // Its own levels: Minimal is one Claude Code doesn't take.
+  await click(trigger(container, "Thinking"))
+  await press("Home")
+  await press("Enter")
+  expect(changes.at(-1)).toEqual({ model: "openai/gpt-6-sol", thinkingLevel: "minimal" })
+
+  // Back to Claude Code drops it; its default sets no model at all.
+  await click(trigger(container, "Model"))
+  await click(option("Default · Opus 5.5"))
+  expect(changes.at(-1)).toEqual({})
+  expect(trigger(container, "Model")?.textContent).toBe("Opus 5.5")
+  await click(trigger(container, "Model"))
+  expect(selected()).toEqual(["Default · Opus 5.5"])
+  await click(option("Claude Opus 5.5"))
+  expect(changes.at(-1)).toEqual({ model: "anthropic/claude-opus-5-5" })
+})
+
+test("Claude Code's group waits for its Runner's list, while pi's Models are already there", async () => {
+  const { container } = await picker({ model: "openai/gpt-6-sol" }, fakeModels, {
+    claudeCode: { models: undefined },
+    pi: { models: piModels },
+  })
+  await click(trigger(container, "Model"))
+  expect(groups()[0]).toEqual(["Anthropic · Claude Code", ["Default"]])
+  expect(selected()).toEqual(["GPT-6-Sol"])
 })

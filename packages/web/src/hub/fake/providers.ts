@@ -9,6 +9,7 @@
 
 import {
   type ConnectableProvider,
+  type Harness,
   type ProviderId,
   ProviderIds,
   type ThinkingLevel,
@@ -243,9 +244,15 @@ export const pasteProblem = (value: string) =>
 
 export class FakeProviders {
   connected: Array<ConnectedProviderWire>
+  /** Which Harness runs Claude's Models in new Sessions, as the Account page sets it (ADR 0030). */
+  claudeHarness: Harness
 
-  constructor(connected: ReadonlyArray<ConnectedProviderWire>) {
+  constructor(
+    connected: ReadonlyArray<ConnectedProviderWire>,
+    claudeHarness: Harness = "ClaudeCode",
+  ) {
     this.connected = [...connected]
+    this.claudeHarness = claudeHarness
   }
 
   /** What the Hub sends the signed-in person: Claude's Models first while they have a credential. */
@@ -255,7 +262,7 @@ export class FakeProviders {
       ...(requestId !== undefined && { requestId }),
       connected: [...this.connected],
       connectable: [...connectable],
-      claudeHarness: "ClaudeCode",
+      claudeHarness: this.claudeHarness,
       models: [
         ...(withClaude ? claudeModels : []),
         ...ProviderIds.flatMap(

@@ -5,6 +5,7 @@
 import {
   defaultProviderModel,
   findModel,
+  type Harness,
   type ModelName,
   type ModelOption,
   type ModelProvider,
@@ -62,7 +63,10 @@ export function modelName(models: RunnerModels | undefined, setting: ModelSettin
   return modelOf(models, setting)?.label ?? setting.model ?? "Default model"
 }
 
-/** What the transcript says of a change: `Alice switched to Sonnet 5.5, High`. */
+/**
+ * What the transcript says of a change: `Alice switched to Sonnet 5.5, High`, and where a switch
+ * moved the Session to the other Harness (ADR 0030), which: `Alice switched to GPT-6-Sol on pi`.
+ */
 export function modelSwitchedText(event: ModelSwitched): string {
   const model =
     event.model === undefined
@@ -70,9 +74,26 @@ export function modelSwitchedText(event: ModelSwitched): string {
         ? "the default model"
         : `the default model (${event.modelLabel})`
       : (event.modelLabel ?? event.model)
+  const harness = event.harness === undefined ? "" : ` on ${harnessNames[event.harness]}`
   const level =
     event.thinkingLevel === undefined ? "" : `, ${thinkingLevelNames[event.thinkingLevel]}`
-  return `${event.by.name} switched to ${model}${level}`
+  return `${event.by.name} switched to ${model}${harness}${level}`
+}
+
+/** What the web UI calls each Harness. */
+export const harnessNames: Record<Harness, string> = {
+  ClaudeCode: "Claude Code",
+  Pi: "pi",
+}
+
+/**
+ * The picker's heading for a Provider's models (ADR 0030): Claude's say what runs them, as either
+ * Harness can (`Anthropic · Claude Code`, `Anthropic · pi`); every other Provider's run on pi alone.
+ */
+export function providerGroupLabel(provider: ModelProvider, harness: Harness): string {
+  return provider === "anthropic"
+    ? `${providerNames.anthropic} · ${harnessNames[harness]}`
+    : providerNames[provider]
 }
 
 /**
@@ -83,12 +104,19 @@ export function otherTurnModel(
   models: RunnerModels | undefined,
   setting: ModelSetting,
   turnModel: string,
+  /** The Creator's Models, for a Turn that ran on pi before a switch of Harness (ADR 0030). */
+  providerModels?: ReadonlyArray<ProviderModel>,
 ): string | undefined {
   const expected = modelOf(models, setting)
   if (expected === undefined || sameModel(turnModel, expected.id)) return undefined
-  const known = models && [models.default, ...models.models].find((m) => sameModel(m.id, turnModel))
+  const known =
+    (models && [models.default, ...models.models].find((m) => sameModel(m.id, turnModel))) ??
+    providerModels?.find((m) => m.id === turnModel)
   return known?.label ?? turnModel
 }
+
+/** Whether a Turn's model is Claude's, as Anthropic names its Models: `claude-opus-5-5`. */
+export const isClaudeModel = (turnModel: string): boolean => turnModel.startsWith("claude")
 
 /**
  * What every one of these Runners' Claude Code has, for a Session the Hub may start on any of

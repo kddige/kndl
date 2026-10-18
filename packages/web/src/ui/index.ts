@@ -43,6 +43,11 @@ export {
   type SearchSelectOption,
   type SearchSelectProps,
 } from "./SearchSelect.tsx"
+export {
+  SegmentedControl,
+  type SegmentedControlProps,
+  type SegmentedOption,
+} from "./SegmentedControl.tsx"
 export { Select, type SelectOption, type SelectSize } from "./Select.tsx"
 export { SessionStatus, type SessionState } from "./SessionStatus.tsx"
 export { NavItem, type NestedNavItems, NavSection, NavSlot, Sidebar } from "./Sidebar.tsx"
