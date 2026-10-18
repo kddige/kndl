@@ -128,7 +128,7 @@ export function SharedVariablesView() {
     <main {...stylex.props(styles.view)}>
       <PageHeader
         title="Shared variables"
-        description="Hub-wide values, such as an API key, that Environments link under a name of their own. A change reaches each linking Repo's Sessions as they next start."
+        description="Values any Environment can link."
         actions={
           <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
             Add shared variable

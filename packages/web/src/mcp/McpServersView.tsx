@@ -297,7 +297,7 @@ export function McpServersView({
     <main {...stylex.props(styles.view)}>
       <PageHeader
         title="MCP"
-        description="Remote MCP servers the Hub adds to Sessions. An Installation puts one on in the Repos it lists: Claude Code in their Sessions gets its tools, through the Hub, from their next wake or Restart."
+        description="MCP servers whose tools Sessions can use."
         actions={add}
       />
       <div {...stylex.props(styles.scroll)}>
@@ -320,7 +320,7 @@ export function McpServersView({
               size="page"
               icon={<McpIcon />}
               title="No MCP servers yet"
-              description="Add a remote MCP server by its URL, or an MCP server package from git or an upload, then install it on the Repos whose Sessions should have its tools."
+              description="Add a remote MCP server by its URL, or an MCP server package from git or an upload. An Installation puts it on in the Repos it lists, and their Sessions get its tools from their next wake or restart."
               action={add}
             />
           ) : (

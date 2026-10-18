@@ -84,10 +84,7 @@ export function EnvironmentList() {
 
   return (
     <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="Environments"
-        description="What every Sandbox of a Repo is built from: one Environment per Repo. A Repo shows here once it has a Session; start one to set up a new Repo."
-      />
+      <PageHeader title="Environments" description="What each Repo's Sandboxes are built from." />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
           {repos === null ? (
@@ -99,7 +96,7 @@ export function EnvironmentList() {
               size="page"
               icon={<BoxIcon />}
               title="No Repos yet"
-              description="A Repo's Environment is set up with its first Session."
+              description="A Repo shows here once it has a Session. Start one to set up a new Repo and its Environment."
             />
           ) : (
             <ul aria-label="Environments" {...stylex.props(styles.list)}>

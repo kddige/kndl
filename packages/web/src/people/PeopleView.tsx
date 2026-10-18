@@ -158,7 +158,7 @@ function People() {
     <>
       <PageHeader
         title="People"
-        description="Who can sign in to this Hub. It is invite-only: GitHub sign-in turns away anyone who isn't a Member and brings no Invite."
+        description="Members of this Hub, and open Invites."
         actions={
           <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setInviting(true)}>
             Invite someone

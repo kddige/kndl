@@ -257,7 +257,7 @@ function Hub({ update }: { update: HubUpdateState }) {
     <>
       <PageHeader
         title="Hub"
-        description="The kndl this Hub runs, and whether a newer one is out on its Channel. The Hub checks GitHub every 6 hours."
+        description="The kndl this Hub runs, and updates on its Channel."
         actions={
           follows._tag === "Channel" && (
             <Button

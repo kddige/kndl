@@ -276,14 +276,14 @@ export function RunnersView() {
         title="Runners"
         description={
           <>
-            The machines Sessions run on, each on its Creator's own Claude credential.
+            The machines Sessions run on
             {hubVersion && (
               <>
-                {" "}
-                The Hub runs <span {...stylex.props(styles.mono)}>{describeBuild(hubVersion)}</span>
-                .
+                ; the Hub runs{" "}
+                <span {...stylex.props(styles.mono)}>{describeBuild(hubVersion)}</span>
               </>
             )}
+            .
           </>
         }
         actions={

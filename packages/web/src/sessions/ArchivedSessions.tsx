@@ -208,7 +208,7 @@ export function AllArchivedSessions() {
     <main {...stylex.props(styles.view)}>
       <PageHeader
         title="Archived Sessions"
-        description="Deleted Sessions, by Repo. They can be restored until they're purged."
+        description="Deleted Sessions by Repo, which you can restore until they're purged."
       />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>

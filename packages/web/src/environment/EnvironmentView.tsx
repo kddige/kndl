@@ -255,7 +255,7 @@ export function EnvironmentView({
             <Badge intent="warning">Not set up</Badge>
           ))
         }
-        description="Environment: what every Sandbox of this Repo is built from. Changes stay in this browser until you apply them."
+        description="What this Repo's Sandboxes are built from."
         actions={
           <Button nativeButton={false} render={<Link to="/variables" />} size="sm">
             Shared variables
@@ -804,7 +804,7 @@ function EnvironmentEditor({
         </div>
       </Disclosure>
 
-      <Section title="Apply">
+      <Section title="Apply" note="Changes stay in this browser until you apply them.">
         {problems.all.length > 0 && (
           <ul aria-label="What to fix before applying" {...stylex.props(styles.problems)}>
             {problems.all.map((problem) => (

@@ -441,7 +441,6 @@ function LoadedSession({
     <main {...stylex.props(styles.view)}>
       <PageHeader
         // On a phone the name keeps its row, and the toggle and buttons go on one of their own.
-        stackActions
         // Its name, edited in place: its Creator may rename it, whatever its state.
         title={
           renaming ? (
