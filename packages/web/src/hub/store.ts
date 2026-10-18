@@ -447,6 +447,11 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return forgetRepo(state, action.repo)
     case "ClaudeCredentialState":
       return { ...state, claudeCredential: action.credential }
+    case "ProvidersState":
+    case "SignInStepped":
+    case "SignInEnded":
+      // Connected providers (ADR 0029) aren't shown yet.
+      return state
     case "CliTokenList":
       return { ...state, cliTokens: action.tokens }
     case "InviteCreated":

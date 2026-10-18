@@ -212,6 +212,7 @@ import {
   type Participant,
   type ParticipantId,
   type McpServerCommand,
+  type ProviderCommand,
   PresenceChanged,
   type PresentParticipant,
   PromptCancelled,
@@ -349,6 +350,7 @@ import {
 } from "./Peers.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
+import { isProviderCommand } from "./ProviderRelay.ts"
 import {
   everything,
   holdMillis,
@@ -2116,6 +2118,7 @@ export class SessionRelay extends Context.Service<
           }
         | MemberCommand
         | McpServerCommand
+        | ProviderCommand
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -3118,29 +3121,19 @@ export class SessionRelay extends Context.Service<
               ? mcpServerRelay.receiveWeb(client, message)
               : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
                 ? claudeCredentialCommand(message)
-                : message._tag === "RevokeCliToken"
-                  ? revokeCliToken(message)
-                  : message._tag === "CheckAppPermissions"
-                    ? checkAppPermissions(message.requestId)
-                    : message._tag === "CheckHubUpdate" || message._tag === "UpdateHub"
-                      ? (message._tag === "CheckHubUpdate"
-                          ? checkHubUpdate(message)
-                          : updateHub(message)
-                        ).pipe(
-                          Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("A Hub update command failed", error).pipe(
-                              Effect.andThen(
-                                Effect.sync(() =>
-                                  refuse(message, "The Hub could not do that; try again."),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                      : message._tag === "GetSessionDiskUsage"
-                        ? getSessionDiskUsage(message).pipe(
+                : isProviderCommand(message)
+                  ? Effect.sync(() => refuse(message, "This Hub can't connect Providers yet."))
+                  : message._tag === "RevokeCliToken"
+                    ? revokeCliToken(message)
+                    : message._tag === "CheckAppPermissions"
+                      ? checkAppPermissions(message.requestId)
+                      : message._tag === "CheckHubUpdate" || message._tag === "UpdateHub"
+                        ? (message._tag === "CheckHubUpdate"
+                            ? checkHubUpdate(message)
+                            : updateHub(message)
+                          ).pipe(
                             Effect.catchTag("SqlError", (error) =>
-                              Effect.logError("A disk usage request failed", error).pipe(
+                              Effect.logError("A Hub update command failed", error).pipe(
                                 Effect.andThen(
                                   Effect.sync(() =>
                                     refuse(message, "The Hub could not do that; try again."),
@@ -3149,50 +3142,69 @@ export class SessionRelay extends Context.Service<
                               ),
                             ),
                           )
-                        : message._tag === "ListRepos"
-                          ? listRepos(message)
-                          : message._tag === "ListBranches"
-                            ? listBranches(message)
-                            : message._tag === "CheckRepo"
-                              ? checkRepo(message).pipe(
-                                  Effect.catchTag("SqlError", (error) =>
-                                    Effect.logError("A Repo check failed", error).pipe(
-                                      Effect.andThen(
-                                        Effect.sync(() =>
-                                          refuse(message, "The Hub could not do that; try again."),
+                        : message._tag === "GetSessionDiskUsage"
+                          ? getSessionDiskUsage(message).pipe(
+                              Effect.catchTag("SqlError", (error) =>
+                                Effect.logError("A disk usage request failed", error).pipe(
+                                  Effect.andThen(
+                                    Effect.sync(() =>
+                                      refuse(message, "The Hub could not do that; try again."),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : message._tag === "ListRepos"
+                            ? listRepos(message)
+                            : message._tag === "ListBranches"
+                              ? listBranches(message)
+                              : message._tag === "CheckRepo"
+                                ? checkRepo(message).pipe(
+                                    Effect.catchTag("SqlError", (error) =>
+                                      Effect.logError("A Repo check failed", error).pipe(
+                                        Effect.andThen(
+                                          Effect.sync(() =>
+                                            refuse(
+                                              message,
+                                              "The Hub could not do that; try again.",
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                )
-                              : authorize(message).pipe(
-                                  Effect.flatMap((verdict) =>
-                                    Effect.gen(function* () {
-                                      const command =
-                                        verdict.refusal === undefined
-                                          ? yield* respelled(message)
-                                          : message
-                                      return yield* serialized(
-                                        Effect.gen(function* () {
-                                          const { learned, refusal } = verdict
-                                          if (learned !== undefined)
-                                            yield* accessKnown(you, learned.repo, learned.allowed)
-                                          if (refusal !== undefined) return refuse(message, refusal)
-                                          return yield* handle(command)
-                                        }),
-                                      )
-                                    }),
-                                  ),
-                                  Effect.catchTag("SqlError", (error) =>
-                                    Effect.logError("A web command failed", error).pipe(
-                                      Effect.andThen(
-                                        Effect.sync(() =>
-                                          refuse(message, "The Hub could not do that; try again."),
+                                  )
+                                : authorize(message).pipe(
+                                    Effect.flatMap((verdict) =>
+                                      Effect.gen(function* () {
+                                        const command =
+                                          verdict.refusal === undefined
+                                            ? yield* respelled(message)
+                                            : message
+                                        return yield* serialized(
+                                          Effect.gen(function* () {
+                                            const { learned, refusal } = verdict
+                                            if (learned !== undefined)
+                                              yield* accessKnown(you, learned.repo, learned.allowed)
+                                            if (refusal !== undefined)
+                                              return refuse(message, refusal)
+                                            return yield* handle(command)
+                                          }),
+                                        )
+                                      }),
+                                    ),
+                                    Effect.catchTag("SqlError", (error) =>
+                                      Effect.logError("A web command failed", error).pipe(
+                                        Effect.andThen(
+                                          Effect.sync(() =>
+                                            refuse(
+                                              message,
+                                              "The Hub could not do that; try again.",
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                )
+                                  )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
