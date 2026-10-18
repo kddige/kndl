@@ -26,6 +26,16 @@ export interface SteeredPrompt {
   readonly attachments?: ReadonlyArray<MarkedFile & { readonly size: number }> | undefined
 }
 
+/**
+ * An agent's result, as the main loop is given it (Subagents.ts): a message of its own, which
+ * starts a run, so a Turn from the agent (ADR 0014), as Claude Code's task notification does.
+ */
+export interface AgentResultMessage {
+  readonly agentId: string
+  /** What the model reads. */
+  readonly text: string
+}
+
 /** What pi-ai says of a finished assistant message: its stop reason, model and usage. */
 export interface AssistantEnd {
   readonly provider: string
@@ -169,6 +179,13 @@ export const toolResultSummary = (result: unknown): string => {
   )
 }
 
+/** How the next run starts: its prompt, and who sent it. */
+interface NextRun {
+  readonly text: string
+  readonly from?: DeliveredPrompt | undefined
+  readonly agentResult?: AgentResultMessage | undefined
+}
+
 interface RunningTurn {
   readonly turnId: string
   readonly startedAt: number
@@ -182,7 +199,7 @@ export class Turns {
   /** The prompt from the Hub pi took in as input, for the run it starts. */
   private claimed: DeliveredPrompt | undefined
   /** How the next run starts: its prompt, and who sent it. */
-  private next: { readonly text: string; readonly from?: DeliveredPrompt | undefined } | undefined
+  private next: NextRun | undefined
   /** The prompts steered into the running Turn that no request has read yet. */
   private readonly unread = new Set<string>()
 
@@ -219,12 +236,19 @@ export class Turns {
 
   /**
    * A run is starting (`before_agent_start`) with this prompt, or with a message of an
-   * extension's own (undefined). Returns the prompt from the Hub it starts with, if it is one.
+   * extension's own (undefined): maybe an agent's result. Returns the prompt from the Hub it
+   * starts with, if it is one.
    */
-  beforeAgentStart(prompt: string | undefined): DeliveredPrompt | undefined {
+  beforeAgentStart(
+    prompt: string | undefined,
+    agentResult?: AgentResultMessage,
+  ): DeliveredPrompt | undefined {
     const from = prompt === undefined ? undefined : this.claimed
     this.claimed = undefined
-    this.next = { text: prompt ?? "", from }
+    this.next =
+      agentResult === undefined
+        ? { text: prompt ?? "", from }
+        : { text: agentResult.text, agentResult }
     return from
   }
 
@@ -234,17 +258,19 @@ export class Turns {
     const next = this.next ?? { text: "" }
     this.next = undefined
     const turnId = this.options.newId()
+    const { from, agentResult } = next
     this.turn = { turnId, startedAt: this.options.now(), requests: [] }
     if (this.options.agentId !== undefined) return
-    const from = next.from
     this.options.report({
       _tag: "TurnStarted",
       turnId,
       text: next.text,
       sender:
-        from === undefined
-          ? { _tag: "FromTerminal" }
-          : { _tag: "FromParticipant", participant: from.sender },
+        agentResult !== undefined
+          ? { _tag: "FromAgent", agentId: agentResult.agentId }
+          : from === undefined
+            ? { _tag: "FromTerminal" }
+            : { _tag: "FromParticipant", participant: from.sender },
       ...(from === undefined ? {} : { promptId: from.promptId }),
     })
   }

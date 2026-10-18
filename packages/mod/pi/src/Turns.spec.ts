@@ -150,6 +150,26 @@ describe("a pi run is a Turn: from the prompt to the run settling", () => {
     expect(events).toEqual([])
   })
 
+  test("a run an agent's result starts is a Turn from that agent, with the result as its prompt", () => {
+    const { turns, events } = tracker()
+    const result = { agentId: "a1", text: "<task-notification>done</task-notification>" }
+    turns.beforeAgentStart(undefined, result)
+    turns.agentStart()
+    turns.assistantEnded(assistant())
+    turns.settled(false)
+    expect(events.map((event) => [event._tag, event.turnId])).toEqual([
+      ["TurnStarted", "t1"],
+      ["TurnEnded", "t1"],
+    ])
+    expect(events[0]).toEqual({
+      _tag: "TurnStarted",
+      turnId: "t1",
+      text: "<task-notification>done</task-notification>",
+      sender: { _tag: "FromAgent", agentId: "a1" },
+    })
+    expect(valid(events)).toBe(true)
+  })
+
   test("the next run is a new Turn, and the delivered prompt is claimed once", () => {
     const { turns, events } = tracker()
     turns.deliver({ promptId: "q1", sender: ada, text: "[Ada Lovelace] hi" })

@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Subprocess } from "bun"
-import { errorReply, FakeHub, hangingReply, textReply, toolCallReply } from "./FakeHub.ts"
+import { errorReply, FakeHub, hangingReply, textReply, toolCallReply, when } from "./FakeHub.ts"
+import type { Script } from "./FakeHub.ts"
 
 const root = join(import.meta.dir, "../..")
 const extension = join(root, "pi/dist/kndl.js")
@@ -31,19 +32,112 @@ const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 const png =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
+/** pi in RPC mode, as a Runner would start it, with what it said. */
+interface Pi {
+  readonly process: Subprocess<"pipe", "pipe", "pipe">
+  readonly stderr: () => string
+  /** The dialogs pi asked its RPC client for, which stand for its terminal's. */
+  readonly dialogs: Array<Record<string, unknown>>
+}
+
+/** Starts pi with the built extension, in `home`, linked to `hub`, with `args`. */
+const startPi = (
+  home: string,
+  hub: FakeHub,
+  args: ReadonlyArray<string>,
+  env: Record<string, string> = {},
+): Pi => {
+  const process = Bun.spawn(["node", piCli, "--mode", "rpc", "-e", extension, ...args], {
+    cwd: home,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      PATH: Bun.env.PATH ?? "",
+      HOME: home,
+      PI_CODING_AGENT_DIR: join(home, "agent"),
+      PI_OFFLINE: "1",
+      PI_SKIP_VERSION_CHECK: "1",
+      PI_TELEMETRY: "0",
+      KNDL_URL: hub.url,
+      KNDL_MOD_TOKEN: modToken,
+      KNDL_SESSION_ID: sessionId,
+      ...env,
+    },
+  })
+  let stderr = ""
+  void (async () => {
+    for await (const chunk of process.stderr) stderr += new TextDecoder().decode(chunk)
+  })()
+  // pi's RPC records go to stdout; read them so pi never stalls on a full pipe, and keep the
+  // dialogs it asks its client for.
+  const dialogs: Array<Record<string, unknown>> = []
+  void (async () => {
+    let buffered = ""
+    for await (const chunk of process.stdout) {
+      buffered += new TextDecoder().decode(chunk)
+      const lines = buffered.split("\n")
+      buffered = lines.pop() ?? ""
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line) as Record<string, unknown>
+          if (record.type === "extension_ui_request" && record.method !== "setWidget")
+            dialogs.push(record)
+        } catch {
+          // Not a record.
+        }
+      }
+    }
+  })()
+  return { process, stderr: () => stderr, dialogs }
+}
+
+/** The bundle pi loads, from the sources as they are now. */
+const build = () => {
+  const built = Bun.spawnSync(["bun", "scripts/build.ts"], { cwd: root, stdout: "ignore" })
+  if (built.exitCode !== 0 || !existsSync(extension))
+    throw new Error("couldn't build the pi extension")
+}
+
+/** What a subagent's requests say, in its system prompt, and its parent's don't. */
+const childNote = "You are an agent that another agent started"
+/** `script`, for a subagent's request. */
+const ofChild = (script: Script) => when(script, childNote)
+/** `script`, for the main loop's request. */
+const ofParent = (script: Script) => when(script, childNote, true)
+
+type HubEvent = FakeHub["events"][number]
+
+/**
+ * The events after the `from`th, up to the end of the first Turn an agent's result started
+ * (ADR 0014): a TurnStarted from the agent, and its TurnEnded.
+ */
+const untilResultTurnEnds = (hub: FakeHub, from: number) =>
+  hub.eventsUntil(from, (event) => {
+    if (event._tag !== "TurnEnded" || event.agentId !== undefined) return false
+    const started = hub.events.find(
+      (each, at) => at >= from && each._tag === "TurnStarted" && each.turnId === event.turnId,
+    )
+    return (started?.sender as { _tag?: string } | undefined)?._tag === "FromAgent"
+  })
+
+/** The Turn an agent's result started, among `events`: its TurnStarted. */
+const resultTurn = (events: ReadonlyArray<HubEvent>) =>
+  events.find(
+    (event) =>
+      event._tag === "TurnStarted" && (event.sender as { _tag?: string })._tag === "FromAgent",
+  )
+
 describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
   let hub: FakeHub
   let pi: Subprocess<"pipe", "pipe", "pipe">
+  let running: Pi
   let home: string
-  let stderr = ""
   /** The dialogs pi asked its RPC client for. */
-  const dialogs: Array<Record<string, unknown>> = []
+  let dialogs: Array<Record<string, unknown>> = []
 
   beforeAll(async () => {
-    // The bundle pi loads, from the sources as they are now.
-    const built = Bun.spawnSync(["bun", "scripts/build.ts"], { cwd: root, stdout: "ignore" })
-    if (built.exitCode !== 0 || !existsSync(extension))
-      throw new Error("couldn't build the pi extension")
+    build()
     hub = new FakeHub({
       modToken,
       providers: {
@@ -68,61 +162,14 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       join(home, ".claude", "skills", "greet", "SKILL.md"),
       "---\nname: greet\ndescription: Greets the e2e person by name.\n---\n\nSay hello.\n",
     )
-    pi = Bun.spawn(
-      [
-        "node",
-        piCli,
-        "--mode",
-        "rpc",
-        "-e",
-        extension,
-        "--no-session",
-        "--no-skills",
-        "--no-context-files",
-        "--model",
-        "openai/gpt-4.1",
-      ],
-      {
-        cwd: home,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: home,
-          PI_CODING_AGENT_DIR: join(home, "agent"),
-          PI_OFFLINE: "1",
-          PI_SKIP_VERSION_CHECK: "1",
-          PI_TELEMETRY: "0",
-          KNDL_URL: hub.url,
-          KNDL_MOD_TOKEN: modToken,
-          KNDL_SESSION_ID: sessionId,
-          KNDL_MCP_SERVERS: JSON.stringify([{ installationId: "inst-1", server: "linear" }]),
-        },
-      },
+    running = startPi(
+      home,
+      hub,
+      ["--no-session", "--no-skills", "--no-context-files", "--model", "openai/gpt-4.1"],
+      { KNDL_MCP_SERVERS: JSON.stringify([{ installationId: "inst-1", server: "linear" }]) },
     )
-    void (async () => {
-      for await (const chunk of pi.stderr) stderr += new TextDecoder().decode(chunk)
-    })()
-    // pi's RPC records go to stdout; read them so pi never stalls on a full pipe, and keep the
-    // dialogs it asks its client for, which stand for its terminal's.
-    void (async () => {
-      let buffered = ""
-      for await (const chunk of pi.stdout) {
-        buffered += new TextDecoder().decode(chunk)
-        const lines = buffered.split("\n")
-        buffered = lines.pop() ?? ""
-        for (const line of lines) {
-          try {
-            const record = JSON.parse(line) as Record<string, unknown>
-            if (record.type === "extension_ui_request" && record.method !== "setWidget")
-              dialogs.push(record)
-          } catch {
-            // Not a record.
-          }
-        }
-      }
-    })()
+    pi = running.process
+    dialogs = running.dialogs
   })
 
   afterAll(async () => {
@@ -133,7 +180,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
 
   const debug = () => {
     const log = join(home, "agent", "kndl.log")
-    return `stderr: ${stderr}\nkndl.log: ${existsSync(log) ? readFileSync(log, "utf8") : "(none)"}`
+    return `stderr: ${running.stderr()}\nkndl.log: ${existsSync(log) ? readFileSync(log, "utf8") : "(none)"}`
   }
 
   test("says hello once pi's session is known: its conversation, its model, and that it steers, attaches and switches models", async () => {
@@ -496,27 +543,34 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     )
   }, 30_000)
 
-  test("the agent tool runs a subagent on the model asked for, reported under its call, and its answer is the call's (ADR 0014)", async () => {
+  /** The agent the tests below start, and then resume. */
+  let agentId = ""
+
+  test("the agent tool starts a subagent in the background: the call returns at once, the Turn ends while it runs, and its result starts a Turn from it (ADR 0014)", async () => {
     hub.scripts.push(
-      toolCallReply(
-        "agent",
-        { description: "Count files", prompt: "Count the files here.", model: "openai/gpt-4.1" },
-        { input: 10, output: 2 },
+      ofParent(
+        toolCallReply(
+          "agent",
+          { description: "Count files", prompt: "Count the files here.", model: "openai/gpt-4.1" },
+          { input: 10, output: 2 },
+        ),
       ),
-      textReply("There are 3 files.", { input: 30, output: 5 }),
-      textReply("The agent counted 3.", { input: 40, output: 5 }),
+      ofParent(textReply("It's counting.", { input: 20, output: 3 })),
+      ofChild(toolCallReply("bash", { command: "sleep 1" }, { input: 30, output: 2 })),
+      ofChild(textReply("There are 3 files.", { input: 30, output: 5 })),
+    )
+    // The main loop's request for the agent's result, once it has it.
+    hub.scripts.push(
+      when(textReply("The agent counted 3.", { input: 40, output: 5 }), "There are 3 files."),
     )
     const requests = hub.gatewayRequests.length
     const from = hub.events.length
     hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q9", text: "count", sender: ada })
-    const events = await hub.eventsUntil(
-      from,
-      (event) => event._tag === "TurnEnded" && event.agentId === undefined,
-    )
+    const events = await untilResultTurnEnds(hub, from)
     const turnId = events[0]?.turnId
-    const call = events.find((event) => event._tag === "ToolCallStarted")
     const started = events.find((event) => event._tag === "AgentStarted")
-    const agentId = started?.agentId
+    agentId = String(started?.agentId)
+    const call = events.find((event) => event._tag === "ToolCallStarted" && event.tool === "agent")
     expect(started).toEqual({
       _tag: "AgentStarted",
       turnId,
@@ -525,61 +579,128 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       agentType: "general-purpose",
       description: "Count files",
       model: "openai/gpt-4.1",
-      background: false,
+      background: true,
     })
-    const agents = events.filter((event) => event.agentId !== undefined)
-    const run = agents.find((event) => event._tag === "TurnEnded")?.turnId
-    expect(run).not.toBe(turnId)
-    expect(agents).toEqual([
-      started,
-      { _tag: "AgentStatusChanged", agentId, status: "Running" },
-      { _tag: "TextDelta", turnId: run, agentId, text: "There are 3 files." },
-      expect.objectContaining({
-        _tag: "TurnEnded",
-        turnId: run,
-        agentId,
-        reason: "stop",
-        usage: expect.objectContaining({ model: "openai/gpt-4.1", input: 30, output: 5 }),
-      }),
-      { _tag: "AgentStatusChanged", agentId, status: "Done" },
-    ])
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        _tag: "ToolCallEnded",
-        turnId,
-        tool: "agent",
-        outcome: "Succeeded",
-        output: "There are 3 files.",
-      }),
+    // The call returned at once, saying the result comes later.
+    const returned = events.find(
+      (event) => event._tag === "ToolCallEnded" && event.tool === "agent",
     )
-    // The agent's request went through the Gateway, with the Session token, knowing only its task.
-    const child = hub.gatewayRequests[requests + 1]
+    expect(returned).toMatchObject({ turnId, outcome: "Succeeded" })
+    expect(String(returned?.output)).toContain(`Started the agent ${agentId} in the background.`)
+    // The Turn ended while the agent ran; its end started a Turn from it.
+    const at = (check: (event: HubEvent) => boolean) => events.findIndex(check)
+    const turnEnded = at((event) => event._tag === "TurnEnded" && event.turnId === turnId)
+    const done = at((event) => event._tag === "AgentStatusChanged" && event.status === "Done")
+    const result = resultTurn(events)
+    expect(turnEnded).toBeGreaterThan(-1)
+    expect(turnEnded).toBeLessThan(done)
+    expect(done).toBeLessThan(events.indexOf(result as HubEvent))
+    expect(result).toEqual({
+      _tag: "TurnStarted",
+      turnId: expect.any(String),
+      text: expect.stringContaining("<result>There are 3 files.</result>"),
+      sender: { _tag: "FromAgent", agentId },
+    })
+    expect(String(result?.text)).toStartWith("<task-notification>")
+    expect(events.at(-1)).toMatchObject({
+      _tag: "TurnEnded",
+      turnId: result?.turnId,
+      reason: "stop",
+    })
+    expect(events).toContainEqual({
+      _tag: "TextDelta",
+      turnId: result?.turnId,
+      text: "The agent counted 3.",
+    })
+    // Its own run: events tagged with its id, its usage on its own TurnEnded.
+    const agents = events.filter((event) => event.agentId === agentId)
+    expect(agents.map((event) => event._tag)).toEqual([
+      "AgentStarted",
+      "AgentStatusChanged",
+      "ToolCallStarted",
+      "ToolCallEnded",
+      "TextDelta",
+      "TurnEnded",
+      "AgentStatusChanged",
+    ])
+    expect(agents.find((event) => event._tag === "TurnEnded")).toMatchObject({
+      reason: "stop",
+      usage: { model: "openai/gpt-4.1", input: 60, output: 7 },
+    })
+    // Its requests went through the Gateway, with the Session token, knowing only its task.
+    const child = hub.gatewayRequests
+      .slice(requests)
+      .find((request) => JSON.stringify(request.body).includes(childNote))
     expect(child?.path).toBe("/gateway/models/openai/v1/responses")
     expect(child?.authorization).toBe(`Bearer ${modToken}`)
     const asked = JSON.stringify(child?.body)
     expect(asked).toContain("Count the files here.")
-    expect(asked).toContain("You are an agent that another agent started")
     expect(asked).not.toContain("[Ada Lovelace] count")
-    // The parent's tools, but the agent and question tools.
+    // The parent's tools, but the agent, message, stop and question tools.
     expect(asked).toContain('"name":"bash"')
     expect(asked).toContain('"name":"attachment"')
-    expect(asked).not.toContain('"name":"agent"')
-    expect(asked).not.toContain('"name":"ask_user_question"')
-    expect(JSON.stringify(hub.gatewayRequests[requests + 2]?.body)).toContain("There are 3 files.")
+    for (const tool of ["agent", "message_agent", "stop_agent", "ask_user_question"])
+      expect(asked).not.toContain(`"name":"${tool}"`)
+  }, 30_000)
 
-    // Done, a message resumes it; stopping it once it is done again fails.
-    hub.scripts.push(textReply("Now 4 files.", { input: 50, output: 5 }))
-    const resumed = hub.events.length
+  test("the model's message resumes a finished agent with its context, and its result starts a Turn again", async () => {
+    hub.scripts.push(
+      ofParent(
+        toolCallReply(
+          "message_agent",
+          { agentId, message: "Count them again." },
+          { input: 10, output: 2 },
+        ),
+      ),
+      ofParent(textReply("Asked it.", { input: 20, output: 2 })),
+      ofChild(textReply("Now 4 files.", { input: 50, output: 5 })),
+      when(textReply("It says 4.", { input: 40, output: 5 }), "Now 4 files."),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q15", text: "again", sender: ada })
+    const events = await untilResultTurnEnds(hub, from)
+    const returned = events.find(
+      (event) => event._tag === "ToolCallEnded" && event.tool === "message_agent",
+    )
+    expect(String(returned?.output)).toContain(`Resumed the agent ${agentId}`)
+    expect(events.filter((event) => event._tag === "AgentStatusChanged")).toEqual([
+      { _tag: "AgentStatusChanged", agentId, status: "Running" },
+      { _tag: "AgentStatusChanged", agentId, status: "Done" },
+    ])
+    expect(resultTurn(events)).toMatchObject({
+      text: expect.stringContaining("<result>Now 4 files.</result>"),
+      sender: { _tag: "FromAgent", agentId },
+    })
+    // It went on from its own conversation: its task and first answer, and the message.
+    const child = hub.gatewayRequests
+      .slice(requests)
+      .find((request) => JSON.stringify(request.body).includes(childNote))
+    const asked = JSON.stringify(child?.body)
+    expect(asked).toContain("Count the files here.")
+    expect(asked).toContain("There are 3 files.")
+    expect(asked).toContain("Count them again.")
+  }, 30_000)
+
+  test("the Creator's message resumes it too, and its result starts a Turn; stopping it once it is done fails", async () => {
+    hub.scripts.push(
+      ofChild(textReply("Now 5 files.", { input: 50, output: 5 })),
+      when(textReply("It says 5.", { input: 40, output: 5 }), "Now 5 files."),
+    )
+    const from = hub.events.length
     hub.send({ _tag: "DeliverAgentMessage", sessionId, agentId, text: "count again", sender: ada })
-    const again = await hub.eventsUntil(
-      resumed,
-      (event) => event._tag === "AgentStatusChanged" && event.status === "Done",
+    const events = await untilResultTurnEnds(hub, from)
+    expect(events[0]).toEqual({ _tag: "AgentStatusChanged", agentId, status: "Running" })
+    expect(events).toContainEqual(
+      expect.objectContaining({ _tag: "TextDelta", agentId, text: "Now 5 files." }),
     )
-    expect(again[0]).toEqual({ _tag: "AgentStatusChanged", agentId, status: "Running" })
-    expect(again).toContainEqual(
-      expect.objectContaining({ _tag: "TextDelta", agentId, text: "Now 4 files." }),
-    )
-    expect(JSON.stringify(hub.gatewayRequests.at(-1)?.body)).toContain("[Ada Lovelace] count again")
+    expect(resultTurn(events)).toMatchObject({ sender: { _tag: "FromAgent", agentId } })
+    expect(
+      JSON.stringify(
+        hub.gatewayRequests.findLast((request) => JSON.stringify(request.body).includes(childNote))
+          ?.body,
+      ),
+    ).toContain("[Ada Lovelace] count again")
     const stopped = hub.events.length
     hub.send({ _tag: "StopAgent", sessionId, agentId })
     expect(await hub.eventsUntil(stopped, (event) => event._tag === "AgentCommandFailed")).toEqual([
@@ -640,4 +761,114 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     ])
     expect(exited).not.toBe("hung")
   }, 20_000)
+})
+
+/** Ends pi as a sleep does, and waits for it to exit. */
+const stopPi = async (pi: Pi) => {
+  pi.process.stdin.end()
+  const exited = await Promise.race([
+    pi.process.exited,
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 15_000)),
+  ])
+  if (exited === "hung") pi.process.kill()
+}
+
+describe.skipIf(cannotRun !== undefined)("a pi Session's agents outlive pi", () => {
+  let hub: FakeHub
+  let home: string
+  let pi: Pi | undefined
+  const conversation = "c0ffee00-0000-4000-8000-000000000001"
+  const start = () =>
+    startPi(home, hub, [
+      "--session-id",
+      conversation,
+      "--no-skills",
+      "--no-context-files",
+      "--model",
+      "openai/gpt-4.1",
+    ])
+
+  beforeAll(() => {
+    build()
+    hub = new FakeHub({
+      modToken,
+      providers: {
+        models: [{ provider: "openai", id: "gpt-4.1", label: "GPT-4.1", thinkingLevels: [] }],
+      } as never,
+      attachments: {},
+    })
+    home = mkdtempSync(join(tmpdir(), "kndl-pi-restart-"))
+  })
+
+  afterAll(() => {
+    pi?.process.kill()
+    hub?.stop()
+    if (home !== undefined) rmSync(home, { recursive: true, force: true })
+  })
+
+  test("after pi stops and starts again on the same conversation, the model's message resumes an agent on its saved conversation", async () => {
+    pi = start()
+    await hub.until(() => hub.hellos[0])
+    hub.scripts.push(
+      ofParent(
+        toolCallReply(
+          "agent",
+          { description: "Remember a word", prompt: "Remember the word kiwi." },
+          { input: 10, output: 2 },
+        ),
+      ),
+      ofParent(textReply("Started.", { input: 10, output: 2 })),
+      ofChild(textReply("I will remember kiwi.", { input: 10, output: 2 })),
+      when(textReply("It remembers.", { input: 10, output: 2 }), "I will remember kiwi."),
+    )
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q1", text: "remember", sender: ada })
+    const events = await untilResultTurnEnds(hub, from)
+    const agentId = String(events.find((event) => event._tag === "AgentStarted")?.agentId)
+    const agents = join(home, "agent", "kndl", "agents")
+    expect(existsSync(join(agents, `${agentId}.jsonl`))).toBe(true)
+    expect(JSON.parse(readFileSync(join(agents, "index.json"), "utf8")).agents).toEqual([
+      {
+        agentId,
+        description: "Remember a word",
+        model: "openai/gpt-4.1",
+        status: "Done",
+        reported: true,
+      },
+    ])
+
+    await stopPi(pi)
+    pi = start()
+    await hub.until(() => hub.hellos[1])
+    expect(hub.hellos[1]?.conversationId).toBe(conversation)
+
+    hub.scripts.push(
+      ofParent(
+        toolCallReply(
+          "message_agent",
+          { agentId, message: "Which word?" },
+          { input: 10, output: 2 },
+        ),
+      ),
+      ofParent(textReply("Asked it.", { input: 10, output: 2 })),
+      ofChild(textReply("The word was kiwi.", { input: 10, output: 2 })),
+      when(textReply("It said kiwi.", { input: 10, output: 2 }), "The word was kiwi."),
+    )
+    const requests = hub.gatewayRequests.length
+    const resumed = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q2", text: "which?", sender: ada })
+    const again = await untilResultTurnEnds(hub, resumed)
+    expect(resultTurn(again)).toMatchObject({
+      text: expect.stringContaining("<result>The word was kiwi.</result>"),
+      sender: { _tag: "FromAgent", agentId },
+    })
+    // It remembered: its request carried its saved conversation.
+    const child = hub.gatewayRequests
+      .slice(requests)
+      .find((request) => JSON.stringify(request.body).includes(childNote))
+    const asked = JSON.stringify(child?.body)
+    expect(asked).toContain("Remember the word kiwi.")
+    expect(asked).toContain("I will remember kiwi.")
+    expect(asked).toContain("Which word?")
+  }, 60_000)
 })

@@ -10,7 +10,8 @@
 //   runs the Hub's commands: prompts, steering, stopping, switching the model (ModelSwitch.ts),
 //   presence.
 // - The model: the system prompt says the Session is shared, and a tool opens attachments; others
-//   ask the people questions (Questions.ts) and start subagents (Subagents.ts).
+//   ask the people questions (Questions.ts), and start, message and stop subagents, which run in
+//   the background, kept on disk, and whose results start Turns of their own (Subagents.ts).
 // - The person at the terminal: a line above the editor shows the link and who watches.
 //
 // pi loads this bundle with its own copies of its packages (`@earendil-works/*` stay external);
@@ -22,7 +23,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getModels, Type } from "@earendil-works/pi-ai/compat"
 import { getAgentDir } from "@earendil-works/pi-coding-agent"
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionToolContext,
+} from "@earendil-works/pi-coding-agent"
 import { providerModelName } from "@kndl/protocol"
 import type { ModCommand, ModProviders } from "@kndl/protocol"
 import { HubLink } from "../../src/HubLink.ts"
@@ -41,7 +46,14 @@ import { presenceLine, watching } from "./Presence.ts"
 import { fetchProviders, gatewayProviders } from "./Providers.ts"
 import { Questions, questionToolDefinition } from "./Questions.ts"
 import { claudeSkills, installationServers, McpServersVariable } from "./RepoSetup.ts"
-import { agentToolDefinition, Subagents } from "./Subagents.ts"
+import {
+  agentToolDefinitions,
+  childModel,
+  childModels,
+  childTools,
+  createChild,
+  Subagents,
+} from "./Subagents.ts"
 import { Turns } from "./Turns.ts"
 
 /** What the Runner tells the extension (the Runner's pi launch), or undefined outside a Session. */
@@ -72,8 +84,10 @@ const steeredMessage = "kndl-steered"
 const attachmentsMessage = "kndl-attachments"
 /** The system prompt section that says the Session is shared. */
 const sharedSection = "kndl_shared_session"
-/** The custom message that tells the main loop how an agent's resumed run ended (ADR 0014). */
+/** The custom message an agent's result is, which starts a Turn from the agent (ADR 0014). */
 const agentMessage = "kndl-agent"
+/** The custom message that tells the main loop, with its next prompt, of an interrupted agent. */
+const agentNote = "kndl-agent-note"
 /** The key of the line above the editor. */
 const widgetKey = "kndl"
 
@@ -84,6 +98,18 @@ const modelNames = (listed: ModProviders) => listed.models.map(providerModelName
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** The agent's result a custom message is, if it is one: what starts a Turn from the agent. */
+const agentResult = (message: {
+  readonly customType: string
+  readonly content: unknown
+  readonly details?: unknown
+}) => {
+  if (message.customType !== agentMessage || !isRecord(message.details)) return undefined
+  const { agentId } = message.details
+  if (typeof agentId !== "string" || typeof message.content !== "string") return undefined
+  return { agentId, text: message.content }
+}
 
 export default async function kndl(pi: ExtensionAPI) {
   const env = readEnv(process.env)
@@ -190,17 +216,80 @@ export default async function kndl(pi: ExtensionAPI) {
   const turns = new Turns({ report, now: () => performance.now(), newId: randomUUID, secrets })
   // Open questions and subagents (ADR 0014, #193): Questions.ts, Subagents.ts.
   const questions = new Questions({ report })
+  /** The context of the last call of one of this extension's tools, which has the parent's tools. */
+  let toolContext: ExtensionToolContext | undefined
+  /** The parent's tools a subagent runs, as the last tool call's context has them, live. */
+  const callableTools = () => {
+    try {
+      return toolContext?.tools
+    } catch {
+      // That context's session has ended.
+      return undefined
+    }
+  }
+  /** Agents' results waiting for the main loop to be idle, oldest first. */
+  const results: Array<{ readonly agentId: string; readonly text: string }> = []
+  let resultTimer: ReturnType<typeof setInterval> | undefined
   const subagents = new Subagents({
     report,
     now: () => performance.now(),
     newId: randomUUID,
     secrets,
-    notify: (text) =>
+    dir: join(getAgentDir(), "kndl", "agents"),
+    open: async (file, name) => {
+      const current = ctx
+      if (current === undefined) throw new Error("pi's session hasn't started.")
+      const modelRuntime = await childModels(current.modelRegistry)
+      const model = childModel(modelRuntime, name, current.model, agentModels)
+      const session = await createChild({
+        cwd: current.cwd,
+        agentDir: getAgentDir(),
+        file,
+        modelRuntime,
+        model,
+        thinkingLevel: pi.getThinkingLevel(),
+        ...childTools(pi.getActiveTools(), pi.getAllTools(), callableTools),
+        settings: pi.getSettings(),
+      })
+      return { session, model: `${model.provider}/${model.id}` }
+    },
+    deliver: (result) => {
+      results.push(result)
+      deliverResults()
+    },
+    note: (text) =>
       pi.sendMessage(
-        { customType: agentMessage, content: text, display: true },
+        { customType: agentNote, content: text, display: true },
         { deliverAs: "nextTurn" },
       ),
   })
+
+  /**
+   * Gives the main loop the agents' results once it is idle, each a message that starts a run of
+   * its own, so a Turn from its agent (ADR 0014). One that comes while pi runs waits for it to
+   * settle: never in the middle of a run, and not in pi's own follow-up queue, which its terminal
+   * empties when the person stops a run there, and which an aborted run leaves waiting.
+   */
+  const deliverResults = () => {
+    while (results.length > 0 && ctx?.isIdle() === true && turns.turnId === undefined) {
+      const result = results.shift()
+      if (result === undefined) break
+      // pi starts the run at once, or right after its run settles: it is busy for the next.
+      pi.sendMessage(
+        {
+          customType: agentMessage,
+          content: result.text,
+          display: true,
+          details: { agentId: result.agentId },
+        },
+        { triggerTurn: true },
+      )
+    }
+    if (results.length === 0) {
+      if (resultTimer !== undefined) clearInterval(resultTimer)
+      resultTimer = undefined
+    } else resultTimer ??= setInterval(deliverResults, 250)
+  }
 
   const drawLine = () => {
     try {
@@ -363,10 +452,10 @@ export default async function kndl(pi: ExtensionAPI) {
         drawLine()
         return
       case "DeliverAgentMessage":
-        void subagents.message(command)
+        void subagents.messageFromCreator(command)
         return
       case "StopAgent":
-        subagents.stop(command)
+        subagents.stopFromCreator(command)
         return
       case "DeliverAnswer":
         questions.answer(command)
@@ -379,6 +468,8 @@ export default async function kndl(pi: ExtensionAPI) {
     link = undefined
     if (waitTimer !== undefined) clearInterval(waitTimer)
     waitTimer = undefined
+    if (resultTimer !== undefined) clearInterval(resultTimer)
+    resultTimer = undefined
     if (stopping === undefined) return
     await stopping.flushNow().catch(() => undefined)
     stopping.stop()
@@ -415,15 +506,17 @@ export default async function kndl(pi: ExtensionAPI) {
 
   // The question and agent tools (ADR 0029).
   pi.registerTool(questionToolDefinition({ questions, turnId: () => turns.turnId }))
-  pi.registerTool(
-    agentToolDefinition({
-      subagents,
-      turnId: () => turns.turnId,
-      models: agentModels,
-      pi,
-      agentDir: getAgentDir,
-    }),
-  )
+  const [agentTool, messageAgentTool, stopAgentTool] = agentToolDefinitions({
+    subagents,
+    turnId: () => turns.turnId,
+    models: agentModels,
+    seen: (context) => {
+      toolContext = context
+    },
+  })
+  pi.registerTool(agentTool)
+  pi.registerTool(messageAgentTool)
+  pi.registerTool(stopAgentTool)
 
   pi.on("session_start", async (event, context) => {
     await stopLink()
@@ -443,6 +536,9 @@ export default async function kndl(pi: ExtensionAPI) {
       const { promptId, submitted: isSubmitted } = entry.data
       if (typeof promptId === "string") submitted.set(promptId, isSubmitted === true)
     }
+    // The Session's agents, from its volume: those pi's stopping interrupted are said to the model.
+    toolContext = undefined
+    subagents.load()
     link = new HubLink({
       hubUrl: env.hubUrl,
       modToken: env.modToken,
@@ -465,7 +561,9 @@ export default async function kndl(pi: ExtensionAPI) {
   })
 
   pi.on("session_shutdown", async () => {
+    // Running agents are Interrupted, said to the Hub before the link stops.
     subagents.dispose()
+    results.length = 0
     await stopLink()
     ctx = undefined
   })
@@ -476,7 +574,10 @@ export default async function kndl(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", (event) => {
     event.systemPromptOptions.sections[sharedSection] = sharedSessionNoteFor(attachmentTool)
-    const from = turns.beforeAgentStart(event.messageType === "user" ? event.prompt : undefined)
+    const from =
+      event.messageType === "user"
+        ? turns.beforeAgentStart(event.prompt)
+        : turns.beforeAgentStart(undefined, agentResult(event.message))
     const attachments = from?.attachments ?? []
     // What the model is told of a prompt's files, out of sight: to open each before answering.
     if (attachments.length === 0) return
@@ -523,7 +624,9 @@ export default async function kndl(pi: ExtensionAPI) {
 
   pi.on("agent_settled", (event) => {
     turns.settled(event.aborted)
-    // A prompt that waited for this run goes now: pi starts it once it has settled.
+    // An agent's result, or a prompt, that waited for this run goes now: pi starts each, in turn,
+    // once it has settled.
+    deliverResults()
     deliverWaiting()
   })
 }

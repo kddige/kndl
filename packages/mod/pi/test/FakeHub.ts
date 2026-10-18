@@ -26,7 +26,19 @@ export interface Script {
   readonly hang?: boolean
   /** Refuse the request instead, with this status and the Provider's error message. */
   readonly error?: { readonly status: number; readonly message: string }
+  /**
+   * Which requests it answers, by their body as JSON; any, without one. A request takes the
+   * first script that answers it, as a subagent's run alongside its parent's makes requests in no
+   * set order.
+   */
+  readonly when?: (body: string) => boolean
 }
+
+/** `script`, for requests whose body says `text`, or doesn't (`not`). */
+export const when = (script: Script, text: string, not = false): Script => ({
+  ...script,
+  when: (body) => body.includes(text) !== not,
+})
 
 type Event = Record<string, unknown> & { readonly _tag: string }
 
@@ -249,7 +261,9 @@ export class FakeHub {
       this.heard()
       if (authorization !== `Bearer ${this.options.modToken}`)
         return Response.json({ error: { message: "bad token" } }, { status: 401 })
-      const script = this.scripts.shift()
+      const said = JSON.stringify(body)
+      const index = this.scripts.findIndex((each) => each.when === undefined || each.when(said))
+      const [script] = index === -1 ? [] : this.scripts.splice(index, 1)
       if (script === undefined)
         return Response.json({ error: { message: "no script" } }, { status: 500 })
       if (script.error !== undefined)
