@@ -65,7 +65,12 @@ export const runnerModels = {
       description: "Fastest for quick answers",
       reasoning: false,
     },
-    { alias: "opus[1m]", id: "claude-opus-5-5[1m]", label: "Opus 5.5 (1M context)", reasoning: true },
+    {
+      alias: "opus[1m]",
+      id: "claude-opus-5-5[1m]",
+      label: "Opus 5.5 (1M context)",
+      reasoning: true,
+    },
   ],
   thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
 }

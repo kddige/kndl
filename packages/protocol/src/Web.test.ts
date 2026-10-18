@@ -37,7 +37,13 @@ const sessionEvents = [
     attachments: [{ id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }],
   },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
-  { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", thinkingLevel: "high" },
+  {
+    _tag: "ModelSwitched",
+    by: alice,
+    model: "sonnet",
+    modelLabel: "Sonnet 5.5",
+    thinkingLevel: "high",
+  },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
   { _tag: "ModelSwitched", by: bob },
   {

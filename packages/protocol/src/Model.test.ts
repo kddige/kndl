@@ -27,7 +27,10 @@ describe("ModelName", () => {
 
 describe("RunnerModels", () => {
   test("round-trips, and refuses a thinking level pi-ai doesn't have", () => {
-    expectRoundTrips(RunnerModels, [runnerModels, { ...runnerModels, models: [], thinkingLevels: [] }])
+    expectRoundTrips(RunnerModels, [
+      runnerModels,
+      { ...runnerModels, models: [], thinkingLevels: [] },
+    ])
     expectRejected(RunnerModels, { ...runnerModels, thinkingLevels: ["low", "auto"] })
   })
 })

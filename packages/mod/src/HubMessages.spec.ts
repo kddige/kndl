@@ -343,7 +343,13 @@ test("turnUsage names Claude Code's usage as pi-ai does, without a cost Claude C
       cache_read_input_tokens: 6789,
       cache_creation_input_tokens: 101,
     }),
-  ).toEqual({ model: "claude-sonnet-5-5", input: 12, output: 345, cacheRead: 6789, cacheWrite: 101 })
+  ).toEqual({
+    model: "claude-sonnet-5-5",
+    input: 12,
+    output: 345,
+    cacheRead: 6789,
+    cacheWrite: 101,
+  })
 })
 
 test("a prompt from a Participant is led by their name", () => {
