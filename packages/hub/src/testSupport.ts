@@ -199,7 +199,10 @@ export async function startHub(
     readonly mcpServerIcons?: Layer.Layer<McpServerIcons>
     /** How far ahead of the time it is the Hub's clock reads, as after a long time down. */
     readonly clockAhead?: Duration.Duration
-    /** The Models each Member's pi Sessions can run (ADR 0029); by default none, for anyone. */
+    /**
+     * The Models each Member's pi Sessions can run (ADR 0029); by default the Hub's own, their
+     * Connected providers' (ConnectedProviders.modelCatalog).
+     */
     readonly modelCatalog?: Layer.Layer<ModelCatalog>
     /** How much of the Hub model calls may take (ModelCallLimits); by default the Hub's own. */
     readonly modelCallLimits?: Partial<ModelCallLimits>

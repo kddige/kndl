@@ -63,11 +63,11 @@ export const HubRoutes = Layer.mergeAll(
  * The credential stores, each person's Claude credential, the mod outbox, Environments, Repo
  * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
  * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub
- * App (GitHubApp.ts), the check of Claude credentials (ClaudeCheck), the Providers' APIs and sign-ins (ProviderApis), where MCP
- * server packages are read from (McpServerSources.ts), the Hub's version (HubVersion.ts), its
- * check for a newer kndl (HubUpdates.ts) and the updates its Owner starts from the web
- * (HubUpdateRuns.ts). The Models each Member's pi Sessions can run (ADR 0029) are their Connected
- * providers', unless a test gives others.
+ * App (GitHubApp.ts), the check of Claude credentials (ClaudeCheck), the Providers' APIs and
+ * sign-ins (ProviderApis), where MCP server packages are read from (McpServerSources.ts), the
+ * Hub's version (HubVersion.ts), its check for a newer kndl (HubUpdates.ts) and the updates its
+ * Owner starts from the web (HubUpdateRuns.ts). The Models each Member's pi Sessions can run (ADR
+ * 0029) are their Connected providers', unless a test gives others.
  */
 export const hubServices = (
   modelCatalog: typeof ConnectedProviders.modelCatalog = ConnectedProviders.modelCatalog,
