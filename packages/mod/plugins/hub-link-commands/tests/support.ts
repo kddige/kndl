@@ -132,3 +132,43 @@ export const answeredSession = (on: On, answers: Array<Record<string, unknown>>)
   on("turn.start", (_, e) => ({ turnId: e.turnId }))
   return { posted, release: () => release?.() }
 }
+
+/**
+ * The terminal under a session: the panes opened and closed, and the toasts raised. Its panes are
+ * drawn, unless `placed.is` is set false, as a tool's pane waits undrawn on a narrow terminal.
+ */
+export const terminal = (on: On) => {
+  const placed = { is: true }
+  const opened: Array<Record<string, unknown>> = []
+  const closed: Array<{ id: string; origin: string }> = []
+  const toasts: Array<string> = []
+  on("ui.open", (_, e) => {
+    opened.push(e)
+    return {
+      value: placed.is
+        ? { isPlaced: true as const }
+        : { isPlaced: false as const, reason: "narrow" },
+    }
+  })
+  on("ui.close", (_, e) => {
+    closed.push({ id: e.id, origin: e.origin.kind })
+    return { value: undefined }
+  })
+  on("ui.toast", (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  return { placed, opened, closed, toasts }
+}
+
+/** The Pane component's props on the terminal. */
+export const paneProps = {
+  title: "Question",
+  isFocused: true,
+  bodyColumns: 100,
+  placement: "inline",
+  scroll: { offset: 0, bodyRows: 12 },
+  view: {},
+} as const
+
+export const questionPane = "kndl-question"

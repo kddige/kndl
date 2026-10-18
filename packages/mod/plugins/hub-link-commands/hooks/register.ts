@@ -47,8 +47,11 @@ import type {
   LinkStatus,
   ModCommand,
   Participant,
+  Question,
   QuestionAnswer,
 } from "./hub-link-lib.js"
+import { dialogs, PANE, registerQuestionDialog, rowsFor } from "./question-dialog.ts"
+import type { Submit } from "./question-dialog.ts"
 
 const band = atom(
   { plugin: "hub-link-commands", key: "band" } as const,
@@ -61,6 +64,8 @@ const band = atom(
 
 const delivered = { plugin: "hub-link-commands", key: "delivered" } as const
 const steering = { plugin: "hub-link-commands", key: "steering" } as const
+/** The question dialog's state, which question-dialog.ts draws from. */
+const question = { plugin: "hub-link-commands", key: "question" } as const
 
 /** The module's own state; a reload starts it over, and fires `session.start` again. */
 const state = {
@@ -71,10 +76,11 @@ const state = {
   /** The Turn running on the main loop, which StopTurn stops. */
   mainTurn: undefined as string | undefined,
   /**
-   * The question tool's calls waiting for an answer, by id (#193): each takes the Creator's
-   * answer, and says whether it came first.
+   * The question tool's calls waiting for an answer, by id (#193): each takes an answer, from the
+   * web UI with its sender, or from the terminal's dialog with none, and says whether it came
+   * first.
    */
-  asking: new Map<string, (answer: QuestionAnswer, sender: Participant) => boolean>(),
+  asking: new Map<string, (answer: QuestionAnswer, sender: Participant | undefined) => boolean>(),
   /** The call of the question asked `async` that is still waiting for an answer, if one is. */
   asyncOpen: undefined as string | undefined,
   /**
@@ -299,12 +305,13 @@ const textResult = (text: string) => ({ result: [{ type: "text" as const, text }
 /**
  * The answer to the question Claude asked `async` (#193), as a note in its conversation if a Turn
  * runs, as a steered prompt is: it reads it at its next step. With none, or once it has ended, a
- * Turn of its own starts with it, from whoever answered.
+ * Turn of its own starts with it, from whoever answered: the person at the terminal, who has no
+ * `sender`, answers it from the dialog.
  */
 const giveAnswer = async (
   $: EngineInterface,
   toolCallId: string,
-  sender: Participant,
+  sender: Participant | undefined,
   text: string,
 ) => {
   const lost = (why: string) =>
@@ -318,12 +325,85 @@ const giveAnswer = async (
       })
       if (appended.deny === undefined) return
     }
-    // Said before it is submitted, so hub-link reports the Turn as the answerer's.
-    await $.state.set(delivered, { promptId: `answer-${toolCallId}`, sender, text })
+    // Said before it is submitted, so hub-link reports the Turn as the answerer's. Without one it
+    // is the terminal's, as a prompt typed there is.
+    if (sender !== undefined)
+      await $.state.set(delivered, { promptId: `answer-${toolCallId}`, sender, text })
     const entered = await $.prompt.submit({ text, asUser: true })
     if (entered.drop !== undefined) lost(`a hook dropped the prompt: ${entered.drop}`)
   } catch (error) {
     lost(String(error))
+  }
+}
+
+/**
+ * Opens the question's pane, and says if it is drawn. One the person's command opens is placed at
+ * any width; one a tool opens waits undrawn below 144 columns.
+ */
+const showPane = async ($: EngineInterface, questions: ReadonlyArray<Question>) => {
+  try {
+    const opened = await $.ui.open({
+      id: PANE,
+      title: "Question",
+      focus: true,
+      rows: rowsFor(questions),
+    })
+    return opened.isPlaced
+  } catch (error) {
+    $.ui.log(`hub-link-commands: couldn't open the question pane: ${error}`, { to: "debug" })
+    return false
+  }
+}
+
+/**
+ * Shows the questions of `toolCallId` in the terminal's pane (#193), until the question closes
+ * (`closeDialog`) or the pane answers it: `submit` takes the answer, and tells the question's call.
+ * Never rejects: a pane that can't be drawn leaves the web UI to answer.
+ */
+const openDialog = async (
+  $: EngineInterface,
+  opened: { toolCallId: string; async: boolean; questions: ReadonlyArray<Question> },
+  submit: Submit,
+) => {
+  const { toolCallId, questions } = opened
+  dialogs.submitters.set(toolCallId, submit)
+  dialogs.current = toolCallId
+  try {
+    await $.state.set(question, {
+      toolCallId,
+      async: opened.async,
+      questions: [...questions],
+      index: 0,
+      answers: {},
+      picked: [],
+    })
+    // Closed already, by an answer from the web UI or a Stop, while the state was written.
+    if (dialogs.current !== toolCallId) return
+    const isPlaced = await showPane($, questions)
+    if (dialogs.current !== toolCallId) {
+      // Closed while the pane opened: it goes, unless another question has it by now.
+      if (dialogs.current === undefined) await $.ui.close({ id: PANE })
+      return
+    }
+    if (!isPlaced) $.ui.toast("The agent has a question: type /question, or widen the terminal.")
+  } catch (error) {
+    $.ui.log(`hub-link-commands: couldn't show the question: ${error}`, { to: "debug" })
+  }
+}
+
+/** The question of `toolCallId` is answered or closed: its pane goes, if it is the one shown. */
+const closeDialog = async ($: EngineInterface, toolCallId: string) => {
+  dialogs.submitters.delete(toolCallId)
+  if (dialogs.current !== toolCallId) return
+  dialogs.current = undefined
+  try {
+    await $.state.set(question, null)
+    // Another question opened meanwhile, and has the pane.
+    if (dialogs.current !== undefined) return
+    // Our own close, which `ui.close` hears as the plugin's: it dismisses nothing.
+    await $.ui.close({ id: PANE })
+  } catch (error) {
+    $.ui.log(`hub-link-commands: couldn't close the question pane: ${error}`, { to: "debug" })
   }
 }
 
@@ -415,11 +495,21 @@ export function register(on: On) {
       return false
     })
     // In the tool list from the first request on, beside the Hub link they fetch through.
-    if (linked)
+    if (linked) {
       for (const tool of [attachmentToolSpec, historyToolSpec, questionToolSpec])
         await $.tool
           .register(tool)
           .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
+      // The way to the pane where the terminal is too narrow for a tool to open it.
+      await $.command
+        .register({
+          name: "question",
+          description: "Show the agent's open question",
+          // The agent may be waiting for the answer, with its Turn running.
+          immediate: true,
+        })
+        .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
+    }
     return started
   })
 
@@ -481,10 +571,11 @@ export function register(on: On) {
 
   // Claude's question on the main loop is the Session's Open question (#193). The tool replaces
   // Claude Code's AskUserQuestion, which the Runner turns off: it takes the same questions, and an
-  // `async` option, with which Claude goes on while they are answered. The Creator answers from the
-  // web UI: Claude Code's own dialog can't be opened with its tool off. A question Claude waits for
-  // holds the call until the answer, or a Stop; one asked `async` returns at once, and its answer
-  // reaches Claude as a note, or as a Turn of its own. A subagent's questions are refused.
+  // `async` option, with which Claude goes on while they are answered. Claude Code's own dialog
+  // can't be opened with its tool off, so a pane of this plugin's asks at the terminal, beside the
+  // web UI: whichever answers first wins. A question Claude waits for holds the call until the
+  // answer, or a Stop; one asked `async` returns at once, and its answer reaches Claude as a note,
+  // or as a Turn of its own. A subagent's questions are refused.
   on("tool.call", { tool: questionToolName }, async ($, e, next) => {
     const turnId = state.mainTurn
     const toolCallId = e.tool_use_id
@@ -517,8 +608,14 @@ export function register(on: On) {
       settled = true
       state.asking.delete(toolCallId)
       if (state.asyncOpen === toolCallId) state.asyncOpen = undefined
+      // The pane goes, whoever answered, or if the Turn was stopped.
+      void closeDialog($, toolCallId)
       return true
     }
+    const dialog = { toolCallId, async: isAsync, questions }
+    // The terminal's dialog answers as the web UI does, with no one to name.
+    const answerFromTerminal = (answer: QuestionAnswer) =>
+      state.asking.get(toolCallId)?.(answer, undefined)
     if (isAsync) {
       state.asyncOpen = toolCallId
       state.asking.set(toolCallId, (answer, sender) => {
@@ -532,10 +629,11 @@ export function register(on: On) {
         )
         return true
       })
+      await openDialog($, dialog, answerFromTerminal)
       return textResult(askedAsyncText)
     }
-    return new Promise<Awaited<ReturnType<typeof next>>>((resolve) => {
-      // Stopped, from the web UI or with Esc at the terminal: Claude reads no answer, and the Hub
+    const answered = new Promise<Awaited<ReturnType<typeof next>>>((resolve) => {
+      // Stopped, from the web UI or at the terminal: Claude reads no answer, and the Hub
       // hears so now.
       next.signal.addEventListener("abort", () => {
         if (!settle()) return
@@ -549,6 +647,21 @@ export function register(on: On) {
         return true
       })
     })
+    await openDialog($, dialog, answerFromTerminal)
+    return answered
+  })
+
+  registerQuestionDialog(on)
+
+  on("command.run", { command: "question" }, async ($) => {
+    if (dialogs.current === undefined) return { text: "No question is open." }
+    const shown = await read($, question)
+    const isPlaced = await showPane($, shown?.questions ?? [])
+    return {
+      text: isPlaced
+        ? "The question is open in a pane."
+        : "The question's pane couldn't be drawn; answer it in the web UI.",
+    }
   })
 
   on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {

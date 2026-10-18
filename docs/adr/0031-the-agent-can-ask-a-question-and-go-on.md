@@ -13,7 +13,7 @@ So:
 - **The answer is a message.** When the Creator answers (or replies, or dismisses), the agent is given it in the shape of the waited answer, saying these are the questions it asked earlier. Mid-Turn, it goes in before the Turn's next request, as a steered prompt does (ADR 0018). With no Turn running, it starts a Turn of its own, from whoever answered. Nothing is queued in the Hub: the mod holds the answer until the agent can read it.
 - **The question outlives its Turn.** `QuestionAsked` and `OpenQuestion` carry `async`. The Hub doesn't cancel an async question when its Turn ends, only when its agent's process does, or its Session is archived. While one is open the Session doesn't sleep, as with any Open question.
 - **One at a time.** The Session has one Open question. While an async one is open the tool refuses another, sync or async, telling the agent to carry on and ask again once the answer comes.
-- **Claude Code gets the same tool.** Its AskUserQuestion can't take a flag, so the Runner turns it off (`--disallowedTools AskUserQuestion`) and the hub-link-commands plugin registers `ask_user_question` in its place (`mcp__hub-link-commands__ask_user_question`), with the same questions and `async`. Claude Code's own dialog can't be opened with the tool off (`$.ui.ask` rejects with `no tool named "AskUserQuestion"`, checked against 2.1.296), so a Claude Code question is answered from the web UI alone.
+- **Claude Code gets the same tool.** Its AskUserQuestion can't take a flag, so the Runner turns it off (`--disallowedTools AskUserQuestion`) and the hub-link-commands plugin registers `ask_user_question` in its place (`mcp__hub-link-commands__ask_user_question`), with the same questions and `async`. Claude Code's own dialog can't be opened with the tool off (`$.ui.ask` rejects with `no tool named "AskUserQuestion"`, checked against 2.1.296), so the plugin draws a dialog of its own at the terminal, a pane, and the first answer from it or the web UI is the one the agent reads. A pane a tool opens waits undrawn below 144 terminal columns, wider than a Session's terminal, so the plugin toasts that there is a question, and `/question` opens the pane at any width.
 
 ## Considered options
 
@@ -24,5 +24,5 @@ So:
 ## Consequences
 
 - **A late answer can wait.** An answer steered into a Turn that ends before reading it stays in the conversation for the next prompt, as a steered prompt does (ADR 0018).
-- **Claude Code loses its terminal dialog for questions.** Someone at its terminal reads the question in the web UI or its terminal mirror, and answers there. A kndl dialog drawn by the plugin could bring it back.
+- **Claude Code's terminal dialog is kndl's.** It is a plugin pane, not Claude Code's own dialog: simpler, but on a narrow terminal the person has to type `/question` to see it, and a Dismiss button, or closing the pane, dismisses the question for everyone.
 - **A subagent can't ask.** In Claude Code the tool is the plugin's, which subagents see; the plugin refuses them, as pi's extension leaves it out of subagents.

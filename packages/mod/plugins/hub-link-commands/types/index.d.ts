@@ -55,12 +55,35 @@ export type HubLinkAttachment = {
   size: number
 }
 
+/** One question of the dialog, as the protocol has it. */
+export type HubLinkQuestion = {
+  question: string
+  header: string
+  options: readonly { label: string; description?: string }[]
+  multiSelect: boolean
+}
+
+/**
+ * The question dialog in Claude Code's terminal (#193): the questions the agent asked, which one
+ * is shown, what was answered so far, and the options picked for a multi-select question.
+ */
+export type QuestionDialog = {
+  toolCallId: string
+  /** Asked `async`: the agent works on while it is answered. */
+  async: boolean
+  questions: readonly HubLinkQuestion[]
+  index: number
+  answers: Record<string, string>
+  picked: string[]
+}
+
 declare module "claude-code" {
   interface PluginState {
     "hub-link-commands": {
       band: HubLinkBand
       delivered: HubLinkDelivered | null
       steering: HubLinkSteering | null
+      question: QuestionDialog | null
     }
   }
 }

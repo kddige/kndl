@@ -3,7 +3,14 @@
 // plugin's files and "claude-code", and the loader checks the hooks module's own source, so the
 // glue stays hand-written beside this bundle (spike #4).
 
-export type { ModCommand, Participant, QuestionAnswer, ToolCallOutcome } from "@kndl/protocol"
+export { joinAnswers } from "@kndl/protocol"
+export type {
+  ModCommand,
+  Participant,
+  Question,
+  QuestionAnswer,
+  ToolCallOutcome,
+} from "@kndl/protocol"
 export {
   handoffNote,
   historyAnswer,
