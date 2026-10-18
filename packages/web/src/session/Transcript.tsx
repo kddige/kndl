@@ -104,7 +104,8 @@ const styles = stylex.create({
     fontSize: text.xs,
   },
   sentFiles: { marginInlineStart: space.s8 },
-  claudeMark: {
+  // The initial of whoever answers: Claude, or a pi Session's Model.
+  replierMark: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -329,7 +330,7 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
         sx={styles.sentFiles}
       />
       <div {...stylex.props(styles.speaker)}>
-        <span aria-hidden="true" {...stylex.props(styles.claudeMark)}>
+        <span aria-hidden="true" {...stylex.props(styles.replierMark)}>
           {replier.charAt(0).toUpperCase()}
         </span>
         <span {...stylex.props(styles.name)}>{replier}</span>
