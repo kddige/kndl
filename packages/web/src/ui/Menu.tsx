@@ -104,6 +104,8 @@ export interface MenuItemProps {
   keepOpen?: boolean
   /** What shows at the row's end, such as the value a further panel sets. */
   end?: ReactNode
+  /** Renders the item as this element instead, such as a router Link, so it's a real link. */
+  render?: ReactElement
 }
 
 export function MenuItem({
@@ -114,10 +116,12 @@ export function MenuItem({
   disabled = false,
   keepOpen = false,
   end,
+  render,
 }: MenuItemProps) {
   const danger = intent === "danger"
   return (
     <BaseMenu.Item
+      {...(render && { render })}
       {...(onClick && { onClick: () => onClick() })}
       disabled={disabled}
       closeOnClick={!keepOpen}

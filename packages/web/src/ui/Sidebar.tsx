@@ -47,6 +47,7 @@ const styles = stylex.create({
     paddingInlineStart: space.s4,
     paddingInlineEnd: space.s2,
   },
+  landmark: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   nav: {
     display: "flex",
     flexDirection: "column",
@@ -81,8 +82,10 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: color.border,
   },
-  aboveFooter: { flexShrink: 0, paddingBlock: space.s1, paddingInline: space.s4 },
+  aboveFooter: { flexShrink: 0, paddingBlock: space.s1, paddingInline: space.s2 },
   section: { display: "flex", flexDirection: "column" },
+  labelRow: { display: "flex", alignItems: "center", gap: space.s1, paddingInlineEnd: space.s0_5 },
+  labelGrow: { flex: 1, minWidth: 0 },
   sectionLabel: {
     paddingTop: space.s1,
     paddingBottom: space.s1,
@@ -265,10 +268,11 @@ export function Sidebar({ label, header, children, aboveFooter, footer, sx }: Si
   return (
     <div {...stylex.props(styles.sidebar, sx)}>
       {header && <div {...stylex.props(styles.header)}>{header}</div>}
-      <nav aria-label={label} {...stylex.props(styles.nav)}>
-        {children}
+      {/* One landmark for every link: the list that scrolls, and the rows pinned under it. */}
+      <nav aria-label={label} {...stylex.props(styles.landmark)}>
+        <div {...stylex.props(styles.nav)}>{children}</div>
+        {aboveFooter && <div {...stylex.props(styles.aboveFooter)}>{aboveFooter}</div>}
       </nav>
-      {aboveFooter && <div {...stylex.props(styles.aboveFooter)}>{aboveFooter}</div>}
       {footer && <div {...stylex.props(styles.footer)}>{footer}</div>}
     </div>
   )
@@ -280,19 +284,29 @@ export interface NavSectionProps {
    * it for the top section.
    */
   label?: string
+  /** A control at the end of the label's row, such as a Repo's ⋯ menu. */
+  action?: ReactNode
   /** NavItems. */
   children: ReactNode
 }
 
 /** A list of NavItems, under a heading that also names it for screen readers. */
-export function NavSection({ label, children }: NavSectionProps) {
+export function NavSection({ label, action, children }: NavSectionProps) {
   const id = useId()
+  const heading = label && (
+    <h2 id={id} {...stylex.props(styles.sectionLabel, action !== undefined && styles.labelGrow)}>
+      {label}
+    </h2>
+  )
   return (
     <div {...stylex.props(styles.section)}>
-      {label && (
-        <h2 id={id} {...stylex.props(styles.sectionLabel)}>
-          {label}
-        </h2>
+      {heading && action !== undefined ? (
+        <div {...stylex.props(styles.labelRow)}>
+          {heading}
+          {action}
+        </div>
+      ) : (
+        heading
       )}
       <ul {...(label && { "aria-labelledby": id })} {...stylex.props(styles.list)}>
         {children}

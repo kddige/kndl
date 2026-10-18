@@ -61,9 +61,10 @@ async function open(path: string) {
   return { hub, client, router, page: view.container }
 }
 
-/** The sidebar's navigation, wherever it is: beside the page, or in the drawer. */
+/** The sidebar's navigation, wherever it is: beside the page, or in the drawer; on a settings page,
+ * the Settings nav that takes its place. */
 function nav(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('nav[aria-label="Main"]')
+  return document.querySelector<HTMLElement>('nav[aria-label="Main"], nav[aria-label="Settings"]')
 }
 
 /** The sidebar's Repo sections: each one's name, and its Sessions' rows as their links read. */
@@ -136,12 +137,16 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
     ),
   ).toEqual(["Asleep", "Active", "Frozen"])
 
-  // The general nav and the footer.
-  const links = [...(nav()?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"))
-  expect(links).toContain("/environments")
-  expect(links).toContain("/variables")
-  expect(links).toContain("/archive")
-  expect(document.body.textContent).toContain("2 of 3 Runners online")
+  // Settings and Archived Sessions, pinned under the Sessions; the Hub-wide pages are Settings'.
+  const links = [...document.querySelectorAll("a")].map((a) => [
+    a.textContent,
+    a.getAttribute("href"),
+  ])
+  expect(links).toContainEqual(["Settings", "/runners"])
+  expect(links).toContainEqual(["Archived Sessions", "/archive"])
+  expect(links.map(([, href]) => href)).not.toContain("/environments")
+  // The Runners' status is the way to them.
+  expect(links).toContainEqual(["2 of 3 Runners online", "/runners"])
   expect(button("Signed in as Alice Kim", document).getAttribute("aria-haspopup")).toBe("menu")
 })
 
@@ -347,7 +352,8 @@ test("a Session's running and interrupted agents nest under it, which only its c
   expect(chevron.getAttribute("aria-expanded")).toBe("true")
   const controlled = document.getElementById(chevron.getAttribute("aria-controls") ?? "")
   expect(controlled?.querySelectorAll("a").length).toBe(1)
-  expect(nav()?.querySelectorAll("button[aria-expanded]").length).toBe(1)
+  // The Repos' ⋯ menus aside.
+  expect(nav()?.querySelectorAll("button[aria-expanded]:not([aria-haspopup])").length).toBe(1)
 
   // The chevron folds them, and the fold is kept for this viewer.
   await step(() => chevron.click())

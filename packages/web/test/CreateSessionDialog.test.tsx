@@ -31,7 +31,7 @@ async function openDialog(withToken = true) {
 
 async function open(hub: InstanceType<typeof FakeHub>) {
   const client = new HubClient(hub, { retryDelay: () => 1 })
-  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/runners"] }))
+  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/archive"] }))
   const view = await render(
     <HubProvider client={client}>
       <RouterProvider router={router} />
@@ -264,7 +264,7 @@ test("leaves a branch git would refuse out of the Environment setup's search", a
 // URL asks for Claude Code. A model says its Harness, so only Claude Code's default needs it said.
 
 /** Opens New Session at `path` on a fake Hub whose only online Runner is pi-box, which runs both. */
-async function openOnPi(options: ConstructorParameters<typeof FakeHub>[0] = {}, path = "/runners") {
+async function openOnPi(options: ConstructorParameters<typeof FakeHub>[0] = {}, path = "/archive") {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, ...options })
   hub.patchRunner("r-studio", { isOnline: false })
   const client = new HubClient(hub, { retryDelay: () => 1 })
@@ -388,7 +388,7 @@ test("on a pi Runner without Models, says to connect a Provider on the Account p
 })
 
 test("?harness=claude-code preselects Claude Code, whatever the Account page says", async () => {
-  const opened = await openOnPi({ claudeHarness: "Pi" }, "/runners?harness=claude-code")
+  const opened = await openOnPi({ claudeHarness: "Pi" }, "/archive?harness=claude-code")
   await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Opus 5.5"))
   const sent = await startWith(opened)
   expect(sent).toMatchObject({ harness: "ClaudeCode" })
@@ -396,7 +396,7 @@ test("?harness=claude-code preselects Claude Code, whatever the Account page say
 })
 
 test("?harness=claude-code goes through the Environment setup of a Repo's first Session", async () => {
-  const { dialog, router, start } = await openOnPi({}, "/runners?harness=claude-code")
+  const { dialog, router, start } = await openOnPi({}, "/archive?harness=claude-code")
   await type(dialog, "Repo", "acme/fresh")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
   await step(() => start.click())

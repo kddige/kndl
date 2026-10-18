@@ -233,7 +233,7 @@ The authorization server refused the connection: invalid_client.
 
 ## A global Installation can't be changed
 
-**What you see.** On **MCP**, **Edit** and **Delete** are off for an Installation marked **Global**, or for its MCP server, or saving says:
+**What you see.** On **MCP servers**, **Edit** and **Delete** are off for an Installation marked **Global**, or for its MCP server, or saving says:
 
 ```
 Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it.

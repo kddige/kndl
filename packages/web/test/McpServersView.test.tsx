@@ -36,7 +36,7 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 
 const mcpServer = (name: string) => document.querySelector(`[aria-label="MCP server ${name}"]`)
 const mcpServersLink = () =>
-  [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "MCP")
+  [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "MCP servers")
 
 /** Types `value` into `field`, as a browser would, so React sees it. */
 async function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {

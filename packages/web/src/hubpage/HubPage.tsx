@@ -157,7 +157,7 @@ export function HubPage() {
         <Hub update={update} />
       ) : (
         <>
-          <PageHeader title="Hub" />
+          <PageHeader title="Updates" />
           <EmptyState
             size="page"
             icon={<UpdateIcon />}
@@ -256,7 +256,7 @@ function Hub({ update }: { update: HubUpdateState }) {
   return (
     <>
       <PageHeader
-        title="Hub"
+        title="Updates"
         description="The kndl this Hub runs, and updates on its Channel."
         actions={
           follows._tag === "Channel" && (

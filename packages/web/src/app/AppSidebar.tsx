@@ -7,7 +7,7 @@ import {
   sessionTitle,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
+import { Link, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { recentAgents } from "../hub/transcript.ts"
@@ -22,11 +22,9 @@ import {
   AgentStatus,
   ArchiveIcon,
   Avatar,
-  BoxIcon,
   CloseIcon,
   IconButton,
   InlineEdit,
-  KeyIcon,
   Menu,
   MenuGroup,
   MenuItem,
@@ -37,15 +35,12 @@ import {
   NavSlot,
   type NestedNavItems,
   PencilIcon,
-  PeopleIcon,
-  McpIcon,
   PlusIcon,
-  ServerIcon,
+  SettingsIcon,
   SessionStatus,
   Sidebar,
   Spinner,
   SunIcon,
-  UpdateIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -53,6 +48,9 @@ import { color, font, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
 import { counted, environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
+import { isSettingsPath, lastSettingsPath, useRememberPlace } from "./lastPlaces.ts"
+import { RepoMenu } from "./RepoMenu.tsx"
+import { SettingsSidebar } from "./SettingsSidebar.tsx"
 
 // Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
 const HOVER = "@media (hover: hover)"
@@ -66,11 +64,22 @@ const styles = stylex.create({
   },
   // Its count changes as Runners connect: figures of one width keep the line still.
   runners: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s2,
     paddingInline: space.s2,
-    color: color.textSecondary,
+    borderRadius: radius.sm,
+    color: { default: color.textSecondary, ":hover": color.text },
     fontSize: text.sm,
     fontVariantNumeric: "tabular-nums",
+    textDecoration: "none",
   },
+  runnersDot: (allOnline: boolean) => ({
+    width: "0.375rem",
+    height: "0.375rem",
+    borderRadius: radius.full,
+    backgroundColor: allOnline ? color.success : color.warning,
+  }),
   version: { fontFamily: font.mono, userSelect: "text" },
   you: {
     display: "flex",
@@ -110,22 +119,6 @@ const styles = stylex.create({
   },
 })
 
-/** The Hub-wide page the sidebar's general nav marks as current, from the path. */
-function sectionOf(
-  pathname: string,
-): "runners" | "environments" | "variables" | "mcpServers" | "archive" | "people" | "hub" | null {
-  if (pathname === "/runners") return "runners"
-  if (pathname === "/people") return "people"
-  if (pathname === "/hub") return "hub"
-  if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
-    return "environments"
-  if (pathname === "/variables") return "variables"
-  if (pathname === "/mcp") return "mcpServers"
-  if (pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname))
-    return "archive"
-  return null
-}
-
 /**
  * The app's sidebar: New Session, the Hub-wide pages, every listed Session under its Repo's name
  * in the order they were created, and the Runners and the signed-in person at the bottom. A
@@ -135,18 +128,16 @@ function sectionOf(
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hub = useHub()
-  const navigate = useNavigate()
   const sessions = useHubState((state) => state.sessions)
   const runners = useHubState((state) => state.runners)
   const you = useHubState((state) => state.you)
-  const owner = useHubState((state) => state.owner)
-  // Only a Hub that checks for a newer kndl sends its Owner the check, and has the Hub page.
-  const hubPage = useHubState((state) => state.owner && state.hubUpdate !== null)
   const hubVersion = useHubState((state) => state.hubVersion)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
   const { agent: agentId } = useSearch({ strict: false })
-  const section = sectionOf(pathname)
+  // Archived Sessions is the one Sessions page in the pinned rows; the rest are Settings'.
+  const archive = pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname)
+  useRememberPlace(pathname)
 
   const groups = useMemo(
     () => (sessions ? groupByRepo(sessions.filter(isListed)) : null),
@@ -166,9 +157,23 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   }, [sessionId, agentId])
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
 
+  // On a settings page, Settings takes the sidebar over (#398).
+  if (isSettingsPath(pathname)) return <SettingsSidebar {...(onClose && { onClose })} />
+
   return (
     <Sidebar
       label="Main"
+      aboveFooter={
+        // Settings is a place of its own; Archived Sessions lists Sessions, so it stays here.
+        <NavSection>
+          <NavItem render={<Link to={lastSettingsPath()} />} icon={<SettingsIcon />}>
+            Settings
+          </NavItem>
+          <NavItem render={<Link to="/archive" />} icon={<ArchiveIcon />} current={archive}>
+            Archived Sessions
+          </NavItem>
+        </NavSection>
+      }
       header={
         <>
           <Brand />
@@ -189,9 +194,11 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       footer={
         <>
           {runners && (
-            <p {...stylex.props(styles.runners)}>
+            // Ambient status that's also the way to the Runners.
+            <Link to="/runners" {...stylex.props(styles.runners, focus.ring)}>
+              <span {...stylex.props(styles.runnersDot(online === runners.length))} />
               {online} of {counted(runners.length, { one: "Runner", other: "Runners" })} online
-            </p>
+            </Link>
           )}
           {you && (
             <Menu
@@ -209,7 +216,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
               }
             >
               <MenuGroup label={`${you.name} (@${you.login})`}>
-                <MenuItem onClick={() => void navigate({ to: "/account" })}>Account</MenuItem>
+                <MenuItem render={<Link to="/account" />}>Account</MenuItem>
                 <MenuItem
                   onClick={() => {
                     void hub.transport.signOut().finally(() => hub.retry())
@@ -238,53 +245,6 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         </>
       }
     >
-      <NavSection>
-        <NavItem
-          render={<Link to="/runners" />}
-          icon={<ServerIcon />}
-          current={section === "runners"}
-        >
-          Runners
-        </NavItem>
-        <NavItem
-          render={<Link to="/environments" />}
-          icon={<BoxIcon />}
-          current={section === "environments"}
-        >
-          Environments
-        </NavItem>
-        <NavItem
-          render={<Link to="/variables" />}
-          icon={<KeyIcon />}
-          current={section === "variables"}
-        >
-          Shared variables
-        </NavItem>
-        <NavItem render={<Link to="/mcp" />} icon={<McpIcon />} current={section === "mcpServers"}>
-          MCP
-        </NavItem>
-        <NavItem
-          render={<Link to="/archive" />}
-          icon={<ArchiveIcon />}
-          current={section === "archive"}
-        >
-          Archived Sessions
-        </NavItem>
-        {owner && (
-          <NavItem
-            render={<Link to="/people" />}
-            icon={<PeopleIcon />}
-            current={section === "people"}
-          >
-            People
-          </NavItem>
-        )}
-        {hubPage && (
-          <NavItem render={<Link to="/hub" />} icon={<UpdateIcon />} current={section === "hub"}>
-            Hub
-          </NavItem>
-        )}
-      </NavSection>
       {groups === null ? (
         <NavSection>
           <li {...stylex.props(styles.note)}>
@@ -298,7 +258,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       ) : (
         // Each Repo is a section of its own, under its name.
         groups.map((group) => (
-          <NavSection key={group.repo} label={group.repo}>
+          <NavSection key={group.repo} label={group.repo} action={<RepoMenu repo={group.repo} />}>
             {group.sessions.map((session) => {
               const current = session.id === sessionId
               // The open Session's log, once it has come, has every agent the summary lists.

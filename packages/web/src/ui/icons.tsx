@@ -209,6 +209,17 @@ export function ServerIcon(props: IconProps) {
   )
 }
 
+/** Settings: your Providers and CLI tokens, and the Hub's (#398). */
+export function SettingsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4.5h6.5M12.5 4.5h1M2.5 11.5h1M7 11.5h6.5" />
+      <circle cx="10.75" cy="4.5" r="1.75" />
+      <circle cx="5.25" cy="11.5" r="1.75" />
+    </Icon>
+  )
+}
+
 /** People: the Hub's Members and Invites (#209). */
 export function PeopleIcon(props: IconProps) {
   return (
