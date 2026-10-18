@@ -38,6 +38,17 @@ export const literalConfigValue = (value: string) => {
 }
 
 /**
+ * What a Provider's sign-in refuses that its API keys take: pi-ai leaves these out itself only for
+ * a request it sees going to OpenAI directly (`isChatGPTSignIn`), never one to the Gateway.
+ */
+const signInCompat = {
+  supportsMaxOutputTokens: false,
+  supportsMidConvoEffort: false,
+  supportsLongCacheRetention: false,
+  supportsExplicitPromptCacheMode: false,
+}
+
+/**
  * pi's provider for each Provider among the Models the Hub lists, but Claude's, which runs
  * through the Claude bridge (see `registerClaude`): the built-in one, at the Gateway, with only
  * the listed Models, in the Hub's order.
@@ -59,9 +70,14 @@ export const gatewayProviders = (
   return [...listed].flatMap(([name, ids]) => {
     const baseUrl = `${hubUrl}${modelGatewayPath(name)}`
     const catalog = options.catalog(name)
+    const signedIn = (providers.signedIn ?? []).some((provider) => provider === name)
     const known = ids.flatMap((id) => {
       const model = catalog.find((entry) => entry.id === id)
-      return model === undefined ? [] : [{ ...model, baseUrl } as unknown as ProviderModelConfig]
+      if (model === undefined) return []
+      const compat = signedIn
+        ? { ...(model as { readonly compat?: object }).compat, ...signInCompat }
+        : (model as { readonly compat?: object }).compat
+      return [{ ...model, baseUrl, ...(compat !== undefined && { compat }) } as unknown as ProviderModelConfig]
     })
     if (known.length === 0) return []
     return [

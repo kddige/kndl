@@ -47,6 +47,24 @@ describe("the Gateway providers (ADR 0029)", () => {
     ])
   })
 
+  test("a Provider connected by a sign-in gets requests without the fields a sign-in refuses", () => {
+    // pi-ai leaves them out itself only for a request it sees going to OpenAI directly.
+    const [openai, xai] = gatewayProviders(
+      { ...listed, signedIn: ["openai"] },
+      { hubUrl: "http://hub.test", modToken: "t", catalog },
+    )
+    for (const model of openai?.config.models ?? []) {
+      expect(model.compat).toMatchObject({
+        supportsMaxOutputTokens: false,
+        supportsMidConvoEffort: false,
+        supportsLongCacheRetention: false,
+        supportsExplicitPromptCacheMode: false,
+      })
+    }
+    const builtin = catalog("xai").find((model) => model.id === "grok-4.3")
+    expect(xai?.config.models?.[0]?.compat).toEqual(builtin?.compat as never)
+  })
+
   test("a Provider none of whose Models pi knows isn't registered", () => {
     const registered = gatewayProviders(
       { models: [{ provider: "xai", id: "grok-zz", label: "?", thinkingLevels: [] }] },

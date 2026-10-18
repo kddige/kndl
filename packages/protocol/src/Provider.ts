@@ -274,5 +274,11 @@ export type ProviderMessage = typeof ProviderMessage.Type
  */
 export const ModProviders = Schema.Struct({
   models: Schema.Array(ProviderModel),
+  /**
+   * The Providers among them connected by a sign-in: their APIs refuse some request fields that
+   * an API key's take, which pi leaves out only for a request it sees going to the Provider
+   * directly.
+   */
+  signedIn: Schema.optionalKey(Schema.Array(ProviderId)),
 })
 export type ModProviders = typeof ModProviders.Type
