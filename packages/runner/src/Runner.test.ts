@@ -858,7 +858,7 @@ describe("Sessions", () => {
       {
         _tag: "SandboxNote",
         sessionId: "s-1",
-        message: expect.stringContaining("couldn't resume its conversation"),
+        message: expect.stringContaining("couldn't resume a conversation it didn't have"),
       },
     ])
   })

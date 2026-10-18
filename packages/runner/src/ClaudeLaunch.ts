@@ -47,8 +47,8 @@ export interface ClaudeLaunchOptions {
   readonly mcpServers?: ReadonlyArray<GatewayServer>
 }
 
-/** The thinking levels Claude Code's `--effort` takes. */
-const claudeEfforts: ReadonlySet<ThinkingLevel> = new Set(["low", "medium", "high", "xhigh", "max"])
+/** The thinking levels Claude Code's `--effort` takes, lowest first. */
+export const ClaudeEfforts: ReadonlyArray<ThinkingLevel> = ["low", "medium", "high", "xhigh", "max"]
 
 export interface ClaudeLaunch {
   readonly argv: ReadonlyArray<string>
@@ -87,7 +87,7 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ),
       "--dangerously-skip-permissions",
       ...(options.model === undefined ? [] : ["--model", options.model]),
-      ...(options.thinkingLevel !== undefined && claudeEfforts.has(options.thinkingLevel)
+      ...(options.thinkingLevel !== undefined && ClaudeEfforts.includes(options.thinkingLevel)
         ? ["--effort", options.thinkingLevel]
         : []),
     ],

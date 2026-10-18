@@ -573,7 +573,7 @@ export class Sessions extends Context.Service<
         const rows = yield* sql<{ readonly conversationId: string | null }>`
           SELECT conversation_id AS conversationId FROM sessions WHERE id = ${id}
         `
-        // One recorded before only plain names decoded may not be one: then it is unknown.
+        // One recorded before conversation ids were checked may not be one: then it is unknown.
         return Option.flatMap(Option.fromNullishOr(rows[0]?.conversationId), decodeConversationId)
       })
 

@@ -259,11 +259,11 @@ export const SessionsLive = Layer.effect(
           return { _tag: "New", id: randomUUID() } as const
         }
         const id = request.resume
-        const claudes = ClaudeSessionIdPattern.test(id)
-        if (claudes && (yield* sandboxes.hasTranscript(request.sessionId, directories, id)))
+        const isClaudeId = ClaudeSessionIdPattern.test(id)
+        if (isClaudeId && (yield* sandboxes.hasTranscript(request.sessionId, directories, id)))
           return { _tag: "Resume", id } as const
         yield* Effect.logWarning(
-          claudes
+          isClaudeId
             ? `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id}, ` +
                 "so it starts a new one with that id instead of resuming it"
             : `Session ${request.sessionId}: conversation ${id} isn't Claude Code's, ` +
@@ -272,12 +272,14 @@ export const SessionsLive = Layer.effect(
         yield* hub.send(
           RunnerToHub.cases.SandboxNote.make({
             sessionId: request.sessionId,
-            message:
-              "Claude Code couldn't resume its conversation, which it has no transcript of, so it " +
-              "started a new one: it doesn't remember what was said above.",
+            message: isClaudeId
+              ? "Claude Code couldn't resume its conversation, which it has no transcript of, so " +
+                "it started a new one: it doesn't remember what was said above."
+              : "Claude Code couldn't resume a conversation it didn't have, so it started a new " +
+                "one: it doesn't remember what was said above.",
           }),
         )
-        return { _tag: "New", id: claudes ? id : randomUUID() } as const
+        return { _tag: "New", id: isClaudeId ? id : randomUUID() } as const
       })
 
     /**
@@ -373,11 +375,11 @@ export const SessionsLive = Layer.effect(
       )
 
     /**
-     * Starts a running Session's Claude Code again with the model and thinking level the Hub sends (#128),
-     * resuming its conversation: Claude Code exits as on a stop and starts in a new tmux session,
-     * while its Sandbox stays as it is, on its Creator's setup token fetched again. The Hub sends
-     * it only while no Turn runs. A Claude Code that won't start again, as when the Hub refuses
-     * the setup token, leaves the Session as a failed start does, asleep.
+     * Starts a running Session's Claude Code again with the model and thinking level the Hub sends
+     * (#128), resuming its conversation: Claude Code exits as on a stop and starts in a new tmux
+     * session, while its Sandbox stays as it is, on its Creator's setup token fetched again. The
+     * Hub sends it only while no Turn runs. A Claude Code that won't start again, as when the Hub
+     * refuses the setup token, leaves the Session as a failed start does, asleep.
      */
     const relaunch = (request: RelaunchSession) =>
       serialized(request.sessionId)(

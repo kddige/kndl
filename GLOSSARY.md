@@ -70,6 +70,10 @@ _Avoid_: integration, linked account, API key (alone), Installation
 One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it, to any Provider's, between Turns, and the conversation carries over.
 _Avoid_: engine, LLM, backend
 
+**Thinking level**:
+How hard a Session's Model thinks before it answers, from Off to Max, set with its Model. With none set, the Harness picks.
+_Avoid_: effort, reasoning effort
+
 ## Who gets in
 
 **Member**:

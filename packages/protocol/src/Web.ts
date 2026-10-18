@@ -128,8 +128,9 @@ export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
 export type SandboxNoted = typeof SandboxNoted.Type
 
 /**
- * A Participant changed the Session's model or thinking level (#128): what it is set to now, which its
- * Claude Code runs from the next Turn on. An absent `model` or `thinkingLevel` is Claude Code's default.
+ * A Participant changed the Session's model or thinking level (#128): what it is set to now, which
+ * its Claude Code runs from the next Turn on. An absent `model` or `thinkingLevel` is Claude Code's
+ * default.
  */
 export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
   by: Participant,
@@ -191,8 +192,8 @@ export type WebHello = typeof WebHello.Type
 /**
  * Start a new Session on a Repo, on a branch (ADR 0023): an existing one, directly or on a new
  * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is named. A
- * `model` or `thinkingLevel` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
- * default is used (#128).
+ * `model` or `thinkingLevel` the Runner's Claude Code doesn't take is refused; absent, Claude Code's
+ * own default is used (#128).
  */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
   requestId: RequestId,
@@ -353,12 +354,12 @@ export const RenameSession = Schema.TaggedStruct("RenameSession", {
 export type RenameSession = typeof RenameSession.Type
 
 /**
- * Set the Session's model and thinking level (#128), both at once; an absent one is Claude Code's default.
- * Anyone with access to its Repo may, in any state but Archived. A model or thinking level the Runner's
- * Claude Code doesn't take is refused, a model as Claude Code refuses it (`Model 'x' not found`).
- * Every client that can see the Session gets a SessionUpdated, and its log a ModelSwitched. A
- * running Turn goes on as it is: Claude Code is restarted with the new setting once no Turn runs,
- * or starts with it when the Session next wakes.
+ * Set the Session's model and thinking level (#128), both at once; an absent one is Claude Code's
+ * default. Anyone with access to its Repo may, in any state but Archived. A model or thinking level
+ * the Runner's Claude Code doesn't take is refused, a model as Claude Code refuses it (`Model 'x'
+ * not found`). Every client that can see the Session gets a SessionUpdated, and its log a
+ * ModelSwitched. A running Turn goes on as it is: Claude Code is restarted with the new setting
+ * once no Turn runs, or starts with it when the Session next wakes.
  */
 export const SetSessionModel = Schema.TaggedStruct("SetSessionModel", {
   sessionId: SessionId,

@@ -527,8 +527,8 @@ export const SessionSummary = Schema.Struct({
   /** Its thinking level (#128): absent for Claude Code's default. */
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**
-   * Present while its Claude Code still runs on the model and thinking level from before it was changed:
-   * they apply once no Turn runs, when the Hub restarts Claude Code with them.
+   * Present while its Claude Code still runs on the model and thinking level from before it was
+   * changed: they apply once no Turn runs, when the Hub restarts Claude Code with them.
    */
   modelPending: Schema.optionalKey(Schema.Literal(true)),
   /**

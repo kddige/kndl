@@ -1,10 +1,11 @@
 import type { ModelOption, RunnerModels, ThinkingLevel } from "@kndl/protocol"
 import { ThinkingLevels } from "@kndl/protocol"
 import { Config, Context, Data, Effect, Layer } from "effect"
+import { ClaudeEfforts } from "./ClaudeLaunch.ts"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
-// Which models and thinking levels a Session's Claude Code takes (#128), for the Runner's hello: the
-// Hub offers its Sessions those, and refuses others.
+// Which models and thinking levels a Session's Claude Code takes (#128), for the Runner's hello:
+// the Hub offers its Sessions those, and refuses others.
 //
 // Sessions run the pinned build of Claude Code in their Sandboxes (ADR 0013), so what they take
 // is known with the build: PinnedClaudeModels says it, and the Runner's host needs no Claude Code
@@ -84,7 +85,7 @@ export const PinnedClaudeModels: RunnerModels = {
       reasoning: true,
     },
   ],
-  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+  thinkingLevels: ClaudeEfforts,
 }
 
 /** The flags every probe runs Claude Code with: no settings, no conversation kept, events out. */

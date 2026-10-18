@@ -378,9 +378,9 @@ export class HubClient {
   }
 
   /**
-   * Sets the model and thinking level a Session runs, for everyone in it (#128); an absent one is Claude
-   * Code's default. A running Turn finishes on the old one: the new one runs from the next Turn.
-   * Every open tab gets the change as a SessionUpdated, and the transcript a ModelSwitched.
+   * Sets the model and thinking level a Session runs, for everyone in it (#128); an absent one is
+   * Claude Code's default. A running Turn finishes on the old one: the new one runs from the next
+   * Turn. Every open tab gets the change as a SessionUpdated, and the transcript a ModelSwitched.
    */
   setSessionModel(
     sessionId: SessionId,
