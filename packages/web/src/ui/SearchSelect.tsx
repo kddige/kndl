@@ -24,6 +24,11 @@ export interface SearchSelectGroup {
 export interface SearchSelectProps {
   /** The button that opens it, usually a Button showing what is picked. */
   trigger: ReactElement
+  /**
+   * The trigger's accessible name: a combobox never takes it from its content. Where the trigger
+   * shows the value, include it, so the visible text stays part of the name: `Model: Opus 5.5`.
+   */
+  label: string
   groups: ReadonlyArray<SearchSelectGroup>
   /** The value picked; none of the options' leaves none checked. */
   value: string | undefined
@@ -40,12 +45,15 @@ export interface SearchSelectProps {
   sx?: stylex.StyleXStyles
 }
 
+// iOS zooms the page into a focused field under 16px, so the filter is 16px on touch screens.
+const TOUCH = "@media (pointer: coarse)"
+
 const styles = stylex.create({
   popup: {
     display: "flex",
     flexDirection: "column",
     width: "18rem",
-    maxWidth: "calc(100vw - 2rem)",
+    maxWidth: "min(18rem, var(--available-width))",
     maxHeight: "min(24rem, var(--available-height))",
   },
   // A long list keeps its height as typing narrows it, so the search field stays where it is,
@@ -60,7 +68,7 @@ const styles = stylex.create({
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   input: {
     flex: 1,
@@ -71,9 +79,9 @@ const styles = stylex.create({
     backgroundColor: "transparent",
     color: color.text,
     fontFamily: font.sans,
-    fontSize: text.base,
+    fontSize: { default: text.base, [TOUCH]: text.lg },
     outline: "none",
-    "::placeholder": { color: color.textSubtle },
+    "::placeholder": { color: color.textTertiary },
   },
   list: {
     flex: 1,
@@ -87,7 +95,7 @@ const styles = stylex.create({
     position: "sticky",
     top: `calc(${space.s1} * -1)`,
     zIndex: 1,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
   },
   label: {
     flex: 1,
@@ -101,7 +109,7 @@ const styles = stylex.create({
     margin: 0,
     paddingBlock: space.s3,
     paddingInline: space.s3,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
 })
@@ -135,6 +143,7 @@ export function searchGroups(
  */
 export function SearchSelect({
   trigger,
+  label,
   groups,
   value,
   onValueChange,
@@ -167,7 +176,7 @@ export function SearchSelect({
       }}
       autoHighlight
     >
-      <BaseCombobox.Trigger render={trigger} />
+      <BaseCombobox.Trigger render={trigger} aria-label={label} />
       <BaseCombobox.Portal>
         <BaseCombobox.Positioner
           side={side}

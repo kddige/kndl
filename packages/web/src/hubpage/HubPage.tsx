@@ -22,7 +22,7 @@ import type {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type ReactNode, useEffect, useState } from "react"
-import { day, timeAgo } from "../app/format.ts"
+import { counted, day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import {
   Badge,
@@ -33,14 +33,20 @@ import {
   ExternalLinkIcon,
   LogView,
   Markdown,
-  PageHeader,
+  PropertyRow,
   RestartIcon,
+  SettingsEmpty,
+  SettingsItem,
+  SettingsList,
+  SettingsPage,
+  SettingsSection,
   Spinner,
   toast,
   UpdateIcon,
+  textRole,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { focus, textLink } from "../ui/shared.ts"
+import { color, font, leading, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   channelChangeText,
   drainingRunners,
@@ -55,50 +61,9 @@ import {
 const startingMillis = 60_000
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s6,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
-  card: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s3,
-    paddingBlock: space.s4,
-    paddingInline: space.s4,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-  },
-  facts: {
-    display: "grid",
-    gridTemplateColumns: "max-content 1fr",
-    columnGap: space.s6,
-    rowGap: space.s2,
-    margin: 0,
-    fontSize: text.sm,
-  },
-  term: { color: color.textMuted },
-  value: { margin: 0, minWidth: 0, overflowWrap: "anywhere" },
-  channel: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   mono: { fontFamily: font.mono },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
-  failedTitle: { color: color.dangerSubtleText },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
+  failedTitle: { color: color.dangerText },
   headline: {
     display: "flex",
     flexWrap: "wrap",
@@ -107,8 +72,8 @@ const styles = stylex.create({
     gap: space.s3,
   },
   headlineText: { display: "flex", flexDirection: "column", gap: space.s1, minWidth: 0 },
-  headlineTitle: { margin: 0, fontSize: text.md, fontWeight: weight.semibold },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  headlineTitle: { margin: 0 },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   /** Update, beside the link to GitHub. */
   actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   link: {
@@ -118,30 +83,17 @@ const styles = stylex.create({
     color: color.text,
     fontSize: text.sm,
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
-    textDecorationColor: color.borderStrong,
     whiteSpace: "nowrap",
   },
-  release: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s3,
-    paddingTop: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
+  release: { display: "flex", flexDirection: "column", gap: space.s2 },
   releaseTitle: {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "baseline",
     gap: space.s2,
     margin: 0,
-    fontSize: text.base,
-    fontWeight: weight.semibold,
   },
-  releaseDate: { color: color.textMuted, fontSize: text.sm, fontWeight: weight.normal },
+  releaseDate: { color: color.textSecondary, fontSize: text.sm, fontWeight: weight.normal },
   commits: {
     display: "flex",
     flexDirection: "column",
@@ -152,7 +104,7 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   commit: { display: "flex", gap: space.s3, minWidth: 0 },
-  sha: { flexShrink: 0, color: color.textMuted, fontFamily: font.mono },
+  sha: { flexShrink: 0, color: color.textSecondary, fontFamily: font.mono },
   title: { minWidth: 0, overflowWrap: "anywhere" },
   loading: { display: "flex", alignItems: "center", gap: space.s2 },
 })
@@ -160,30 +112,25 @@ const styles = stylex.create({
 export function HubPage() {
   const owner = useHubState((state) => state.owner)
   const update = useHubState((state) => state.hubUpdate)
-  return (
-    <main {...stylex.props(styles.view)}>
-      {owner && update !== null ? (
-        <Hub update={update} />
-      ) : (
-        <>
-          <PageHeader title="Hub" />
-          <EmptyState
-            size="page"
-            icon={<UpdateIcon />}
-            {...(owner
-              ? {
-                  title: "This Hub doesn't check for updates",
-                  description:
-                    "Only a Hub that kndl's service runs from its install checks GitHub for a newer kndl. Update this one where it runs.",
-                }
-              : {
-                  title: "Only the Hub's Owner sees this page",
-                  description: "It says which kndl the Hub runs, and whether a newer one is out.",
-                })}
-          />
-        </>
-      )}
-    </main>
+  return owner && update !== null ? (
+    <Hub update={update} />
+  ) : (
+    <SettingsPage title="Updates">
+      <EmptyState
+        size="page"
+        icon={<UpdateIcon />}
+        {...(owner
+          ? {
+              title: "This Hub doesn't check for updates",
+              description:
+                "Only a Hub that kndl's service runs from its install checks GitHub for a newer kndl. Update this one where it runs.",
+            }
+          : {
+              title: "Only the Hub's Owner sees this page",
+              description: "It says which kndl the Hub runs, and whether a newer one is out.",
+            })}
+      />
+    </SettingsPage>
   )
 }
 
@@ -262,122 +209,106 @@ function Hub({ update }: { update: HubUpdateState }) {
     }
   }
 
+  const updateButton = updating ? null : (
+    <Button
+      size="sm"
+      intent="primary"
+      icon={<UpdateIcon />}
+      onClick={() => setConfirming({ _tag: "Update" })}
+    >
+      Update
+    </Button>
+  )
   return (
-    <>
-      <PageHeader
-        title="Hub"
-        description="The kndl this Hub runs, and whether a newer one is out on its Channel. The Hub checks GitHub every 6 hours."
-        actions={
-          follows._tag === "Channel" && (
-            <Button
-              size="sm"
-              icon={<RestartIcon />}
-              loading={checking}
-              onClick={() => void checkNow()}
+    <SettingsPage title="Updates" description="The kndl this Hub runs, and updates on its Channel.">
+      <SettingsSection title="This Hub">
+        <SettingsList label="This Hub">
+          <PropertyRow label="Version">
+            <span {...stylex.props(styles.mono)}>{versionText(version, follows)}</span>
+          </PropertyRow>
+          <PropertyRow label="Channel" description={followsText(follows)}>
+            <ChannelPicker
+              follows={follows}
+              disabled={updating}
+              onPick={(to) => setConfirming({ _tag: "Channel", to })}
+            />
+          </PropertyRow>
+          {follows._tag === "Channel" && (
+            <PropertyRow
+              label="Last checked"
+              description={checked === undefined ? "Not yet" : timeAgo(checked.at, now)}
             >
-              Check now
-            </Button>
-          )
-        }
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          <section aria-labelledby="this-hub" {...stylex.props(styles.section)}>
-            <h2 id="this-hub" {...stylex.props(styles.sectionTitle)}>
-              This Hub
-            </h2>
-            <div {...stylex.props(styles.card)}>
-              <dl {...stylex.props(styles.facts)}>
-                <dt {...stylex.props(styles.term)}>Version</dt>
-                <dd {...stylex.props(styles.value, styles.mono)}>
-                  {versionText(version, follows)}
-                </dd>
-                <dt {...stylex.props(styles.term)}>Channel</dt>
-                <dd {...stylex.props(styles.value)}>
-                  <ChannelPicker
-                    follows={follows}
-                    disabled={updating}
-                    onPick={(to) => setConfirming({ _tag: "Channel", to })}
-                  />
-                </dd>
-                {follows._tag === "Channel" && (
-                  <>
-                    <dt {...stylex.props(styles.term)}>Last checked</dt>
-                    <dd {...stylex.props(styles.value)}>
-                      {checked === undefined ? "Not yet" : timeAgo(checked.at, now)}
-                    </dd>
-                  </>
-                )}
-              </dl>
-              {failure !== undefined && (
-                <p role="alert" {...stylex.props(styles.error)}>
-                  The check {timeAgo(failure.at, now)} failed: {failure.message}
-                </p>
-              )}
-            </div>
-          </section>
-          {(run !== null || updating) && (
-            <section aria-labelledby="latest-update" {...stylex.props(styles.section)}>
-              <h2 id="latest-update" {...stylex.props(styles.sectionTitle)}>
-                Latest update
-              </h2>
-              <div {...stylex.props(styles.card)}>
-                <LatestUpdate
-                  run={started || awaiting === null ? run : null}
-                  now={now}
-                  draining={draining}
-                  onStopTurns={() => setConfirming({ _tag: "StopTurns" })}
-                />
-              </div>
-            </section>
+              <Button
+                size="sm"
+                icon={<RestartIcon />}
+                loading={checking}
+                onClick={() => void checkNow()}
+              >
+                Check now
+              </Button>
+            </PropertyRow>
           )}
-          <section aria-labelledby="update" {...stylex.props(styles.section)}>
-            <h2 id="update" {...stylex.props(styles.sectionTitle)}>
-              Update
-            </h2>
-            <div {...stylex.props(styles.card)}>
-              {follows._tag === "Pinned" ? (
-                <p {...stylex.props(styles.note)}>
-                  This Hub is pinned to {follows.ref}, so no update is offered. Pick a Channel above
-                  to follow one again.
-                </p>
-              ) : checked === undefined ? (
-                failure === undefined ? (
-                  <div {...stylex.props(styles.loading, styles.note)}>
-                    <Spinner size="sm" /> Checking GitHub for a newer kndl…
-                  </div>
-                ) : (
-                  <p {...stylex.props(styles.note)}>
-                    The Hub couldn't tell whether a newer kndl is out. See the{" "}
-                    <ExternalLink href="https://github.com/kddige/kndl/releases">
-                      Releases on GitHub
-                    </ExternalLink>
-                    .
-                  </p>
-                )
-              ) : (
-                <Found
-                  found={checked.found}
-                  channel={follows.channel}
-                  version={version}
-                  action={
-                    updating ? null : (
-                      <Button
-                        size="sm"
-                        intent="primary"
-                        icon={<UpdateIcon />}
-                        onClick={() => setConfirming({ _tag: "Update" })}
-                      >
-                        Update
-                      </Button>
-                    )
-                  }
-                />
-              )}
-            </div>
-          </section>
-        </div>
-      </div>
+        </SettingsList>
+        {failure !== undefined && (
+          <p role="alert" {...stylex.props(styles.error)}>
+            The check {timeAgo(failure.at, now)} failed: {failure.message}
+          </p>
+        )}
+      </SettingsSection>
+      {(run !== null || updating) && (
+        <SettingsSection title="Latest update">
+          <SettingsList label="Latest update">
+            <SettingsItem>
+              <LatestUpdate
+                run={started || awaiting === null ? run : null}
+                now={now}
+                draining={draining}
+                onStopTurns={() => setConfirming({ _tag: "StopTurns" })}
+              />
+            </SettingsItem>
+          </SettingsList>
+        </SettingsSection>
+      )}
+      {follows._tag === "Pinned" ? (
+        <SettingsSection title="Releases">
+          <SettingsEmpty
+            title={`Pinned to ${follows.ref}`}
+            description="No update is offered. Pick a Channel above to follow one again."
+          />
+        </SettingsSection>
+      ) : checked === undefined ? (
+        <SettingsSection title={follows.channel === "dev" ? "Commits on main" : "Releases"}>
+          {failure === undefined ? (
+            <SettingsEmpty
+              title={
+                <span {...stylex.props(styles.loading)}>
+                  <Spinner size="sm" /> Checking GitHub for a newer kndl…
+                </span>
+              }
+            />
+          ) : (
+            <SettingsEmpty
+              title="The Hub couldn't tell whether a newer kndl is out"
+              description={
+                <>
+                  See the{" "}
+                  <ExternalLink href="https://github.com/kddige/kndl/releases">
+                    Releases on GitHub
+                  </ExternalLink>
+                  .
+                </>
+              }
+            />
+          )}
+        </SettingsSection>
+      ) : (
+        <Found
+          found={checked.found}
+          channel={follows.channel}
+          version={version}
+          action={updateButton}
+        />
+      )}
       <UpdateDialog
         open={confirming?._tag === "Update"}
         found={checked?.found}
@@ -396,7 +327,7 @@ function Hub({ update }: { update: HubUpdateState }) {
         runners={draining}
         onClose={() => setConfirming(null)}
       />
-    </>
+    </SettingsPage>
   )
 }
 
@@ -419,16 +350,11 @@ function ChannelPicker({
       : follows.channel === "stable"
         ? ["dev"]
         : ["stable"]
-  return (
-    <span {...stylex.props(styles.channel)}>
-      {followsText(follows)}
-      {others.map((to) => (
-        <Button key={to} size="sm" intent="ghost" disabled={disabled} onClick={() => onPick(to)}>
-          {follows._tag === "Pinned" ? `Follow ${to}` : `Switch to ${to}`}
-        </Button>
-      ))}
-    </span>
-  )
+  return others.map((to) => (
+    <Button key={to} size="sm" disabled={disabled} onClick={() => onPick(to)}>
+      {follows._tag === "Pinned" ? `Follow ${to}` : `Switch to ${to}`}
+    </Button>
+  ))
 }
 
 /**
@@ -458,7 +384,7 @@ function LatestUpdate({
           : runTitle(run)
     return (
       <div role="status" {...stylex.props(styles.headlineText)}>
-        <p {...stylex.props(styles.loading, styles.headlineTitle)}>
+        <p {...stylex.props(textRole.subheading, styles.loading, styles.headlineTitle)}>
           <Spinner size="sm" /> {title}
         </p>
         <p {...stylex.props(styles.note)}>
@@ -478,7 +404,13 @@ function LatestUpdate({
     <>
       <div {...stylex.props(styles.headline)}>
         <div role="status" {...stylex.props(styles.headlineText)}>
-          <p {...stylex.props(styles.headlineTitle, failed && styles.failedTitle)}>
+          <p
+            {...stylex.props(
+              textRole.subheading,
+              styles.headlineTitle,
+              failed && styles.failedTitle,
+            )}
+          >
             {runTitle(run)}
           </p>
           <p {...stylex.props(styles.note)}>
@@ -725,7 +657,10 @@ function StopTurnsDialog({
   )
 }
 
-/** What the last check that worked found, with what changed, and Update when it is newer. */
+/**
+ * What the last check that worked found, as its section: up to date, or what changed, with Update
+ * when it is newer. Releases on stable, main's commits on dev.
+ */
 function Found({
   found,
   channel,
@@ -737,90 +672,104 @@ function Found({
   version: BuildVersion | null
   action: ReactNode
 }) {
+  const title = channel === "dev" ? "Commits on main" : "Releases"
   switch (found._tag) {
     case "UpToDate":
       return (
-        <div {...stylex.props(styles.headlineText)}>
-          <p {...stylex.props(styles.headlineTitle)}>kndl is up to date</p>
-          <p {...stylex.props(styles.note)}>
-            {channel === "dev"
-              ? "This Hub runs the head of main."
-              : version !== null && version.release === undefined
-                ? onStableNote
-                : "This Hub runs the newest Release."}
-          </p>
-        </div>
+        <SettingsSection title={title}>
+          <SettingsEmpty
+            title="kndl is up to date"
+            description={
+              channel === "dev"
+                ? "This Hub runs the head of main."
+                : version !== null && version.release === undefined
+                  ? onStableNote
+                  : "This Hub runs the newest Release."
+            }
+          />
+        </SettingsSection>
       )
     case "NewerRelease": {
       const [newest] = found.releases
       const count = found.releases.length
       return (
-        <>
-          <Headline
-            title={`kndl ${newest.version} is out`}
-            note={
-              count === 1
-                ? "One Release is newer than this Hub's."
-                : `${count} Releases are newer than this Hub's, newest first.`
-            }
-            href={found.compareUrl}
-            link="Compare on GitHub"
-            action={action}
-          />
-          {found.releases.map((release) => (
-            <Release key={release.version} release={release} />
-          ))}
-        </>
+        <SettingsSection
+          title={title}
+          note={
+            count === 1
+              ? "One Release is newer than this Hub's."
+              : `${count} Releases are newer than this Hub's, newest first.`
+          }
+        >
+          <SettingsList label="Newer Releases">
+            <SettingsItem>
+              <Headline
+                title={`kndl ${newest.version} is out`}
+                href={found.compareUrl}
+                link="Compare on GitHub"
+                action={action}
+              />
+            </SettingsItem>
+            {found.releases.map((release) => (
+              <SettingsItem key={release.version}>
+                <Release release={release} />
+              </SettingsItem>
+            ))}
+          </SettingsList>
+        </SettingsSection>
       )
     }
     case "NewerCommits":
       return (
-        <>
-          <Headline
-            title={`main is ${found.behindBy === 1 ? "1 commit" : `${found.behindBy} commits`} ahead`}
-            note={
-              found.behindBy > found.commits.length
-                ? `The newest ${found.commits.length}, newest first.`
-                : "Newest first."
-            }
-            href={found.compareUrl}
-            link="Compare on GitHub"
-            action={action}
-          />
-          <ul aria-label="Commits since this Hub's" {...stylex.props(styles.commits)}>
-            {found.commits.map((commit) => (
-              <Commit key={commit.commit} commit={commit} />
-            ))}
-          </ul>
-          {found.behindBy > found.commits.length && (
-            <p {...stylex.props(styles.note)}>
-              And {found.behindBy - found.commits.length} more on GitHub.
-            </p>
-          )}
-        </>
+        <SettingsSection
+          title={title}
+          note={
+            found.behindBy > found.commits.length
+              ? `The newest ${found.commits.length}, newest first.`
+              : "Newest first."
+          }
+        >
+          <SettingsList label="Newer commits">
+            <SettingsItem>
+              <Headline
+                title={`main is ${counted(found.behindBy, { one: "commit", other: "commits" })} ahead`}
+                href={found.compareUrl}
+                link="Compare on GitHub"
+                action={action}
+              />
+            </SettingsItem>
+            <SettingsItem>
+              <ul aria-label="Commits since this Hub's" {...stylex.props(styles.commits)}>
+                {found.commits.map((commit) => (
+                  <Commit key={commit.commit} commit={commit} />
+                ))}
+              </ul>
+              {found.behindBy > found.commits.length && (
+                <p {...stylex.props(styles.note)}>
+                  And {found.behindBy - found.commits.length} more on GitHub.
+                </p>
+              )}
+            </SettingsItem>
+          </SettingsList>
+        </SettingsSection>
       )
   }
 }
 
 function Headline({
   title,
-  note,
   href,
   link,
   action,
 }: {
   title: string
-  note: string
   href: string
   link: string
   action: ReactNode
 }) {
   return (
     <div {...stylex.props(styles.headline)}>
-      <div {...stylex.props(styles.headlineText)}>
-        <p {...stylex.props(styles.headlineTitle)}>{title}</p>
-        <p {...stylex.props(styles.note)}>{note}</p>
-      </div>
+      <p {...stylex.props(textRole.subheading, styles.headlineTitle)}>{title}</p>
       <div {...stylex.props(styles.actions)}>
         <ExternalLink href={href}>{link}</ExternalLink>
         {action}
@@ -832,7 +781,7 @@ function Headline({
 function Release({ release }: { release: ReleaseNotes }) {
   return (
     <article aria-label={release.version} {...stylex.props(styles.release)}>
-      <h3 {...stylex.props(styles.releaseTitle)}>
+      <h3 {...stylex.props(textRole.subheading, styles.releaseTitle)}>
         {release.version}
         {release.publishedAt !== undefined && (
           <span {...stylex.props(styles.releaseDate)}>{day(release.publishedAt)}</span>
@@ -864,7 +813,7 @@ function ExternalLink({ href, children }: { href: string; children: string }) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      {...stylex.props(styles.link, focus.ring)}
+      {...stylex.props(textLink.underline, styles.link, focus.ring)}
     >
       {children}
       <ExternalLinkIcon aria-hidden="true" />

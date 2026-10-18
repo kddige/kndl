@@ -3,7 +3,7 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { CheckIcon, ChevronUpDownIcon } from "./icons.tsx"
 import { focus, popup } from "./shared.ts"
-import { color, control, motion, radius, shadow, space, text } from "./tokens.stylex.ts"
+import { color, control, motion, radius, space, text } from "./tokens.stylex.ts"
 
 export interface SelectOption<Value extends string> {
   value: Value
@@ -30,6 +30,9 @@ export interface SelectProps<Value extends string> {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   trigger: {
     display: "inline-flex",
@@ -43,16 +46,15 @@ const styles = stylex.create({
     paddingInlineEnd: space.s2,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: color.borderStrong, "[data-invalid]": color.danger },
+    borderColor: { default: color.borderControl, "[data-invalid]": color.danger },
     borderRadius: radius.md,
     backgroundColor: {
       default: color.surface,
-      ":hover:not([data-disabled])": color.surfaceHover,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.surfaceHover },
       "[data-popup-open]": color.surfaceHover,
       "[data-disabled]": color.surfaceMuted,
     },
-    boxShadow: shadow.sm,
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
+    color: { default: color.text, "[data-disabled]": color.textDisabled },
     fontFamily: "inherit",
     fontSize: text.base,
     lineHeight: 1,
@@ -76,12 +78,12 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
   },
   placeholder: {
-    color: color.textSubtle,
+    color: color.textTertiary,
   },
   icon: {
     display: "inline-flex",
     flexShrink: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   popup: {
     minWidth: "var(--anchor-width)",

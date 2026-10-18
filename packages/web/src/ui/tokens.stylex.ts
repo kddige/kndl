@@ -9,63 +9,95 @@
 import * as stylex from "@stylexjs/stylex"
 
 const DARK = "@media (prefers-color-scheme: dark)"
+const MORE = "@media (prefers-contrast: more)"
+const DARK_MORE = "@media (prefers-color-scheme: dark) and (prefers-contrast: more)"
 const REDUCED_MOTION = "@media (prefers-reduced-motion: reduce)"
+
+// Values two roles share because they mean the same thing, declared once so they can't drift apart:
+// a Session that's Active is green like success, an Archived one is muted like the chrome, the
+// light labels on solid fills are one colour, and a Switch's thumb is a surface or the text.
+const light = {
+  surface: "oklch(99.5% 0.004 85)",
+  text: "oklch(24% 0.018 47)",
+  surfaceMuted: "oklch(96.3% 0.01 82)",
+  textSecondary: "oklch(47% 0.024 55)",
+  textTertiary: "oklch(53.5% 0.022 60)",
+  onFill: "oklch(98.5% 0.012 85)",
+  success: "oklch(61% 0.145 150)",
+  successTint: "oklch(95.8% 0.03 150)",
+  successText: "oklch(42% 0.105 152)",
+}
 
 const lightColor = {
   // Surfaces
   bg: "oklch(97.9% 0.009 85)",
-  surface: "oklch(99.5% 0.004 85)",
-  surfaceMuted: "oklch(96.3% 0.01 82)",
+  surface: light.surface,
+  surfaceMuted: light.surfaceMuted,
   surfaceHover: "oklch(94.7% 0.012 80)",
   surfaceActive: "oklch(92.3% 0.015 78)",
+  // Overlays: menus, popovers, dialogs, toasts. In light, the page's surface and a shadow.
+  surfaceRaised: light.surface,
+  // A photo's edge: plain black, so no palette tint fringes it.
+  imageOutline: "oklch(0 0 0 / 0.1)",
   surfaceInverse: "oklch(25% 0.018 48)",
   overlay: "oklch(22% 0.02 45 / 0.32)",
 
   // Text
-  text: "oklch(24% 0.018 47)",
-  textMuted: "oklch(47% 0.024 55)",
-  textSubtle: "oklch(53.5% 0.022 60)",
+  text: light.text,
+  textSecondary: light.textSecondary,
+  textTertiary: light.textTertiary,
+  textDisabled: "oklch(53.5% 0.022 60)",
   textInverse: "oklch(97.5% 0.012 85)",
 
-  // Lines
+  // Lines: `border` edges cards and panels, `separator` is a divider line drawn as a fill, and
+  // `borderStrong` is a decorative edge. A control's edge is `borderControl`, the only thing that
+  // shows where a field or an unchecked box is, so it keeps 3:1 against the surfaces it sits on.
   border: "oklch(89.2% 0.015 80)",
+  separator: "oklch(89.2% 0.015 80)",
   borderStrong: "oklch(83.5% 0.021 78)",
-  focus: "oklch(60% 0.125 85)",
+  borderControl: "oklch(62% 0.021 78)",
+  borderControlHover: "oklch(53.5% 0.022 70)",
+  focus: "oklch(60% 0.122 85)",
 
-  // Intents: a solid fill, its hover, the text on it, and a subtle tint with its text
+  // Controls: a solid neutral dot, marker or indicator, and a Switch's thumb on its off track
+  neutral: "oklch(53.5% 0.022 60)",
+  controlThumb: light.surface,
+
+  // Intents: `{intent}` is the solid, then `{intent}Hover`, `on{Intent}` for text on the solid,
+  // `{intent}Tint` for a tinted background, and `{intent}Text`, valid on the tint, `surface` and `bg`
   accent: "oklch(41% 0.07 50)",
   accentHover: "oklch(36% 0.062 48)",
-  onAccent: "oklch(98.5% 0.012 85)",
-  accentSubtle: "oklch(92.6% 0.03 72)",
-  accentSubtleText: "oklch(38% 0.065 45)",
+  onAccent: light.onFill,
+  accentTint: "oklch(92.6% 0.03 52)",
+  accentText: "oklch(38% 0.065 50)",
 
   danger: "oklch(56.5% 0.175 30)",
   dangerHover: "oklch(51% 0.17 29)",
-  onDanger: "oklch(98.5% 0.012 85)",
-  dangerSubtle: "oklch(95.2% 0.028 15)",
-  dangerSubtleText: "oklch(52% 0.17 34)",
+  onDanger: light.onFill,
+  dangerTint: "oklch(95.2% 0.023 15)",
+  dangerText: "oklch(52% 0.17 34)",
 
-  warning: "oklch(72.5% 0.15 68)",
-  warningSubtle: "oklch(95.8% 0.048 92)",
-  warningSubtleText: "oklch(45% 0.095 65)",
+  warning: "oklch(67% 0.14 68)",
+  warningTint: "oklch(95.8% 0.048 92)",
+  warningText: "oklch(45% 0.095 65)",
 
-  success: "oklch(61% 0.145 150)",
-  successSubtle: "oklch(95.8% 0.03 150)",
-  successSubtleText: "oklch(42% 0.105 152)",
+  success: light.success,
+  successTint: light.successTint,
+  successText: light.successText,
 
-  // Session states (GLOSSARY.md): a dot colour, a tint, and the text on the tint
-  sessionActive: "oklch(61% 0.145 150)",
-  sessionActiveSubtle: "oklch(95.8% 0.03 150)",
-  sessionActiveText: "oklch(42% 0.105 152)",
+  // Session states (GLOSSARY.md), in the same shape: a dot colour, its tint, and its text
+  sessionActive: light.success,
+  sessionActiveTint: light.successTint,
+  sessionActiveText: light.successText,
   sessionAsleep: "oklch(60% 0.065 295)",
-  sessionAsleepSubtle: "oklch(95.6% 0.016 300)",
+  sessionAsleepTint: "oklch(95.6% 0.016 300)",
   sessionAsleepText: "oklch(44% 0.065 295)",
   sessionFrozen: "oklch(65% 0.11 225)",
-  sessionFrozenSubtle: "oklch(95.8% 0.022 225)",
-  sessionFrozenText: "oklch(43% 0.09 230)",
-  sessionArchived: "oklch(68% 0.014 70)",
-  sessionArchivedSubtle: "oklch(96.3% 0.01 82)",
-  sessionArchivedText: "oklch(47% 0.024 55)",
+  sessionFrozenTint: "oklch(95.8% 0.022 225)",
+  sessionFrozenText: "oklch(43% 0.085 230)",
+  sessionArchived: "oklch(66.5% 0.014 70)",
+  sessionArchivedTint: light.surfaceMuted,
+  sessionArchivedText: light.textSecondary,
 
   // A chart's one series (#356): a cool blue that reads apart from the warm accent and the warning
   // amber a chart draws thresholds in, checked against the surface with the dataviz validator
@@ -78,56 +110,78 @@ const lightColor = {
   avatarFgChroma: "0.09",
 }
 
-const darkColor: typeof lightColor = {
-  bg: "oklch(18% 0.014 298)",
-  surface: "oklch(20.8% 0.016 300)",
-  surfaceMuted: "oklch(23.4% 0.017 300)",
-  surfaceHover: "oklch(26% 0.018 302)",
-  surfaceActive: "oklch(29.5% 0.02 302)",
-  surfaceInverse: "oklch(93% 0.014 80)",
-  overlay: "oklch(8% 0.02 300 / 0.6)",
-
+const dark: typeof light = {
+  surface: "oklch(20.8% 0.016 78)",
   text: "oklch(93% 0.016 80)",
-  textMuted: "oklch(74% 0.018 305)",
-  textSubtle: "oklch(63.5% 0.02 305)",
-  textInverse: "oklch(21% 0.02 298)",
+  surfaceMuted: "oklch(23.4% 0.017 78)",
+  textSecondary: "oklch(77% 0.018 78)",
+  textTertiary: "oklch(63.5% 0.02 78)",
+  onFill: "oklch(98.5% 0.012 85)",
+  success: "oklch(74% 0.15 150)",
+  successTint: "oklch(29.5% 0.045 155)",
+  successText: "oklch(85% 0.105 152)",
+}
 
-  border: "oklch(30.5% 0.018 302)",
-  borderStrong: "oklch(36.5% 0.022 303)",
+const darkColor: typeof lightColor = {
+  bg: "oklch(18% 0.014 78)",
+  surface: dark.surface,
+  surfaceMuted: dark.surfaceMuted,
+  surfaceHover: "oklch(26% 0.018 78)",
+  surfaceActive: "oklch(29.5% 0.02 78)",
+  // Overlays sit lighter than the card they open over, as a shadow can't show in the dark.
+  surfaceRaised: "oklch(24.5% 0.017 78)",
+  imageOutline: "oklch(1 0 0 / 0.1)",
+  surfaceInverse: "oklch(93% 0.014 80)",
+  overlay: "oklch(8% 0.016 78 / 0.6)",
+
+  text: dark.text,
+  textSecondary: dark.textSecondary,
+  textTertiary: dark.textTertiary,
+  textDisabled: "oklch(63.5% 0.02 78)",
+  textInverse: "oklch(21% 0.02 78)",
+
+  border: "oklch(34% 0.018 78)",
+  separator: "oklch(34% 0.018 78)",
+  borderStrong: "oklch(40% 0.022 78)",
+  borderControl: "oklch(54% 0.022 78)",
+  borderControlHover: "oklch(63.5% 0.02 78)",
   focus: "oklch(85% 0.15 92)",
 
-  accent: "oklch(64% 0.09 52)",
-  accentHover: "oklch(69% 0.088 55)",
-  onAccent: "oklch(20% 0.02 298)",
-  accentSubtle: "oklch(33% 0.04 56)",
-  accentSubtleText: "oklch(86% 0.06 68)",
+  neutral: "oklch(63.5% 0.02 78)",
+  controlThumb: dark.text,
 
-  danger: "oklch(54% 0.2 28)",
-  dangerHover: "oklch(50% 0.195 27)",
-  onDanger: "oklch(98.5% 0.012 85)",
-  dangerSubtle: "oklch(29.5% 0.075 18)",
-  dangerSubtleText: "oklch(79% 0.11 20)",
+  accent: "oklch(55% 0.085 52)",
+  accentHover: "oklch(51% 0.08 50)",
+  onAccent: dark.onFill,
+  accentTint: "oklch(33% 0.04 56)",
+  accentText: "oklch(86% 0.06 55)",
+
+  danger: "oklch(54% 0.17 28)",
+  dangerHover: "oklch(50% 0.165 27)",
+  onDanger: dark.onFill,
+  dangerTint: "oklch(29.5% 0.075 18)",
+  dangerText: "oklch(79% 0.11 20)",
 
   warning: "oklch(77% 0.145 68)",
-  warningSubtle: "oklch(31% 0.055 92)",
-  warningSubtleText: "oklch(87% 0.1 90)",
+  warningTint: "oklch(31% 0.055 92)",
+  warningText: "oklch(87% 0.1 90)",
 
-  success: "oklch(74% 0.15 150)",
-  successSubtle: "oklch(29.5% 0.045 155)",
-  successSubtleText: "oklch(85% 0.105 152)",
+  success: dark.success,
+  successTint: dark.successTint,
+  successText: dark.successText,
 
-  sessionActive: "oklch(74% 0.15 150)",
-  sessionActiveSubtle: "oklch(29.5% 0.045 155)",
-  sessionActiveText: "oklch(85% 0.105 152)",
+  sessionActive: dark.success,
+  sessionActiveTint: dark.successTint,
+  sessionActiveText: dark.successText,
   sessionAsleep: "oklch(68% 0.065 295)",
-  sessionAsleepSubtle: "oklch(29.5% 0.035 298)",
+  sessionAsleepTint: "oklch(29.5% 0.035 298)",
   sessionAsleepText: "oklch(84% 0.045 295)",
   sessionFrozen: "oklch(75% 0.1 225)",
-  sessionFrozenSubtle: "oklch(29.5% 0.04 230)",
+  sessionFrozenTint: "oklch(29.5% 0.04 230)",
   sessionFrozenText: "oklch(85% 0.07 225)",
-  sessionArchived: "oklch(56% 0.014 300)",
-  sessionArchivedSubtle: "oklch(23.4% 0.017 300)",
-  sessionArchivedText: "oklch(74% 0.018 305)",
+  sessionArchived: "oklch(56% 0.014 78)",
+  sessionArchivedTint: dark.surfaceMuted,
+  sessionArchivedText: dark.textSecondary,
 
   chartSeries: "oklch(66% 0.11 240)",
 
@@ -137,81 +191,154 @@ const darkColor: typeof lightColor = {
   avatarFgChroma: "0.06",
 }
 
+// Under `prefers-contrast: more`, edges and the lesser text tiers stand at least 0.15 L further
+// from the surface. The dark Switch thumb turns dark, to stay 3:1 on the lighter off track.
+const lightMore = {
+  textSecondary: "oklch(32% 0.024 55)",
+  textTertiary: "oklch(38% 0.022 60)",
+  border: "oklch(74% 0.015 80)",
+  separator: "oklch(74% 0.015 80)",
+  borderStrong: "oklch(68% 0.021 78)",
+  borderControl: "oklch(47% 0.021 78)",
+  borderControlHover: "oklch(38% 0.022 70)",
+  controlThumb: light.surface,
+}
+
+const darkMore: typeof lightMore = {
+  textSecondary: "oklch(92% 0.016 78)",
+  textTertiary: "oklch(78.5% 0.018 78)",
+  border: "oklch(49% 0.018 78)",
+  separator: "oklch(49% 0.018 78)",
+  borderStrong: "oklch(55% 0.022 78)",
+  borderControl: "oklch(69% 0.022 78)",
+  borderControlHover: "oklch(80% 0.02 78)",
+  controlThumb: dark.surface,
+}
+
 export const color = stylex.defineVars({
   bg: { default: lightColor.bg, [DARK]: darkColor.bg },
   surface: { default: lightColor.surface, [DARK]: darkColor.surface },
   surfaceMuted: { default: lightColor.surfaceMuted, [DARK]: darkColor.surfaceMuted },
   surfaceHover: { default: lightColor.surfaceHover, [DARK]: darkColor.surfaceHover },
   surfaceActive: { default: lightColor.surfaceActive, [DARK]: darkColor.surfaceActive },
+  surfaceRaised: { default: lightColor.surfaceRaised, [DARK]: darkColor.surfaceRaised },
+  imageOutline: { default: lightColor.imageOutline, [DARK]: darkColor.imageOutline },
   surfaceInverse: { default: lightColor.surfaceInverse, [DARK]: darkColor.surfaceInverse },
   overlay: { default: lightColor.overlay, [DARK]: darkColor.overlay },
 
   text: { default: lightColor.text, [DARK]: darkColor.text },
-  textMuted: { default: lightColor.textMuted, [DARK]: darkColor.textMuted },
-  textSubtle: { default: lightColor.textSubtle, [DARK]: darkColor.textSubtle },
+  textSecondary: {
+    default: lightColor.textSecondary,
+    [DARK]: darkColor.textSecondary,
+    [MORE]: lightMore.textSecondary,
+    [DARK_MORE]: darkMore.textSecondary,
+  },
+  textTertiary: {
+    default: lightColor.textTertiary,
+    [DARK]: darkColor.textTertiary,
+    [MORE]: lightMore.textTertiary,
+    [DARK_MORE]: darkMore.textTertiary,
+  },
+  textDisabled: { default: lightColor.textDisabled, [DARK]: darkColor.textDisabled },
   textInverse: { default: lightColor.textInverse, [DARK]: darkColor.textInverse },
 
-  border: { default: lightColor.border, [DARK]: darkColor.border },
-  borderStrong: { default: lightColor.borderStrong, [DARK]: darkColor.borderStrong },
+  border: {
+    default: lightColor.border,
+    [DARK]: darkColor.border,
+    [MORE]: lightMore.border,
+    [DARK_MORE]: darkMore.border,
+  },
+  separator: {
+    default: lightColor.separator,
+    [DARK]: darkColor.separator,
+    [MORE]: lightMore.separator,
+    [DARK_MORE]: darkMore.separator,
+  },
+  borderStrong: {
+    default: lightColor.borderStrong,
+    [DARK]: darkColor.borderStrong,
+    [MORE]: lightMore.borderStrong,
+    [DARK_MORE]: darkMore.borderStrong,
+  },
+  borderControl: {
+    default: lightColor.borderControl,
+    [DARK]: darkColor.borderControl,
+    [MORE]: lightMore.borderControl,
+    [DARK_MORE]: darkMore.borderControl,
+  },
+  borderControlHover: {
+    default: lightColor.borderControlHover,
+    [DARK]: darkColor.borderControlHover,
+    [MORE]: lightMore.borderControlHover,
+    [DARK_MORE]: darkMore.borderControlHover,
+  },
   focus: { default: lightColor.focus, [DARK]: darkColor.focus },
+
+  neutral: { default: lightColor.neutral, [DARK]: darkColor.neutral },
+  controlThumb: {
+    default: lightColor.controlThumb,
+    [DARK]: darkColor.controlThumb,
+    [MORE]: lightMore.controlThumb,
+    [DARK_MORE]: darkMore.controlThumb,
+  },
 
   accent: { default: lightColor.accent, [DARK]: darkColor.accent },
   accentHover: { default: lightColor.accentHover, [DARK]: darkColor.accentHover },
   onAccent: { default: lightColor.onAccent, [DARK]: darkColor.onAccent },
-  accentSubtle: { default: lightColor.accentSubtle, [DARK]: darkColor.accentSubtle },
-  accentSubtleText: { default: lightColor.accentSubtleText, [DARK]: darkColor.accentSubtleText },
+  accentTint: { default: lightColor.accentTint, [DARK]: darkColor.accentTint },
+  accentText: { default: lightColor.accentText, [DARK]: darkColor.accentText },
 
   danger: { default: lightColor.danger, [DARK]: darkColor.danger },
   dangerHover: { default: lightColor.dangerHover, [DARK]: darkColor.dangerHover },
   onDanger: { default: lightColor.onDanger, [DARK]: darkColor.onDanger },
-  dangerSubtle: { default: lightColor.dangerSubtle, [DARK]: darkColor.dangerSubtle },
-  dangerSubtleText: { default: lightColor.dangerSubtleText, [DARK]: darkColor.dangerSubtleText },
+  dangerTint: { default: lightColor.dangerTint, [DARK]: darkColor.dangerTint },
+  dangerText: { default: lightColor.dangerText, [DARK]: darkColor.dangerText },
 
   warning: { default: lightColor.warning, [DARK]: darkColor.warning },
-  warningSubtle: { default: lightColor.warningSubtle, [DARK]: darkColor.warningSubtle },
-  warningSubtleText: {
-    default: lightColor.warningSubtleText,
-    [DARK]: darkColor.warningSubtleText,
+  warningTint: { default: lightColor.warningTint, [DARK]: darkColor.warningTint },
+  warningText: {
+    default: lightColor.warningText,
+    [DARK]: darkColor.warningText,
   },
 
   success: { default: lightColor.success, [DARK]: darkColor.success },
-  successSubtle: { default: lightColor.successSubtle, [DARK]: darkColor.successSubtle },
-  successSubtleText: {
-    default: lightColor.successSubtleText,
-    [DARK]: darkColor.successSubtleText,
+  successTint: { default: lightColor.successTint, [DARK]: darkColor.successTint },
+  successText: {
+    default: lightColor.successText,
+    [DARK]: darkColor.successText,
   },
 
   sessionActive: { default: lightColor.sessionActive, [DARK]: darkColor.sessionActive },
-  sessionActiveSubtle: {
-    default: lightColor.sessionActiveSubtle,
-    [DARK]: darkColor.sessionActiveSubtle,
+  sessionActiveTint: {
+    default: lightColor.sessionActiveTint,
+    [DARK]: darkColor.sessionActiveTint,
   },
   sessionActiveText: {
     default: lightColor.sessionActiveText,
     [DARK]: darkColor.sessionActiveText,
   },
   sessionAsleep: { default: lightColor.sessionAsleep, [DARK]: darkColor.sessionAsleep },
-  sessionAsleepSubtle: {
-    default: lightColor.sessionAsleepSubtle,
-    [DARK]: darkColor.sessionAsleepSubtle,
+  sessionAsleepTint: {
+    default: lightColor.sessionAsleepTint,
+    [DARK]: darkColor.sessionAsleepTint,
   },
   sessionAsleepText: {
     default: lightColor.sessionAsleepText,
     [DARK]: darkColor.sessionAsleepText,
   },
   sessionFrozen: { default: lightColor.sessionFrozen, [DARK]: darkColor.sessionFrozen },
-  sessionFrozenSubtle: {
-    default: lightColor.sessionFrozenSubtle,
-    [DARK]: darkColor.sessionFrozenSubtle,
+  sessionFrozenTint: {
+    default: lightColor.sessionFrozenTint,
+    [DARK]: darkColor.sessionFrozenTint,
   },
   sessionFrozenText: {
     default: lightColor.sessionFrozenText,
     [DARK]: darkColor.sessionFrozenText,
   },
   sessionArchived: { default: lightColor.sessionArchived, [DARK]: darkColor.sessionArchived },
-  sessionArchivedSubtle: {
-    default: lightColor.sessionArchivedSubtle,
-    [DARK]: darkColor.sessionArchivedSubtle,
+  sessionArchivedTint: {
+    default: lightColor.sessionArchivedTint,
+    [DARK]: darkColor.sessionArchivedTint,
   },
   sessionArchivedText: {
     default: lightColor.sessionArchivedText,
@@ -234,14 +361,15 @@ export const color = stylex.defineVars({
 
 const lightShadow = {
   sm: "0 1px 2px oklch(25% 0.025 50 / 0.06)",
-  md: "0 4px 12px -2px oklch(25% 0.025 50 / 0.1), 0 1px 3px oklch(25% 0.025 50 / 0.06)",
-  lg: "0 16px 40px -8px oklch(25% 0.025 50 / 0.18), 0 2px 6px oklch(25% 0.025 50 / 0.06)",
+  // An overlay's edge is the first layer: a 1px ring, which leaves its border to forced colors.
+  md: "0 0 0 1px oklch(0 0 0 / 0.06), 0 4px 12px -2px oklch(25% 0.025 50 / 0.1), 0 1px 3px oklch(25% 0.025 50 / 0.06)",
+  lg: "0 0 0 1px oklch(0 0 0 / 0.06), 0 16px 40px -8px oklch(25% 0.025 50 / 0.18), 0 2px 6px oklch(25% 0.025 50 / 0.06)",
 }
 
 const darkShadow: typeof lightShadow = {
-  sm: "0 1px 2px oklch(5% 0.015 300 / 0.3)",
-  md: "0 4px 12px -2px oklch(5% 0.015 300 / 0.45), 0 0 0 1px oklch(95% 0.02 80 / 0.04)",
-  lg: "0 16px 40px -8px oklch(5% 0.015 300 / 0.6), 0 0 0 1px oklch(95% 0.02 80 / 0.05)",
+  sm: "0 1px 2px oklch(5% 0.01 78 / 0.3)",
+  md: "0 0 0 1px oklch(1 0 0 / 0.08), 0 4px 12px -2px oklch(5% 0.01 78 / 0.45)",
+  lg: "0 0 0 1px oklch(1 0 0 / 0.08), 0 16px 40px -8px oklch(5% 0.01 78 / 0.6)",
 }
 
 export const shadow = stylex.defineVars({
@@ -251,10 +379,36 @@ export const shadow = stylex.defineVars({
 })
 
 /** Forces the light palette on a subtree, whatever the OS prefers. */
-export const lightColorTheme = stylex.createTheme(color, lightColor)
+export const lightColorTheme = stylex.createTheme(color, {
+  ...lightColor,
+  textSecondary: { default: lightColor.textSecondary, [MORE]: lightMore.textSecondary },
+  textTertiary: { default: lightColor.textTertiary, [MORE]: lightMore.textTertiary },
+  border: { default: lightColor.border, [MORE]: lightMore.border },
+  separator: { default: lightColor.separator, [MORE]: lightMore.separator },
+  borderStrong: { default: lightColor.borderStrong, [MORE]: lightMore.borderStrong },
+  borderControl: { default: lightColor.borderControl, [MORE]: lightMore.borderControl },
+  borderControlHover: {
+    default: lightColor.borderControlHover,
+    [MORE]: lightMore.borderControlHover,
+  },
+  controlThumb: { default: lightColor.controlThumb, [MORE]: lightMore.controlThumb },
+})
 export const lightShadowTheme = stylex.createTheme(shadow, lightShadow)
 /** Forces the dark palette on a subtree, whatever the OS prefers. */
-export const darkColorTheme = stylex.createTheme(color, darkColor)
+export const darkColorTheme = stylex.createTheme(color, {
+  ...darkColor,
+  textSecondary: { default: darkColor.textSecondary, [MORE]: darkMore.textSecondary },
+  textTertiary: { default: darkColor.textTertiary, [MORE]: darkMore.textTertiary },
+  border: { default: darkColor.border, [MORE]: darkMore.border },
+  separator: { default: darkColor.separator, [MORE]: darkMore.separator },
+  borderStrong: { default: darkColor.borderStrong, [MORE]: darkMore.borderStrong },
+  borderControl: { default: darkColor.borderControl, [MORE]: darkMore.borderControl },
+  borderControlHover: {
+    default: darkColor.borderControlHover,
+    [MORE]: darkMore.borderControlHover,
+  },
+  controlThumb: { default: darkColor.controlThumb, [MORE]: darkMore.controlThumb },
+})
 export const darkShadowTheme = stylex.createTheme(shadow, darkShadow)
 
 // The terminal mirror's palette: its ground and text match the surface it sits on, and the 16
@@ -284,11 +438,11 @@ const lightTerminal = {
 }
 
 const darkTerminal: typeof lightTerminal = {
-  background: "#19161e",
+  background: "#1c170f",
   foreground: "#eee7dc",
   cursor: "#b87c58",
   selection: "#573927",
-  black: "#514d59",
+  black: "#564e43",
   red: "#ff7b72",
   green: "#3fb950",
   yellow: "#d29922",
@@ -296,7 +450,7 @@ const darkTerminal: typeof lightTerminal = {
   magenta: "#bc8cff",
   cyan: "#39c5cf",
   white: "#c2bdb4",
-  brightBlack: "#7c7885",
+  brightBlack: "#81796d",
   brightRed: "#ffa198",
   brightGreen: "#56d364",
   brightYellow: "#e3b341",
@@ -333,19 +487,21 @@ export const lightTerminalTheme = stylex.createTheme(terminal, lightTerminal)
 export const darkTerminalTheme = stylex.createTheme(terminal, darkTerminal)
 
 export const font = stylex.defineVars({
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  // Inter Variable is bundled (fonts.css); the system stack is its fallback while it loads.
+  sans: '"Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace',
 })
 
-/** The type scale. Dense on purpose: 13px body, like the tools this sits next to. */
+/**
+ * The type scale. Dense on purpose: 13px body, like the tools this sits next to. Components set
+ * text through the roles in type.ts, which pair a size with its weight and line height.
+ */
 export const text = stylex.defineVars({
-  xs: "0.6875rem", // 11px: badges, counts
-  sm: "0.75rem", // 12px: secondary text, descriptions
+  xs: "0.6875rem", // 11px: badges, counts, overlines
+  sm: "0.75rem", // 12px: metadata
   base: "0.8125rem", // 13px: body and controls
-  md: "0.875rem", // 14px: emphasised body
-  lg: "1rem", // 16px: dialog titles
-  xl: "1.25rem", // 20px: page titles
-  xxl: "1.5rem", // 24px: rare
+  md: "0.875rem", // 14px: section headings
+  lg: "1rem", // 16px: page and dialog titles
 })
 
 export const leading = stylex.defineVars({
@@ -362,6 +518,7 @@ export const weight = stylex.defineVars({
 
 export const tracking = stylex.defineVars({
   tight: "-0.011em",
+  wide: "0.05em",
 })
 
 /** Spacing on a 4px grid. Keys are multiples of 4px: `s3` is 12px, `s0_5` is 2px. */
@@ -404,14 +561,21 @@ export const radius = stylex.defineVars({
   full: "9999px",
 })
 
-/** Durations collapse to zero, and entering popups stop moving, under reduced motion. */
+/**
+ * Under reduced motion nothing moves, but things still fade: popups, Dialogs and Toasts keep their
+ * durations while enterScale and enterDistance go flat, and what only moves takes durationMove.
+ * Exits are shorter than enters, and every one eases out.
+ */
 export const motion = stylex.defineVars({
-  durationFast: { default: "100ms", [REDUCED_MOTION]: "0ms" },
-  durationNormal: { default: "150ms", [REDUCED_MOTION]: "0ms" },
-  durationSlow: { default: "250ms", [REDUCED_MOTION]: "0ms" },
+  durationFast: "100ms",
+  durationNormal: "150ms",
+  durationSlow: "250ms",
+  /** For a transition that moves something: a thumb, an indicator, a chevron, a height. */
+  durationMove: { default: "150ms", [REDUCED_MOTION]: "0ms" },
   easeStandard: "cubic-bezier(0.2, 0, 0, 1)",
   easeOut: "cubic-bezier(0.16, 1, 0.3, 1)",
-  easeIn: "cubic-bezier(0.4, 0, 1, 1)",
+  /** A pressed Button's scale. */
+  pressScale: "0.96",
   /** How much popups scale and travel as they enter and leave. */
   enterScale: { default: "0.97", [REDUCED_MOTION]: "1" },
   enterDistance: { default: "4px", [REDUCED_MOTION]: "0px" },
@@ -427,4 +591,9 @@ export const layer = stylex.defineVars({
   popover: "150",
   toast: "200",
   tooltip: "300",
+})
+
+/** An icon's stroke: 1.5px beside regular text, thicker beside the 500–600 labels of Buttons and Tabs. */
+export const icon = stylex.defineVars({
+  stroke: "1.5px",
 })

@@ -16,6 +16,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { Schema } from "effect"
 import { useCallback, useEffect, useState } from "react"
+import { counted } from "../app/format.ts"
 import { useHub } from "../app/hub.tsx"
 import { AuthCard, SignIn } from "../app/SignIn.tsx"
 import type { SignInOptions } from "../hub/config.ts"
@@ -34,7 +35,7 @@ import { color, font, leading, radius, space, text, weight } from "../ui/tokens.
 const styles = stylex.create({
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
   grow: { flex: 1 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   strong: { color: color.text, fontWeight: weight.semibold, overflowWrap: "anywhere" },
   codeRow: {
     display: "flex",
@@ -64,11 +65,11 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   loading: { display: "grid", placeItems: "center", minHeight: "100dvh" },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 /** What `kndl login` put in the page's address. */
@@ -340,7 +341,7 @@ function ApprovedCard({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(code)
-      toast.show({ title: "Copied the code" })
+      toast.show({ title: "Code copied" })
     } catch {
       toast.show({
         title: "Couldn't copy",
@@ -378,8 +379,9 @@ function ApprovedCard({
         </IconButton>
       </div>
       <p {...stylex.props(styles.note)}>
-        It works once, for the next {minutes === 1 ? "minute" : `${minutes} minutes`}, and only for
-        the kndl login that asked for it. Then close this tab.
+        It works once, for the next{" "}
+        {minutes === 1 ? "minute" : counted(minutes, { one: "minute", other: "minutes" })}, and only
+        for the kndl login that asked for it. Then close this tab.
       </p>
     </AuthCard>
   )

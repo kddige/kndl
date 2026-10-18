@@ -73,7 +73,7 @@ const styles = stylex.create({
     gap: space.s1,
     minWidth: 0,
     paddingInline: space.s2,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     fontWeight: weight.medium,
   },
@@ -220,11 +220,11 @@ export function ModelPicker({
       <SearchSelect
         side={side}
         align="start"
+        label={`Model: ${name}`}
         trigger={
           <Button
             {...look(appearance)}
             disabled={disabled}
-            aria-label={`Model: ${name}`}
             title={`${name}, on ${harnessNames[harness]}`}
             sx={styles.trigger}
           >

@@ -22,11 +22,11 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
     fontFamily: font.mono,
     fontSize: text.sm,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   status: { display: "inline-flex", flexShrink: 0 },
   succeeded: { color: color.success },
-  cutShort: { color: color.textSubtle },
+  cutShort: { color: color.textTertiary },
   failed: { color: color.danger },
   details: { display: "flex", flexDirection: "column" },
   section: {
@@ -41,7 +41,7 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: color.border,
   },
-  label: { fontSize: text.xs, fontWeight: weight.medium, color: color.textSubtle },
+  label: { fontSize: text.xs, fontWeight: weight.medium, color: color.textTertiary },
   pre: {
     margin: 0,
     maxHeight: "20rem",

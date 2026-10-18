@@ -22,9 +22,9 @@ import {
   sessionTitle,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { lazy, Suspense, useEffect, useId, useState } from "react"
+import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
-import { timeAgo } from "../app/format.ts"
+import { counted, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import {
@@ -32,22 +32,27 @@ import {
   Banner,
   Button,
   CheckIcon,
-  ChevronDownIcon,
   CopyIcon,
   Dialog,
   DialogClose,
-  EmptyState,
   IconButton,
-  PageHeader,
+  MenuItem,
+  MenuSeparator,
   PlusIcon,
-  ServerIcon,
+  Popover,
+  SettingsEmpty,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
   Spinner,
   SunIcon,
   toast,
-  Tooltip,
   WarningIcon,
 } from "../ui/index.ts"
-import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { focus } from "../ui/shared.ts"
+import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
 import {
   codeOutcome,
   hasMonitor,
@@ -67,92 +72,16 @@ const RunnerMonitor = lazy(async () => ({
 }))
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s6,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    margin: 0,
+  // A badge that opens what it means: no button look of its own.
+  badgeButton: {
+    display: "inline-flex",
     padding: 0,
-    listStyle: "none",
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-    overflow: "hidden",
+    borderWidth: 0,
+    borderRadius: radius.sm,
+    backgroundColor: "transparent",
+    cursor: "pointer",
   },
-  row: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  firstRow: { borderTopWidth: 0 },
-  runner: {
-    display: "flex",
-    flexDirection: "column",
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  runnerHead: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-  },
-  chevron: {
-    transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
-    transitionTimingFunction: motion.easeStandard,
-  },
-  chevronOpen: { transform: "rotate(180deg)" },
-  monitorLoading: {
-    display: "grid",
-    placeItems: "center",
-    paddingBlock: space.s8,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "14rem" },
-  nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
-  name: { fontSize: text.md, fontWeight: weight.semibold },
-  facts: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    columnGap: space.s3,
-    rowGap: space.s1,
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-  },
-  fact: { display: "inline-flex", alignItems: "center", gap: space.s1_5, minWidth: 0 },
+  monitorLoading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
   mono: { fontFamily: font.mono },
   keptAwakeList: {
     display: "flex",
@@ -162,10 +91,9 @@ const styles = stylex.create({
     padding: 0,
     listStyle: "none",
   },
-  actions: { display: "flex", gap: space.s2 },
   dot: { width: "0.5rem", height: "0.5rem", borderRadius: "50%", flexShrink: 0 },
   online: { backgroundColor: color.success },
-  offline: { backgroundColor: color.borderStrong },
+  offline: { backgroundColor: color.neutral },
   dialogBody: { display: "flex", flexDirection: "column", gap: space.s3 },
   command: {
     display: "flex",
@@ -190,29 +118,28 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     userSelect: "all",
   },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   status: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   updateLine: {
     display: "flex",
     alignItems: "flex-start",
     gap: space.s2,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
   updateText: { minWidth: 0, overflowWrap: "anywhere", whiteSpace: "pre-line" },
-  updateWarning: { color: color.warningSubtleText },
-  updateDanger: { color: color.dangerSubtleText },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  updateWarning: { color: color.warningText },
+  updateDanger: { color: color.dangerText },
 })
 
 /** What a pairing dialog is for: a new Runner, or a Re-pair of one. */
@@ -275,93 +202,72 @@ export function RunnersView() {
   const waiting = waitingCodes(codes, now)
   const addRunner = () => pairing.open({ _tag: "New" })
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="Runners"
-        description={
-          <>
-            The machines Sessions run on, each on its Creator's own Claude credential.
-            {hubVersion && (
-              <>
-                {" "}
-                The Hub runs <span {...stylex.props(styles.mono)}>{describeBuild(hubVersion)}</span>
-                .
-              </>
-            )}
-          </>
-        }
-        actions={
-          <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={addRunner}>
-            Add a Runner
-          </Button>
-        }
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {sorted === null ? (
-            <div {...stylex.props(styles.loading)}>
-              <Spinner size="lg" label="Loading Runners" />
-            </div>
-          ) : sorted.length === 0 ? (
-            <EmptyState
-              size="page"
-              icon={<ServerIcon />}
-              title="No Runners yet"
-              description="A Runner is a machine that runs Sessions. Add one with a pairing code: one command on the machine pairs it and starts it."
-              action={
-                <Button intent="primary" icon={<PlusIcon />} onClick={addRunner}>
-                  Add a Runner
-                </Button>
-              }
+    <SettingsPage
+      title="Runners"
+      description={
+        <>
+          The machines Sessions run on
+          {hubVersion && (
+            <>
+              ; the Hub runs <span {...stylex.props(styles.mono)}>{describeBuild(hubVersion)}</span>
+            </>
+          )}
+          .
+        </>
+      }
+      action={
+        <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={addRunner}>
+          Add a Runner
+        </Button>
+      }
+    >
+      {sorted === null ? (
+        <SettingsLoading label="Loading Runners" />
+      ) : sorted.length === 0 ? (
+        <SettingsEmpty
+          title="No Runners yet"
+          description="A Runner is a machine that runs Sessions. One command pairs it and starts it."
+          action={
+            <Button size="sm" icon={<PlusIcon />} onClick={addRunner}>
+              Add a Runner
+            </Button>
+          }
+        />
+      ) : (
+        <SettingsList label="Runners">
+          {sorted.map((runner) => (
+            <RunnerRow
+              key={runner.id}
+              runner={runner}
+              keptAwake={(sessions ?? []).filter(
+                (session) => session.runnerId === runner.id && session.keepAwake !== undefined,
+              )}
+              now={now}
+              onUpdate={() => setUpdating(runner)}
+              onRepair={() => pairing.open({ _tag: "Repair", runner })}
+              onRemove={() => setRemoving(runner)}
             />
-          ) : (
-            <ul aria-label="Runners" {...stylex.props(styles.list)}>
-              {sorted.map((runner, index) => (
-                <RunnerRow
-                  key={runner.id}
-                  runner={runner}
-                  first={index === 0}
-                  keptAwake={(sessions ?? []).filter(
-                    (session) => session.runnerId === runner.id && session.keepAwake !== undefined,
-                  )}
-                  now={now}
-                  onUpdate={() => setUpdating(runner)}
-                  onRepair={() => pairing.open({ _tag: "Repair", runner })}
-                  onRemove={() => setRemoving(runner)}
-                />
-              ))}
-            </ul>
-          )}
-          {waiting.length > 0 && (
-            <section aria-labelledby="waiting-codes" {...stylex.props(styles.section)}>
-              <h2 id="waiting-codes" {...stylex.props(styles.sectionTitle)}>
-                Pairing codes not used yet
-              </h2>
-              <ul aria-label="Pairing codes not used yet" {...stylex.props(styles.list)}>
-                {waiting.map((code, index) => (
-                  <CodeRow
-                    key={code.id}
-                    code={code}
-                    runners={runners ?? []}
-                    first={index === 0}
-                    now={now}
-                  />
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
-      </div>
+          ))}
+        </SettingsList>
+      )}
+      {waiting.length > 0 && (
+        <SettingsSection title="Pairing codes not used yet">
+          <SettingsList label="Pairing codes not used yet">
+            {waiting.map((code) => (
+              <CodeRow key={code.id} code={code} runners={runners ?? []} now={now} />
+            ))}
+          </SettingsList>
+        </SettingsSection>
+      )}
       <PairDialog pairing={pairing.pairing} onConfirm={pairing.confirm} onClose={pairing.close} />
       <RemoveDialog runner={removing} onClose={() => setRemoving(null)} />
       <UpdateDialog runner={updating} hub={hubVersion} onClose={() => setUpdating(null)} />
-    </main>
+    </SettingsPage>
   )
 }
 
 function RunnerRow({
   runner,
-  first,
   keptAwake,
   now,
   onUpdate,
@@ -369,7 +275,6 @@ function RunnerRow({
   onRemove,
 }: {
   runner: RunnerSummary
-  first: boolean
   /** Its Sessions the viewer can see that have Keep awake on (ADR 0016). */
   keptAwake: ReadonlyArray<SessionSummary>
   now: number
@@ -389,80 +294,42 @@ function RunnerRow({
   // Paired, but it hasn't connected since.
   const neverSeen = !runner.isOnline && runner.lastSeenAt === null
   const [monitoring, setMonitoring] = useState(false)
-  const monitorId = useId()
   const lowDisk = runner.sysinfo !== undefined && diskIsLow(runner.sysinfo)
+  const monitor = hasMonitor(runner)
+  const toggleMonitor = () => setMonitoring((open) => !open)
   return (
-    <li aria-label={runner.name} {...stylex.props(styles.runner, first && styles.firstRow)}>
-      <div {...stylex.props(styles.runnerHead)}>
-        <div {...stylex.props(styles.main)}>
-          <div {...stylex.props(styles.nameLine)}>
-            <span
-              aria-hidden="true"
-              {...stylex.props(styles.dot, runner.isOnline ? styles.online : styles.offline)}
-            />
-            <span {...stylex.props(styles.name)}>{runner.name}</span>
-            {runner.isOnline ? <Badge intent="success">online</Badge> : <Badge>offline</Badge>}
-            {note && (
-              <Tooltip content={note.title}>
-                <span tabIndex={0}>
-                  <Badge intent="warning">{note.label}</Badge>
-                </span>
-              </Tooltip>
-            )}
-            {update && <Badge intent={update.intent}>{update.label}</Badge>}
-            {lowDisk && (
-              <Tooltip content="Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it runs out.">
-                <span tabIndex={0}>
-                  <Badge intent="warning">low disk</Badge>
-                </span>
-              </Tooltip>
-            )}
-          </div>
-          <p {...stylex.props(styles.facts)}>
-            <span {...stylex.props(styles.fact)}>
-              {runner.version === null ? (
-                neverSeen ? (
-                  "Not connected yet"
-                ) : (
-                  "Version unknown"
-                )
-              ) : (
-                <span title={runner.version.commit} {...stylex.props(styles.mono)}>
-                  {describeBuild(runner.version)}
-                </span>
-              )}
-            </span>
-            {!runner.isOnline && !neverSeen && (
-              <span {...stylex.props(styles.fact)}>
-                {runner.lastSeenAt !== null && `Last seen ${timeAgo(runner.lastSeenAt, now)}`}
-              </span>
-            )}
-            <span {...stylex.props(styles.fact)}>
-              {runner.openSessions === 0
-                ? "No Sessions"
-                : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
-            </span>
-            {keptAwake.length > 0 && (
-              // Which ones, and who keeps them awake (ADR 0016).
-              <Tooltip
-                content={
-                  <ul {...stylex.props(styles.keptAwakeList)}>
-                    {keptAwake.map((session) => (
-                      <li key={session.id}>
-                        {sessionTitle(session)}
-                        {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
-                      </li>
-                    ))}
-                  </ul>
-                }
-              >
-                <span tabIndex={0} {...stylex.props(styles.fact)}>
-                  <SunIcon />
-                  {keptAwake.length} kept awake
-                </span>
-              </Tooltip>
-            )}
-          </p>
+    <SettingsRow
+      label={runner.name}
+      icon={
+        <span
+          role="img"
+          aria-label={runner.isOnline ? "online" : "offline"}
+          {...stylex.props(styles.dot, runner.isOnline ? styles.online : styles.offline)}
+        />
+      }
+      name={runner.name}
+      meta={[
+        runner.version === null ? (
+          neverSeen ? (
+            "Not connected yet"
+          ) : (
+            "Version unknown"
+          )
+        ) : (
+          <span key="version" title={runner.version.commit} {...stylex.props(styles.mono)}>
+            {describeBuild(runner.version)}
+          </span>
+        ),
+        !runner.isOnline &&
+          !neverSeen &&
+          runner.lastSeenAt !== null &&
+          `Last seen ${timeAgo(runner.lastSeenAt, now)}`,
+        runner.openSessions === 0
+          ? "No Sessions"
+          : counted(runner.openSessions, { one: "Session", other: "Sessions" }),
+      ]}
+      notes={
+        <>
           {update && (
             <p
               aria-live="polite"
@@ -481,76 +348,132 @@ function RunnerRow({
               <span {...stylex.props(styles.updateText)}>{manual}</span>
             </p>
           )}
-        </div>
-        <div {...stylex.props(styles.actions)}>
-          {hasMonitor(runner) && (
-            <Button
-              size="sm"
-              intent="ghost"
-              icon={
-                <ChevronDownIcon
-                  {...stylex.props(styles.chevron, monitoring && styles.chevronOpen)}
-                />
-              }
-              aria-expanded={monitoring}
-              aria-controls={monitoring ? monitorId : undefined}
-              aria-label={`Monitor ${runner.name}`}
-              onClick={() => setMonitoring((open) => !open)}
-            >
-              Monitor
-            </Button>
-          )}
-          {action && (
-            <Button
-              size="sm"
-              intent="primary"
-              aria-label={`${action === "Update" ? "Update" : "Update now"} ${runner.name}`}
-              onClick={onUpdate}
-            >
-              {action === "Update" ? "Update" : "Update now"}
-            </Button>
-          )}
-          <Button size="sm" aria-label={`Re-pair ${runner.name}`} onClick={onRepair}>
-            Re-pair
+        </>
+      }
+      badges={
+        (!runner.isOnline || note || update || lowDisk || keptAwake.length > 0) && (
+          <>
+            {!runner.isOnline && <Badge>offline</Badge>}
+            {note && (
+              // What the badge means has to be readable on touch and to a screen reader: a Popover,
+              // not a Tooltip.
+              <BadgePopover title={note.label} badge={<Badge intent="warning">{note.label}</Badge>}>
+                {note.title}
+              </BadgePopover>
+            )}
+            {update && <Badge intent={update.intent}>{update.label}</Badge>}
+            {lowDisk && (
+              <BadgePopover title="Low disk" badge={<Badge intent="warning">low disk</Badge>}>
+                Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it
+                runs out.
+              </BadgePopover>
+            )}
+            {keptAwake.length > 0 && (
+              // Which ones, and who keeps them awake (ADR 0016).
+              <BadgePopover
+                title="Kept awake"
+                badge={
+                  <Badge icon={<SunIcon width={12} height={12} />}>
+                    {keptAwake.length} kept awake
+                  </Badge>
+                }
+              >
+                <ul {...stylex.props(styles.keptAwakeList)}>
+                  {keptAwake.map((session) => (
+                    <li key={session.id}>
+                      {sessionTitle(session)}
+                      {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
+                    </li>
+                  ))}
+                </ul>
+              </BadgePopover>
+            )}
+          </>
+        )
+      }
+      action={
+        action && (
+          <Button
+            size="sm"
+            intent="primary"
+            aria-label={`${action === "Update" ? "Update" : "Update now"} ${runner.name}`}
+            onClick={onUpdate}
+          >
+            {action === "Update" ? "Update" : "Update now"}
           </Button>
-          <Button size="sm" intent="ghost" aria-label={`Remove ${runner.name}`} onClick={onRemove}>
-            Remove
-          </Button>
-        </div>
-      </div>
-      {monitoring && (
-        <Suspense
-          fallback={
-            <div {...stylex.props(styles.monitorLoading)}>
-              <Spinner label={`Loading ${runner.name}'s monitor`} />
-            </div>
-          }
-        >
-          <RunnerMonitor id={monitorId} runner={runner} now={now} />
-        </Suspense>
-      )}
-    </li>
+        )
+      }
+      menu={
+        <>
+          {monitor && (
+            <MenuItem onClick={toggleMonitor}>
+              {monitoring ? `Close ${runner.name}'s Monitor` : `Monitor ${runner.name}`}
+            </MenuItem>
+          )}
+          <MenuItem onClick={onRepair}>Re-pair {runner.name}</MenuItem>
+          <MenuSeparator />
+          <MenuItem intent="danger" onClick={onRemove}>
+            Remove {runner.name}
+          </MenuItem>
+        </>
+      }
+      {...(monitor && { onToggle: toggleMonitor })}
+      detail={
+        monitor &&
+        monitoring && (
+          <Suspense
+            fallback={
+              <div {...stylex.props(styles.monitorLoading)}>
+                <Spinner label={`Loading ${runner.name}'s monitor`} />
+              </div>
+            }
+          >
+            <RunnerMonitor runner={runner} now={now} />
+          </Suspense>
+        )
+      }
+    />
+  )
+}
+
+/** A badge that opens what it means, readable on touch and to a screen reader. */
+function BadgePopover({
+  title,
+  badge,
+  children,
+}: {
+  title: string
+  badge: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <Popover
+      title={title}
+      trigger={
+        <button type="button" {...stylex.props(styles.badgeButton, focus.ring)}>
+          {badge}
+        </button>
+      }
+    >
+      {children}
+    </Popover>
   )
 }
 
 function CodeRow({
   code,
   runners,
-  first,
   now,
 }: {
   code: PendingPairingCode
   runners: ReadonlyArray<RunnerSummary>
-  first: boolean
   now: number
 }) {
   const hub = useHub()
-  const [busy, setBusy] = useState(false)
   const runner = runners.find((candidate) => candidate.id === code.runnerId)
   const what =
     code.runnerId === undefined ? "A new Runner" : `Re-pair ${runner?.name ?? "a removed Runner"}`
   const revoke = async () => {
-    setBusy(true)
     try {
       await hub.revokePairingCode(code.id)
       toast.show({ title: "Pairing code revoked" })
@@ -560,30 +483,22 @@ function CodeRow({
         description: messageOf(error),
         intent: "danger",
       })
-      setBusy(false)
     }
   }
   return (
-    <li aria-label={what} {...stylex.props(styles.row, first && styles.firstRow)}>
-      <div {...stylex.props(styles.main)}>
-        <span {...stylex.props(styles.name)}>{what}</span>
-        <p {...stylex.props(styles.facts)}>
-          <span>
-            Made by {code.createdBy.name} {timeAgo(code.createdAt, now)}
-          </span>
-          <span>Expires in {timeLeft(code.expiresAt, now)}</span>
-        </p>
-      </div>
-      <Button
-        size="sm"
-        intent="ghost"
-        loading={busy}
-        aria-label={`Revoke the code for ${what.toLowerCase()}`}
-        onClick={() => void revoke()}
-      >
-        Revoke
-      </Button>
-    </li>
+    <SettingsRow
+      label={what}
+      name={what}
+      meta={[
+        `Made by ${code.createdBy.name} ${timeAgo(code.createdAt, now)}`,
+        `Expires in ${timeLeft(code.expiresAt, now)}`,
+      ]}
+      menu={
+        <MenuItem intent="danger" onClick={() => void revoke()}>
+          Revoke the code
+        </MenuItem>
+      }
+    />
   )
 }
 
@@ -670,7 +585,11 @@ function MintedCode({ minted }: { minted: PairingCodeCreated }) {
   if (outcome._tag === "Used") {
     const runner = outcome.runner
     return (
-      <Banner intent="accent" icon={<CheckIcon />} title={`Paired ${runner?.name ?? "the Runner"}`}>
+      <Banner
+        intent="neutral"
+        icon={<CheckIcon />}
+        title={`Paired ${runner?.name ?? "the Runner"}`}
+      >
         {runner?.isOnline
           ? `${runner.name} is online.`
           : "Waiting for it to connect: the join command starts its service."}

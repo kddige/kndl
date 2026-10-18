@@ -30,10 +30,13 @@ const styles = stylex.create({
     userSelect: "none",
     verticalAlign: "middle",
   },
+  // A light photo would bleed into the page without an edge.
   image: {
     width: "100%",
     height: "100%",
     objectFit: "cover",
+    outline: `1px solid ${color.imageOutline}`,
+    outlineOffset: "-1px",
   },
   // Each person keeps one hue everywhere; the theme decides how light and saturated it is.
   tint: (hue: number) => ({
@@ -59,12 +62,12 @@ const styles = stylex.create({
   },
   overflow: {
     backgroundColor: color.surfaceActive,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
 })
 
 const sizes = stylex.create({
-  sm: { width: "1.25rem", height: "1.25rem", fontSize: "0.5625rem" },
+  sm: { width: "1.25rem", height: "1.25rem", fontSize: text.xs },
   md: { width: "1.75rem", height: "1.75rem", fontSize: text.xs },
   lg: { width: "2.25rem", height: "2.25rem", fontSize: text.base },
 })

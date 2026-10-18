@@ -20,10 +20,10 @@ import { ticketFrom } from "./people.ts"
 
 const styles = stylex.create({
   full: { width: "100%" },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   strong: { color: color.text, fontWeight: weight.semibold },
   loading: { display: "grid", placeItems: "center", minHeight: "100dvh" },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   actions: { display: "flex", flexDirection: "column", gap: space.s2 },
 })
 

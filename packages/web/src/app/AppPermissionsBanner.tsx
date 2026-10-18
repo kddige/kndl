@@ -7,9 +7,9 @@ import type { AppPermissionsCheck } from "@kndl/protocol"
 import { describeMissing, hasPermissionDrift } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
-import { Banner, Button, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { color, space, weight } from "../ui/tokens.stylex.ts"
+import { Banner, Button, Disclosure, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
+import { focus, textLink } from "../ui/shared.ts"
+import { space, weight } from "../ui/tokens.stylex.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 const styles = stylex.create({
@@ -18,9 +18,9 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s1_5,
     margin: 0,
-    paddingLeft: space.s4,
+    paddingInlineStart: space.s4,
   },
-  item: { paddingLeft: space.s0_5 },
+  item: { paddingInlineStart: space.s0_5 },
   name: { fontWeight: weight.semibold },
   link: {
     display: "inline-flex",
@@ -28,15 +28,12 @@ const styles = stylex.create({
     gap: space.s1,
     color: "inherit",
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
-    textDecorationColor: color.borderStrong,
     whiteSpace: "nowrap",
   },
 })
 
 /** The Hub's last permission check, as a warning across the app while it found anything. */
-export function AppPermissionsBanner({ sx }: { sx?: stylex.StyleXStyles }) {
+export function AppPermissionsBanner() {
   const hub = useHub()
   const check = useHubState((state) => state.appPermissions)
   const [checking, setChecking] = useState(false)
@@ -51,7 +48,7 @@ export function AppPermissionsBanner({ sx }: { sx?: stylex.StyleXStyles }) {
       }
     } catch (error) {
       toast.show({
-        title: "Could not check the GitHub App",
+        title: "Couldn't check the GitHub App",
         description: error instanceof Error ? error.message : String(error),
         intent: "danger",
       })
@@ -70,13 +67,23 @@ export function AppPermissionsBanner({ sx }: { sx?: stylex.StyleXStyles }) {
           Check again
         </Button>
       }
-      detail={<Steps check={check} />}
-      {...(sx && { sx })}
+      detail={
+        <Disclosure variant="plain" summary={`Show ${stepCount(check)} to fix it`}>
+          <Steps check={check} />
+        </Disclosure>
+      }
     >
       Until it has them, Sessions can fail on GitHub. Only someone who manages the App on GitHub can
       fix this.
     </Banner>
   )
+}
+
+function stepCount(check: AppPermissionsCheck): string {
+  const count =
+    (check.missing.length > 0 || check.missingEvents.length > 0 ? 1 : 0) +
+    check.installations.length
+  return count === 1 ? "the step" : `${count} steps`
 }
 
 function Steps({ check }: { check: AppPermissionsCheck }) {
@@ -108,7 +115,7 @@ function ExternalLink({ href, children }: { href: string; children: string }) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      {...stylex.props(styles.link, focus.ring)}
+      {...stylex.props(textLink.underline, styles.link, focus.ring)}
     >
       {children}
       <ExternalLinkIcon aria-hidden="true" />

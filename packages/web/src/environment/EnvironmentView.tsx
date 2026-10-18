@@ -1,7 +1,9 @@
 // A Repo's Environment screen (ADR 0009): edit a draft of everything that builds its Sandboxes,
 // run a Test build of it on a Runner, and apply it as the next version. The draft stays in the
-// browser until applied. Also where a Repo without an Environment is set up before its first
-// Session.
+// browser until applied, and while it differs from what's applied, a bar at the foot of the page
+// says so, with Apply. Also where a Repo without an Environment is set up before its first
+// Session. Its sections go from what you act on to what happened: Build, Variables, MCP servers,
+// History.
 
 import {
   type BranchChoice,
@@ -17,12 +19,12 @@ import {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { type ReactNode, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, type RepoCheck, RepoRefusal } from "../app/repoAccess.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
-import { RepoMcpServers } from "../mcp/RepoMcpServers.tsx"
+import { McpServerChangeLog, RepoMcpServers } from "../mcp/RepoMcpServers.tsx"
 import { branchText } from "../sessions/branches.ts"
 import {
   Avatar,
@@ -37,18 +39,27 @@ import {
   InfoIcon,
   Input,
   LogView,
-  PageHeader,
   PlusIcon,
+  PropertyRow,
   Select,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
   Spinner,
+  StickyApplyBar,
   Switch,
   Textarea,
   toast,
   TrashIcon,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { focus, srOnly } from "../ui/shared.ts"
+import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
 import {
   type DraftFolder,
   draftIdentity,
@@ -80,115 +91,54 @@ export interface PendingSession {
 }
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s5,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  section: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s4,
-    padding: space.s4,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-  },
-  sectionHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
-  sectionTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: space.s2,
-    flexWrap: "wrap",
-  },
-  sectionTitle: { fontSize: text.md, fontWeight: weight.semibold },
-  sectionNote: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  form: { display: "flex", flexDirection: "column", gap: space.s4 },
   script: { fontFamily: font.mono, fontSize: text.sm, minHeight: "6rem" },
   mono: { fontFamily: font.mono },
-  pair: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))",
-    gap: space.s4,
-  },
-  rows: { display: "flex", flexDirection: "column", gap: space.s3 },
-  row: {
+  number: { width: "6rem" },
+  rowItem: {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "flex-start",
     gap: space.s2,
-    paddingBottom: space.s3,
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: color.border,
   },
   rowName: { flex: "1 1 10rem", minWidth: "8rem" },
   rowKind: { flex: "0 0 8.5rem" },
   rowValue: { flex: "2 1 14rem", minWidth: "10rem" },
   rowBuild: { flex: "0 0 auto", alignSelf: "center" },
-  rowError: { flexBasis: "100%", color: color.dangerSubtleText, fontSize: text.sm },
+  rowError: { flexBasis: "100%", color: color.dangerText, fontSize: text.sm },
   kindSelect: { minWidth: 0, width: "100%" },
   valueSelect: { minWidth: 0, width: "100%" },
   valueLine: { display: "flex", alignItems: "center", gap: space.s2 },
-  grow: { flex: 1, minWidth: 0 },
   actions: { display: "flex", gap: space.s2, flexWrap: "wrap" },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
+  },
+  // Unframed, its chevron on the column's edge: the trigger's padding hangs outside it.
+  disclosure: { marginInlineStart: `calc(${space.s2} * -1)` },
+  folders: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s3,
+    paddingTop: space.s2,
+    paddingInlineStart: space.s2,
   },
   folderPattern: { flex: "2 1 12rem", minWidth: "10rem" },
   folderNextTo: { flex: "1 1 9rem", minWidth: "8rem" },
   problems: {
     margin: 0,
     paddingInlineStart: space.s5,
-    color: color.dangerSubtleText,
+    color: color.dangerText,
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
   status: { display: "flex", alignItems: "center", gap: space.s2, fontSize: text.sm },
-  statusText: { color: color.textMuted },
-  testBar: { display: "flex", alignItems: "flex-end", gap: space.s2, flexWrap: "wrap" },
-  runnerSelect: { minWidth: "14rem" },
-  applyBar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: space.s2,
-    flexWrap: "wrap",
-  },
-  applyNote: { flex: 1, color: color.textMuted, fontSize: text.sm, minWidth: "12rem" },
-  error: { color: color.dangerSubtleText, fontSize: text.sm },
-  history: {
-    display: "flex",
-    flexDirection: "column",
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-  },
-  version: {
-    display: "flex",
-    alignItems: "center",
-    gap: space.s2,
-    flexWrap: "wrap",
-    paddingBlock: space.s2,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-    fontSize: text.sm,
-  },
-  firstVersion: { borderTopWidth: 0 },
-  versionNumber: { fontWeight: weight.semibold, minWidth: "4.5rem" },
-  muted: { color: color.textMuted },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  statusText: { color: color.textSecondary },
+  runnerSelect: { minWidth: "12rem" },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
+  muted: { color: color.textSecondary },
 })
 
 /** Loads the Repo's Environment and the shared variables, then edits them. */
@@ -244,62 +194,63 @@ export function EnvironmentView({
 
   const environment = saved?.environment
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title={repo}
-        badge={
-          saved &&
-          (environment ? (
-            <Badge>Version {environment.version}</Badge>
-          ) : (
-            <Badge intent="warning">Not set up</Badge>
-          ))
-        }
-        description="Environment: what every Sandbox of this Repo is built from. Changes stay in this browser until you apply them."
-        actions={
-          <Button nativeButton={false} render={<Link to="/variables" />} size="sm">
-            Shared variables
-          </Button>
-        }
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {refusal !== null && isRefused(refusal) ? (
-            <EmptyState
-              size="page"
-              icon={<WarningIcon />}
-              title="Can't open this Environment"
-              description={
-                <RepoRefusal
-                  repo={repo}
-                  check={refusal}
-                  onRecheck={() => setAttempt((count) => count + 1)}
-                />
-              }
-            />
-          ) : saved ? (
-            <EnvironmentEditor
-              key={repo}
+    <SettingsPage
+      title={repo}
+      pageTitle={`Environment of ${repo}`}
+      badge={
+        saved &&
+        (environment ? (
+          <Badge>Version {environment.version}</Badge>
+        ) : (
+          <Badge intent="warning">Not set up</Badge>
+        ))
+      }
+      description="What this Repo's Sandboxes are built from."
+    >
+      {refusal !== null && isRefused(refusal) ? (
+        <EmptyState
+          size="page"
+          icon={<WarningIcon />}
+          title="Can't open this Environment"
+          description={
+            <RepoRefusal
               repo={repo}
-              saved={saved}
-              sharedVariables={sharedVariables}
-              pendingSession={pendingSession}
+              check={refusal}
+              onRecheck={() => setAttempt((count) => count + 1)}
             />
-          ) : loadError ? (
-            <EmptyState
-              size="page"
-              icon={<WarningIcon />}
-              title="Can't load the Environment"
-              description={loadError}
-            />
-          ) : (
-            <div {...stylex.props(styles.loading)}>
-              <Spinner size="lg" label="Loading the Environment" />
-            </div>
-          )}
-        </div>
-      </div>
-    </main>
+          }
+        />
+      ) : saved ? (
+        <EnvironmentEditor
+          key={repo}
+          repo={repo}
+          saved={saved}
+          sharedVariables={sharedVariables}
+          pendingSession={pendingSession}
+        />
+      ) : loadError ? (
+        <Banner
+          intent="danger"
+          icon={<WarningIcon />}
+          title="Couldn't load the Environment"
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                setLoadError(null)
+                setAttempt((n) => n + 1)
+              }}
+            >
+              Try again
+            </Button>
+          }
+        >
+          {loadError}
+        </Banner>
+      ) : (
+        <SettingsLoading label="Loading the Environment" />
+      )}
+    </SettingsPage>
   )
 }
 
@@ -475,7 +426,7 @@ function EnvironmentEditor({
       }
       toast.show({
         title: `Applied version ${version}`,
-        description: "New Sessions start on it. Active ones show a Restart.",
+        description: "New Sessions start on it. Active ones show a Restart button.",
       })
     } catch (error) {
       setApplyError(messageOf(error))
@@ -508,6 +459,7 @@ function EnvironmentEditor({
   const needed = valuesNeeded({ environment: environment ?? null, sharedVariables })
   const neededShared = needed.some((variable) => variable.sharedVariable !== undefined)
 
+  const canTestBuild = needsTestBuild && !stale && problems.all.length === 0
   return (
     <>
       {needed.length > 0 && (
@@ -532,7 +484,7 @@ function EnvironmentEditor({
       )}
 
       {pendingSession && !environment && (
-        <Banner intent="accent" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
+        <Banner intent="neutral" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
           A Repo needs an Environment before its first Session. This one starts from the defaults:
           change what you need, run a Test build, and apply it. Your Session on{" "}
           {branchText(pendingSession.branch)} starts once it's applied.
@@ -541,7 +493,7 @@ function EnvironmentEditor({
 
       {pendingSession && environment && (
         <Banner
-          intent="accent"
+          intent="neutral"
           icon={<InfoIcon />}
           title={`${repo} has an Environment`}
           action={
@@ -580,88 +532,244 @@ function EnvironmentEditor({
         </Banner>
       )}
 
-      <Section
-        title="Image and scripts"
+      <SettingsSection
+        title="Build"
         note="The bootstrap runs once per build on each Runner, without the Workspace; the start script runs in each new Sandbox, with it."
       >
-        <Field
-          label="Image"
-          description="Any OCI image, such as buildpack-deps:bookworm."
-          invalid={problems.image !== undefined}
-          error={problems.image}
-        >
-          <Input
-            value={edit.image}
-            onValueChange={(value: string) => setEdit((current) => ({ ...current, image: value }))}
-            spellCheck={false}
-            autoCapitalize="off"
-            sx={styles.mono}
-          />
-        </Field>
-        <Field
-          label="Bootstrap script"
-          description="Installs the tools. Its result is snapshotted, so it doesn't run per Session."
-        >
-          <Textarea
-            value={edit.bootstrapScript}
-            onValueChange={(value) =>
-              setEdit((current) => ({ ...current, bootstrapScript: value }))
-            }
-            rows={5}
-            placeholder="apt-get update && apt-get install -y curl git"
-            sx={styles.script}
-          />
-        </Field>
-        <Field
-          label="Start script"
-          description="Runs in each new Sandbox, in the Workspace: install dependencies, pull images. Optional."
-        >
-          <Textarea
-            value={edit.startScript}
-            onValueChange={(value) => setEdit((current) => ({ ...current, startScript: value }))}
-            rows={3}
-            placeholder="bun install"
-            sx={styles.script}
-          />
-        </Field>
-        <Switch
-          label="Docker in every Sandbox"
-          description="Each Session's Docker keeps its data on a disk of its own, so images the bootstrap pulls aren't visible in Sessions. Pull them in the start script instead."
-          checked={edit.docker}
-          onCheckedChange={(docker) => setEdit((current) => ({ ...current, docker }))}
-        />
-      </Section>
-
-      <Section
-        title="Resources"
-        note="What each Sandbox gets, capped by what its Runner allows. A Session notes it in its transcript when it gets less."
-      >
-        <div {...stylex.props(styles.pair)}>
-          <Field label="CPUs" invalid={problems.cpus !== undefined} error={problems.cpus}>
+        <div {...stylex.props(styles.form)}>
+          <Field
+            label="Image"
+            description="Any OCI image, such as buildpack-deps:bookworm."
+            invalid={problems.image !== undefined}
+            error={problems.image}
+          >
             <Input
-              value={edit.cpus}
-              inputMode="numeric"
-              onValueChange={(value: string) => setEdit((current) => ({ ...current, cpus: value }))}
+              value={edit.image}
+              onValueChange={(value: string) =>
+                setEdit((current) => ({ ...current, image: value }))
+              }
+              spellCheck={false}
+              autoCapitalize="off"
+              sx={styles.mono}
             />
           </Field>
           <Field
-            label="Memory (MiB)"
-            description={memoryHint(edit.memoryMib)}
-            invalid={problems.memoryMib !== undefined}
-            error={problems.memoryMib}
+            label="Bootstrap script"
+            description="Installs the tools. Its result is snapshotted, so it doesn't run per Session."
           >
-            <Input
-              value={edit.memoryMib}
-              inputMode="numeric"
-              onValueChange={(value: string) =>
-                setEdit((current) => ({ ...current, memoryMib: value }))
+            <Textarea
+              value={edit.bootstrapScript}
+              onValueChange={(value) =>
+                setEdit((current) => ({ ...current, bootstrapScript: value }))
               }
+              rows={5}
+              placeholder="apt-get update && apt-get install -y curl git"
+              sx={styles.script}
+            />
+          </Field>
+          <Field
+            label="Start script"
+            description="Runs in each new Sandbox, in the Workspace: install dependencies, pull images. Optional."
+          >
+            <Textarea
+              value={edit.startScript}
+              onValueChange={(value) => setEdit((current) => ({ ...current, startScript: value }))}
+              rows={3}
+              placeholder="bun install"
+              sx={styles.script}
             />
           </Field>
         </div>
-      </Section>
+        <SettingsList label="Sandbox">
+          <PropertyRow
+            label="Docker in every Sandbox"
+            description="Each Session's Docker keeps its data on a disk of its own, so images the bootstrap pulls aren't visible in Sessions. Pull them in the start script instead."
+          >
+            <Switch
+              label={<span {...stylex.props(srOnly.root)}>Docker in every Sandbox</span>}
+              checked={edit.docker}
+              onCheckedChange={(docker) => setEdit((current) => ({ ...current, docker }))}
+            />
+          </PropertyRow>
+          <PropertyRow
+            label="CPUs"
+            description={
+              problems.cpus === undefined ? (
+                "What each Sandbox gets, capped by what its Runner allows."
+              ) : (
+                <span {...stylex.props(styles.error)}>{problems.cpus}</span>
+              )
+            }
+          >
+            {({ labelId, descriptionId }) => (
+              <Input
+                size="sm"
+                value={edit.cpus}
+                inputMode="numeric"
+                aria-labelledby={labelId}
+                aria-describedby={descriptionId}
+                aria-invalid={problems.cpus !== undefined || undefined}
+                onValueChange={(value: string) =>
+                  setEdit((current) => ({ ...current, cpus: value }))
+                }
+                sx={styles.number}
+              />
+            )}
+          </PropertyRow>
+          <PropertyRow
+            label="Memory (MiB)"
+            description={
+              problems.memoryMib === undefined ? (
+                memoryHint(edit.memoryMib)
+              ) : (
+                <span {...stylex.props(styles.error)}>{problems.memoryMib}</span>
+              )
+            }
+          >
+            {({ labelId, descriptionId }) => (
+              <Input
+                size="sm"
+                value={edit.memoryMib}
+                inputMode="numeric"
+                aria-labelledby={labelId}
+                aria-describedby={descriptionId}
+                aria-invalid={problems.memoryMib !== undefined || undefined}
+                onValueChange={(value: string) =>
+                  setEdit((current) => ({ ...current, memoryMib: value }))
+                }
+                sx={styles.number}
+              />
+            )}
+          </PropertyRow>
+        </SettingsList>
+        <Disclosure
+          summary={
+            <span>
+              Advanced: dependency folders{" "}
+              <span {...stylex.props(styles.muted)}>({edit.dependencyFolders.length})</span>
+            </span>
+          }
+          defaultOpen={Object.keys(problems.folders).length > 0}
+          variant="plain"
+          sx={styles.disclosure}
+        >
+          <div {...stylex.props(styles.folders)}>
+            <p {...stylex.props(styles.note)}>
+              Folders matching a pattern, relative to the Workspace, are kept on a disk of their own
+              that outlives the Sandbox. With a "next to" file, the folder is also made next to
+              every such file, so the first install on a fresh clone already lands on that disk.
+            </p>
+            {edit.dependencyFolders.length > 0 && (
+              <SettingsList label="Dependency folders">
+                {edit.dependencyFolders.map((folder) => (
+                  <SettingsItem key={folder.key}>
+                    <div {...stylex.props(styles.rowItem)}>
+                      <Field label="Pattern" sx={styles.folderPattern}>
+                        <Input
+                          size="sm"
+                          value={folder.pattern}
+                          placeholder="**/node_modules"
+                          onValueChange={(value: string) =>
+                            setFolder(folder.key, { pattern: value })
+                          }
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          sx={styles.mono}
+                        />
+                      </Field>
+                      <Field label="Next to (optional)" sx={styles.folderNextTo}>
+                        <Input
+                          size="sm"
+                          value={folder.nextTo}
+                          placeholder="package.json"
+                          onValueChange={(value: string) =>
+                            setFolder(folder.key, { nextTo: value })
+                          }
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          sx={styles.mono}
+                        />
+                      </Field>
+                      <IconButton
+                        label={`Remove ${folder.pattern || "this folder"}`}
+                        size="sm"
+                        intent="ghost"
+                        sx={styles.rowBuild}
+                        onClick={() =>
+                          setEdit((current) => ({
+                            ...current,
+                            dependencyFolders: current.dependencyFolders.filter(
+                              (other) => other.key !== folder.key,
+                            ),
+                          }))
+                        }
+                      >
+                        <TrashIcon />
+                      </IconButton>
+                      {problems.folders[folder.key] && (
+                        <p role="alert" {...stylex.props(styles.rowError)}>
+                          {problems.folders[folder.key]}
+                        </p>
+                      )}
+                    </div>
+                  </SettingsItem>
+                ))}
+              </SettingsList>
+            )}
+            <div {...stylex.props(styles.actions)}>
+              <Button
+                size="sm"
+                icon={<PlusIcon />}
+                onClick={() =>
+                  setEdit((current) => ({
+                    ...current,
+                    dependencyFolders: [...current.dependencyFolders, newFolder()],
+                  }))
+                }
+              >
+                Add folder
+              </Button>
+            </div>
+          </div>
+        </Disclosure>
+        {(canTestBuild || testRun) && (
+          <SettingsGroup label="Test build">
+            {canTestBuild && (
+              <SettingsList label="Test build">
+                <PropertyRow
+                  label="Runner to build on"
+                  description={
+                    onlineRunners.length === 0
+                      ? "No Runner is online to build on."
+                      : "Test build, at the foot of the page, builds exactly this draft there."
+                  }
+                >
+                  <Select
+                    size="sm"
+                    aria-label="Runner to build on"
+                    value={chosenRunner?.id ?? null}
+                    placeholder="No Runner online"
+                    disabled={onlineRunners.length === 0}
+                    onValueChange={(value) => setRunnerId(value)}
+                    options={onlineRunners.map((runner: RunnerSummary) => ({
+                      value: runner.id as string,
+                      label: runner.name,
+                    }))}
+                    sx={styles.runnerSelect}
+                  />
+                </PropertyRow>
+              </SettingsList>
+            )}
+            {testRun && (
+              <LogView label="Test build log" placeholder="Waiting for the Runner…">
+                {testRun.log}
+              </LogView>
+            )}
+          </SettingsGroup>
+        )}
+      </SettingsSection>
 
-      <Section
+      <SettingsSection
         title="Variables"
         note={
           <>
@@ -673,9 +781,42 @@ function EnvironmentEditor({
             in under a name of this Environment.
           </>
         }
+        action={
+          <>
+            <Button
+              size="sm"
+              icon={<PlusIcon />}
+              onClick={() =>
+                setEdit((current) => ({
+                  ...current,
+                  variables: [...current.variables, newVariable("Plain")],
+                }))
+              }
+            >
+              Add variable
+            </Button>
+            <Button
+              size="sm"
+              icon={<PlusIcon />}
+              onClick={() =>
+                setEdit((current) => ({
+                  ...current,
+                  variables: [...current.variables, newVariable("Link")],
+                }))
+              }
+            >
+              Link shared variable
+            </Button>
+          </>
+        }
       >
-        {edit.variables.length > 0 && (
-          <div {...stylex.props(styles.rows)}>
+        {edit.variables.length === 0 ? (
+          <SettingsEmpty
+            title="No variables yet"
+            description="Add one, or link a shared variable, to set it in every Sandbox."
+          />
+        ) : (
+          <SettingsList label="Variables">
             {edit.variables.map((variable) => (
               <VariableRow
                 key={variable.key}
@@ -693,214 +834,16 @@ function EnvironmentEditor({
                 }
               />
             ))}
-          </div>
+          </SettingsList>
         )}
-        <div {...stylex.props(styles.actions)}>
-          <Button
-            size="sm"
-            icon={<PlusIcon />}
-            onClick={() =>
-              setEdit((current) => ({
-                ...current,
-                variables: [...current.variables, newVariable("Plain")],
-              }))
-            }
-          >
-            Add variable
-          </Button>
-          <Button
-            size="sm"
-            icon={<PlusIcon />}
-            onClick={() =>
-              setEdit((current) => ({
-                ...current,
-                variables: [...current.variables, newVariable("Link")],
-              }))
-            }
-          >
-            Link shared variable
-          </Button>
-        </div>
-      </Section>
+      </SettingsSection>
 
-      <Disclosure
-        summary={
-          <span>
-            Advanced: dependency folders{" "}
-            <span {...stylex.props(styles.muted)}>({edit.dependencyFolders.length})</span>
-          </span>
-        }
-        defaultOpen={Object.keys(problems.folders).length > 0}
-      >
-        <div {...stylex.props(styles.section)}>
-          <p {...stylex.props(styles.sectionNote)}>
-            Folders matching a pattern, relative to the Workspace, are kept on a disk of their own
-            that outlives the Sandbox. With a "next to" file, the folder is also made next to every
-            such file, so the first install on a fresh clone already lands on that disk.
-          </p>
-          <div {...stylex.props(styles.rows)}>
-            {edit.dependencyFolders.map((folder) => (
-              <div key={folder.key} {...stylex.props(styles.row)}>
-                <Field label="Pattern" sx={styles.folderPattern}>
-                  <Input
-                    size="sm"
-                    value={folder.pattern}
-                    placeholder="**/node_modules"
-                    onValueChange={(value: string) => setFolder(folder.key, { pattern: value })}
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    sx={styles.mono}
-                  />
-                </Field>
-                <Field label="Next to (optional)" sx={styles.folderNextTo}>
-                  <Input
-                    size="sm"
-                    value={folder.nextTo}
-                    placeholder="package.json"
-                    onValueChange={(value: string) => setFolder(folder.key, { nextTo: value })}
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    sx={styles.mono}
-                  />
-                </Field>
-                <IconButton
-                  label={`Remove ${folder.pattern || "this folder"}`}
-                  size="sm"
-                  intent="ghost"
-                  sx={styles.rowBuild}
-                  onClick={() =>
-                    setEdit((current) => ({
-                      ...current,
-                      dependencyFolders: current.dependencyFolders.filter(
-                        (other) => other.key !== folder.key,
-                      ),
-                    }))
-                  }
-                >
-                  <TrashIcon />
-                </IconButton>
-                {problems.folders[folder.key] && (
-                  <p role="alert" {...stylex.props(styles.rowError)}>
-                    {problems.folders[folder.key]}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-          <div {...stylex.props(styles.actions)}>
-            <Button
-              size="sm"
-              icon={<PlusIcon />}
-              onClick={() =>
-                setEdit((current) => ({
-                  ...current,
-                  dependencyFolders: [...current.dependencyFolders, newFolder()],
-                }))
-              }
-            >
-              Add folder
-            </Button>
-          </div>
-        </div>
-      </Disclosure>
-
-      <Section title="Apply">
-        {problems.all.length > 0 && (
-          <ul aria-label="What to fix before applying" {...stylex.props(styles.problems)}>
-            {problems.all.map((problem) => (
-              <li key={problem}>{problem}</li>
-            ))}
-          </ul>
-        )}
-        <BuildStatus
-          checked={checked}
-          checkable={checkable}
-          unchanged={unchanged}
-          testRun={testRun}
-          testedThisDraft={testedIdentity === identity}
-        />
-        {needsTestBuild && !stale && problems.all.length === 0 && (
-          <div {...stylex.props(styles.testBar)}>
-            <Field
-              label="Runner to build on"
-              {...(onlineRunners.length === 0 && {
-                description: "No Runner is online to build on.",
-              })}
-            >
-              <Select
-                value={chosenRunner?.id ?? null}
-                placeholder="No Runner online"
-                disabled={onlineRunners.length === 0}
-                onValueChange={(value) => setRunnerId(value)}
-                options={onlineRunners.map((runner: RunnerSummary) => ({
-                  value: runner.id as string,
-                  label: runner.name,
-                }))}
-                sx={styles.runnerSelect}
-              />
-            </Field>
-            <Button
-              onClick={() => void startTestBuild()}
-              loading={starting || testing}
-              disabled={!chosenRunner || !online}
-            >
-              Test build
-            </Button>
-          </div>
-        )}
-        {testError && (
-          <p role="alert" {...stylex.props(styles.error)}>
-            {testError}
-          </p>
-        )}
-        {testRun && (
-          <LogView label="Test build log" placeholder="Waiting for the Runner…">
-            {testRun.log}
-          </LogView>
-        )}
-        {applyError && (
-          <p role="alert" {...stylex.props(styles.error)}>
-            {applyError}
-          </p>
-        )}
-        <div {...stylex.props(styles.applyBar)}>
-          <p {...stylex.props(styles.applyNote)}>
-            {environment
-              ? "New Sessions start on the applied version; Active ones offer a Restart."
-              : "Applying makes version 1."}
-          </p>
-          {!unchanged && environment && (
-            <Button intent="ghost" onClick={startOver}>
-              Discard changes
-            </Button>
-          )}
-          <Button intent="primary" disabled={!canApply} loading={applying} onClick={apply}>
-            {pendingSession && !environment ? "Apply and start Session" : "Apply"}
-          </Button>
-        </div>
-      </Section>
-
-      <Section
-        title="Version history"
-        note="Who applied each version and when. Versions keep no values."
-      >
-        {versions.length === 0 ? (
-          <p {...stylex.props(styles.sectionNote)}>Nothing applied yet.</p>
-        ) : (
-          <ol aria-label="Versions" {...stylex.props(styles.history)}>
-            {versions.map((version, index) => (
-              <VersionRow key={version.version} version={version} first={index === 0} />
-            ))}
-          </ol>
-        )}
-      </Section>
-
-      <Section
+      <SettingsSection
         title="MCP servers"
         note={
           <>
             The Installations on for this Repo: Claude Code in its Sessions gets their tools from
-            their next wake or Restart. A change creates no Environment version.{" "}
+            their next wake or restart. A change creates no Environment version.{" "}
             <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
               Manage MCP servers
             </Link>
@@ -908,28 +851,77 @@ function EnvironmentEditor({
         }
       >
         <RepoMcpServers repo={repo} />
-      </Section>
-    </>
-  )
-}
+      </SettingsSection>
 
-function Section({
-  title,
-  note,
-  children,
-}: {
-  title: string
-  note?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <section aria-label={title} {...stylex.props(styles.section)}>
-      <div {...stylex.props(styles.sectionHead)}>
-        <h2 {...stylex.props(styles.sectionTitle)}>{title}</h2>
-        {note && <p {...stylex.props(styles.sectionNote)}>{note}</p>}
-      </div>
-      {children}
-    </section>
+      <SettingsSection
+        title="History"
+        note="Who applied each version and when, and each change to this Repo's MCP servers. Versions keep no values."
+      >
+        <SettingsGroup label="Versions">
+          {versions.length === 0 ? (
+            <SettingsEmpty title="Nothing applied yet" />
+          ) : (
+            <SettingsList label="Versions">
+              {versions.map((version) => (
+                <VersionRow key={version.version} version={version} />
+              ))}
+            </SettingsList>
+          )}
+        </SettingsGroup>
+        <SettingsGroup label="MCP server changes">
+          <McpServerChangeLog repo={repo} />
+        </SettingsGroup>
+      </SettingsSection>
+
+      {(!unchanged || stale) && (
+        <StickyApplyBar
+          title={environment ? "Unsaved changes" : "Not applied yet"}
+          {...(environment && { onDiscard: startOver })}
+          secondary={
+            canTestBuild && (
+              <Button
+                onClick={() => void startTestBuild()}
+                loading={starting || testing}
+                disabled={!chosenRunner || !online}
+              >
+                Test build
+              </Button>
+            )
+          }
+          apply={
+            <Button intent="primary" disabled={!canApply} loading={applying} onClick={apply}>
+              {pendingSession && !environment ? "Apply and start Session" : "Apply"}
+            </Button>
+          }
+        >
+          {problems.all.length > 0 ? (
+            <ul aria-label="What to fix before applying" {...stylex.props(styles.problems)}>
+              {problems.all.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          ) : (
+            <BuildStatus
+              checked={checked}
+              checkable={checkable}
+              testRun={testRun}
+              testedThisDraft={testedIdentity === identity}
+              fresh={environment === null}
+            />
+          )}
+          {testError && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {testError}
+            </p>
+          )}
+          {applyError && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {applyError}
+            </p>
+          )}
+        </StickyApplyBar>
+      )}
+    </>
   )
 }
 
@@ -960,138 +952,139 @@ function VariableRow({
   const name = variable.name.trim()
   const linked = sharedVariables?.find((shared) => shared.name === variable.sharedVariable)
   return (
-    <div {...stylex.props(styles.row)}>
-      <Field label="Name" invalid={problem !== undefined} sx={styles.rowName}>
-        <Input
-          size="sm"
-          value={variable.name}
-          placeholder="NAME"
-          onValueChange={(value: string) => onChange({ name: value })}
-          spellCheck={false}
-          autoCapitalize="off"
-          sx={styles.mono}
-        />
-      </Field>
-      <Field label="Kind" sx={styles.rowKind}>
-        <Select
-          size="sm"
-          value={variable.kind}
-          options={kinds}
-          onValueChange={(kind) =>
-            onChange({
-              kind,
-              // A saved Sensitive value can't become Plain: it was never sent here.
-              ...(kind === "Plain" && { availableAtBuild: true }),
-              ...(kind === "Link" && { value: "" }),
-              ...(variable.kind === "Link" &&
-                kind !== "Link" && { availableAtBuild: kind === "Plain" }),
-            })
-          }
-          sx={styles.kindSelect}
-        />
-      </Field>
-      {variable.kind === "Plain" && (
-        <Field label="Value" sx={styles.rowValue}>
+    <SettingsItem>
+      <div {...stylex.props(styles.rowItem)}>
+        <Field label="Name" invalid={problem !== undefined} sx={styles.rowName}>
           <Input
             size="sm"
-            value={variable.value}
-            onValueChange={(value: string) => onChange({ value })}
+            value={variable.name}
+            placeholder="NAME"
+            onValueChange={(value: string) => onChange({ name: value })}
             spellCheck={false}
             autoCapitalize="off"
             sx={styles.mono}
           />
         </Field>
-      )}
-      {variable.kind === "Sensitive" && (
-        <Field
-          label={
-            <span {...stylex.props(styles.valueLine)}>
-              Value
-              {hasSavedValue && variable.value === "" && <Badge intent="success">set</Badge>}
-              {savedNeedsValue && variable.value === "" && (
-                <Badge intent="danger">needs a value</Badge>
-              )}
-            </span>
-          }
-          sx={styles.rowValue}
-        >
-          <Input
-            size="sm"
-            type="password"
-            value={variable.value}
-            placeholder={
-              hasSavedValue
-                ? "Saved: type to replace it"
-                : savedNeedsValue
-                  ? "Cleared: enter it again"
-                  : "Enter a value"
-            }
-            autoComplete="off"
-            onValueChange={(value: string) => onChange({ value })}
-            sx={styles.mono}
-          />
-        </Field>
-      )}
-      {variable.kind === "Link" && (
-        <Field
-          label={
-            <span {...stylex.props(styles.valueLine)}>
-              Shared variable
-              {variable.kind === "Link" && needsValue(linked) && (
-                <Badge intent="danger">needs a value</Badge>
-              )}
-            </span>
-          }
-          {...(sharedVariables?.length === 0 && {
-            description: (
-              <Link to="/variables" {...stylex.props(styles.link, focus.ring)}>
-                Add a shared variable first
-              </Link>
-            ),
-          })}
-          sx={styles.rowValue}
-        >
+        <Field label="Kind" sx={styles.rowKind}>
           <Select
             size="sm"
-            value={variable.sharedVariable === "" ? null : variable.sharedVariable}
-            placeholder={sharedVariables === null ? "Loading…" : "Pick one"}
-            disabled={sharedVariables === null || sharedVariables.length === 0}
-            onValueChange={(sharedVariable) =>
+            value={variable.kind}
+            options={kinds}
+            onValueChange={(kind) =>
               onChange({
-                sharedVariable,
-                ...(variable.name === "" && { name: sharedVariable }),
+                kind,
+                // A saved Sensitive value can't become Plain: it was never sent here.
+                ...(kind === "Plain" && { availableAtBuild: true }),
+                ...(kind === "Link" && { value: "" }),
+                ...(variable.kind === "Link" &&
+                  kind !== "Link" && { availableAtBuild: kind === "Plain" }),
               })
             }
-            options={(sharedVariables ?? []).map((shared) => ({
-              value: shared.name,
-              label: `${shared.name} (${shared._tag})`,
-            }))}
-            sx={styles.valueSelect}
+            sx={styles.kindSelect}
           />
         </Field>
-      )}
-      <Checkbox
-        label="At build"
-        checked={variable.kind === "Plain" ? true : variable.availableAtBuild}
-        disabled={variable.kind === "Plain"}
-        onCheckedChange={(availableAtBuild) => onChange({ availableAtBuild })}
-        sx={styles.rowBuild}
-      />
-      <IconButton
-        label={`Remove ${name || "this variable"}`}
-        size="sm"
-        intent="ghost"
-        sx={styles.rowBuild}
-        onClick={onRemove}
-      >
-        <TrashIcon />
-      </IconButton>
-      {problem && (
-        <p role="alert" {...stylex.props(styles.rowError)}>
-          {problem}
-        </p>
-      )}
-    </div>
+        {variable.kind === "Plain" && (
+          <Field label="Value" sx={styles.rowValue}>
+            <Input
+              size="sm"
+              value={variable.value}
+              onValueChange={(value: string) => onChange({ value })}
+              spellCheck={false}
+              autoCapitalize="off"
+              sx={styles.mono}
+            />
+          </Field>
+        )}
+        {variable.kind === "Sensitive" && (
+          <Field
+            label={
+              <span {...stylex.props(styles.valueLine)}>
+                Value
+                {savedNeedsValue && variable.value === "" && (
+                  <Badge intent="danger">needs a value</Badge>
+                )}
+              </span>
+            }
+            sx={styles.rowValue}
+          >
+            <Input
+              size="sm"
+              type="password"
+              value={variable.value}
+              placeholder={
+                hasSavedValue
+                  ? "Saved: type to replace it"
+                  : savedNeedsValue
+                    ? "Cleared: enter it again"
+                    : "Enter a value"
+              }
+              autoComplete="off"
+              onValueChange={(value: string) => onChange({ value })}
+              sx={styles.mono}
+            />
+          </Field>
+        )}
+        {variable.kind === "Link" && (
+          <Field
+            label={
+              <span {...stylex.props(styles.valueLine)}>
+                Shared variable
+                {variable.kind === "Link" && needsValue(linked) && (
+                  <Badge intent="danger">needs a value</Badge>
+                )}
+              </span>
+            }
+            {...(sharedVariables?.length === 0 && {
+              description: (
+                <Link to="/variables" {...stylex.props(styles.link, focus.ring)}>
+                  Add a shared variable first
+                </Link>
+              ),
+            })}
+            sx={styles.rowValue}
+          >
+            <Select
+              size="sm"
+              value={variable.sharedVariable === "" ? null : variable.sharedVariable}
+              placeholder={sharedVariables === null ? "Loading…" : "Pick one"}
+              disabled={sharedVariables === null || sharedVariables.length === 0}
+              onValueChange={(sharedVariable) =>
+                onChange({
+                  sharedVariable,
+                  ...(variable.name === "" && { name: sharedVariable }),
+                })
+              }
+              options={(sharedVariables ?? []).map((shared) => ({
+                value: shared.name,
+                label: `${shared.name} (${shared._tag})`,
+              }))}
+              sx={styles.valueSelect}
+            />
+          </Field>
+        )}
+        <Checkbox
+          label="At build"
+          checked={variable.kind === "Plain" ? true : variable.availableAtBuild}
+          disabled={variable.kind === "Plain"}
+          onCheckedChange={(availableAtBuild) => onChange({ availableAtBuild })}
+          sx={styles.rowBuild}
+        />
+        <IconButton
+          label={`Remove ${name || "this variable"}`}
+          size="sm"
+          intent="ghost"
+          sx={styles.rowBuild}
+          onClick={onRemove}
+        >
+          <TrashIcon />
+        </IconButton>
+        {problem && (
+          <p role="alert" {...stylex.props(styles.rowError)}>
+            {problem}
+          </p>
+        )}
+      </div>
+    </SettingsItem>
   )
 }
 
@@ -1099,20 +1092,18 @@ function VariableRow({
 function BuildStatus({
   checked,
   checkable,
-  unchanged,
   testRun,
   testedThisDraft,
+  fresh,
 }: {
   checked: Check | null
   checkable: boolean
-  unchanged: boolean
   testRun: TestBuildRun | undefined
   testedThisDraft: boolean
+  /** No version is applied yet: applying makes version 1. */
+  fresh: boolean
 }) {
   const online = useHubState((state) => state.connection.status === "online")
-  if (unchanged) {
-    return <Status intent="neutral" text="No changes to apply." />
-  }
   if (!checkable) return null
   if (checked === null) return <Status spinner text="Checking the draft with the Hub…" />
   if ("refused" in checked) return <Status intent="danger" text={checked.refused} />
@@ -1134,12 +1125,24 @@ function BuildStatus({
   }
   if (!checked.needsTestBuild) {
     return (
-      <Status intent="success" badge="No Test build needed" text="It doesn't change the build." />
+      <Status
+        intent="success"
+        badge="No Test build needed"
+        text={fresh ? "Applying makes version 1." : "It doesn't change the build."}
+      />
     )
   }
   if (checked.passed) {
     return (
-      <Status intent="success" badge="Test build passed" text="This exact draft built. Apply it." />
+      <Status
+        intent="success"
+        badge="Test build passed"
+        text={
+          fresh
+            ? "This exact draft built. Applying makes version 1."
+            : "This exact draft built. Apply it."
+        }
+      />
     )
   }
   return (
@@ -1171,22 +1174,20 @@ function Status({
   )
 }
 
-function VersionRow({ version, first }: { version: EnvironmentVersionInfo; first: boolean }) {
+function VersionRow({ version }: { version: EnvironmentVersionInfo }) {
   return (
-    <li {...stylex.props(styles.version, first && styles.firstVersion)}>
-      <span {...stylex.props(styles.versionNumber)}>Version {version.version}</span>
-      <Avatar name={version.appliedBy.name} src={version.appliedBy.avatarUrl} size="sm" />
-      <span>{version.appliedBy.name}</span>
-      <span {...stylex.props(styles.muted)} title={new Date(version.appliedAt).toLocaleString()}>
-        {timeAgo(version.appliedAt)}
-      </span>
-      <span {...stylex.props(styles.grow)} />
-      {version.rebuilt ? (
-        <Badge intent="accent">Changed the build</Badge>
-      ) : (
-        <Badge>Same build</Badge>
-      )}
-    </li>
+    <SettingsRow
+      label={`Version ${version.version}`}
+      icon={<Avatar name={version.appliedBy.name} src={version.appliedBy.avatarUrl} size="sm" />}
+      name={`Version ${version.version}`}
+      meta={[
+        version.appliedBy.name,
+        <span key="when" title={new Date(version.appliedAt).toLocaleString()}>
+          {timeAgo(version.appliedAt)}
+        </span>,
+      ]}
+      badges={<Badge>{version.rebuilt ? "Changed the build" : "Same build"}</Badge>}
+    />
   )
 }
 

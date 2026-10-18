@@ -64,6 +64,9 @@ const styles = stylex.create({
     height: thumb,
     borderRadius: radius.full,
     backgroundColor: color.surfaceActive,
+    // An edge, not a fill, shows where it runs, so the stop dots still read on it. Inset, so the
+    // thumb keeps the track's height.
+    boxShadow: `inset 0 0 0 1px ${color.borderControl}`,
     // The focused element is Base UI's visually hidden range input inside the thumb, so the
     // shared focus.ring, which rings the focused element itself, can't show: the ring goes on
     // the track, around the input, for keyboard focus only.
@@ -84,7 +87,7 @@ const styles = stylex.create({
     marginInlineStart: "-0.125rem",
     marginTop: "-0.125rem",
     borderRadius: radius.full,
-    backgroundColor: color.textSubtle,
+    backgroundColor: color.neutral,
     pointerEvents: "none",
   },
   dotFilled: {
@@ -94,7 +97,7 @@ const styles = stylex.create({
   // With the thumb inset at the ends, its centre runs from half a thumb in to half a thumb short
   // of the end: the dots sit where it stops.
   dotAt: (fraction: number) => ({
-    left: `calc(${thumb} / 2 + (100% - ${thumb}) * ${fraction})`,
+    insetInlineStart: `calc(${thumb} / 2 + (100% - ${thumb}) * ${fraction})`,
   }),
   thumb: {
     width: thumb,
@@ -104,7 +107,7 @@ const styles = stylex.create({
     boxShadow: shadow.sm,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.borderStrong,
+    borderColor: color.borderControl,
   },
   hidden: {
     opacity: 0,

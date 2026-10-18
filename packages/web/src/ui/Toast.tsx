@@ -33,8 +33,9 @@ export interface ToastOptions {
   /** One button in the toast, typically "Undo" after something destructive. */
   action?: ToastAction
   /**
-   * Milliseconds before the toast closes on its own; 0 keeps it until dismissed. Defaults to 5s,
-   * or 10s with an action, so there's time to reach it. Hovering or focusing toasts pauses this.
+   * Milliseconds before the toast closes on its own; 0 keeps it until dismissed. Defaults to 5s.
+   * A toast with an action, such as Undo, or an error stays until dismissed: someone who heard it
+   * while busy elsewhere mustn't lose it to a timer. Hovering or focusing toasts pauses this.
    */
   timeout?: number
   /** Showing a toast with the id of an open one replaces it, instead of stacking another. */
@@ -54,7 +55,7 @@ export const toast = {
       title,
       description,
       type: intent,
-      timeout: timeout ?? (action ? 10_000 : 5_000),
+      timeout: timeout ?? (action !== undefined || intent === "danger" ? 0 : 5_000),
       // Errors interrupt the screen reader; everything else waits its turn.
       priority: intent === "danger" ? "high" : "low",
       ...(id !== undefined && { id }),
@@ -82,7 +83,7 @@ const styles = stylex.create({
     zIndex: layer.toast,
     insetInlineEnd: space.s4,
     bottom: space.s4,
-    width: `min(22.5rem, calc(100vw - ${space.s8}))`,
+    width: `min(22.5rem, calc(100% - ${space.s8}))`,
     display: "flex",
     // Newest first in the DOM; shown at the bottom, nearest where the eye already is.
     flexDirection: "column-reverse",
@@ -96,11 +97,12 @@ const styles = stylex.create({
     paddingBlock: space.s3,
     paddingInlineStart: space.s3,
     paddingInlineEnd: space.s2,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.lg,
     boxShadow: shadow.lg,
     userSelect: "none",
@@ -115,7 +117,11 @@ const styles = stylex.create({
       "[data-starting-style]": `translateY(calc(${motion.enterDistance} * 3))`,
     },
     transitionProperty: "opacity, transform",
-    transitionDuration: { default: motion.durationSlow, "[data-swiping]": "0s" },
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationNormal,
+      "[data-swiping]": "0s",
+    },
     transitionTimingFunction: motion.easeOut,
   },
   marker: {
@@ -138,12 +144,14 @@ const styles = stylex.create({
     fontSize: text.base,
     fontWeight: weight.medium,
     lineHeight: leading.snug,
+    textWrap: "balance",
   },
   description: {
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
   actions: {
     display: "flex",
@@ -154,7 +162,7 @@ const styles = stylex.create({
 })
 
 const markers = stylex.create({
-  neutral: { backgroundColor: color.textSubtle },
+  neutral: { backgroundColor: color.neutral },
   success: { backgroundColor: color.success },
   warning: { backgroundColor: color.warning },
   danger: { backgroundColor: color.danger },

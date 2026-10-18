@@ -82,7 +82,7 @@ The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's 
 
 ## Remove says the Runner has Sessions
 
-**What you see.** **Remove** on the Runners page says:
+**What you see.** **Remove**, in a Runner's **⋯** menu on the Runners page, says:
 
 ```
 Runner build-box has 2 Sessions that aren't Archived. Archive them first, then remove the Runner.

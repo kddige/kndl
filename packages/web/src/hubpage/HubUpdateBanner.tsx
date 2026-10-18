@@ -13,7 +13,7 @@ const styles = stylex.create({
   actions: { display: "flex", alignItems: "center", gap: space.s1 },
 })
 
-export function HubUpdateBanner({ sx }: { sx?: stylex.StyleXStyles }) {
+export function HubUpdateBanner() {
   const update = useHubState((state) => state.hubUpdate)
   const version = useHubState((state) => state.hubVersion)
   const owner = useHubState((state) => state.owner)
@@ -26,20 +26,20 @@ export function HubUpdateBanner({ sx }: { sx?: stylex.StyleXStyles }) {
 
   return (
     <Banner
-      intent="accent"
+      slim
+      intent="neutral"
       icon={<UpdateIcon />}
       title={text.title}
       action={
         <div {...stylex.props(styles.actions)}>
           <Button size="sm" nativeButton={false} render={<Link to="/hub" />}>
-            See what's new
+            See what changed
           </Button>
-          <IconButton label="Dismiss" size="sm" onClick={() => dismissUpdate(target)}>
+          <IconButton label="Dismiss update notice" size="sm" onClick={() => dismissUpdate(target)}>
             <CloseIcon />
           </IconButton>
         </div>
       }
-      {...(sx && { sx })}
     >
       {text.description}
     </Banner>

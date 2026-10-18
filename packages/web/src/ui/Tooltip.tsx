@@ -34,8 +34,10 @@ const styles = stylex.create({
 })
 
 /**
- * A hover and focus hint for one element. Base UI does not show tooltips on touch, so use a
- * Popover or inline text for anything that matters.
+ * A hover and focus hint for one element. Base UI does not show tooltips on touch, and screen
+ * readers don't hear them, so use a Popover or inline text for anything that matters. The trigger
+ * is a focusable, named control, and the content only repeats its name or adds a hint to it, as
+ * IconButton's does.
  */
 export function Tooltip({ content, children, side = "top", disabled = false }: TooltipProps) {
   return (

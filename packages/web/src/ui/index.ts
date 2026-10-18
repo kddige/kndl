@@ -15,16 +15,24 @@ export {
   type ComboboxProps,
 } from "./Combobox.tsx"
 export { Checkbox, Switch, type CheckboxProps } from "./Checkbox.tsx"
+export {
+  type Command,
+  type CommandGroup,
+  CommandPalette,
+  type CommandPaletteProps,
+} from "./CommandPalette.tsx"
 export { Dialog, DialogClose, type DialogSize } from "./Dialog.tsx"
 export { Disclosure } from "./Disclosure.tsx"
 export { Drawer } from "./Drawer.tsx"
 export { EmptyState } from "./EmptyState.tsx"
-export { Field, Input, Textarea, type InputSize } from "./Field.tsx"
+export { Field, fieldText, Input, Textarea, type InputSize } from "./Field.tsx"
 export * from "./icons.tsx"
 export { InlineEdit, type InlineEditProps } from "./InlineEdit.tsx"
 export { LogView } from "./LogView.tsx"
 export { Markdown } from "./Markdown.tsx"
 export {
+  ContextMenu,
+  type ContextMenuProps,
   Menu,
   MenuGroup,
   MenuItem,
@@ -54,8 +62,23 @@ export { NavItem, type NestedNavItems, NavSection, NavSlot, Sidebar } from "./Si
 export { Slider, type SliderProps, type SliderStep } from "./Slider.tsx"
 export { Spinner, type SpinnerSize } from "./Spinner.tsx"
 export { Tab, TabList, TabPanel, Tabs } from "./Tabs.tsx"
+export {
+  PropertyRow,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+  StickyApplyBar,
+} from "./Settings.tsx"
 export { setTheme, themes, type ThemeMode } from "./theme.ts"
 export { toast, type ToastAction, type ToastIntent, type ToastOptions } from "./Toast.tsx"
 export { Tooltip } from "./Tooltip.tsx"
 export { UIProvider } from "./UIProvider.tsx"
+export { PageBarProvider, usePageBar, usePageBarState } from "./pageBar.tsx"
+export { textRole } from "./type.ts"
+export { useDocumentTitle } from "./useDocumentTitle.ts"
 export { useMediaQuery, WIDE } from "./useMediaQuery.ts"

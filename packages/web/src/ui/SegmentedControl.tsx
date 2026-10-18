@@ -20,6 +20,11 @@ export interface SegmentedControlProps<Value extends string> {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
+const FORCED = "@media (forced-colors: active)"
+
 const styles = stylex.create({
   group: {
     display: "inline-flex",
@@ -29,7 +34,8 @@ const styles = stylex.create({
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: color.border,
-    borderRadius: radius.md,
+    // Concentric with the 4px segments inside its 2px padding and 1px border.
+    borderRadius: `calc(${radius.sm} + ${space.s0_5} + 1px)`,
     // Sunk below the card it is on: the chosen one, raised and outlined, stands out either way.
     backgroundColor: color.bg,
   },
@@ -41,14 +47,19 @@ const styles = stylex.create({
     paddingInline: space.s3,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: "transparent", "[data-checked]": color.borderStrong },
+    borderColor: { default: "transparent", "[data-checked]": color.borderControl },
     borderRadius: radius.sm,
-    backgroundColor: { default: "transparent", "[data-checked]": color.surface },
+    // In forced colors the chosen one takes the system's selection colours.
+    forcedColorAdjust: { default: "auto", "[data-checked]": "none" },
+    backgroundColor: {
+      default: "transparent",
+      "[data-checked]": { default: color.surface, [FORCED]: "Highlight" },
+    },
     boxShadow: { default: "none", "[data-checked]": shadow.sm },
     color: {
-      default: color.textMuted,
-      ":hover:not([data-disabled])": color.text,
-      "[data-checked]": color.text,
+      default: color.textSecondary,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
+      "[data-checked]": { default: color.text, [FORCED]: "HighlightText" },
     },
     fontSize: text.base,
     fontWeight: weight.medium,

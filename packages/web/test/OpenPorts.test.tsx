@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, chooseSessionAction, render, sessionOffers, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -101,7 +101,9 @@ test("a Session that isn't Active shows no Open ports, and none once it sleeps",
 
   const { page, portsButton } = await open(demoSessionId)
   await eventually(() => expect(portsButton()).not.toBeNull())
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
-  await step(() => button("Sleep now", page).click())
+  for (const deadline = Date.now() + 5_000; !(await sessionOffers("Sleep now", page));) {
+    if (Date.now() > deadline) throw new Error("Sleep now never offered")
+  }
+  await chooseSessionAction("Sleep now", page)
   await eventually(() => expect(portsButton()).toBeNull())
 })

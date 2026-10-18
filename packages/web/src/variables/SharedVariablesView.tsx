@@ -24,87 +24,42 @@ import {
   Button,
   Dialog,
   DialogClose,
-  EmptyState,
   Field,
   Input,
-  KeyIcon,
-  PageHeader,
+  LockIcon,
+  MenuItem,
+  MenuSeparator,
   PlusIcon,
   Select,
-  Spinner,
+  SettingsEmpty,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
   toast,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s4,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-    overflow: "hidden",
-  },
-  row: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  firstRow: { borderTopWidth: 0 },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "12rem" },
-  nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
   name: { fontFamily: font.mono, fontSize: text.sm, fontWeight: weight.semibold },
   value: {
+    display: "inline-block",
+    maxWidth: "100%",
+    verticalAlign: "bottom",
     fontFamily: font.mono,
-    fontSize: text.sm,
-    color: color.textMuted,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    maxWidth: "100%",
-  },
-  links: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s1_5,
-    color: color.textMuted,
-    fontSize: text.sm,
   },
   link: {
-    color: color.accentSubtleText,
-    textDecoration: { default: "none", ":hover": "underline" },
+    color: color.accentText,
     borderRadius: radius.sm,
   },
   mono: { fontFamily: font.mono },
-  actions: { display: "flex", gap: space.s2 },
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
-  error: { color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  error: { color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 export function SharedVariablesView() {
@@ -115,166 +70,166 @@ export function SharedVariablesView() {
   const [editing, setEditing] = useState<SharedVariable | "new" | null>(null)
   const [deleting, setDeleting] = useState<SharedVariable | null>(null)
 
+  // Bumped by Try again, after a failed load.
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!online) return
     hub.getSharedVariables().then(
       () => setLoadError(null),
       (error: unknown) => setLoadError(messageOf(error)),
     )
-  }, [hub, online])
+  }, [hub, online, attempt])
+  const retry = () => {
+    setLoadError(null)
+    setAttempt((n) => n + 1)
+  }
 
   const sorted = variables?.toSorted((a, b) => a.name.localeCompare(b.name)) ?? null
   const needed = (sorted ?? []).filter(needsValue)
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="Shared variables"
-        description="Hub-wide values, such as an API key, that Environments link under a name of their own. A change reaches each linking Repo's Sessions as they next start."
-        actions={
-          <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
-            Add shared variable
-          </Button>
-        }
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {needed.length > 0 && (
-            <Banner
-              intent="danger"
-              icon={<WarningIcon />}
-              title={valuesNeededText(
-                needed.map((variable) => ({ name: variable.name, availableAtBuild: false })),
-              )}
-            >
-              The Hub's secrets key was replaced, and the values it encrypted were cleared. The
-              Sessions of each Repo that links {needed.length === 1 ? "it" : "one"} don't start
-              until {needed.length === 1 ? "it gets" : "each gets"} a value again: edit{" "}
-              {needed.length === 1 ? "it" : "each"} to enter one.
-            </Banner>
+    <SettingsPage
+      title="Shared variables"
+      description="Values any Environment can link."
+      action={
+        <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+          Add shared variable
+        </Button>
+      }
+    >
+      {needed.length > 0 && (
+        <Banner
+          intent="danger"
+          icon={<WarningIcon />}
+          title={valuesNeededText(
+            needed.map((variable) => ({ name: variable.name, availableAtBuild: false })),
           )}
-          {sorted === null ? (
-            loadError ? (
-              <EmptyState
-                size="page"
-                icon={<WarningIcon />}
-                title="Can't load the shared variables"
-                description={loadError}
-              />
-            ) : (
-              <div {...stylex.props(styles.loading)}>
-                <Spinner size="lg" label="Loading shared variables" />
-              </div>
-            )
-          ) : sorted.length === 0 ? (
-            <EmptyState
-              size="page"
-              icon={<KeyIcon />}
-              title="No shared variables yet"
-              description="Add one here, then link it from each Environment that needs it."
-              action={
-                <Button intent="primary" icon={<PlusIcon />} onClick={() => setEditing("new")}>
-                  Add shared variable
-                </Button>
-              }
+        >
+          The Hub's secrets key was replaced, and the values it encrypted were cleared. The Sessions
+          of each Repo that links {needed.length === 1 ? "it" : "one"} don't start until{" "}
+          {needed.length === 1 ? "it gets" : "each gets"} a value again: enter{" "}
+          {needed.length === 1 ? "it" : "each"} below.
+        </Banner>
+      )}
+      {sorted === null ? (
+        loadError ? (
+          <Banner
+            intent="danger"
+            icon={<WarningIcon />}
+            title="Couldn't load the shared variables"
+            action={
+              <Button size="sm" onClick={retry}>
+                Try again
+              </Button>
+            }
+          >
+            {loadError}
+          </Banner>
+        ) : (
+          <SettingsLoading label="Loading shared variables" />
+        )
+      ) : sorted.length === 0 ? (
+        <SettingsEmpty
+          title="No shared variables yet"
+          description="Add one here, then link it from each Environment that needs it."
+          action={
+            <Button size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+              Add shared variable
+            </Button>
+          }
+        />
+      ) : (
+        <SettingsList label="Shared variables">
+          {sorted.map((variable) => (
+            <VariableRow
+              key={variable.name}
+              variable={variable}
+              onEdit={() => setEditing(variable)}
+              onDelete={() => setDeleting(variable)}
             />
-          ) : (
-            <ul aria-label="Shared variables" {...stylex.props(styles.list)}>
-              {sorted.map((variable, index) => (
-                <VariableRow
-                  key={variable.name}
-                  variable={variable}
-                  first={index === 0}
-                  onEdit={() => setEditing(variable)}
-                  onDelete={() => setDeleting(variable)}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+          ))}
+        </SettingsList>
+      )}
       <EditDialog editing={editing} existing={variables ?? []} onClose={() => setEditing(null)} />
       <DeleteDialog variable={deleting} onClose={() => setDeleting(null)} />
-    </main>
+    </SettingsPage>
   )
 }
 
 function VariableRow({
   variable,
-  first,
   onEdit,
   onDelete,
 }: {
   variable: SharedVariable
-  first: boolean
   onEdit: () => void
   onDelete: () => void
 }) {
+  const needed = needsValue(variable)
   return (
-    <li aria-label={variable.name} {...stylex.props(styles.row, first && styles.firstRow)}>
-      <div {...stylex.props(styles.main)}>
-        <div {...stylex.props(styles.nameLine)}>
-          <span {...stylex.props(styles.name)}>{variable.name}</span>
+    <SettingsRow
+      label={variable.name}
+      name={<span {...stylex.props(styles.name)}>{variable.name}</span>}
+      meta={[
+        variable._tag === "Plain" && (
+          <span key="value" title={variable.value} {...stylex.props(styles.value)}>
+            {variable.value === "" ? "(empty)" : variable.value}
+          </span>
+        ),
+        variable.linkedBy.length === 0 ? (
+          "No Environment links it."
+        ) : (
+          <span key="links">
+            Linked by{" "}
+            {variable.linkedBy.map((use, index) => (
+              <span key={`${use.repo}:${use.name}`}>
+                <Link
+                  to="/repos/$owner/$repo/environment"
+                  params={repoParams(use.repo)}
+                  {...stylex.props(textLink.underline, styles.link, focus.ring)}
+                >
+                  {use.repo}
+                </Link>
+                {use.name !== variable.name && (
+                  <>
+                    {" as "}
+                    <span {...stylex.props(styles.mono)}>{use.name}</span>
+                  </>
+                )}
+                {use.availableAtBuild && " (at build)"}
+                {index < variable.linkedBy.length - 1 && ", "}
+              </span>
+            ))}
+          </span>
+        ),
+      ]}
+      badges={
+        <>
+          {/* What kind it is, in no colour: only what needs attention gets one. */}
           {variable._tag === "Sensitive" ? (
-            <>
-              <Badge intent="warning">Sensitive</Badge>
-              {variable.needsValue ? (
-                <Badge intent="danger">needs a value</Badge>
-              ) : (
-                <Badge intent="success">set</Badge>
-              )}
-            </>
+            <Badge icon={<LockIcon width={12} height={12} />}>Sensitive</Badge>
           ) : (
             <Badge>Plain</Badge>
           )}
-        </div>
-        {variable._tag === "Plain" && (
-          <span title={variable.value} {...stylex.props(styles.value)}>
-            {variable.value === "" ? "(empty)" : variable.value}
-          </span>
-        )}
-        <div {...stylex.props(styles.links)}>
-          {variable.linkedBy.length === 0 ? (
-            <span>No Environment links it.</span>
-          ) : (
-            <>
-              <span>Linked by</span>
-              {variable.linkedBy.map((use, index) => (
-                <span key={`${use.repo}:${use.name}`}>
-                  <Link
-                    to="/repos/$owner/$repo/environment"
-                    params={repoParams(use.repo)}
-                    {...stylex.props(styles.link, focus.ring)}
-                  >
-                    {use.repo}
-                  </Link>
-                  {use.name !== variable.name && (
-                    <>
-                      {" as "}
-                      <span {...stylex.props(styles.mono)}>{use.name}</span>
-                    </>
-                  )}
-                  {use.availableAtBuild && " (at build)"}
-                  {index < variable.linkedBy.length - 1 && ","}
-                </span>
-              ))}
-            </>
-          )}
-        </div>
-      </div>
-      <div {...stylex.props(styles.actions)}>
-        <Button
-          size="sm"
-          {...(needsValue(variable) && { intent: "primary" })}
-          aria-label={`Edit ${variable.name}`}
-          onClick={onEdit}
-        >
-          {needsValue(variable) ? "Enter value" : "Edit"}
-        </Button>
-        <Button size="sm" intent="ghost" aria-label={`Delete ${variable.name}`} onClick={onDelete}>
-          Delete
-        </Button>
-      </div>
-    </li>
+          {needed && <Badge intent="danger">needs a value</Badge>}
+        </>
+      }
+      action={
+        needed && (
+          <Button size="sm" aria-label={`Enter value for ${variable.name}`} onClick={onEdit}>
+            Enter value
+          </Button>
+        )
+      }
+      menu={
+        <>
+          <MenuItem onClick={onEdit}>Edit {variable.name}</MenuItem>
+          <MenuSeparator />
+          <MenuItem intent="danger" onClick={onDelete}>
+            Delete {variable.name}
+          </MenuItem>
+        </>
+      }
+    />
   )
 }
 
@@ -423,17 +378,7 @@ function EditDialog({
           />
         </Field>
         <Field
-          label={
-            <span>
-              Value{" "}
-              {savedValue &&
-                (cleared ? (
-                  <Badge intent="danger">needs a value</Badge>
-                ) : (
-                  <Badge intent="success">set</Badge>
-                ))}
-            </span>
-          }
+          label={<span>Value {cleared && <Badge intent="danger">needs a value</Badge>}</span>}
           invalid={touched && valueProblem !== undefined}
           error={touched ? valueProblem : undefined}
         >

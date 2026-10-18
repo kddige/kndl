@@ -999,7 +999,8 @@ export class HubClient {
     if (isTagged(raw, "WebWelcome")) {
       const rejection = checkHandshake(raw)
       if (rejection) {
-        this.#reject(socket, rejection.message)
+        const spoken = (raw as { protocolVersion?: unknown }).protocolVersion
+        this.#reject(socket, rejection.message, typeof spoken === "number" ? spoken : undefined)
         return
       }
     }
@@ -1024,7 +1025,7 @@ export class HubClient {
         for (const sessionId of this.#terminals.keys()) this.#sendOpenTerminal(sessionId)
         break
       case "HandshakeRejected":
-        this.#reject(socket, message.message)
+        this.#reject(socket, message.message, message.protocolVersion)
         break
       case "SessionCreated":
       case "ArchivedSessionPurged":
@@ -1079,11 +1080,18 @@ export class HubClient {
   }
 
   /** The Hub refused the hello: stay disconnected, since trying again would be refused too. */
-  #reject(socket: HubSocket, message: string): void {
+  #reject(socket: HubSocket, message: string, hubProtocol: number | undefined): void {
     this.#running = false
     this.#socket = null
     socket.close()
-    this.#dispatch({ _tag: "ConnectionChanged", connection: { status: "rejected", message } })
+    this.#dispatch({
+      _tag: "ConnectionChanged",
+      connection: {
+        status: "rejected",
+        message,
+        ...(hubProtocol !== undefined && { hubProtocol }),
+      },
+    })
     this.#failRequests(message)
   }
 

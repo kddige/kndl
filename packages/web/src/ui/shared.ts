@@ -8,7 +8,6 @@
 import * as stylex from "@stylexjs/stylex"
 import {
   color,
-  control,
   layer,
   leading,
   motion,
@@ -43,11 +42,12 @@ export const popup = stylex.create({
   },
   surface: {
     boxSizing: "border-box",
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.lg,
     boxShadow: shadow.md,
     outline: "none",
@@ -65,7 +65,7 @@ export const popup = stylex.create({
       // Keyboard-opened popups and instant hand-offs between tooltips skip the motion.
       "[data-instant]": "0s",
     },
-    transitionTimingFunction: { default: motion.easeOut, "[data-ending-style]": motion.easeIn },
+    transitionTimingFunction: motion.easeOut,
   },
   /** A list of selectable rows: menu items, select options. */
   list: {
@@ -73,32 +73,36 @@ export const popup = stylex.create({
     minWidth: "10rem",
     maxHeight: "var(--available-height)",
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   item: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    minHeight: control.md,
+    // One row height and radius with the sidebar's rows; taller on touch.
+    minHeight: { default: "1.75rem", "@media (pointer: coarse)": "2.25rem" },
     paddingInline: space.s2,
-    borderRadius: radius.md,
+    // Concentric with the panel: 4px + its 4px padding + 1px border ≈ its 8px corner.
+    borderRadius: radius.sm,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
-    backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceHover },
+    color: { default: color.text, "[data-disabled]": color.textDisabled },
+    // surfaceActive: on the raised fill in dark, surfaceHover would barely show.
+    backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceActive },
     cursor: { default: "default", "[data-disabled]": "not-allowed" },
     userSelect: "none",
     outline: "none",
     scrollMargin: space.s1,
   },
   itemDanger: {
-    color: color.dangerSubtleText,
-    backgroundColor: { default: "transparent", "[data-highlighted]": color.dangerSubtle },
+    color: color.dangerText,
+    backgroundColor: { default: "transparent", "[data-highlighted]": color.dangerTint },
   },
   /** The icon slot at the start of a row; takes the row's colour when the row is dangerous. */
   itemIcon: {
     display: "inline-flex",
     flexShrink: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   itemIconDanger: {
     color: "currentColor",
@@ -107,7 +111,7 @@ export const popup = stylex.create({
     height: "1px",
     marginBlock: space.s1,
     marginInline: `calc(${space.s1} * -1)`,
-    backgroundColor: color.border,
+    backgroundColor: color.separator,
     borderWidth: 0,
   },
   groupLabel: {
@@ -116,7 +120,32 @@ export const popup = stylex.create({
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textSubtle,
+    color: color.textSecondary,
     userSelect: "none",
+  },
+})
+
+export const textLink = stylex.create({
+  /** A link in running text: underlined, from the font's own metrics, so it never relies on colour. */
+  underline: {
+    textDecorationLine: "underline",
+    textDecorationThickness: "from-font",
+    textUnderlinePosition: "from-font",
+    textDecorationColor: { default: color.borderStrong, ":hover": "currentColor" },
+  },
+})
+
+/** Read out, not shown: the 1px clip, for a live region or a label only screen readers need. */
+export const srOnly = stylex.create({
+  root: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    margin: "-1px",
+    padding: 0,
+    overflow: "hidden",
+    clip: "rect(0 0 0 0)",
+    whiteSpace: "nowrap",
+    borderWidth: 0,
   },
 })

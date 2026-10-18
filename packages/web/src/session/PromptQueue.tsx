@@ -12,7 +12,7 @@ const styles = stylex.create({
   heading: {
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textSubtle,
+    color: color.textTertiary,
     paddingInline: space.s1,
   },
   list: {
@@ -39,7 +39,7 @@ const styles = stylex.create({
   position: {
     flexShrink: 0,
     width: "1rem",
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
     fontVariantNumeric: "tabular-nums",
     textAlign: "center",

@@ -10,8 +10,11 @@ export interface InlineEditProps {
   /** Shown while the field is empty: what clearing it leaves. */
   placeholder?: string
   maxLength?: number
-  /** Enter, or leaving the field: the text as typed, untrimmed. */
-  onCommit: (value: string) => void
+  /**
+   * Enter, or leaving the field: the text as typed, untrimmed. Return false when it couldn't be
+   * saved, to keep editing what was typed.
+   */
+  onCommit: (value: string) => void | boolean
   /** Escape: the edit is dropped. */
   onCancel: () => void
   size?: InputSize
@@ -39,8 +42,8 @@ export function InlineEdit({
   const finish = (commit: boolean) => {
     if (done.current) return
     done.current = true
-    if (commit) onCommit(value)
-    else onCancel()
+    if (!commit) onCancel()
+    else if (onCommit(value) === false) done.current = false
   }
   return (
     <Input

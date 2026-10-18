@@ -63,3 +63,17 @@ OpenClaw is the closest comparison: an open-source agent whose web Control UI is
 
 - Page headers are styled separately in each view; a shared page header is #79.
 - Session titles, search and filtering in the sidebar, and pinning are out of scope in #76.
+
+## The sidebar for Sessions, and Settings (#398)
+
+Recommendation 2 above put three Hub-wide destinations over the Sessions. They grew to seven (Runners, Environments, Shared variables, MCP, Archived Sessions, People, Hub), so the first Repo started at y=276: 45% of the nav at 640px tall. Personal settings hung off the avatar menu, at the other end. A review with the better-interface skill and a prototype the owner picked (#396, the `prototype-session-view` branch) changed the structure. It follows Linear's split between work and workspace settings.
+
+| Then | Now | Why |
+|---|---|---|
+| Seven destination rows over the Sessions | The sidebar is Sessions under their Repos. Only **Settings** and **Archived Sessions** are pinned under them | Sessions are opened many times a day; settings, by a few people, now and then. Archived Sessions lists Sessions, so it isn't a setting |
+| Hub-wide pages and Account in different places | One Settings: on a settings page it takes the sidebar over, with **← Back to Sessions**, then **You** (Providers, CLI tokens) and **Hub** (Runners, Environments, Shared variables, MCP servers, People, Updates) | One place for configuration, with its own "you are here". Labels without icons, since the group gives the context. A trailing count only for what needs attention |
+| A Repo is a bare label | A Repo's label has a **⋯** menu: Environment, Archived Sessions, Open on GitHub (#5 above, at last) | What you do to a Repo sits next to it |
+| "2 of 3 Runners online" is text | It's a link to Runners, with a dot that turns amber when one is offline | The way in to Runners, now that it left the top |
+| The page "Hub" | **Updates** | Inside Settings every page is about the Hub |
+
+URLs stay as they were (`/runners`, `/account` and so on). The ⌘K palette (#399) and one Tab stop per Session row (#400) build on this.

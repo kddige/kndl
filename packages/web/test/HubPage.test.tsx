@@ -38,10 +38,11 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
+/** Settings' Updates row, which leads to the Hub page; it may say "New" after its name. */
 const hubLink = () =>
-  [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "Hub")
+  [...document.querySelectorAll("nav a")].find((a) => a.textContent?.trim().startsWith("Updates"))
 const banner = () =>
-  [...document.querySelectorAll('[role="status"]')].find((el) => el.textContent?.includes("is out"))
+  [...document.querySelectorAll("[data-banner]")].find((el) => el.textContent?.includes("is out"))
 const heading = () => document.querySelector("h1")?.textContent
 
 async function open(at: string, options: Options = {}) {
@@ -72,10 +73,9 @@ test("the Owner of a Hub behind a Release sees the banner, and the notes on the 
   const { router } = await open("/")
   await eventually(() => expect(banner()?.textContent).toContain("kndl 2026.10.4 is out"))
   expect(banner()?.textContent).toContain("This Hub runs 2026.10.2, 2 Releases behind.")
-  expect(hubLink()?.getAttribute("href")).toBe("/hub")
 
   await step(() => void router.navigate({ to: "/hub" }))
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   const page = document.querySelector("main")?.textContent ?? ""
   expect(page).toContain("2026.10.2 (824de4a1f0c3)")
   expect(page).toContain("stable")
@@ -94,6 +94,8 @@ test("the Owner of a Hub behind a Release sees the banner, and the notes on the 
   expect(compare?.getAttribute("href")).toBe(
     "https://github.com/kddige/kndl/compare/v2026.10.2...v2026.10.4",
   )
+  // In Settings, its Updates row leads here and is marked current.
+  expect(hubLink()?.getAttribute("href")).toBe("/hub")
   expect(hubLink()?.getAttribute("aria-current")).toBe("page")
   // The page says it all: no banner on it.
   expect(banner()).toBeUndefined()
@@ -102,7 +104,7 @@ test("the Owner of a Hub behind a Release sees the banner, and the notes on the 
 test("a dismissed banner stays away until the check finds a newer update", async () => {
   await open("/")
   await eventually(() => expect(banner()).toBeDefined())
-  await step(() => button("Dismiss").click())
+  await step(() => button("Dismiss update notice").click())
   await eventually(() => expect(banner()).toBeUndefined())
 
   // Reloaded, it stays dismissed: the dismissal is kept in the browser.
@@ -128,7 +130,7 @@ test("a dismissed banner stays away until the check finds a newer update", async
 
 test("Check now asks the Hub, and shows when it checked", async () => {
   const { hub } = await open("/hub")
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   await step(() => button("Check now").click())
   await eventually(() =>
     expect(document.querySelector("main")?.textContent).toContain("Last checkedjust now"),
@@ -157,7 +159,7 @@ test("on dev, lists the titles of main's new commits", async () => {
       },
     },
   })
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   const page = document.querySelector("main")?.textContent ?? ""
   expect(page).toContain("aaaaaaaaaaaa")
   expect(page).toContain("main is 52 commits ahead")
@@ -192,15 +194,18 @@ test("a Hub that doesn't check, as one run from a checkout, has no Hub page", as
 // ── Updating the Hub (#362) ────────────────────────────────────────────────
 
 const main = () => document.querySelector("main")?.textContent ?? ""
-const latest = () => document.querySelector('[aria-labelledby="latest-update"]')?.textContent ?? ""
+const latest = () =>
+  [...document.querySelectorAll("main section")].find(
+    (section) => section.querySelector("h2")?.textContent === "Latest update",
+  )?.textContent ?? ""
 const restartingBanner = () =>
-  [...document.querySelectorAll('[role="status"]')].find((el) =>
-    el.textContent?.includes("Hub restarting"),
+  [...document.querySelectorAll("[data-banner]")].find((el) =>
+    el.textContent?.includes("Updating the Hub"),
   )
 
 test("the Owner updates the Hub: its steps, Hub restarting while it's down, then Updated to", async () => {
   const { hub } = await open("/hub")
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   hub.hold()
   await step(() => button("Update").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Update the Hub?"))
@@ -225,7 +230,7 @@ test("the Owner updates the Hub: its steps, Hub restarting while it's down, then
   // The Hub goes down under it, and the page says why.
   await hub.step()
   await eventually(() => expect(latest()).toContain("Updating… Hub restarting"))
-  expect(restartingBanner()?.textContent).toContain("Updating… Hub restarting")
+  expect(restartingBanner()?.textContent).toContain("Updating the Hub…")
 
   // Back on the new version, it says how it ended.
   hub.resume()
@@ -238,7 +243,7 @@ test("the Owner updates the Hub: its steps, Hub restarting while it's down, then
 
 test("an update that failed shows it rolled back, with its error and the end of its log", async () => {
   await open("/hub", { hubUpdateOutcome: "RolledBack" })
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   await step(() => button("Update").click())
   await eventually(() => expect(dialog()).not.toBeNull())
   await step(() => button("Update", dialog() ?? document).click())
@@ -328,7 +333,7 @@ test("moving from dev to stable records the Channel, and the Hub stays on its co
       checked: { at: Date.now(), found: { _tag: "UpToDate" } },
     },
   })
-  await eventually(() => expect(heading()).toBe("Hub"))
+  await eventually(() => expect(heading()).toBe("Updates"))
   await step(() => button("Switch to stable").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Follow stable?"))
   expect(dialog()?.textContent).toContain("stays on this commit until a newer Release is out")

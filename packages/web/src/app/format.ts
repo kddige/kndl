@@ -3,17 +3,32 @@
 import type { SessionState, SessionSummary } from "@kndl/protocol"
 import type { SessionState as StatusState } from "../ui/index.ts"
 
+const relative = new Intl.RelativeTimeFormat("en", { style: "narrow" })
+const plurals = new Intl.PluralRules("en")
+// "A, B and C": no comma before "and", as the docs write it.
+const conjunction = new Intl.ListFormat("en-GB", { type: "conjunction" })
+
 /** "just now", "5m ago", "3h ago", "2d ago", then the date. */
 export function timeAgo(at: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
   if (seconds < 45) return "just now"
   const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return relative.format(-minutes, "minute")
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return relative.format(-hours, "hour")
   const days = Math.round(hours / 24)
-  if (days < 7) return `${days}d ago`
+  if (days < 7) return relative.format(-days, "day")
   return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+/** The word for a count: `plural(n, { one: "Runner", other: "Runners" })`. Never `n === 1 ?`. */
+export function plural(n: number, forms: { one: string; other: string }): string {
+  return plurals.select(n) === "one" ? forms.one : forms.other
+}
+
+/** A count and its word: "1 Session", "3 Sessions". */
+export function counted(n: number, forms: { one: string; other: string }): string {
+  return `${n} ${plural(n, forms)}`
 }
 
 /** The time of day, for a message: "14:05". */
@@ -67,8 +82,7 @@ export function uptime(seconds: number): string {
 
 /** "A", "A and B", "A, B and C". */
 export function andList(items: ReadonlyArray<string>): string {
-  if (items.length <= 1) return items[0] ?? ""
-  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+  return conjunction.format(items)
 }
 
 /** The protocol's Session state as the kit's SessionStatus takes it. */
@@ -94,7 +108,7 @@ export function day(at: number): string {
 export function purgedIn(purgeAt: number, now = Date.now()): string {
   const days = Math.ceil((purgeAt - now) / 86_400_000)
   if (days <= 0) return "today"
-  return days === 1 ? "in 1 day" : `in ${days} days`
+  return `in ${counted(days, { one: "day", other: "days" })}`
 }
 
 /** A Repo's route params, from its `owner/name`. */

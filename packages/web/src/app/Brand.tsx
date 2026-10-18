@@ -8,7 +8,9 @@ const styles = stylex.create({
     display: "inline-flex",
     alignItems: "center",
     gap: space.s1,
-    flex: 1,
+    // It hugs the logo and name, so a tap on empty bar space doesn't go home; the buttons after it
+    // still sit at the end.
+    marginInlineEnd: "auto",
     fontSize: text.md,
     fontWeight: weight.semibold,
     letterSpacing: tracking.tight,

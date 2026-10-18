@@ -8,126 +8,70 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
-import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
+import { notSent } from "../app/copy.ts"
+import { counted, day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { messageOf, useLastOpened } from "../mcp/shared.ts"
 import { useDrives } from "../session/drive.ts"
 import {
-  Avatar,
   BranchIcon,
   Button,
   Checkbox,
   Dialog,
   DialogClose,
-  EmptyState,
-  InboxIcon,
-  PageHeader,
-  Spinner,
+  MenuItem,
+  SettingsEmpty,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
   toast,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { focus, srOnly } from "../ui/shared.ts"
+import { color, font, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { type DiskSizes, freedBy, freedText, sizeText } from "./diskSizes.ts"
 import { groupByRepo } from "./groups.ts"
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s4,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
+  // Its Select all lines up with the rows' ticks under it, and Purge selected ends with the list.
   toolbar: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: space.s3,
-    paddingInline: space.s4,
+    columnGap: space.s3,
+    rowGap: space.s2,
+    paddingInlineStart: space.s3,
   },
-  group: { display: "flex", flexDirection: "column", gap: space.s2 },
-  repo: { fontSize: text.md, fontWeight: weight.semibold, lineHeight: leading.tight },
+  // The toolbar, close over the list it ticks.
+  listed: { display: "flex", flexDirection: "column", gap: space.s3 },
   repoLink: {
     color: color.text,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
   },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-    overflow: "hidden",
-  },
-  row: {
-    display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
-    alignItems: "center",
-    columnGap: space.s4,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  firstRow: { borderTopWidth: 0 },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, minWidth: 0 },
   branch: {
     display: "inline-flex",
     alignItems: "center",
     gap: space.s1,
+    maxWidth: "100%",
     fontFamily: font.mono,
     fontSize: text.sm,
     color: color.text,
     textDecoration: { default: "none", ":hover": "underline" },
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    borderRadius: radius.sm,
   },
-  meta: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: space.s1_5,
-    color: color.textMuted,
-    fontSize: text.sm,
-  },
-  actions: { display: "flex", alignItems: "center", gap: space.s2 },
-  size: {
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontVariantNumeric: "tabular-nums",
-    textAlign: "end",
-    whiteSpace: "nowrap",
-  },
+  branchText: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  size: { fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   toolbarEnd: { display: "flex", alignItems: "center", gap: space.s3 },
-  freed: { color: color.textMuted, fontSize: text.sm },
+  freed: { color: color.textSecondary, fontSize: text.sm },
   freedTotal: {
     margin: 0,
     marginBlockStart: space.s3,
     fontSize: text.sm,
     fontWeight: weight.semibold,
-  },
-  // For screen readers only: the row's link names the Session to everyone else.
-  hidden: {
-    position: "absolute",
-    width: "1px",
-    height: "1px",
-    overflow: "hidden",
-    clipPath: "inset(50%)",
-    whiteSpace: "nowrap",
   },
   purging: {
     display: "flex",
@@ -138,8 +82,7 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   purgingTitle: { fontFamily: font.mono },
-  purgingRepo: { color: color.textMuted },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  purgingRepo: { color: color.textSecondary },
 })
 
 /**
@@ -159,32 +102,26 @@ export function ArchivedSessions({ repo }: { repo: string }) {
   const purging = usePurging(archived ?? noSessions)
 
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="Archived Sessions"
-        description={`${repo}: deleted Sessions can be restored until they're purged.`}
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {archived === null ? (
-            <Loading />
-          ) : archived.length === 0 ? (
-            <EmptyState
-              size="page"
-              icon={<InboxIcon />}
-              title="Nothing archived"
-              description={`Sessions deleted from ${repo} show here until they're purged.`}
-            />
-          ) : (
-            <>
-              <PurgeToolbar purging={purging} />
-              <ArchivedList label="Archived Sessions" sessions={archived} purging={purging} />
-            </>
-          )}
+    <SettingsPage
+      title="Archived Sessions"
+      pageTitle={`Archived Sessions · ${repo}`}
+      description={`${repo}: deleted Sessions can be restored until they're purged.`}
+    >
+      {archived === null ? (
+        <SettingsLoading label="Loading Sessions" />
+      ) : archived.length === 0 ? (
+        <SettingsEmpty
+          title="Nothing archived"
+          description={`Sessions deleted from ${repo} show here until they're purged.`}
+        />
+      ) : (
+        <div {...stylex.props(styles.listed)}>
+          <PurgeToolbar purging={purging} />
+          <ArchivedList label="Archived Sessions" sessions={archived} purging={purging} />
         </div>
-      </div>
+      )}
       <PurgeDialog purging={purging} />
-    </main>
+    </SettingsPage>
   )
 }
 
@@ -205,49 +142,44 @@ export function AllArchivedSessions() {
   const purging = usePurging(listed)
 
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="Archived Sessions"
-        description="Deleted Sessions, by Repo. They can be restored until they're purged."
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {groups === null ? (
-            <Loading />
-          ) : groups.length === 0 ? (
-            <EmptyState
-              size="page"
-              icon={<InboxIcon />}
-              title="Nothing archived"
-              description="Deleted Sessions show here until they're purged."
-            />
-          ) : (
-            <>
-              <PurgeToolbar purging={purging} />
-              {groups.map(({ repo, sessions: archived }) => (
-                <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
-                  <h2 {...stylex.props(styles.repo)}>
-                    <Link
-                      to="/repos/$owner/$repo/archived"
-                      params={repoParams(repo)}
-                      {...stylex.props(styles.repoLink, focus.ring)}
-                    >
-                      {repo}
-                    </Link>
-                  </h2>
-                  <ArchivedList
-                    label={`Archived Sessions of ${repo}`}
-                    sessions={archived}
-                    purging={purging}
-                  />
-                </section>
-              ))}
-            </>
-          )}
-        </div>
-      </div>
+    <SettingsPage
+      title="Archived Sessions"
+      description="Deleted Sessions by Repo, which you can restore until they're purged."
+    >
+      {groups === null ? (
+        <SettingsLoading label="Loading Sessions" />
+      ) : groups.length === 0 ? (
+        <SettingsEmpty
+          title="Nothing archived"
+          description="Deleted Sessions show here until they're purged."
+        />
+      ) : (
+        <>
+          <PurgeToolbar purging={purging} />
+          {groups.map(({ repo, sessions: archived }) => (
+            <SettingsSection
+              key={repo}
+              title={
+                <Link
+                  to="/repos/$owner/$repo/archived"
+                  params={repoParams(repo)}
+                  {...stylex.props(styles.repoLink, focus.ring)}
+                >
+                  {repo}
+                </Link>
+              }
+            >
+              <ArchivedList
+                label={`Archived Sessions of ${repo}`}
+                sessions={archived}
+                purging={purging}
+              />
+            </SettingsSection>
+          ))}
+        </>
+      )}
       <PurgeDialog purging={purging} />
-    </main>
+    </SettingsPage>
   )
 }
 
@@ -259,14 +191,6 @@ const lastDeletedFirst = (a: SessionSummary, b: SessionSummary) =>
 /** The Archived ones, the most recently deleted first. */
 function newestArchived(sessions: ReadonlyArray<SessionSummary>): Array<SessionSummary> {
   return sessions.filter((session) => session.archived !== undefined).toSorted(lastDeletedFirst)
-}
-
-function Loading() {
-  return (
-    <div {...stylex.props(styles.loading)}>
-      <Spinner size="lg" label="Loading Sessions" />
-    </div>
-  )
 }
 
 /** What is ticked to purge on an Archived screen, and what its confirmation asks about. */
@@ -412,28 +336,20 @@ function ArchivedList({
 }) {
   const hub = useHub()
   return (
-    <ul aria-label={label} {...stylex.props(styles.list)}>
-      {sessions.map((session, index) => (
-        <ArchivedRow
-          key={session.id}
-          session={session}
-          first={index === 0}
-          hub={hub}
-          purging={purging}
-        />
+    <SettingsList label={label}>
+      {sessions.map((session) => (
+        <ArchivedRow key={session.id} session={session} hub={hub} purging={purging} />
       ))}
-    </ul>
+    </SettingsList>
   )
 }
 
 function ArchivedRow({
   session,
-  first,
   hub,
   purging,
 }: {
   session: SessionSummary
-  first: boolean
   hub: HubClient
   purging: Purging
 }) {
@@ -443,37 +359,39 @@ function ArchivedRow({
   if (archived === undefined) return null
   const title = sessionTitle(session)
   return (
-    <li {...stylex.props(styles.row, first && styles.firstRow)}>
-      <Checkbox
-        label={<span {...stylex.props(styles.hidden)}>Select {title}</span>}
-        checked={purging.isSelected(session.id)}
-        onCheckedChange={(on) => purging.select([session.id], on)}
-      />
-      <div {...stylex.props(styles.main)}>
+    <SettingsRow
+      label={title}
+      icon={
+        <Checkbox
+          label={<span {...stylex.props(srOnly.root)}>Select {title}</span>}
+          checked={purging.isSelected(session.id)}
+          onCheckedChange={(on) => purging.select([session.id], on)}
+        />
+      }
+      name={
         <Link
           to="/sessions/$sessionId"
           params={{ sessionId: session.id }}
+          title={title}
           {...stylex.props(styles.branch, focus.ring)}
         >
           <BranchIcon />
-          {title}
+          <span {...stylex.props(styles.branchText)}>{title}</span>
         </Link>
-        <div {...stylex.props(styles.meta)}>
-          <Avatar name={archived.by.name} src={archived.by.avatarUrl} size="sm" />
-          <span>
-            Deleted by {archived.by.name} {timeAgo(archived.at)}
-          </span>
-          <span aria-hidden="true">·</span>
-          <span title={day(archived.purgeAt)}>Purged {purgedIn(archived.purgeAt)}</span>
-        </div>
-      </div>
-      <span {...stylex.props(styles.size)}>
-        {/* A label on a plain span isn't read out, so the words are there, hidden from sight. */}
-        <span {...stylex.props(styles.hidden)}>Disk used by {title}: </span>
-        {sizeText(purging.sizes.get(session.id))}
-      </span>
-      <div {...stylex.props(styles.actions)}>
-        {drives && (
+      }
+      meta={[
+        `Deleted by ${archived.by.name} ${timeAgo(archived.at)}`,
+        <span key="purge" title={day(archived.purgeAt)}>
+          Purged {purgedIn(archived.purgeAt)}
+        </span>,
+        <span key="size" {...stylex.props(styles.size)}>
+          {/* A label on a plain span isn't read out, so the words are there, hidden from sight. */}
+          <span {...stylex.props(srOnly.root)}>Disk used by {title}: </span>
+          {sizeText(purging.sizes.get(session.id))}
+        </span>,
+      ]}
+      action={
+        drives && (
           <Button
             size="sm"
             aria-label={`Restore ${title}`}
@@ -481,17 +399,14 @@ function ArchivedRow({
           >
             Restore
           </Button>
-        )}
-        <Button
-          size="sm"
-          intent="ghost"
-          aria-label={`Purge ${title}`}
-          onClick={() => purging.ask([session])}
-        >
-          Purge
-        </Button>
-      </div>
-    </li>
+        )
+      }
+      menu={
+        <MenuItem intent="danger" onClick={() => purging.ask([session])}>
+          Purge {title}
+        </MenuItem>
+      }
+    />
   )
 }
 
@@ -596,7 +511,7 @@ async function purgeSessions(
   const [first] = purged
   if (first === undefined) return
   toast.show({
-    title: `Purged ${purged.length === 1 ? sessionTitle(first) : `${purged.length} Sessions`}`,
+    title: `Purged ${purged.length === 1 ? sessionTitle(first) : counted(purged.length, { one: "Session", other: "Sessions" })}`,
     ...(offline.size > 0 && {
       description: [...offline]
         .map((name) => `${name} is offline: its disk frees when it reconnects.`)
@@ -608,7 +523,7 @@ async function purgeSessions(
 /** Restores an Archived Session, saying so, or that the Hub isn't connected. */
 export function restoreSession(hub: HubClient, sessionId: SessionId): void {
   if (!hub.restoreSession(sessionId)) {
-    toast.show({ title: "Not connected to the Hub", intent: "warning" })
+    notSent("Restore")
     return
   }
   toast.show({ title: "Session restored", description: "It's Asleep: the next prompt wakes it." })

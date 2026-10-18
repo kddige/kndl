@@ -42,9 +42,17 @@ textarea {
   color: inherit;
 }
 
+/* Controls draw their own pressed state, so the browser's grey tap flash would double it. */
+a,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* A copy of font.mono in tokens.stylex.ts, which plain CSS can't read: keep the two the same. */
 code,
 kbd,
 pre,
 samp {
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }

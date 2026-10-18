@@ -3,18 +3,8 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactElement, ReactNode } from "react"
 import { Button, type ButtonIntent, IconButton } from "./Button.tsx"
 import { CloseIcon } from "./icons.tsx"
-import {
-  color,
-  layer,
-  leading,
-  motion,
-  radius,
-  shadow,
-  space,
-  text,
-  tracking,
-  weight,
-} from "./tokens.stylex.ts"
+import { color, layer, leading, motion, radius, shadow, space } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export type DialogSize = "sm" | "md" | "lg"
 
@@ -46,7 +36,10 @@ const styles = stylex.create({
     backgroundColor: color.overlay,
     opacity: { default: 1, "[data-starting-style]": 0, "[data-ending-style]": 0 },
     transitionProperty: "opacity",
-    transitionDuration: motion.durationSlow,
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationFast,
+    },
     transitionTimingFunction: motion.easeOut,
   },
   viewport: {
@@ -57,16 +50,18 @@ const styles = stylex.create({
     placeItems: "center",
     padding: space.s4,
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   popup: {
     display: "flex",
     flexDirection: "column",
     maxHeight: `calc(100dvh - ${space.s8})`,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.xl,
     boxShadow: shadow.lg,
     outline: "none",
@@ -77,7 +72,10 @@ const styles = stylex.create({
       "[data-ending-style]": `translateY(${motion.enterDistance}) scale(${motion.enterScale})`,
     },
     transitionProperty: "opacity, transform",
-    transitionDuration: motion.durationNormal,
+    transitionDuration: {
+      default: motion.durationNormal,
+      "[data-ending-style]": motion.durationFast,
+    },
     transitionTimingFunction: motion.easeOut,
   },
   header: {
@@ -96,15 +94,11 @@ const styles = stylex.create({
     minWidth: 0,
     paddingTop: space.s1,
   },
-  title: {
-    fontSize: text.lg,
-    fontWeight: weight.semibold,
-    lineHeight: leading.tight,
-    letterSpacing: tracking.tight,
-  },
+  title: { textWrap: "balance" },
   description: {
-    color: color.textMuted,
+    color: color.textSecondary,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
   close: {
     marginTop: `calc(${space.s0_5} * -1)`,
@@ -113,6 +107,7 @@ const styles = stylex.create({
     paddingTop: space.s4,
     paddingInline: space.s5,
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   footer: {
     display: "flex",
@@ -163,7 +158,9 @@ export function Dialog({
           <BaseDialog.Popup {...stylex.props(styles.popup, sizes[size])}>
             <div {...stylex.props(styles.header, !hasBody && !footer && styles.headerLast)}>
               <div {...stylex.props(styles.heading)}>
-                <BaseDialog.Title {...stylex.props(styles.title)}>{title}</BaseDialog.Title>
+                <BaseDialog.Title {...stylex.props(textRole.title, styles.title)}>
+                  {title}
+                </BaseDialog.Title>
                 {description && (
                   <BaseDialog.Description {...stylex.props(styles.description)}>
                     {description}

@@ -1,126 +1,95 @@
 import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
-import { chrome, color, leading, space, text, tracking, weight } from "./tokens.stylex.ts"
+import { chrome, color, leading, space, text } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
+import { useDocumentTitle } from "./useDocumentTitle.ts"
 
 export interface PageHeaderProps {
-  /** The page's name, as its h1: a work branch, a Repo, "Shared variables". */
+  /** The page's name, as its h1: a work branch, a Repo, "Shared variables". Shown whole. */
   title: ReactNode
   /** Beside the title: a SessionStatus or Badge saying what state the page's thing is in. */
   badge?: ReactNode
-  /** A line under the title: what the page is for, or where its thing comes from. */
+  /** The page's name in the browser tab, where `title` isn't plain text or needs context. */
+  pageTitle?: string
+  /** One sentence, under 15 words: what the page holds. */
   description?: ReactNode
-  /** At the end of the title row: small Buttons and IconButtons, an AvatarStack. */
+  /** After the title: small Buttons and IconButtons, an AvatarStack. They wrap under it when narrow. */
   actions?: ReactNode
-  /**
-   * Below the `WIDE` breakpoint, puts the actions on a row of their own under the title, so a long
-   * title isn't cut down to a few letters by many actions. From `WIDE` up they share its row.
-   */
-  stackActions?: boolean
   sx?: stylex.StyleXStyles
 }
 
 const styles = stylex.create({
+  // The title and the actions share a row while they fit, and the actions wrap under it when
+  // they don't: the header's own content sets the break, whatever the viewport. A one-line title
+  // with 32px actions is exactly the bar's height, so its rule sits level with the Sidebar's.
   header: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    columnGap: space.s3,
+    rowGap: space.s2,
     flexShrink: 0,
+    minHeight: chrome.barHeight,
+    paddingBlock: space.s1_5,
     paddingInline: space.s4,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
     backgroundColor: color.surface,
   },
-  withDescription: { paddingBottom: space.s2_5 },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: space.s3,
-    height: chrome.barHeight,
-  },
+  // What the page is, first: the title with its badge, then the description under them.
   heading: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s0_5,
+    flex: "1 1 12rem",
+    minWidth: 0,
+  },
+  titleLine: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    flex: 1,
     minWidth: 0,
   },
-  // The brand's type in the Sidebar, so the two read as one line across the top.
-  title: {
-    minWidth: 0,
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
+  // Focus lands on it when the page opens; it isn't a control, so it shows no ring.
+  title: { minWidth: 0, overflowWrap: "anywhere", outline: "none" },
   badge: { display: "inline-flex", flexShrink: 0 },
   actions: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: space.s2,
-    flexShrink: 0,
+    minWidth: 0,
+    maxWidth: "100%",
   },
-  // stackActions: narrow, the title and its badge fill the first row, and the actions wrap under
-  // it. The query is WIDE's (useMediaQuery.ts); StyleX needs it spelled out here.
-  rowStacked: {
-    flexWrap: { default: "wrap", "@media (min-width: 48rem)": "nowrap" },
-    height: { default: "auto", "@media (min-width: 48rem)": chrome.barHeight },
-    rowGap: { default: 0, "@media (min-width: 48rem)": space.s3 },
-  },
-  headingStacked: {
-    flexBasis: { default: "100%", "@media (min-width: 48rem)": "auto" },
-    height: { default: chrome.barHeight, "@media (min-width: 48rem)": "auto" },
-  },
-  actionsStacked: {
-    flexWrap: { default: "wrap", "@media (min-width: 48rem)": "nowrap" },
-    paddingBottom: { default: space.s2, "@media (min-width: 48rem)": 0 },
-  },
-  descriptionStacked: {
-    marginTop: { default: 0, "@media (min-width: 48rem)": `calc(${space.s2} * -1)` },
-  },
-  // The row is as tall as the brand's, which leaves room under the title: the description takes
-  // some of it, so it reads with the title rather than apart from it.
   description: {
-    marginTop: `calc(${space.s2} * -1)`,
-    color: color.textMuted,
+    maxWidth: "60ch",
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
 })
 
 /**
- * The top of a page beside the Sidebar: its title, what it's about, and what can be done to it. The
- * title row is as tall as the Sidebar's header, with the same gutter and type, so the title sits
- * level with the brand. A title too long for the row is cut short; a string one is its own tooltip.
+ * The top of a page beside the Sidebar: its title, what it's about, and what can be done to it.
+ * At least as tall as the Sidebar's header, with the same gutter, so the title sits level with the
+ * brand. The title shows whole, wrapping if it must.
  */
-export function PageHeader({
-  title,
-  badge,
-  description,
-  actions,
-  stackActions = false,
-  sx,
-}: PageHeaderProps) {
+export function PageHeader({ title, pageTitle, badge, description, actions, sx }: PageHeaderProps) {
+  useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
   return (
-    <header {...stylex.props(styles.header, description ? styles.withDescription : null, sx)}>
-      <div {...stylex.props(styles.row, stackActions && styles.rowStacked)}>
-        <div {...stylex.props(styles.heading, stackActions && styles.headingStacked)}>
-          <h1 {...(typeof title === "string" && { title })} {...stylex.props(styles.title)}>
+    <header {...stylex.props(styles.header, sx)}>
+      <div {...stylex.props(styles.heading)}>
+        <div {...stylex.props(styles.titleLine)}>
+          <h1 tabIndex={-1} {...stylex.props(textRole.title, styles.title)}>
             {title}
           </h1>
           {badge && <span {...stylex.props(styles.badge)}>{badge}</span>}
         </div>
-        {actions && (
-          <div {...stylex.props(styles.actions, stackActions && styles.actionsStacked)}>
-            {actions}
-          </div>
-        )}
+        {description && <p {...stylex.props(styles.description)}>{description}</p>}
       </div>
-      {description && (
-        <p {...stylex.props(styles.description, stackActions && styles.descriptionStacked)}>
-          {description}
-        </p>
-      )}
+      {actions && <div {...stylex.props(styles.actions)}>{actions}</div>}
     </header>
   )
 }

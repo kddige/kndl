@@ -18,7 +18,7 @@ import { Chart } from "@tanstack/charts/react"
 import { scaleLinear } from "@tanstack/charts/scales/linear"
 import { tooltip } from "@tanstack/charts/tooltip"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { bytes, uptime } from "../app/format.ts"
+import { bytes, counted, uptime } from "../app/format.ts"
 import { useHub } from "../app/hub.tsx"
 import { Spinner, WarningIcon } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -35,16 +35,12 @@ import {
 const chartHeight = 132
 
 const styles = stylex.create({
+  // Under its Runner's row, indented with the row's detail: no frame of its own.
   monitor: {
     display: "flex",
     flexDirection: "column",
     gap: space.s4,
-    paddingBlock: space.s4,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-    backgroundColor: color.bg,
+    paddingBlockStart: space.s1,
     // The tiles and charts lay out by the room the Monitor has, not the window's.
     containerType: "inline-size",
   },
@@ -61,7 +57,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     fontWeight: weight.semibold,
   },
-  age: { margin: 0, color: color.textMuted, fontSize: text.sm },
+  age: { margin: 0, color: color.textSecondary, fontSize: text.sm },
   offline: { opacity: 0.55 },
   tiles: {
     display: "grid",
@@ -85,7 +81,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: color.surface,
   },
-  tileLabel: { color: color.textMuted, fontSize: text.xs, fontWeight: weight.medium },
+  tileLabel: { color: color.textSecondary, fontSize: text.xs, fontWeight: weight.medium },
   tileValue: {
     margin: 0,
     color: color.text,
@@ -99,11 +95,11 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     lineHeight: leading.snug,
   },
-  low: { color: color.warningSubtleText },
+  low: { color: color.warningText },
   charts: {
     display: "grid",
     gridTemplateColumns: {
@@ -127,7 +123,7 @@ const styles = stylex.create({
     backgroundColor: color.surface,
     // The chart's own paint: the series in its token, a threshold in the warning colour, axes and
     // grid in muted text (its default is currentColor), and its tooltip as the app's surfaces.
-    color: color.textSubtle,
+    color: color.textTertiary,
     "--ts-chart-1": color.chartSeries,
     "--kndl-chart-threshold": color.warning,
     "--ts-chart-tooltip-background": color.surface,
@@ -145,7 +141,7 @@ const styles = stylex.create({
     gap: space.s2,
   },
   chartTitle: { color: color.text, fontSize: text.sm, fontWeight: weight.medium },
-  chartSpan: { color: color.textMuted, fontSize: text.xs },
+  chartSpan: { color: color.textSecondary, fontSize: text.xs },
   chartBody: {
     height: `${chartHeight}px`,
     fontSize: text.xs,
@@ -156,7 +152,7 @@ const styles = stylex.create({
     display: "grid",
     placeItems: "center",
     height: `${chartHeight}px`,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     textAlign: "center",
   },
@@ -165,7 +161,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1_5,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
   },
   thresholdKey: {
@@ -175,7 +171,7 @@ const styles = stylex.create({
     borderTopStyle: "dashed",
     borderTopColor: color.warning,
   },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 /** A paint the chart resolves against the card it's in, so it follows the light or dark theme. */
@@ -186,19 +182,11 @@ const thresholdPaint = "var(--kndl-chart-threshold)"
  * A Runner's Monitor: its last sample as tiles, and its history as charts. `id` names it for the
  * toggle that opens it.
  */
-export function RunnerMonitor({
-  id,
-  runner,
-  now,
-}: {
-  id: string
-  runner: RunnerSummary
-  now: number
-}) {
+export function RunnerMonitor({ runner, now }: { runner: RunnerSummary; now: number }) {
   const history = useRunnerHistory(runner, now)
   const sysinfo = runner.sysinfo
   return (
-    <section id={id} aria-label={`${runner.name}'s monitor`} {...stylex.props(styles.monitor)}>
+    <section aria-label={`${runner.name}'s monitor`} {...stylex.props(styles.monitor)}>
       <div {...stylex.props(styles.head)}>
         <h3 {...stylex.props(styles.title)}>Host</h3>
         {sysinfo && (
@@ -253,7 +241,7 @@ function HostTiles({ sysinfo, offline }: { sysinfo: SysinfoSample; offline: bool
       </Tile>
       <Tile label="Load, 1 minute" value={load1.toFixed(2)}>
         <span {...stylex.props(styles.tileNote)}>
-          on {sysinfo.cpuCores} {sysinfo.cpuCores === 1 ? "core" : "cores"}
+          on {counted(sysinfo.cpuCores, { one: "core", other: "cores" })}
         </span>
         <span {...stylex.props(styles.tileNote)}>
           5 min {load5.toFixed(2)} · 15 min {load15.toFixed(2)}

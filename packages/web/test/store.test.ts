@@ -76,7 +76,11 @@ describe("connection", () => {
         message: "Update the peer.",
       }),
     )
-    expect(state.connection).toEqual({ status: "rejected", message: "Update the peer." })
+    expect(state.connection).toEqual({
+      status: "rejected",
+      message: "Update the peer.",
+      hubProtocol: 2,
+    })
   })
 })
 

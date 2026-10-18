@@ -1,4 +1,6 @@
+import * as stylex from "@stylexjs/stylex"
 import type { SVGProps } from "react"
+import { icon } from "./tokens.stylex.ts"
 
 /**
  * A few 16px stroke icons the components need. Decorative by default (aria-hidden): give the
@@ -6,7 +8,13 @@ import type { SVGProps } from "react"
  */
 export type IconProps = SVGProps<SVGSVGElement>
 
-function Icon({ children, ...props }: IconProps) {
+const styles = stylex.create({
+  // The stroke follows the label beside it: Button and Tab thicken it (icon in tokens.stylex.ts).
+  stroke: { strokeWidth: icon.stroke },
+})
+
+function Icon({ children, className, ...props }: IconProps) {
+  const stroke = stylex.props(styles.stroke)
   return (
     <svg
       width="16"
@@ -20,6 +28,7 @@ function Icon({ children, ...props }: IconProps) {
       aria-hidden="true"
       focusable="false"
       {...props}
+      className={[stroke.className, className].filter(Boolean).join(" ")}
     >
       {children}
     </svg>
@@ -189,6 +198,16 @@ export function KeyIcon(props: IconProps) {
   )
 }
 
+/** Kept secret: a Sensitive Variable. */
+export function LockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.25" y="7" width="9.5" height="6.75" rx="1.25" />
+      <path d="M5.25 7V5a2.75 2.75 0 0 1 5.5 0v2" />
+    </Icon>
+  )
+}
+
 /** A Runner: a machine that runs Sessions. */
 export function ServerIcon(props: IconProps) {
   return (
@@ -196,6 +215,17 @@ export function ServerIcon(props: IconProps) {
       <rect x="2.25" y="2.25" width="11.5" height="4.5" rx="1.25" />
       <rect x="2.25" y="9.25" width="11.5" height="4.5" rx="1.25" />
       <path d="M4.75 4.5h.01M4.75 11.5h.01M7.5 4.5h3.75M7.5 11.5h3.75" />
+    </Icon>
+  )
+}
+
+/** Settings: your Providers and CLI tokens, and the Hub's (#398). */
+export function SettingsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4.5h6.5M12.5 4.5h1M2.5 11.5h1M7 11.5h6.5" />
+      <circle cx="10.75" cy="4.5" r="1.75" />
+      <circle cx="5.25" cy="11.5" r="1.75" />
     </Icon>
   )
 }

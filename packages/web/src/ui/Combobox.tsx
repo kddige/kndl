@@ -65,7 +65,7 @@ const styles = stylex.create({
     padding: 0,
     borderWidth: 0,
     backgroundColor: "transparent",
-    color: { default: color.textMuted, "[data-disabled]": color.textSubtle },
+    color: { default: color.textSecondary, "[data-disabled]": color.textTertiary },
     cursor: { default: "pointer", "[data-disabled]": "not-allowed" },
   },
   popup: { minWidth: "var(--anchor-width)" },
@@ -75,7 +75,7 @@ const styles = stylex.create({
     paddingInlineEnd: space.s3,
   },
   indicator: { display: "inline-flex", width: "1rem", flexShrink: 0, color: color.text },
-  createIcon: { display: "inline-flex", width: "1rem", flexShrink: 0, color: color.textMuted },
+  createIcon: { display: "inline-flex", width: "1rem", flexShrink: 0, color: color.textSecondary },
   label: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   separator: { borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: color.border },
 })

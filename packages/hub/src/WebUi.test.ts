@@ -24,6 +24,7 @@ beforeAll(async () => {
   await writeFile(join(webDir, "index.html"), indexHtml)
   await writeFile(join(webDir, "assets", "index-Bx1a2b3c.js"), script)
   await writeFile(join(webDir, "assets", "index-Cd4e5f6a.css"), "body{margin:0}")
+  await writeFile(join(webDir, "assets", "InterVariable-Ef7a8b9c.woff2"), "wOF2")
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
 
@@ -61,6 +62,11 @@ describe("with the web UI built", () => {
     const css = await fetch(`${hub.url}/assets/index-Cd4e5f6a.css`)
     expect(css.headers.get("content-type")).toBe("text/css; charset=utf-8")
     expect(css.headers.get("cache-control")).toBe(assetCacheControl)
+
+    // The UI font, bundled rather than fetched from another host.
+    const font = await fetch(`${hub.url}/assets/InterVariable-Ef7a8b9c.woff2`)
+    expect(font.headers.get("content-type")).toBe("font/woff2")
+    expect(font.headers.get("cache-control")).toBe(assetCacheControl)
   })
 
   test("a missing file is a 404, not index.html", async () => {

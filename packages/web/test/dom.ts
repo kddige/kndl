@@ -23,6 +23,10 @@ if (!globalThis.stylexCompilerRegistered) {
   globalThis.stylexCompilerRegistered = true
   const stylex = createStylexBunPlugin({
     dev: true,
+    // Off in tests: it only orders media queries in the generated CSS, which no test reads, and
+    // StyleX 0.19's media query parser fails at random once it has parsed many files ("Invalid
+    // media query syntax"), failing whichever file comes next.
+    enableMediaQueryOrder: false,
     // The plugin writes the collected CSS to a file; keep it out of the repo.
     bunDevCssOutput: join(tmpdir(), "kndl-web-test-stylex.css"),
   })

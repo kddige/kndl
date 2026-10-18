@@ -45,6 +45,10 @@ const styles = stylex.create({
     height: "0.5rem",
     verticalAlign: "middle",
   },
+  // A filled dot is a border half its width thick, so forced colors, which drop backgrounds, keep
+  // it filled.
+  filled: { borderStyle: "solid", borderWidth: "0.1875rem" },
+  filledAlone: { borderWidth: "0.25rem" },
   // Frozen and Archived Sessions aren't running anywhere: a hollow dot says "not live" without colour.
   hollow: {
     backgroundColor: "transparent",
@@ -54,15 +58,15 @@ const styles = stylex.create({
 })
 
 const badges = stylex.create({
-  active: { backgroundColor: color.sessionActiveSubtle, color: color.sessionActiveText },
-  asleep: { backgroundColor: color.sessionAsleepSubtle, color: color.sessionAsleepText },
-  frozen: { backgroundColor: color.sessionFrozenSubtle, color: color.sessionFrozenText },
-  archived: { backgroundColor: color.sessionArchivedSubtle, color: color.sessionArchivedText },
+  active: { backgroundColor: color.sessionActiveTint, color: color.sessionActiveText },
+  asleep: { backgroundColor: color.sessionAsleepTint, color: color.sessionAsleepText },
+  frozen: { backgroundColor: color.sessionFrozenTint, color: color.sessionFrozenText },
+  archived: { backgroundColor: color.sessionArchivedTint, color: color.sessionArchivedText },
 })
 
 const dots = stylex.create({
-  active: { backgroundColor: color.sessionActive },
-  asleep: { backgroundColor: color.sessionAsleep },
+  active: { borderColor: color.sessionActive },
+  asleep: { borderColor: color.sessionAsleep },
   frozen: { borderColor: color.sessionFrozen },
   archived: { borderColor: color.sessionArchived },
 })
@@ -75,7 +79,7 @@ export function SessionStatus({ state, variant = "badge", sx }: SessionStatusPro
       {...stylex.props(
         styles.dot,
         alone && styles.dotAlone,
-        hollow && styles.hollow,
+        hollow ? styles.hollow : [styles.filled, alone && styles.filledAlone],
         dots[state],
         alone && sx,
       )}

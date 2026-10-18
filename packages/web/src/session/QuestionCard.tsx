@@ -9,6 +9,7 @@ import {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react"
+import { notSent } from "../app/copy.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { QuestionPicksState } from "../hub/store.ts"
 import type { QuestionView } from "../hub/transcript.ts"
@@ -25,7 +26,6 @@ import {
   InfoIcon,
   Input,
   PencilIcon,
-  toast,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, leading, radius, shadow, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -58,7 +58,7 @@ const styles = stylex.create({
     paddingBlock: space.s2,
     paddingInlineStart: space.s3,
     paddingInlineEnd: space.s1_5,
-    backgroundColor: color.warningSubtle,
+    backgroundColor: color.warningTint,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
@@ -81,7 +81,7 @@ const styles = stylex.create({
     display: "inline-flex",
     alignItems: "center",
     flexShrink: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     fontVariantNumeric: "tabular-nums",
   },
@@ -116,18 +116,18 @@ const styles = stylex.create({
   arrow: {
     flexShrink: 0,
     width: "0.75rem",
-    color: color.warningSubtleText,
+    color: color.warningText,
     fontWeight: weight.semibold,
   },
   number: {
     flexShrink: 0,
     minWidth: "1rem",
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontVariantNumeric: "tabular-nums",
   },
   option: { display: "flex", flexDirection: "column", gap: space.s0_5, flex: 1, minWidth: 0 },
   label: { fontWeight: weight.medium },
-  description: { color: color.textMuted, fontSize: text.sm },
+  description: { color: color.textSecondary, fontSize: text.sm },
   check: { display: "inline-flex", flexShrink: 0, color: color.accent, minWidth: "1rem" },
   hidden: { visibility: "hidden" },
   other: {
@@ -138,7 +138,7 @@ const styles = stylex.create({
     paddingInline: space.s2,
     borderRadius: radius.md,
   },
-  pencil: { display: "inline-flex", flexShrink: 0, color: color.textSubtle },
+  pencil: { display: "inline-flex", flexShrink: 0, color: color.textTertiary },
   otherInput: { flex: 1, minWidth: 0 },
   typed: {
     display: "flex",
@@ -146,7 +146,7 @@ const styles = stylex.create({
     gap: space.s1_5,
     paddingInline: space.s8,
     paddingBottom: space.s1,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   footer: {
@@ -159,7 +159,7 @@ const styles = stylex.create({
     borderTopWidth: "1px",
     borderTopStyle: "solid",
     borderTopColor: color.border,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   keys: { flex: 1, minWidth: 0 },
@@ -204,7 +204,7 @@ export function QuestionDock({
           ? {
               onAnswer: (answer: QuestionAnswerFromWeb) => {
                 const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
-                if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                if (!sent) notSent("Answer")
                 return sent
               },
               onPick,

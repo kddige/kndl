@@ -20,7 +20,7 @@ Claude's Models run on your Claude setup token, not on a Provider you connect he
 
 ## Find your Providers
 
-Press your name at the bottom of the sidebar, then **Account**. Under **Providers**, your Connected providers come first, each with a card. Below them, **Connect a Provider** lists the rest in two groups:
+Press your name at the bottom of the sidebar, then **Account**. Under **Providers**, your Connected providers come first, a row each. Below them, **Connect a Provider** lists the rest in two groups:
 
 - **Subscriptions**: Providers you sign in to with a subscription. Most of them also take an API key.
 - **API keys**: Providers that take only a key. **Show … more** lists the ones after the first six.
@@ -46,7 +46,7 @@ Press your name at the bottom of the sidebar, then **Account**. Under **Provider
    - **To enter a code**, press **Copy code**, then **Open the sign-in page**, and enter the code there. The line says **Waiting for …** until you have.
    - **To paste the address**, press **Open the sign-in page** and sign in. Your browser then lands on a page at `127.0.0.1` that may not load. That's expected: the Hub's machine is waiting for it, not yours. Copy the page's address from the address bar, paste it in **Address of the page you landed on**, and press **Continue**.
 
-3. When the sign-in is done, the page says **Connected …**, and the Provider gets a card of its own.
+3. When the sign-in is done, the page says **Connected …**, and the Provider moves up to **Providers**.
 
 </Steps>
 
@@ -56,7 +56,7 @@ Press your name at the bottom of the sidebar, then **Account**. Under **Provider
 
 <Steps>
 
-1. On the Provider's line, press **API key**, or **Add API key** for a Provider that takes only a key.
+1. On the Provider's line, press **Add API key**. For a Provider you can also sign in to, it's in the line's **⋯** menu.
 
 2. Paste the key in its field, named as the Provider names it, such as **Gemini API key**, and press **Connect**.
 
@@ -66,17 +66,19 @@ The Hub asks the Provider for its Models with the key before it saves it. If the
 
 ## Check its Models
 
-A Provider's card shows the **Account** you signed in as, or what the key **Ends in**, never the token or key itself. Under them, **… Models · checked …** opens the Models your Sessions can pick, each with its thinking levels.
+A Provider's row shows the account you signed in as, or the key's last 4 characters, never the token or key itself, and **… Models · checked …**. A click on the row, or **Show … Models** in its **⋯** menu, lists the Models your Sessions can pick, each with its thinking levels.
 
-The Hub asks the Provider for them when you connect it, and again when its list is a day old. Press **Refresh models** to ask now, such as after you change plans.
+The Hub asks the Provider for them when you connect it, and again when its list is a day old. Choose **Refresh …'s Models** in its **⋯** menu to ask now, such as after you change plans.
 
 - **Couldn't check its Models** means the Provider didn't list them this time. Your Sessions keep the Models it listed before.
-- **It doesn't work anymore** means the Provider refused to renew the sign-in, such as after you signed out there. Press **Replace** and connect it again.
+- **It doesn't work anymore** means the Provider refused to renew the sign-in, such as after you signed out there. Choose **Replace …** in its **⋯** menu and connect it again.
 
 ## Replace or disconnect it
 
-- **Replace** signs in again, or takes a new key, in place of the old one.
-- **Disconnect** makes the Hub forget the tokens or key. It doesn't sign you out at the Provider or revoke the key.
+In the Provider's **⋯** menu:
+
+- **Replace …** signs in again, or takes a new key, in place of the old one.
+- **Disconnect …** makes the Hub forget the tokens or key. It doesn't sign you out at the Provider or revoke the key.
 
 Your Sessions stay awake either way. After a disconnect, a Session on that Provider's Models can't run a Turn until you connect it again or [switch its Model](/guides/manage-a-session/#choose-the-model-and-thinking-level).
 

@@ -3,7 +3,7 @@ import * as stylex from "@stylexjs/stylex"
 import { memo } from "react"
 import type { QuestionView } from "../hub/transcript.ts"
 import { Badge, CheckIcon, CloseIcon, Disclosure, StopIcon } from "../ui/index.ts"
-import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { splitAnswer } from "./question.ts"
 import { SentAttachments } from "./SentAttachments.tsx"
 
@@ -21,24 +21,24 @@ const styles = stylex.create({
     height: "0.5rem",
     borderRadius: radius.full,
     backgroundColor: color.warning,
-    animationName: pulse,
-    // 1.6s; none under reduced motion, where the duration collapses to zero and the dot holds still.
-    animationDuration: `calc(${motion.durationSlow} * 6.4)`,
+    // The dot holds still under reduced motion.
+    animationName: { default: pulse, "@media (prefers-reduced-motion: reduce)": "none" },
+    animationDuration: "1.6s",
     animationTimingFunction: "ease-in-out",
     animationIterationCount: "infinite",
   },
   open: {
     borderColor: color.warning,
-    backgroundColor: color.warningSubtle,
+    backgroundColor: color.warningTint,
   },
-  asking: { fontWeight: weight.medium, color: color.warningSubtleText, flexShrink: 0 },
+  asking: { fontWeight: weight.medium, color: color.warningText, flexShrink: 0 },
   headers: {
     flex: 1,
     minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   outcome: {
     flex: 1,
@@ -49,7 +49,7 @@ const styles = stylex.create({
   },
   status: { display: "inline-flex", flexShrink: 0 },
   answered: { color: color.success },
-  closed: { color: color.textSubtle },
+  closed: { color: color.textTertiary },
   body: {
     display: "flex",
     flexDirection: "column",
@@ -68,9 +68,9 @@ const styles = stylex.create({
     margin: 0,
     paddingInlineStart: space.s5,
   },
-  description: { color: color.textMuted },
+  description: { color: color.textSecondary },
   chosen: { fontWeight: weight.semibold },
-  answer: { color: color.textMuted },
+  answer: { color: color.textSecondary },
 })
 
 /** The amber dot that pulses while Claude waits for an answer (#193). */

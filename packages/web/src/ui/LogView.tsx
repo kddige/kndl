@@ -32,7 +32,7 @@ const styles = stylex.create({
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
   },
-  placeholder: { color: color.textSubtle },
+  placeholder: { color: color.textTertiary },
 })
 
 /**

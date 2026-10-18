@@ -28,7 +28,7 @@ kndl doctor --fix
 | `kndl logs hub`, `kndl logs runner` | Why a service won't start, refused connections, sign-in failures, what happened to Sandboxes. Add `-f` to follow. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`. |
 | **Show log** on a Session's **Starting…** banner | The output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** tab | The agent's own screen: pi's or Claude Code's. |
+| A Session's **Terminal** | The agent's own screen: pi's or Claude Code's. |
 | `https://<your Hub>/health` | `{"status":"ok"}` when the Hub is up. |
 
 Running kndl from a checkout? The logs are in the terminals running `bun run hub` and `bun run runner`, and the Hub's settings in `packages/hub/.env.local`. See [Develop kndl](/contributing/develop-kndl/).
@@ -50,7 +50,7 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `… is readable by others (mode 644); …` | [Install](/troubleshooting/install/#an-env-file-is-readable-by-others) |
 | `kndl update` stays where it is | [Install](/troubleshooting/install/#kndl-update-stays-where-it-is) |
 | `An update is already running (pid …, started …).` | [Install](/troubleshooting/install/#an-update-is-already-running) |
-| `Couldn't start the update: …` on the Hub page | [Install](/troubleshooting/install/#the-hub-page-cant-start-an-update) |
+| `Couldn't start the update: …` on the Updates page | [Install](/troubleshooting/install/#the-updates-page-cant-start-an-update) |
 | `The update failed, so the install went back to …` | [Install](/troubleshooting/install/#the-update-failed-and-went-back) |
 | `kndl uninstall` refuses the home | [Install](/troubleshooting/install/#kndl-uninstall-refuses-the-home) |
 | `Failed to start server. Is port 7777 in use?` | [Hub](/troubleshooting/hub/#failed-to-start-server-is-port-7777-in-use) |

@@ -1,3 +1,4 @@
+import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu"
 import { Menu as BaseMenu } from "@base-ui/react/menu"
 import * as stylex from "@stylexjs/stylex"
 import type { ReactElement, ReactNode } from "react"
@@ -6,6 +7,8 @@ import { popup } from "./shared.ts"
 import { color, space, text } from "./tokens.stylex.ts"
 
 const styles = stylex.create({
+  // It points to the inline end, whichever way the page reads.
+  submenuChevron: { transform: { default: "none", ":dir(rtl)": "scaleX(-1)" } },
   /** A row with a second line under its label. */
   itemTwoLine: {
     paddingBlock: space.s1_5,
@@ -18,7 +21,7 @@ const styles = stylex.create({
     minWidth: 0,
   },
   description: {
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   /** The slot at the end of a row: a radio item's check, a submenu's value and chevron. */
@@ -28,7 +31,7 @@ const styles = stylex.create({
     gap: space.s1,
     flexShrink: 0,
     marginInlineStart: "auto",
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   check: {
     display: "inline-flex",
@@ -88,6 +91,33 @@ export function Menu({
   )
 }
 
+export interface ContextMenuProps {
+  /** The element a right-click, Shift+F10 or the Menu key opens the menu on. */
+  trigger: ReactElement
+  /** MenuItems, MenuGroups and MenuSeparators, as in a Menu. */
+  children: ReactNode
+}
+
+/**
+ * A Menu that opens where the element is right-clicked, or from the keyboard with Shift+F10 or the
+ * Menu key while focus is in it. The same actions should also be reachable another way, such as a
+ * ⋯ Menu: a context menu alone is hidden.
+ */
+export function ContextMenu({ trigger, children }: ContextMenuProps) {
+  return (
+    <BaseContextMenu.Root>
+      <BaseContextMenu.Trigger render={trigger} />
+      <BaseContextMenu.Portal>
+        <BaseContextMenu.Positioner {...stylex.props(popup.positioner)}>
+          <BaseContextMenu.Popup {...stylex.props(popup.surface, popup.list)}>
+            {children}
+          </BaseContextMenu.Popup>
+        </BaseContextMenu.Positioner>
+      </BaseContextMenu.Portal>
+    </BaseContextMenu.Root>
+  )
+}
+
 /** `danger` for destructive actions, which also get a confirmation step elsewhere. */
 export type MenuItemIntent = "default" | "danger"
 
@@ -102,6 +132,8 @@ export interface MenuItemProps {
   keepOpen?: boolean
   /** What shows at the row's end, such as the value a further panel sets. */
   end?: ReactNode
+  /** Renders the item as this element instead, such as a router Link, so it's a real link. */
+  render?: ReactElement
 }
 
 export function MenuItem({
@@ -112,10 +144,12 @@ export function MenuItem({
   disabled = false,
   keepOpen = false,
   end,
+  render,
 }: MenuItemProps) {
   const danger = intent === "danger"
   return (
     <BaseMenu.Item
+      {...(render && { render })}
       {...(onClick && { onClick: () => onClick() })}
       disabled={disabled}
       closeOnClick={!keepOpen}
@@ -227,7 +261,7 @@ export function MenuSubmenu({ label, value, disabled = false, children, sx }: Me
         {label}
         <span {...stylex.props(styles.end)}>
           {value}
-          <ChevronRightIcon />
+          <ChevronRightIcon {...stylex.props(styles.submenuChevron)} />
         </span>
       </BaseMenu.SubmenuTrigger>
       <BaseMenu.Portal>

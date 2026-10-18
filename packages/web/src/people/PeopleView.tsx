@@ -21,72 +21,21 @@ import {
   Field,
   IconButton,
   Input,
-  PageHeader,
+  MenuItem,
   PeopleIcon,
   PlusIcon,
-  Spinner,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
   toast,
 } from "../ui/index.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
 import { inviteFor, inviteTimeLeft, readLogin, usableInvites } from "./people.ts"
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s6,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-    overflow: "hidden",
-  },
-  row: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  firstRow: { borderTopWidth: 0 },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "12rem" },
-  nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
-  name: { fontSize: text.md, fontWeight: weight.semibold, overflowWrap: "anywhere" },
-  facts: {
-    display: "flex",
-    flexWrap: "wrap",
-    columnGap: space.s3,
-    rowGap: space.s1,
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-  },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   link: {
     display: "flex",
@@ -111,28 +60,22 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     userSelect: "all",
   },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 export function PeopleView() {
   const owner = useHubState((state) => state.owner)
-  return (
-    <main {...stylex.props(styles.view)}>
-      {owner ? (
-        <People />
-      ) : (
-        <>
-          <PageHeader title="People" />
-          <EmptyState
-            size="page"
-            icon={<PeopleIcon />}
-            title="Only the Hub's Owner manages people"
-            description="This Hub is invite-only, and its Owner invites everyone who signs in. Ask them to invite someone."
-          />
-        </>
-      )}
-    </main>
+  return owner ? (
+    <People />
+  ) : (
+    <SettingsPage title="People">
+      <EmptyState
+        size="page"
+        icon={<PeopleIcon />}
+        title="Only the Hub's Owner manages people"
+        description="This Hub is invite-only, and its Owner invites everyone who signs in. Ask them to invite someone."
+      />
+    </SettingsPage>
   )
 }
 
@@ -159,109 +102,89 @@ function People() {
 
   const pending = usableInvites(invites, now)
   return (
-    <>
-      <PageHeader
-        title="People"
-        description="Who can sign in to this Hub. It is invite-only: GitHub sign-in turns away anyone who isn't a Member and brings no Invite."
-        actions={
-          <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setInviting(true)}>
-            Invite someone
-          </Button>
-        }
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {members === null ? (
-            <div {...stylex.props(styles.loading)}>
-              <Spinner size="lg" label="Loading Members" />
-            </div>
-          ) : (
-            <section aria-labelledby="members" {...stylex.props(styles.section)}>
-              <h2 id="members" {...stylex.props(styles.sectionTitle)}>
-                Members
-              </h2>
-              <ul aria-label="Members" {...stylex.props(styles.list)}>
-                {members.map((member, index) => (
-                  <MemberRow
-                    key={member.participant.id}
-                    member={member}
-                    you={member.participant.id === you?.id}
-                    first={index === 0}
-                    now={now}
-                    onRemove={() => setRemoving(member)}
-                  />
-                ))}
-              </ul>
-            </section>
-          )}
-          {pending.length > 0 && (
-            <section aria-labelledby="invites" {...stylex.props(styles.section)}>
-              <h2 id="invites" {...stylex.props(styles.sectionTitle)}>
-                Invites not used yet
-              </h2>
-              <ul aria-label="Invites not used yet" {...stylex.props(styles.list)}>
-                {pending.map((invite, index) => (
-                  <InviteRow key={invite.id} invite={invite} first={index === 0} now={now} />
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
-      </div>
+    <SettingsPage
+      title="People"
+      description="Members of this Hub, and open Invites."
+      action={
+        <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setInviting(true)}>
+          Invite someone
+        </Button>
+      }
+    >
+      <SettingsSection title="Members">
+        {members === null ? (
+          <SettingsLoading label="Loading Members" />
+        ) : (
+          <SettingsList label="Members">
+            {members.map((member) => (
+              <MemberRow
+                key={member.participant.id}
+                member={member}
+                you={member.participant.id === you?.id}
+                now={now}
+                onRemove={() => setRemoving(member)}
+              />
+            ))}
+          </SettingsList>
+        )}
+      </SettingsSection>
+      {pending.length > 0 && (
+        <SettingsSection title="Invites not used yet">
+          <SettingsList label="Invites not used yet">
+            {pending.map((invite) => (
+              <InviteRow key={invite.id} invite={invite} now={now} />
+            ))}
+          </SettingsList>
+        </SettingsSection>
+      )}
       <InviteDialog open={inviting} onClose={() => setInviting(false)} />
       <RemoveDialog member={removing} onClose={() => setRemoving(null)} />
-    </>
+    </SettingsPage>
   )
 }
 
 function MemberRow({
   member,
   you,
-  first,
   now,
   onRemove,
 }: {
   member: Member
   you: boolean
-  first: boolean
   now: number
   onRemove: () => void
 }) {
   const { participant } = member
   return (
-    <li aria-label={participant.name} {...stylex.props(styles.row, first && styles.firstRow)}>
-      <Avatar name={participant.name} src={participant.avatarUrl} size="md" />
-      <div {...stylex.props(styles.main)}>
-        <div {...stylex.props(styles.nameLine)}>
-          <span {...stylex.props(styles.name)}>{participant.name}</span>
-          {member.owner && <Badge intent="accent">Owner</Badge>}
-          {you && <Badge>You</Badge>}
-        </div>
-        <p {...stylex.props(styles.facts)}>
-          <span>@{participant.login}</span>
-          <span>Admitted {timeAgo(member.admittedAt, now)}</span>
-        </p>
-      </div>
-      {!member.owner && (
-        <Button
-          size="sm"
-          intent="ghost"
-          aria-label={`Remove ${participant.name}`}
-          onClick={onRemove}
-        >
-          Remove
-        </Button>
-      )}
-    </li>
+    <SettingsRow
+      label={participant.name}
+      icon={<Avatar name={participant.name} src={participant.avatarUrl} size="sm" />}
+      name={participant.name}
+      meta={[`@${participant.login}`, `Admitted ${timeAgo(member.admittedAt, now)}`]}
+      badges={
+        (member.owner || you) && (
+          <>
+            {member.owner && <Badge>Owner</Badge>}
+            {you && <Badge>You</Badge>}
+          </>
+        )
+      }
+      // The Owner can't be removed.
+      {...(!member.owner && {
+        menu: (
+          <MenuItem intent="danger" onClick={onRemove}>
+            Remove {participant.name}
+          </MenuItem>
+        ),
+      })}
+    />
   )
 }
 
-function InviteRow({ invite, first, now }: { invite: PendingInvite; first: boolean; now: number }) {
+function InviteRow({ invite, now }: { invite: PendingInvite; now: number }) {
   const hub = useHub()
-  const [busy, setBusy] = useState(false)
   const what = inviteFor(invite)
   const revoke = async () => {
-    setBusy(true)
     try {
       await hub.revokeInvite(invite.id)
       toast.show({ title: "Invite revoked" })
@@ -271,30 +194,22 @@ function InviteRow({ invite, first, now }: { invite: PendingInvite; first: boole
         description: messageOf(error),
         intent: "danger",
       })
-      setBusy(false)
     }
   }
   return (
-    <li aria-label={what} {...stylex.props(styles.row, first && styles.firstRow)}>
-      <div {...stylex.props(styles.main)}>
-        <span {...stylex.props(styles.name)}>{what}</span>
-        <p {...stylex.props(styles.facts)}>
-          <span>
-            Made by {invite.createdBy.name} {timeAgo(invite.createdAt, now)}
-          </span>
-          <span>Expires in {inviteTimeLeft(invite.expiresAt, now)}</span>
-        </p>
-      </div>
-      <Button
-        size="sm"
-        intent="ghost"
-        loading={busy}
-        aria-label={`Revoke the Invite for ${what === "Anyone with the link" ? "anyone with the link" : what}`}
-        onClick={() => void revoke()}
-      >
-        Revoke
-      </Button>
-    </li>
+    <SettingsRow
+      label={what}
+      name={what}
+      meta={[
+        `Made by ${invite.createdBy.name} ${timeAgo(invite.createdAt, now)}`,
+        `Expires in ${inviteTimeLeft(invite.expiresAt, now)}`,
+      ]}
+      menu={
+        <MenuItem intent="danger" onClick={() => void revoke()}>
+          Revoke the Invite
+        </MenuItem>
+      }
+    />
   )
 }
 
@@ -408,7 +323,7 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
 async function copyLink(link: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(link)
-    toast.show({ title: "Copied the link" })
+    toast.show({ title: "Link copied" })
   } catch {
     toast.show({
       title: "Couldn't copy",

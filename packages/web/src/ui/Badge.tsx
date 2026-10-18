@@ -35,11 +35,11 @@ const styles = stylex.create({
 })
 
 const intents = stylex.create({
-  neutral: { backgroundColor: color.surfaceActive, color: color.textMuted },
-  accent: { backgroundColor: color.accentSubtle, color: color.accentSubtleText },
-  success: { backgroundColor: color.successSubtle, color: color.successSubtleText },
-  warning: { backgroundColor: color.warningSubtle, color: color.warningSubtleText },
-  danger: { backgroundColor: color.dangerSubtle, color: color.dangerSubtleText },
+  neutral: { backgroundColor: color.surfaceActive, color: color.textSecondary },
+  accent: { backgroundColor: color.accentTint, color: color.accentText },
+  success: { backgroundColor: color.successTint, color: color.successText },
+  warning: { backgroundColor: color.warningTint, color: color.warningText },
+  danger: { backgroundColor: color.dangerTint, color: color.dangerText },
 })
 
 /** A short, non-interactive label: a count, a type, a state. */

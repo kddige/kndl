@@ -122,6 +122,7 @@ describe("connecting", () => {
       expect(client.getState().connection).toEqual({
         status: "rejected",
         message: "Update the web UI.",
+        hubProtocol: 2,
       }),
     )
     await Bun.sleep(20)

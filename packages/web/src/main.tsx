@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client"
 import { createHubClient, HubProvider } from "./app/hub.tsx"
 import { createAppRouter } from "./router.tsx"
 import { setTheme } from "./ui/theme.ts"
+import "./ui/fonts.css"
 import "./ui/reset.css"
 
 const root = document.getElementById("root")

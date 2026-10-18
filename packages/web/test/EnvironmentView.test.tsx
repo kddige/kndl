@@ -3,7 +3,16 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import {
+  button,
+  dialog,
+  menuItem,
+  render,
+  sessionMenuItem,
+  sessionOffers,
+  settle,
+  step,
+} from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -63,26 +72,51 @@ async function open(
   }
   const page = view.container
   const section = (name: string) => {
-    const found = page.querySelector(`section[aria-label="${name}"]`)
+    const found = [...page.querySelectorAll("section")].find(
+      (each) => each.querySelector("h2")?.textContent === name,
+    )
     if (!found) throw new Error(`no ${name} section`)
     return found
   }
-  const status = () => section("Apply").querySelector('[role="status"]')?.textContent ?? ""
-  return { hub, client, router, page, section, status }
+  /** The apply bar, shown while the draft differs from what's applied. */
+  const bar = () =>
+    [...page.querySelectorAll<HTMLElement>('[role="group"][aria-labelledby]')].find((group) =>
+      ["Unsaved changes", "Not applied yet"].includes(
+        document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent ?? "",
+      ),
+    )
+  const status = () => bar()?.querySelector('[role="status"]')?.textContent ?? ""
+  /** The input a property row's label names. */
+  const input = (label: string) =>
+    [...page.querySelectorAll<HTMLInputElement>("input[aria-labelledby]")].find(
+      (each) =>
+        document.getElementById(each.getAttribute("aria-labelledby") ?? "")?.textContent === label,
+    ) as HTMLInputElement
+  return { hub, client, router, page, section, bar, status, input }
 }
 
 test("a change to the image needs a passing Test build before it applies", async () => {
-  const { page, section, status } = await open("/repos/kddige/kndl/environment")
+  const { page, section, bar, status } = await open("/repos/kddige/kndl/environment")
   // Headed by the Repo while it loads, then with its version beside it.
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/kndl"))
   await eventually(() => expect(page.textContent).toContain("Version 2"))
-  expect(section("Version history").textContent).toContain("Changed the build")
-  expect(status()).toContain("No changes to apply.")
-  expect(button("Apply").disabled).toBe(true)
-  // A saved Sensitive value shows as set, never as the value.
-  expect(section("Variables").textContent).toContain("set")
+  // What you act on first, and what happened last.
+  expect([...page.querySelectorAll("main section h2")].map((h2) => h2.textContent)).toEqual([
+    "Build",
+    "Variables",
+    "MCP servers",
+    "History",
+  ])
+  expect(section("History").textContent).toContain("Changed the build")
+  // Nothing to apply: no bar, and no Apply.
+  expect(bar()).toBeUndefined()
+  expect(() => button("Apply")).toThrow()
+  // A saved Sensitive value is there to replace, never shown.
+  expect(
+    section("Variables").querySelector('input[type="password"]')?.getAttribute("placeholder"),
+  ).toBe("Saved: type to replace it")
 
-  const image = section("Image and scripts").querySelector("input") as HTMLInputElement
+  const image = section("Build").querySelector("input") as HTMLInputElement
   await step(() => typeInto(image, "ubuntu:24.04"))
   await eventually(() => expect(status()).toContain("Needs a Test build"))
   expect(button("Apply").disabled).toBe(true)
@@ -103,12 +137,13 @@ test("a change to the image needs a passing Test build before it applies", async
 
   await step(() => button("Apply").click())
   await eventually(() => expect(page.textContent).toContain("Version 3"))
-  expect(status()).toContain("No changes to apply.")
+  await eventually(() => expect(bar()).toBeUndefined())
 })
 
 test("the draft survives a reload, without its Sensitive values", async () => {
   const first = await open("/repos/kddige/kndl/environment")
-  await eventually(() => expect(first.status()).toContain("No changes to apply."))
+  await eventually(() => expect(first.page.textContent).toContain("Version 2"))
+  expect(first.bar()).toBeUndefined()
   await step(() => button("Add variable").click())
   // The new row's name, then its value.
   const names = first.section("Variables").querySelectorAll('input[placeholder="NAME"]')
@@ -135,9 +170,10 @@ test("the draft survives a reload, without its Sensitive values", async () => {
 })
 
 test("a draft made before someone else applied is refused, with a way to reload", async () => {
-  const { hub, page, status } = await open("/repos/kddige/kndl/environment")
-  await eventually(() => expect(status()).toContain("No changes to apply."))
-  const cpus = page.querySelector('section[aria-label="Resources"] input') as HTMLInputElement
+  const { hub, page, bar, status, input } = await open("/repos/kddige/kndl/environment")
+  await eventually(() => expect(page.textContent).toContain("Version 2"))
+  expect(bar()).toBeUndefined()
+  const cpus = input("CPUs")
   await step(() => typeInto(cpus, "8"))
   await eventually(() => expect(status()).toContain("No Test build needed"))
 
@@ -175,7 +211,12 @@ test("a Repo without an Environment is set up before its first Session", async (
   await eventually(() => expect(page.textContent).toContain("Starting…"))
   expect(page.textContent).toContain("Starting the Sandbox on version 1 of acme/new's Environment")
   expect(page.textContent).not.toContain("Environment changed")
-  expect(button("Sleep now").disabled).toBe(true)
+  // Read together, as opening the menu takes a moment in which it may finish starting.
+  const sleepNow = await sessionMenuItem("Sleep now", page)
+  if (page.textContent?.includes("Starting…")) {
+    expect(sleepNow?.hasAttribute("data-disabled")).toBe(true)
+  }
+  await step(() => button("Session actions", page).click())
   await step(() => button("Show log").click())
   const log = () => page.querySelector('[aria-label="Start log"]')?.textContent ?? ""
   await eventually(() => expect(log()).toContain("Building version 1 of acme/new's Environment"))
@@ -185,7 +226,7 @@ test("a Repo without an Environment is set up before its first Session", async (
   // Started, it shows neither.
   await eventually(() => expect(page.textContent).not.toContain("Starting…"))
   expect(page.textContent).not.toContain("Environment changed")
-  expect(button("Sleep now").disabled).toBe(false)
+  expect(await sessionOffers("Sleep now", page)).toBe(true)
 })
 
 test("shared variables: linked ones show who links them, and can't be deleted", async () => {
@@ -197,9 +238,11 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
   const row = page.querySelector('li[aria-label="GH_READ_TOKEN"]')
   expect(row?.textContent).toContain("Linked by")
   expect(row?.textContent).toContain("kddige/kndl as GITHUB_TOKEN")
-  expect(row?.textContent).toContain("set")
+  // Its kind, in no colour, and nothing said of a value that's there.
+  expect(row?.textContent).toContain("Sensitive")
+  expect(row?.textContent).not.toContain("needs a value")
 
-  await step(() => button("Delete GH_READ_TOKEN").click())
+  await menuItem("Actions for GH_READ_TOKEN", "Delete GH_READ_TOKEN")
   await eventually(() => expect(button("Delete").disabled).toBe(false))
   await step(() => button("Delete").click())
   await eventually(() =>
@@ -214,7 +257,7 @@ const needsValueBadges = (within: ParentNode) =>
   [...within.querySelectorAll("span")].filter((span) => span.textContent === "needs a value")
 
 test("after a secrets-reset, the Environment asks for the cleared values again", async () => {
-  const { page, section, status } = await open("/repos/kddige/kndl/environment", 2, (hub) =>
+  const { page, section, bar } = await open("/repos/kddige/kndl/environment", 2, (hub) =>
     hub.environments.resetSecrets(),
   )
   await eventually(() =>
@@ -227,7 +270,7 @@ test("after a secrets-reset, the Environment asks for the cleared values again",
   expect(section("Variables").textContent).toContain(
     "GITHUB_TOKEN (the shared variable GH_READ_TOKEN) needs a value: set it on the Shared variables screen.",
   )
-  const banner = [...page.querySelectorAll('[role="status"]')].find((shown) =>
+  const banner = [...page.querySelectorAll("[data-banner]")].find((shown) =>
     shown.textContent?.includes("Sessions can't start"),
   )
   expect(banner?.querySelector('a[href="/variables"]')?.textContent).toBe("Shared variables")
@@ -238,7 +281,7 @@ test("after a secrets-reset, the Environment asks for the cleared values again",
   await step(() => typeInto(sensitive as HTMLInputElement, "made-up-new-npm-token"))
   expect(needsValueBadges(section("Variables"))).toHaveLength(1)
   expect(section("Variables").textContent).not.toContain("NPM_TOKEN needs a value")
-  expect(status()).not.toContain("No changes to apply.")
+  expect(bar()).toBeDefined()
 })
 
 test("after a secrets-reset, a shared variable asks for its value, and entering it clears that", async () => {
@@ -247,7 +290,7 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   const row = () => page.querySelector('li[aria-label="GH_READ_TOKEN"]')
   expect(needsValueBadges(row() as Element)).toHaveLength(1)
 
-  await step(() => button("Edit GH_READ_TOKEN").click())
+  await step(() => button("Enter value for GH_READ_TOKEN").click())
   await eventually(() => expect(dialog()).not.toBeNull())
   const editor = dialog() as HTMLElement
   const value = editor.querySelector('input[type="password"]') as HTMLInputElement
@@ -257,21 +300,20 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   expect(editor.textContent).toContain("under 4 characters")
   await step(() => typeInto(value, "made-up-new-gh-token"))
   await step(() => button("Save", editor).click())
-  await eventually(() => expect(row()?.textContent).toContain("set"))
-  expect(needsValueBadges(row() as Element)).toHaveLength(0)
+  await eventually(() => expect(needsValueBadges(row() as Element)).toHaveLength(0))
+  expect(() => button("Enter value for GH_READ_TOKEN")).toThrow()
   expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
 })
 
 test("shows the Repo's Installations and its MCP server change log, which changes keep fresh", async () => {
   const { client, section } = await open("/repos/kddige/kndl/environment")
   await eventually(() =>
-    expect(
-      section("MCP servers").querySelector('[aria-label="MCP server change log"]'),
-    ).not.toBeNull(),
+    expect(section("History").querySelector('[aria-label="MCP server change log"]')).not.toBeNull(),
   )
   const mcpServers = () => section("MCP servers").textContent
+  const log = () => section("History").textContent
   await eventually(() => expect(mcpServers()).toContain("Docs search"))
-  expect(mcpServers()).toContain("Bob Lee created Docs, an Installation of Docs search")
+  expect(log()).toContain("Bob Lee created Docs, an Installation of Docs search")
 
   // Someone installs an MCP server here: both the list and the log show it, with no new version.
   const linear = client
@@ -280,17 +322,18 @@ test("shows the Repo's Installations and its MCP server change log, which change
   if (linear === undefined) throw new Error("No MCP server Linear")
   await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"]))
   await eventually(() =>
-    expect(mcpServers()).toContain("Alice Kim created Linear, an Installation of Linear"),
+    expect(log()).toContain("Alice Kim created Linear, an Installation of Linear"),
   )
   expect(
     section("MCP servers").querySelector('[aria-label="Installations for this Repo"]')?.textContent,
   ).toContain("Linear")
-  expect(section("Version history").querySelectorAll("li")).toHaveLength(2)
+  expect(section("History").querySelectorAll('[aria-label="Versions"] li')).toHaveLength(2)
 })
 
 test("shows where each Installation comes from, and turns a global one off and on (#219)", async () => {
   const { client, section } = await open("/repos/kddige/kndl/environment")
   const mcpServers = () => section("MCP servers").textContent
+  const log = () => section("History").textContent
   const row = (name: string) =>
     section("MCP servers").querySelector(
       `[aria-label="Installations for this Repo"] li[aria-label="${name}"]`,
@@ -308,9 +351,7 @@ test("shows where each Installation comes from, and turns a global one off and o
   if (search === undefined) throw new Error("No MCP server Web search")
   await step(() => client.createInstallation(search.id, "Web search", [], [], true))
   await eventually(() =>
-    expect(mcpServers()).toContain(
-      "Alice Kim created Web search, a global Installation of Web search",
-    ),
+    expect(log()).toContain("Alice Kim created Web search, a global Installation of Web search"),
   )
   expect(row("Web search")?.textContent).toContain("Global")
 
@@ -327,12 +368,12 @@ test("shows where each Installation comes from, and turns a global one off and o
   await eventually(() =>
     expect(row("Web search")?.textContent).toContain("turned off for this Repo"),
   )
-  expect(mcpServers()).toContain(
+  expect(log()).toContain(
     "Alice Kim turned Web search, a global Installation of Web search, off for this Repo",
   )
   await step(() => button("Turn back on", row("Web search") as Element).click())
   await eventually(() =>
-    expect(mcpServers()).toContain(
+    expect(log()).toContain(
       "Alice Kim turned Web search, a global Installation of Web search, back on for this Repo",
     ),
   )

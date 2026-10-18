@@ -1,7 +1,7 @@
 import type { SessionInstallation, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { mcpServersChanged } from "../app/format.ts"
+import { counted, mcpServersChanged } from "../app/format.ts"
 import { Button, McpIcon, Popover, useMediaQuery, WIDE } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -26,11 +26,11 @@ const styles = stylex.create({
   },
   line: { display: "flex", alignItems: "baseline", gap: space.s2, minWidth: 0 },
   name: { fontWeight: weight.semibold },
-  mcpServer: { minWidth: 0, color: color.textMuted, fontSize: text.sm },
-  server: { color: color.textMuted, fontFamily: font.mono, fontSize: text.xs },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  mcpServer: { minWidth: 0, color: color.textSecondary, fontSize: text.sm },
+  server: { color: color.textSecondary, fontFamily: font.mono, fontSize: text.xs },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
   },
@@ -41,7 +41,7 @@ export const serverName = (installation: SessionInstallation) =>
   `plugin:kndl:${installation.server}`
 
 const installationsText = (count: number) =>
-  count === 1 ? "1 Installation" : `${count} Installations`
+  counted(count, { one: "Installation", other: "Installations" })
 
 /**
  * The Installations a Session runs with (ADR 0020): a button in its header while it runs with any,
@@ -87,7 +87,7 @@ export function SessionMcpServers({ summary }: { summary: SessionSummary }) {
       )}
       <p {...stylex.props(styles.note)}>
         {changed
-          ? `${summary.repo}'s Installations changed since it started: a Restart applies the change. `
+          ? `${summary.repo}'s Installations changed since it started: a restart applies the change. `
           : ""}
         <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
           Manage MCP servers

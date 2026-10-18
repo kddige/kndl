@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, dialog, menuItem, menuItems, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -62,7 +62,7 @@ test("lists each Runner with its version, last connection and Sessions, and no c
   const studio = rows.find((row) => row.startsWith("studio"))
   const ci = rows.find((row) => row.startsWith("ci-box"))
   expect(studio).toContain("studio")
-  expect(studio).toContain("online")
+  expect(stateOf("studio")).toBe("online")
   // Sessions run on their Creators' setup tokens, not the Runner's (ADR 0026).
   expect(studio).not.toContain("Claude")
   expect(studio).toContain("824de4a1f0c3 (main)")
@@ -78,6 +78,9 @@ test("lists each Runner with its version, last connection and Sessions, and no c
   expect(document.querySelector('a[aria-current="page"]')?.textContent).toContain("Runners")
 })
 
+/** What a Runner's dot says: online or offline. */
+const stateOf = (name: string) =>
+  runners()?.querySelector(`[aria-label="${name}"] [role="img"]`)?.getAttribute("aria-label")
 const studioBox = () => runners()?.querySelector('[aria-label="studio"]')?.textContent ?? ""
 const monitorOf = (name: string) =>
   runners()?.querySelector<HTMLElement>(`section[aria-label="${name}'s monitor"]`) ?? null
@@ -86,7 +89,7 @@ const historyAsked = (hub: InstanceType<typeof FakeHub>) =>
 
 /** Opens a Runner's Monitor, and waits for the history it asks for to be charted. */
 async function openMonitor(name: string) {
-  await step(() => button(`Monitor ${name}`).click())
+  await menuItem(`Actions for ${name}`, `Monitor ${name}`)
   await eventually(() =>
     expect(
       monitorOf(name)?.querySelector('[aria-label^="Free disk over the last 7 days"]') ?? null,
@@ -97,7 +100,6 @@ async function openMonitor(name: string) {
 
 test("keeps a Runner's row to itself, its host behind a Monitor that is closed and asks nothing (#356)", async () => {
   const { hub } = await openRunners()
-  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("false")
   expect(monitorOf("studio")).toBeNull()
   expect(studioBox()).not.toContain("free of")
   expect(studioBox()).not.toContain("GiB")
@@ -108,8 +110,6 @@ test("keeps a Runner's row to itself, its host behind a Monitor that is closed a
 test("opens a Runner's Monitor: its host as tiles, and charts of its last week, then closes it (#356)", async () => {
   const { hub } = await openRunners()
   const monitor = await openMonitor("studio")
-  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("true")
-  expect(button("Monitor studio").getAttribute("aria-controls")).toBe(monitor.id)
   const host = monitor.textContent ?? ""
   expect(host).toContain("Free disk186 GiBof 500 GiB (37%)")
   expect(host).toContain("Available memory19 GiBof 32 GiB (59%)")
@@ -126,9 +126,25 @@ test("opens a Runner's Monitor: its host as tiles, and charts of its last week, 
   }
   expect(host).toContain("Low disk, under 50 GiB")
 
-  await step(() => button("Monitor studio").click())
+  // Its menu says it's open, and closes it.
+  await menuItem("Actions for studio", "Close studio's Monitor")
   expect(monitorOf("studio")).toBeNull()
-  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("false")
+
+  // A click on the row opens it too, and again closes it; a click on its controls doesn't.
+  const row = runners()?.querySelector<HTMLElement>('[aria-label="studio"] > div') as HTMLElement
+  await step(() => row.click())
+  await eventually(() => expect(monitorOf("studio")).not.toBeNull())
+  await step(() => button("Actions for studio").click())
+  await settle(10)
+  expect(menuItems().map((item) => item.textContent)).toEqual([
+    "Close studio's Monitor",
+    "Re-pair studio",
+    "Remove studio",
+  ])
+  expect(monitorOf("studio")).not.toBeNull()
+  await step(() => (document.activeElement as HTMLElement | null)?.blur())
+  await step(() => row.click())
+  expect(monitorOf("studio")).toBeNull()
 })
 
 test("warns of a low disk in the row, under 10 GiB free or a tenth of it, and greys the host of a Runner that is offline", async () => {
@@ -163,9 +179,9 @@ test("opens the Monitor of a Runner that sent no sysinfo with a note in place of
     hub.runners = hub.runners.map(({ sysinfo: _sampled, ...runner }) => runner)
     hub.patchRunner("r-ci", { isOnline: true })
   })
-  await eventually(() => expect(ciBox()).toContain("online"))
+  await eventually(() => expect(stateOf("ci-box")).toBe("online"))
   expect(ciBox()).not.toContain("low disk")
-  await step(() => button("Monitor ci-box").click())
+  await menuItem("Actions for ci-box", "Monitor ci-box")
   await eventually(() =>
     expect(monitorOf("ci-box")?.textContent).toContain("Not enough history yet"),
   )
@@ -205,7 +221,7 @@ test("adds a Runner: shows the join command, then the Runner once the code is us
 
 test("Re-pairs a Runner only once that's confirmed", async () => {
   const { hub } = await openRunners()
-  await step(() => button("Re-pair studio").click())
+  await menuItem("Actions for studio", "Re-pair studio")
   await eventually(() => expect(dialog()?.textContent).toContain("Re-pair studio"))
   expect(dialog()?.textContent).toContain("its current token stops working")
   expect(hub.received.some((m) => m._tag === "CreatePairingCode")).toBe(false)
@@ -226,7 +242,7 @@ test("Re-pairs a Runner only once that's confirmed", async () => {
 
 test("refuses to remove a Runner with open Sessions, and removes one without", async () => {
   const { hub } = await openRunners()
-  await step(() => button("Remove studio").click())
+  await menuItem("Actions for studio", "Remove studio")
   await eventually(() => expect(dialog()?.textContent).toContain("studio can't be removed yet"))
   expect(dialog()?.textContent).toContain("Archive them first")
   expect(hub.received.some((m) => m._tag === "RemoveRunner")).toBe(false)
@@ -242,7 +258,7 @@ test("refuses to remove a Runner with open Sessions, and removes one without", a
   await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(4))
   await settle()
 
-  await step(() => button("Remove spare").click())
+  await menuItem("Actions for spare", "Remove spare")
   await eventually(() => expect(dialog()?.textContent).toContain("Remove spare?"))
   await step(() => button("Remove").click())
   await eventually(() => expect(runners()?.textContent).not.toContain("spare"))
@@ -274,7 +290,7 @@ test("updates a Runner behind the Hub, following the update to the Hub's commit"
 test("offers a Member no Update, though it shows the Runner is behind (ADR 0028)", async () => {
   const { hub } = await openRunners({ owner: false })
   await step(() => hub.patchRunner("r-ci", { isOnline: true }))
-  await eventually(() => expect(ciBox()).toContain("online"))
+  await eventually(() => expect(stateOf("ci-box")).toBe("online"))
   expect(ciBox()).toContain("behind the Hub")
   expect(document.querySelector('[aria-label="Update ci-box"]')).toBeNull()
 

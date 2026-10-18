@@ -142,7 +142,9 @@ test("the Creator answers Claude's questions from the chat, as the terminal woul
   await step(() =>
     client.answerQuestion(closed.sessionId, closed.toolCallId, { _tag: "Dismissed" }),
   )
-  await eventually(() => expect(document.body.textContent).toContain("The question had closed"))
+  await eventually(() =>
+    expect(document.body.textContent).toContain("That question was already answered"),
+  )
   expect(document.body.textContent).toContain(`Alice Kim answered first: ${library} Luxon`)
 })
 

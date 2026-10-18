@@ -6,7 +6,7 @@ import { type RepoStatus, sameRepo } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkIcon } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, space, weight } from "../ui/tokens.stylex.ts"
 import { useHub } from "./hub.tsx"
 
@@ -99,8 +99,6 @@ const styles = stylex.create({
     gap: space.s1,
     color: "inherit",
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
     whiteSpace: "nowrap",
   },
   again: {
@@ -112,12 +110,10 @@ const styles = stylex.create({
     fontSize: "inherit",
     lineHeight: "inherit",
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
-  muted: { color: color.textMuted },
+  muted: { color: color.textSecondary },
 })
 
 /**
@@ -143,7 +139,7 @@ export function RepoRefusal({
               href={check.installUrl}
               target="_blank"
               rel="noreferrer"
-              {...stylex.props(styles.link, focus.ring)}
+              {...stylex.props(textLink.underline, styles.link, focus.ring)}
             >
               Install the App
               <ExternalLinkIcon aria-hidden="true" />
@@ -151,7 +147,11 @@ export function RepoRefusal({
             , then{" "}
           </>
         )}
-        <button type="button" onClick={onRecheck} {...stylex.props(styles.again, focus.ring)}>
+        <button
+          type="button"
+          onClick={onRecheck}
+          {...stylex.props(textLink.underline, styles.again, focus.ring)}
+        >
           {check.installUrl === null ? "Check again" : "check again"}
         </button>
         .
@@ -162,7 +162,11 @@ export function RepoRefusal({
     return (
       <>
         You don't have access to {repo} on GitHub.{" "}
-        <button type="button" onClick={onRecheck} {...stylex.props(styles.again, focus.ring)}>
+        <button
+          type="button"
+          onClick={onRecheck}
+          {...stylex.props(textLink.underline, styles.again, focus.ring)}
+        >
           Check again
         </button>
       </>

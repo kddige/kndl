@@ -1,7 +1,8 @@
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
 import { githubSignInUrl, type SignInOptions } from "../hub/config.ts"
-import { Button, Field, Input } from "../ui/index.ts"
+import { Button, Field, Input, useDocumentTitle } from "../ui/index.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import {
   color,
   leading,
@@ -37,6 +38,7 @@ const styles = stylex.create({
   wide: { width: "min(26rem, 100%)" },
   heading: { display: "flex", flexDirection: "column", gap: space.s1 },
   title: {
+    outline: "none",
     margin: 0,
     fontSize: text.lg,
     fontWeight: weight.semibold,
@@ -44,40 +46,46 @@ const styles = stylex.create({
     lineHeight: leading.tight,
     overflowWrap: "anywhere",
   },
-  lede: { margin: 0, color: color.textMuted, lineHeight: leading.snug },
+  lede: { margin: 0, color: color.textSecondary, lineHeight: leading.snug },
   divider: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
-    "::before": { content: '""', flex: 1, height: "1px", backgroundColor: color.border },
-    "::after": { content: '""', flex: 1, height: "1px", backgroundColor: color.border },
+    "::before": { content: '""', flex: 1, height: "1px", backgroundColor: color.separator },
+    "::after": { content: '""', flex: 1, height: "1px", backgroundColor: color.separator },
   },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   full: { width: "100%" },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm },
 })
 
 /** A card alone in the middle of the page: signing in, and approving the CLI. */
 export function AuthCard({
   title,
+  pageTitle,
   lede,
   wide = false,
   children,
 }: {
   title: ReactNode
+  /** The browser tab's name, where `title` isn't plain text. */
+  pageTitle?: string
   lede?: ReactNode
   /** A little wider, for a card with a code or a warning in it. */
   wide?: boolean
   children?: ReactNode
 }) {
+  useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
   return (
     <main {...stylex.props(styles.page)}>
       <div {...stylex.props(styles.card, wide && styles.wide)}>
         <div {...stylex.props(styles.heading)}>
-          <h1 {...stylex.props(styles.title)}>{title}</h1>
+          <h1 tabIndex={-1} {...stylex.props(styles.title)}>
+            {title}
+          </h1>
           {lede !== undefined && <p {...stylex.props(styles.lede)}>{lede}</p>}
         </div>
         {children}
@@ -124,9 +132,21 @@ export function SignIn({
     <AuthCard
       title="Sign in to kndl"
       lede={
-        options.github || options.dev
-          ? (lede ?? "Sign in to see the Sessions on the Repos you can access.")
-          : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with KNDL_DEV_LOGIN=1."
+        options.github || options.dev ? (
+          (lede ?? "Sign in to see the Sessions on the Repos you can access.")
+        ) : (
+          <>
+            No sign-in method is set up on this Hub.{" "}
+            <a
+              href="https://kddige.github.io/kndl/self-hosting/set-up-the-github-app/"
+              target="_blank"
+              rel="noreferrer noopener"
+              {...stylex.props(textLink.underline, focus.ring)}
+            >
+              Set up GitHub sign-in
+            </a>
+          </>
+        )
       }
     >
       {options.github && (
@@ -142,7 +162,7 @@ export function SignIn({
       )}
       {options.github && (
         <p {...stylex.props(styles.note)}>
-          This Hub is invite-only. New here? Open the invite its Owner sent you.
+          This Hub is invite-only. New here? Open the Invite its Owner sent you.
         </p>
       )}
       {options.github && options.dev && <div {...stylex.props(styles.divider)}>or</div>}

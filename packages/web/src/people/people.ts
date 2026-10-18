@@ -3,6 +3,7 @@
 
 import { GitHubLogin, type PendingInvite } from "@kndl/protocol"
 import { Schema } from "effect"
+import { counted } from "../app/format.ts"
 
 /** The Invites that can still be used: the Hub lists them, but one may have expired since. */
 export function usableInvites(
@@ -18,7 +19,7 @@ export function inviteTimeLeft(expiresAt: number, now: number): string {
   if (left < 3_600_000) return "under an hour"
   // Rounded, so an Invite just made says 7 days, not 6.
   const hours = Math.round(left / 3_600_000)
-  if (hours < 48) return hours === 1 ? "1 hour" : `${hours} hours`
+  if (hours < 48) return counted(hours, { one: "hour", other: "hours" })
   return `${Math.round(left / 86_400_000)} days`
 }
 

@@ -28,6 +28,7 @@ import {
   InlineEdit,
   Input,
   KeyIcon,
+  LockIcon,
   LogView,
   Markdown,
   Menu,
@@ -48,6 +49,7 @@ import {
   PlugIcon,
   PlusIcon,
   Popover,
+  PropertyRow,
   RestartIcon,
   ServerIcon,
   UpdateIcon,
@@ -58,11 +60,19 @@ import {
   SegmentedControl,
   Select,
   SessionStatus,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsRow,
+  SettingsSection,
   setTheme,
   Sidebar,
   Slider,
   Spinner,
   SteerIcon,
+  StickyApplyBar,
   StopIcon,
   Switch,
   Tab,
@@ -74,8 +84,11 @@ import {
   Tooltip,
   TrashIcon,
   WarningIcon,
+  textRole,
+  CommandPalette,
+  type CommandGroup,
 } from "../ui/index.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, font, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const route = getRouteApi("/kit")
 
@@ -94,12 +107,9 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s3,
   },
-  sectionTitle: {
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    lineHeight: leading.tight,
-  },
-  sectionNote: { color: color.textMuted, fontSize: text.sm },
+  sectionTitle: { textWrap: "balance" },
+  stack: { display: "flex", flexDirection: "column", gap: space.s3 },
+  sectionNote: { color: color.textSecondary, fontSize: text.sm },
   card: {
     display: "flex",
     flexDirection: "column",
@@ -120,7 +130,7 @@ const styles = stylex.create({
   rowLabel: {
     width: "6rem",
     flexShrink: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.sm,
   },
   grid: {
@@ -141,7 +151,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     fontSize: text.sm,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   chip: {
     width: "1.5rem",
@@ -153,9 +163,9 @@ const styles = stylex.create({
     borderColor: color.border,
   },
   chipColor: (value: string) => ({ backgroundColor: value }),
-  panel: { paddingTop: space.s3, color: color.textMuted },
-  detail: { padding: space.s3, color: color.textMuted },
-  mono: { fontFamily: font.mono, fontSize: text.sm, color: color.textMuted },
+  panel: { paddingTop: space.s3, color: color.textSecondary },
+  detail: { padding: space.s3, color: color.textSecondary },
+  mono: { fontFamily: font.mono, fontSize: text.sm, color: color.textSecondary },
   pre: { margin: 0, padding: space.s3, fontFamily: font.mono, fontSize: text.sm },
   popoverList: {
     display: "flex",
@@ -189,8 +199,23 @@ const styles = stylex.create({
     backgroundColor: color.bg,
   },
   phoneFrame: { maxWidth: "24rem" },
+  // The settings template's parts, at their column's width.
+  settingsFrame: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s8,
+    maxWidth: "48rem",
+    // Keeps the apply bar in place here, rather than floating over the kit page, with room for
+    // its shadow.
+    overflow: "hidden",
+    padding: space.s4,
+    margin: `calc(${space.s4} * -1)`,
+  },
+  dot: { width: "0.5rem", height: "0.5rem", borderRadius: radius.full },
+  online: { backgroundColor: color.success },
+  offline: { backgroundColor: color.neutral },
   brand: { flex: 1, fontWeight: weight.semibold },
-  footerNote: { paddingInline: space.s2, color: color.textMuted, fontSize: text.sm },
+  footerNote: { paddingInline: space.s2, color: color.textSecondary, fontSize: text.sm },
   warningIcon: { display: "inline-flex", color: color.warning },
   themeSelect: { minWidth: "7rem" },
 })
@@ -200,8 +225,11 @@ const SWATCHES = [
   ["surface", color.surface],
   ["surfaceMuted", color.surfaceMuted],
   ["border", color.border],
+  ["borderControl", color.borderControl],
   ["text", color.text],
-  ["textMuted", color.textMuted],
+  ["textSecondary", color.textSecondary],
+  ["textTertiary", color.textTertiary],
+  ["neutral", color.neutral],
   ["accent", color.accent],
   ["danger", color.danger],
   ["warning", color.warning],
@@ -238,7 +266,7 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   return (
     <section {...stylex.props(styles.section)}>
       <div>
-        <h2 {...stylex.props(styles.sectionTitle)}>{title}</h2>
+        <h2 {...stylex.props(textRole.heading, styles.sectionTitle)}>{title}</h2>
         {note && <p {...stylex.props(styles.sectionNote)}>{note}</p>}
       </div>
       <div {...stylex.props(styles.card)}>{children}</div>
@@ -373,7 +401,7 @@ function Fields() {
             rows={1}
             value={prompt}
             onValueChange={setPrompt}
-            placeholder="Ask Claude…"
+            placeholder="Send a prompt"
             sx={styles.composer}
           />
         </Field>
@@ -497,8 +525,9 @@ function SearchSelects() {
     >
       <Row label="models">
         <SearchSelect
+          label={`Model: ${label}`}
           trigger={
-            <Button aria-label={`Model: ${label}`}>
+            <Button>
               {label}
               <ChevronDownIcon />
             </Button>
@@ -510,6 +539,7 @@ function SearchSelects() {
           noMatch={(query) => `No Models match "${query}".`}
         />
         <SearchSelect
+          label="Model"
           trigger={<Button>Empty</Button>}
           groups={[]}
           value={undefined}
@@ -602,7 +632,7 @@ function Overlays() {
         <Popover
           trigger={<Button icon={<InfoIcon />}>Participants</Button>}
           title="4 Participants"
-          description="Everyone here can prompt, stop and delete this Session."
+          description="Only Alice can prompt it. Everyone here watches."
         >
           <ul {...stylex.props(styles.popoverList)}>
             {PEOPLE.slice(0, 4).map((person) => (
@@ -618,7 +648,7 @@ function Overlays() {
         <Dialog
           trigger={<Button>New Session</Button>}
           title="New Session"
-          description="Claude starts on its own Work branch, created from the base branch."
+          description="The agent starts on its own Work branch, created from the base branch."
           footer={
             <>
               <DialogClose>Cancel</DialogClose>
@@ -634,14 +664,14 @@ function Overlays() {
           </Field>
         </Dialog>
         <Button intent="danger" onClick={() => setConfirmOpen(true)}>
-          Delete Session…
+          Purge Session…
         </Button>
         <Dialog
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
           size="sm"
-          title="Delete this Session?"
-          description="It is Archived for 30 days and can be restored until then."
+          title="Purge Fix flaky login test?"
+          description="Deletes 1 Session now: its history, and its Workspace on its Runner with any work not pushed. This can't be undone."
           footer={
             <>
               <DialogClose>Cancel</DialogClose>
@@ -649,18 +679,72 @@ function Overlays() {
                 intent="danger"
                 onClick={() => {
                   setConfirmOpen(false)
-                  toast.show({
-                    title: "Session archived",
-                    description: "Fix flaky login test",
-                    action: { label: "Undo", onAction: () => toast.show({ title: "Restored" }) },
-                  })
+                  toast.show({ title: "Purged Fix flaky login test" })
                 }}
               >
-                Delete
+                Purge Session
               </Button>
             </>
           }
         />
+      </Row>
+    </Section>
+  )
+}
+
+const PALETTE_GROUPS: ReadonlyArray<CommandGroup> = [
+  {
+    label: "Actions",
+    commands: [
+      {
+        id: "new",
+        label: "New Session",
+        shortcut: "C",
+        run: () => toast.show({ title: "New Session" }),
+      },
+    ],
+  },
+  {
+    label: "Sessions",
+    commands: [
+      {
+        id: "s1",
+        label: "Fix flaky login test",
+        meta: "kddige/kndl",
+        run: () => toast.show({ title: "Opened" }),
+      },
+      {
+        id: "s2",
+        label: "Release 0.4",
+        meta: "kddige/kndl",
+        run: () => toast.show({ title: "Opened" }),
+      },
+      {
+        id: "s3",
+        label: "claude/zsh-prompt",
+        meta: "kddige/dotfiles",
+        run: () => toast.show({ title: "Opened" }),
+      },
+    ],
+  },
+  {
+    label: "Settings",
+    commands: [{ id: "runners", label: "Runners", run: () => toast.show({ title: "Runners" }) }],
+  },
+]
+
+function Palette() {
+  const [open, setOpen] = useState(false)
+  return (
+    <Section
+      title="CommandPalette"
+      note="⌘K in the app. Every typed word must match a label or its meta; Enter runs the active one."
+    >
+      <Row label="palette">
+        <Button icon={<SearchIcon />} onClick={() => setOpen(true)}>
+          Open the palette
+        </Button>
+        <CommandPalette open={open} onOpenChange={setOpen} groups={PALETTE_GROUPS} />
       </Row>
     </Section>
   )
@@ -709,8 +793,9 @@ function Toasts() {
         <Button
           onClick={() =>
             toast.show({
-              title: "Session archived",
-              description: "Restore it within 30 days.",
+              title: "Session deleted",
+              description:
+                "Fix flaky login test is archived. Restore it from kddige/kndl's Archived Sessions.",
               action: { label: "Undo", onAction: () => toast.show({ title: "Session restored" }) },
             })
           }
@@ -752,6 +837,8 @@ Test build passed in 41s`
 function Toggles() {
   const [atBuild, setAtBuild] = useState(true)
   const [docker, setDocker] = useState(false)
+  const [cache, setCache] = useState(false)
+  const [autoStop, setAutoStop] = useState(true)
   const [lines, setLines] = useState(2)
   const [harness, setHarness] = useState<"ClaudeCode" | "Pi">("ClaudeCode")
   const log = BUILD_LOG.split("\n").slice(0, lines).join("\n")
@@ -783,6 +870,7 @@ function Toggles() {
       </Row>
       <div {...stylex.props(styles.grid)}>
         <Checkbox label="At build" checked={atBuild} onCheckedChange={setAtBuild} />
+        <Checkbox label="Keep the build cache" checked={cache} onCheckedChange={setCache} />
         <Checkbox label="Disabled, ticked" checked disabled />
         <Switch
           label="Docker in every Sandbox"
@@ -790,6 +878,7 @@ function Toggles() {
           checked={docker}
           onCheckedChange={setDocker}
         />
+        <Switch label="Stop idle Sessions" checked={autoStop} onCheckedChange={setAutoStop} />
         <Switch label="Disabled, off" checked={false} disabled />
       </div>
       <LogView label="Test build log" placeholder="Waiting for the Runner…">
@@ -1054,6 +1143,133 @@ function PageHeaders() {
   )
 }
 
+function SettingsTemplate() {
+  const [open, setOpen] = useState(true)
+  return (
+    <Section
+      title="Settings template"
+      note="SettingsPage puts a page's title, its one primary action and these sections in one 48rem column. Every section heading is 14px semibold; an overline only labels a group inside one."
+    >
+      <div {...stylex.props(styles.settingsFrame)}>
+        <SettingsSection
+          title="Runners"
+          note="Click a row, or choose Monitor in its menu, to open its detail."
+        >
+          <SettingsList label="Runners">
+            <SettingsRow
+              label="studio"
+              icon={<span {...stylex.props(styles.dot, styles.online)} />}
+              name="studio"
+              meta={["2026.10.2", "4 Sessions"]}
+              menu={
+                <>
+                  <MenuItem onClick={() => setOpen((was) => !was)}>
+                    {open ? "Close studio's Monitor" : "Monitor studio"}
+                  </MenuItem>
+                  <MenuItem>Re-pair studio</MenuItem>
+                  <MenuSeparator />
+                  <MenuItem intent="danger">Remove studio</MenuItem>
+                </>
+              }
+              onToggle={() => setOpen((was) => !was)}
+              detail={open && <p {...stylex.props(styles.sectionNote)}>The Monitor opens here.</p>}
+            />
+            <SettingsRow
+              label="ci-box"
+              icon={<span {...stylex.props(styles.dot, styles.offline)} />}
+              name="ci-box"
+              meta={["5d2b9e07c41a", "Last seen 3h ago"]}
+              badges={
+                <>
+                  <Badge>offline</Badge>
+                  <Badge intent="warning">behind the Hub</Badge>
+                </>
+              }
+              action={<Button size="sm">Update</Button>}
+              menu={<MenuItem>Re-pair ci-box</MenuItem>}
+            />
+            <SettingsRow
+              label="GITHUB_TOKEN"
+              icon={<KeyIcon />}
+              name={<span {...stylex.props(styles.mono)}>GITHUB_TOKEN</span>}
+              meta="Linked by kddige/kndl"
+              badges={<Badge icon={<LockIcon width={12} height={12} />}>Sensitive</Badge>}
+              rows={<SettingsRow label="as GH_TOKEN" name="as GH_TOKEN" meta="At build" />}
+              rowsLabel="Links of GITHUB_TOKEN"
+            />
+          </SettingsList>
+        </SettingsSection>
+        <SettingsSection title="Properties" note="A label and what it does, then its control.">
+          <SettingsList label="Properties">
+            <PropertyRow label="Memory (MiB)" description="4 GiB">
+              {({ labelId, descriptionId }) => (
+                <Input
+                  size="sm"
+                  defaultValue="4096"
+                  aria-labelledby={labelId}
+                  aria-describedby={descriptionId}
+                />
+              )}
+            </PropertyRow>
+            <PropertyRow label="Channel" description="Releases only: a tested kndl, about weekly.">
+              <Button size="sm" intent="ghost">
+                Switch to dev
+              </Button>
+            </PropertyRow>
+            <PropertyRow
+              label="Run Claude's Models with"
+              description="New Sessions start on it; the Model picker can switch."
+            >
+              <SegmentedControl
+                label="Run Claude's Models with"
+                options={[
+                  { value: "ClaudeCode", label: "Claude Code" },
+                  { value: "Pi", label: "pi" },
+                ]}
+                value="ClaudeCode"
+                onValueChange={() => {}}
+              />
+            </PropertyRow>
+          </SettingsList>
+        </SettingsSection>
+        <SettingsSection title="Connect a Provider">
+          <SettingsGroup label="API keys">
+            <SettingsList label="API keys">
+              <SettingsRow
+                label="OpenAI"
+                name="OpenAI"
+                action={<Button size="sm">Add API key</Button>}
+              />
+              <SettingsItem>
+                <p {...stylex.props(styles.sectionNote)}>A list item that isn't a row.</p>
+              </SettingsItem>
+            </SettingsList>
+          </SettingsGroup>
+        </SettingsSection>
+        <SettingsSection title="Empty and loading">
+          <SettingsEmpty
+            title="No Runners yet"
+            description="A Runner is a machine that runs Sessions."
+            action={
+              <Button size="sm" icon={<PlusIcon />}>
+                Add a Runner
+              </Button>
+            }
+          />
+          <SettingsLoading label="Loading Runners" />
+        </SettingsSection>
+        <StickyApplyBar
+          onDiscard={() => {}}
+          secondary={<Button>Test build</Button>}
+          apply={<Button intent="primary">Apply</Button>}
+        >
+          <span {...stylex.props(styles.sectionNote)}>It changes the build: run a Test build.</span>
+        </StickyApplyBar>
+      </div>
+    </Section>
+  )
+}
+
 function Disclosures() {
   return (
     <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
@@ -1080,13 +1296,8 @@ function Disclosures() {
 function Banners() {
   return (
     <Section title="Banner" note="A strip across a view saying what state it's in.">
-      <Banner
-        intent="frozen"
-        icon={<InfoIcon />}
-        title="This Session is Frozen"
-        action={<Button size="sm">Unfreeze</Button>}
-      >
-        Its Sandbox is stopped, so it can't run. Unfreeze it to carry on.
+      <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">
+        Its Runner is offline. Prompts sent now wait in the queue until the Runner is back.
       </Banner>
       <Banner intent="asleep" icon={<InfoIcon />} title="This Session is Asleep">
         Sending a prompt wakes it.
@@ -1096,7 +1307,7 @@ function Banners() {
         The Session carries on when it's back.
       </Banner>
       <Banner
-        intent="accent"
+        intent="neutral"
         icon={<Spinner size="sm" />}
         title="Starting…"
         detail={
@@ -1107,9 +1318,9 @@ function Banners() {
           </Disclosure>
         }
       >
-        Building the Environment, then running its start script.
+        Building the Environment, then running its Start script.
       </Banner>
-      <Banner intent="accent" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
+      <Banner intent="neutral" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
       <Banner title="Neutral, with nothing else" />
     </Section>
   )
@@ -1132,6 +1343,24 @@ export function KitPage() {
                 {name}
               </div>
             ))}
+          </div>
+        </Section>
+
+        <Section
+          title="Type roles"
+          note="Inter Variable. Each role pairs a size with its weight and line height; headings descend."
+        >
+          <div {...stylex.props(styles.stack)}>
+            <p {...stylex.props(textRole.title)}>Title: a page or a dialog</p>
+            <p {...stylex.props(textRole.heading)}>Heading: a section of a page</p>
+            <p {...stylex.props(textRole.subheading)}>Subheading: a part of a section, or a card</p>
+            <p {...stylex.props(textRole.overline)}>Overline: a group's label</p>
+            <p {...stylex.props(textRole.body)}>
+              Body: running text and controls, 13px, at about 75 characters a line at most.
+            </p>
+            <p {...stylex.props(textRole.meta)}>
+              Meta: 2 of 3 Runners online · 12m ago · 2026.10.2
+            </p>
           </div>
         </Section>
 
@@ -1213,7 +1442,7 @@ export function KitPage() {
               The conversation, Turn by Turn.
             </TabPanel>
             <TabPanel value="terminal" sx={styles.panel}>
-              Claude Code's terminal, live, to watch and type into.
+              The Session's terminal, live, to watch and type into.
             </TabPanel>
             <TabPanel value="previews" sx={styles.panel}>
               Ports served from the Sandbox.
@@ -1222,13 +1451,15 @@ export function KitPage() {
         </Section>
 
         <Overlays />
+        <Palette />
         <Toasts />
         <Banners />
         <Disclosures />
         <SidebarKit />
         <PageHeaders />
+        <SettingsTemplate />
 
-        <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
+        <Section title="Markdown" note="The agent's answers. A small, safe subset: no raw HTML.">
           <div {...stylex.props(styles.panel)}>
             <Markdown text={MARKDOWN} />
           </div>

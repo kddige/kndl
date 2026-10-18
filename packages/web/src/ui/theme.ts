@@ -47,12 +47,39 @@ const styles = stylex.create({
 /** Applies a theme to the whole page. Call once at startup and again when the user switches. */
 export function setTheme(mode: ThemeMode): void {
   const root = document.documentElement
-  root.className =
-    stylex.props(
-      styles.root,
-      mode === "light" && [themes.light, styles.light],
-      mode === "dark" && [themes.dark, styles.dark],
-    ).className ?? ""
-  root.dataset["theme"] = mode
-  document.body.className = stylex.props(styles.body).className ?? ""
+  withoutTransitions(() => {
+    root.className =
+      stylex.props(
+        styles.root,
+        mode === "light" && [themes.light, styles.light],
+        mode === "dark" && [themes.dark, styles.dark],
+      ).className ?? ""
+    root.dataset["theme"] = mode
+    document.body.className = stylex.props(styles.body).className ?? ""
+  })
+  followSystemScheme()
+}
+
+let following = false
+
+/** In `system` mode the OS can switch the scheme under the page: switch it without a smear too. */
+function followSystemScheme(): void {
+  if (following || typeof matchMedia !== "function") return
+  following = true
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (document.documentElement.dataset["theme"] === "system") withoutTransitions(() => {})
+  })
+}
+
+/**
+ * Runs a theme swap with every transition off, so controls that fade their colours don't smear
+ * while the rest of the page snaps. The pause outlasts the swap's style recalculation.
+ */
+function withoutTransitions(swap: () => void): void {
+  const pause = document.createElement("style")
+  pause.textContent = "*,*::before,*::after{transition:none!important}"
+  document.head.append(pause)
+  swap()
+  void document.body.offsetHeight
+  requestAnimationFrame(() => requestAnimationFrame(() => pause.remove()))
 }

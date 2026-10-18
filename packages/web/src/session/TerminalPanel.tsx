@@ -14,8 +14,9 @@ import { FitAddon } from "@xterm/addon-fit"
 import { type ITheme, Terminal } from "@xterm/xterm"
 import "@xterm/xterm/css/xterm.css"
 import { useEffect, useRef, useState } from "react"
+import { notSent } from "../app/copy.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { Button, Spinner, toast } from "../ui/index.ts"
+import { Button, Spinner } from "../ui/index.ts"
 import { color, font, radius, space, terminal, text } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
@@ -33,11 +34,11 @@ const styles = stylex.create({
     flexWrap: "wrap",
     gap: space.s2,
     minHeight: "1.5rem",
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   note: { flex: 1, minWidth: 0 },
-  size: { fontFamily: font.mono, fontSize: text.xs, color: color.textSubtle },
+  size: { fontFamily: font.mono, fontSize: text.xs, color: color.textTertiary },
   frame: {
     position: "relative",
     flex: 1,
@@ -135,7 +136,7 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
           disabled={!running || status !== "live"}
           onClick={() => {
             if (!mirror.current?.claim(true)) {
-              toast.show({ title: "Not connected to the Hub", intent: "warning" })
+              notSent("Terminal control")
             }
           }}
         >

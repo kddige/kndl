@@ -9,7 +9,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
-import { clock, count, dollars, duration, statusOf } from "../app/format.ts"
+import { clock, count, counted, dollars, duration, statusOf } from "../app/format.ts"
 import type {
   AgentView,
   Block,
@@ -32,7 +32,7 @@ import {
   SteerIcon,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { modelSwitchedText } from "./models.ts"
 import { QuestionChip } from "./QuestionChip.tsx"
@@ -74,7 +74,7 @@ const styles = stylex.create({
     minWidth: 0,
   },
   name: { fontWeight: weight.semibold },
-  time: { color: color.textSubtle, fontSize: text.xs },
+  time: { color: color.textTertiary, fontSize: text.xs },
   prompt: {
     marginInlineStart: space.s8,
     paddingBlock: space.s2,
@@ -93,14 +93,14 @@ const styles = stylex.create({
     borderStyle: "dashed",
     borderColor: color.borderStrong,
     backgroundColor: "transparent",
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   cancelledNote: {
     display: "inline-flex",
     alignItems: "center",
     gap: space.s1,
     marginInlineStart: space.s8,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   sentFiles: { marginInlineStart: space.s8 },
@@ -112,8 +112,8 @@ const styles = stylex.create({
     width: "1.75rem",
     height: "1.75rem",
     borderRadius: radius.full,
-    backgroundColor: color.accentSubtle,
-    color: color.accentSubtleText,
+    backgroundColor: color.accentTint,
+    color: color.accentText,
     fontSize: text.xs,
     fontWeight: weight.semibold,
     flexShrink: 0,
@@ -126,7 +126,7 @@ const styles = stylex.create({
     height: "1.75rem",
     borderRadius: radius.full,
     backgroundColor: color.surfaceActive,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontFamily: font.mono,
     fontSize: text.xs,
     flexShrink: 0,
@@ -139,7 +139,7 @@ const styles = stylex.create({
     height: "1.75rem",
     borderRadius: radius.md,
     backgroundColor: color.surfaceActive,
-    color: color.textMuted,
+    color: color.textSecondary,
     flexShrink: 0,
   },
   sessionLink: {
@@ -150,7 +150,7 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
     color: "inherit",
     textDecorationLine: { default: "none", ":hover": "underline" },
-    textUnderlineOffset: "2px",
+    textUnderlinePosition: "from-font",
     borderRadius: radius.sm,
   },
   reply: {
@@ -183,12 +183,12 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
     fontFamily: font.mono,
     fontSize: text.xs,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   agentCount: {
     flexShrink: 0,
     marginInlineStart: "auto",
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   agentMeta: {
@@ -196,13 +196,11 @@ const styles = stylex.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: space.s2,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   agentLink: {
-    color: color.textMuted,
-    textDecorationLine: { default: "underline", ":hover": "underline" },
-    textUnderlineOffset: "2px",
+    color: color.textSecondary,
     borderRadius: radius.sm,
   },
   message: {
@@ -229,7 +227,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     minWidth: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   footer: {
@@ -237,19 +235,19 @@ const styles = stylex.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: space.s2,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
   },
   failure: {
     flexBasis: "100%",
-    color: color.dangerSubtleText,
+    color: color.dangerText,
     overflowWrap: "anywhere",
   },
   working: {
     display: "inline-flex",
     alignItems: "center",
     gap: space.s1_5,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   notice: {
@@ -258,11 +256,11 @@ const styles = stylex.create({
     justifyContent: "center",
     flexWrap: "wrap",
     gap: space.s2,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     textAlign: "center",
   },
-  noticeError: { color: color.dangerSubtleText },
+  noticeError: { color: color.dangerText },
   noticeLink: {
     color: "inherit",
     fontWeight: weight.semibold,
@@ -560,7 +558,7 @@ export function AgentSummaryRow({ agent }: { agent: AgentView }) {
         </span>
       )}
       <span {...stylex.props(styles.agentCount)}>
-        {tools} {tools === 1 ? "tool call" : "tool calls"}
+        {counted(tools, { one: "tool call", other: "tool calls" })}
       </span>
     </>
   )
@@ -576,7 +574,7 @@ export function AgentMeta({ agent, link }: { agent: AgentView; link?: boolean })
       {agent.model !== "" && <span>{agent.model}</span>}
       <span>{agent.background ? "In the background" : "In the foreground"}</span>
       {link === true && (
-        <AgentLink agentId={agent.agentId} sx={styles.agentLink}>
+        <AgentLink agentId={agent.agentId} sx={[textLink.underline, styles.agentLink]}>
           Message or stop it
         </AgentLink>
       )}

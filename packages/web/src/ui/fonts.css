@@ -1,0 +1,22 @@
+/*
+ * The UI font, Inter Variable (rsms/inter 4.1, ui/fonts/OFL.txt), served from the Hub's own
+ * /assets/ with no third-party fetch. One file per style carries every weight, so 400, 500 and
+ * 600 all render. StyleX can't declare @font-face, so it lives here; font.sans names it.
+ */
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable.woff2") format("woff2");
+}
+
+/* Fetched only when italic text shows, as Markdown's emphasis does. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable-Italic.woff2") format("woff2");
+}

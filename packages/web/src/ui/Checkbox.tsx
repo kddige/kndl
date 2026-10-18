@@ -1,7 +1,7 @@
 import { Checkbox as BaseCheckbox } from "@base-ui/react/checkbox"
 import { Switch as BaseSwitch } from "@base-ui/react/switch"
 import * as stylex from "@stylexjs/stylex"
-import type { ReactNode } from "react"
+import { type ReactNode, useId } from "react"
 import { CheckIcon } from "./icons.tsx"
 import { focus } from "./shared.ts"
 import { color, leading, motion, radius, space, text, weight } from "./tokens.stylex.ts"
@@ -16,6 +16,8 @@ export interface CheckboxProps {
   disabled?: boolean
   sx?: stylex.StyleXStyles
 }
+
+const FORCED = "@media (forced-colors: active)"
 
 const styles = stylex.create({
   row: {
@@ -39,9 +41,9 @@ const styles = stylex.create({
     lineHeight: leading.tight,
     color: color.text,
   },
-  labelDisabled: { color: color.textSubtle },
+  labelDisabled: { color: color.textDisabled },
   labelStrong: { fontWeight: weight.medium },
-  description: { fontSize: text.sm, lineHeight: leading.snug, color: color.textMuted },
+  description: { fontSize: text.sm, lineHeight: leading.snug, color: color.textSecondary },
   box: {
     display: "inline-flex",
     alignItems: "center",
@@ -53,7 +55,7 @@ const styles = stylex.create({
     padding: 0,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: color.borderStrong, "[data-checked]": color.accent },
+    borderColor: { default: color.borderControl, "[data-checked]": color.accent },
     borderRadius: radius.sm,
     // Disabled shows as faded, checked or not, so a fixed tick still reads as ticked.
     backgroundColor: { default: color.surface, "[data-checked]": color.accent },
@@ -77,9 +79,11 @@ const styles = stylex.create({
     height: "1rem",
     marginTop: "0.0625rem",
     padding: "0.125rem",
-    borderWidth: 0,
+    // Forced colors drop the track's fill: an outline keeps the Switch there.
+    borderWidth: { default: 0, [FORCED]: "1px" },
+    borderStyle: "solid",
     borderRadius: radius.full,
-    backgroundColor: { default: color.borderStrong, "[data-checked]": color.accent },
+    backgroundColor: { default: color.borderControl, "[data-checked]": color.accent },
     opacity: { default: 1, "[data-disabled]": 0.6 },
     transitionProperty: "background-color",
     transitionDuration: motion.durationFast,
@@ -89,13 +93,28 @@ const styles = stylex.create({
     width: "0.75rem",
     height: "0.75rem",
     borderRadius: radius.full,
-    backgroundColor: color.onAccent,
-    transform: { default: "translateX(0)", "[data-checked]": "translateX(0.75rem)" },
+    // In forced colors the thumb keeps a fill in the text colour, so its side says on or off.
+    forcedColorAdjust: "none",
+    backgroundColor: {
+      default: color.controlThumb,
+      "[data-checked]": { default: color.onAccent, [FORCED]: "CanvasText" },
+      [FORCED]: "CanvasText",
+    },
+    transform: {
+      default: "translateX(0)",
+      "[data-checked]": { default: "translateX(0.75rem)", ":dir(rtl)": "translateX(-0.75rem)" },
+    },
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
 })
+
+/** How Labelled names its control: by the label's id, and the description's. */
+interface Named {
+  "aria-labelledby": string
+  "aria-describedby"?: string
+}
 
 function Labelled({
   label,
@@ -107,15 +126,23 @@ function Labelled({
   label: ReactNode
   description: ReactNode
   disabled: boolean
-  control: ReactNode
+  /** The control, given the ids to name and describe it by. */
+  control: (named: Named) => ReactNode
   sx: stylex.StyleXStyles | undefined
 }) {
+  const labelId = useId()
+  const descriptionId = useId()
   return (
-    // The label around the control names it, and clicking the text toggles it.
+    // Clicking anywhere on the row toggles it; the label alone names it, and the description
+    // describes it rather than joining the name.
     <label {...(disabled && { "data-disabled": "" })} {...stylex.props(styles.row, sx)}>
-      {control}
+      {control({
+        "aria-labelledby": labelId,
+        ...(description !== undefined && { "aria-describedby": descriptionId }),
+      })}
       <span {...stylex.props(styles.text)}>
         <span
+          id={labelId}
           {...stylex.props(
             styles.label,
             description !== undefined && styles.labelStrong,
@@ -125,7 +152,9 @@ function Labelled({
           {label}
         </span>
         {description !== undefined && (
-          <span {...stylex.props(styles.description)}>{description}</span>
+          <span id={descriptionId} {...stylex.props(styles.description)}>
+            {description}
+          </span>
         )}
       </span>
     </label>
@@ -147,8 +176,9 @@ export function Checkbox({
       description={description}
       disabled={disabled}
       sx={sx}
-      control={
+      control={(named) => (
         <BaseCheckbox.Root
+          {...named}
           checked={checked}
           disabled={disabled}
           {...(onCheckedChange && { onCheckedChange: (next: boolean) => onCheckedChange(next) })}
@@ -158,7 +188,7 @@ export function Checkbox({
             <CheckIcon {...stylex.props(styles.check)} />
           </BaseCheckbox.Indicator>
         </BaseCheckbox.Root>
-      }
+      )}
     />
   )
 }
@@ -178,8 +208,9 @@ export function Switch({
       description={description}
       disabled={disabled}
       sx={sx}
-      control={
+      control={(named) => (
         <BaseSwitch.Root
+          {...named}
           checked={checked}
           disabled={disabled}
           {...(onCheckedChange && { onCheckedChange: (next: boolean) => onCheckedChange(next) })}
@@ -187,7 +218,7 @@ export function Switch({
         >
           <BaseSwitch.Thumb {...stylex.props(styles.thumb)} />
         </BaseSwitch.Root>
-      }
+      )}
     />
   )
 }

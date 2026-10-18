@@ -1,10 +1,18 @@
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import * as stylex from "@stylexjs/stylex"
-import { type ReactElement, type ReactNode, useId } from "react"
+import {
+  type KeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+} from "react"
 import { IconButton } from "./Button.tsx"
 import { ChevronRightIcon } from "./icons.tsx"
 import { navRow } from "./markers.stylex.ts"
+import { ContextMenu } from "./Menu.tsx"
 import { focus } from "./shared.ts"
 import {
   chrome,
@@ -27,6 +35,9 @@ const TOGGLE_AND_ACTION_ROOM = `calc(${control.sm} * 2 + ${space.s1} + ${space.s
 // How far a nested list is indented: its rows' dots line up under the label above them.
 const NESTED_INDENT = `calc(1rem + ${space.s2})`
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   sidebar: {
     display: "flex",
@@ -44,6 +55,7 @@ const styles = stylex.create({
     paddingInlineStart: space.s4,
     paddingInlineEnd: space.s2,
   },
+  landmark: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   nav: {
     display: "flex",
     flexDirection: "column",
@@ -54,6 +66,19 @@ const styles = stylex.create({
     overscrollBehavior: "contain",
     paddingBlock: space.s2,
     paddingInline: space.s2,
+    // A shade at an edge only while there's more past it: two covers in the Sidebar's own fill
+    // scroll with the list and hide the shades, which stay put.
+    backgroundColor: color.surface,
+    backgroundImage: [
+      `linear-gradient(${color.surface} 30%, transparent)`,
+      `linear-gradient(transparent, ${color.surface} 70%)`,
+      `radial-gradient(farthest-side at 50% 0, ${color.borderStrong}, transparent)`,
+      `radial-gradient(farthest-side at 50% 100%, ${color.borderStrong}, transparent)`,
+    ].join(", "),
+    backgroundPosition: "0 0, 0 100%, 0 0, 0 100%",
+    backgroundSize: "100% 2.5rem, 100% 2.5rem, 100% 0.75rem, 100% 0.75rem",
+    backgroundRepeat: "no-repeat",
+    backgroundAttachment: "local, local, scroll, scroll",
   },
   footer: {
     display: "flex",
@@ -65,19 +90,18 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: color.border,
   },
-  aboveFooter: { flexShrink: 0, paddingBlock: space.s1, paddingInline: space.s4 },
+  aboveFooter: { flexShrink: 0, paddingBlock: space.s1, paddingInline: space.s2 },
   section: { display: "flex", flexDirection: "column" },
+  labelRow: { display: "flex", alignItems: "center", gap: space.s1, paddingInlineEnd: space.s0_5 },
+  labelGrow: { flex: 1, minWidth: 0 },
   sectionLabel: {
     paddingTop: space.s1,
     paddingBottom: space.s1,
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textSubtle,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    userSelect: "none",
+    color: color.textSecondary,
+    overflowWrap: "anywhere",
   },
   list: {
     display: "flex",
@@ -99,15 +123,18 @@ const styles = stylex.create({
     borderRadius: radius.md,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.textMuted, ":hover": color.text },
-    backgroundColor: { default: "transparent", ":hover": color.surfaceHover },
+    color: { default: color.textSecondary, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: color.surfaceHover },
+    },
     textDecoration: "none",
   },
   // Room for the action while it shows, so the label is cut short before it.
   itemWithAction: {
     paddingInlineEnd: {
       default: space.s2,
-      [stylex.when.ancestor(":hover", navRow)]: ACTION_ROOM,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: ACTION_ROOM },
       [stylex.when.ancestor(":focus-within", navRow)]: ACTION_ROOM,
     },
   },
@@ -117,15 +144,18 @@ const styles = stylex.create({
   itemWithToggleAndAction: {
     paddingInlineEnd: {
       default: ACTION_ROOM,
-      [stylex.when.ancestor(":hover", navRow)]: TOGGLE_AND_ACTION_ROOM,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: TOGGLE_AND_ACTION_ROOM },
       [stylex.when.ancestor(":focus-within", navRow)]: TOGGLE_AND_ACTION_ROOM,
     },
   },
   itemWithToggleAndActionShown: { paddingInlineEnd: TOGGLE_AND_ACTION_ROOM },
   // Not by colour alone: a bar at the start and a heavier label as well as the fill.
   current: {
-    color: { default: color.text, ":hover": color.text },
-    backgroundColor: { default: color.surfaceActive, ":hover": color.surfaceActive },
+    color: { default: color.text, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: color.surfaceActive,
+      ":hover": { default: null, [HOVER]: color.surfaceActive },
+    },
     fontWeight: weight.medium,
     "::before": {
       content: "''",
@@ -133,16 +163,22 @@ const styles = stylex.create({
       insetInlineStart: 0,
       top: space.s1_5,
       bottom: space.s1_5,
-      width: "2px",
+      // A border, not a fill, so forced colors keep the bar.
+      width: 0,
+      borderInlineStartWidth: "2px",
+      borderInlineStartStyle: "solid",
+      borderInlineStartColor: color.accent,
       borderRadius: radius.full,
-      backgroundColor: color.accent,
     },
   },
   // In place of the link while editing: the field is what's live, so the row doesn't change on hover.
   editing: {
     paddingInlineEnd: space.s0_5,
-    color: { default: color.text, ":hover": color.text },
-    backgroundColor: { default: "transparent", ":hover": "transparent" },
+    color: { default: color.text, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: "transparent" },
+    },
   },
   // A 16px slot, so icons, chevrons and status dots line up down the sidebar.
   slot: {
@@ -165,7 +201,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     flexShrink: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
   },
   // Over the end of the row, shown while the row is hovered or holds focus. Hidden, it takes no
   // pointer, so a tap there still follows the link.
@@ -177,12 +213,12 @@ const styles = stylex.create({
     transform: "translateY(-50%)",
     opacity: {
       default: 0,
-      [stylex.when.ancestor(":hover", navRow)]: 1,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: 1 },
       [stylex.when.ancestor(":focus-within", navRow)]: 1,
     },
     pointerEvents: {
       default: "none",
-      [stylex.when.ancestor(":hover", navRow)]: "auto",
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: "auto" },
       [stylex.when.ancestor(":focus-within", navRow)]: "auto",
     },
   },
@@ -197,9 +233,11 @@ const styles = stylex.create({
     transform: "translateY(-50%)",
   },
   chevron: {
-    color: color.textSubtle,
+    color: color.textTertiary,
+    // Closed, it points to the inline end, whichever way the page reads.
+    transform: { default: "none", ":dir(rtl)": "scaleX(-1)" },
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   chevronOpen: { transform: "rotate(90deg)" },
@@ -238,10 +276,11 @@ export function Sidebar({ label, header, children, aboveFooter, footer, sx }: Si
   return (
     <div {...stylex.props(styles.sidebar, sx)}>
       {header && <div {...stylex.props(styles.header)}>{header}</div>}
-      <nav aria-label={label} {...stylex.props(styles.nav)}>
-        {children}
+      {/* One landmark for every link: the list that scrolls, and the rows pinned under it. */}
+      <nav aria-label={label} {...stylex.props(styles.landmark)}>
+        <div {...stylex.props(styles.nav)}>{children}</div>
+        {aboveFooter && <div {...stylex.props(styles.aboveFooter)}>{aboveFooter}</div>}
       </nav>
-      {aboveFooter && <div {...stylex.props(styles.aboveFooter)}>{aboveFooter}</div>}
       {footer && <div {...stylex.props(styles.footer)}>{footer}</div>}
     </div>
   )
@@ -249,23 +288,33 @@ export function Sidebar({ label, header, children, aboveFooter, footer, sx }: Si
 
 export interface NavSectionProps {
   /**
-   * A short heading over the section, such as a Repo's `owner/name`; cut short when too long, with
-   * the whole of it as a tooltip. Omit it for the top section.
+   * A short heading over the section, such as a Repo's `owner/name`, wrapping when too long. Omit
+   * it for the top section.
    */
   label?: string
+  /** A control at the end of the label's row, such as a Repo's ⋯ menu. */
+  action?: ReactNode
   /** NavItems. */
   children: ReactNode
 }
 
 /** A list of NavItems, under a heading that also names it for screen readers. */
-export function NavSection({ label, children }: NavSectionProps) {
+export function NavSection({ label, action, children }: NavSectionProps) {
   const id = useId()
+  const heading = label && (
+    <h2 id={id} {...stylex.props(styles.sectionLabel, action !== undefined && styles.labelGrow)}>
+      {label}
+    </h2>
+  )
   return (
     <div {...stylex.props(styles.section)}>
-      {label && (
-        <div id={id} title={label} {...stylex.props(styles.sectionLabel)}>
-          {label}
+      {heading && action !== undefined ? (
+        <div {...stylex.props(styles.labelRow)}>
+          {heading}
+          {action}
         </div>
+      ) : (
+        heading
       )}
       <ul {...(label && { "aria-labelledby": id })} {...stylex.props(styles.list)}>
         {children}
@@ -292,6 +341,10 @@ export interface NavItemProps {
    * while the row is hovered or holds focus, and always on the current item.
    */
   action?: ReactNode
+  /** Items for a menu on the row's right-click, Shift+F10 and Menu key; repeat them in `action`. */
+  contextMenu?: ReactNode
+  /** F2 on the row: rename it in place, as the file managers do. */
+  onRename?: () => void
   /** Shown in place of the link and the action while set, such as an InlineEdit: the icon stays. */
   editor?: ReactNode
   /**
@@ -324,14 +377,22 @@ export function NavItem({
   trailing,
   title,
   action,
+  contextMenu,
+  onRename,
   editor,
   nested,
 }: NavItemProps) {
   const nestedId = useId()
   const iconSlot = icon && <span {...stylex.props(styles.slot)}>{icon}</span>
+  // Where you are is never hidden past the list's edge: the current row scrolls into view.
+  const linkRef = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    if (current) linkRef.current?.scrollIntoView?.({ block: "nearest" })
+  }, [current])
   const link = useRender({
     defaultTagName: "a",
     render,
+    ref: linkRef,
     props: mergeProps<"a">(
       {
         ...stylex.props(
@@ -348,6 +409,13 @@ export function NavItem({
         ),
         ...(current && { "aria-current": "page" }),
         ...(title !== undefined && { title }),
+        ...(onRename && {
+          onKeyDown: (event: KeyboardEvent<HTMLAnchorElement>) => {
+            if (event.key !== "F2") return
+            event.preventDefault()
+            onRename()
+          },
+        }),
       },
       {
         children: (
@@ -377,37 +445,40 @@ export function NavItem({
       </li>
     )
   }
+  const row = (
+    <div {...stylex.props(styles.row, navRow)}>
+      {link}
+      {action !== undefined && (
+        <span
+          {...stylex.props(
+            styles.action,
+            current && styles.actionShown,
+            nested && styles.actionBesideToggle,
+          )}
+        >
+          {action}
+        </span>
+      )}
+      {nested && (
+        <span {...stylex.props(styles.toggle)}>
+          <IconButton
+            label={nested.label}
+            size="sm"
+            aria-expanded={nested.open}
+            aria-controls={nestedId}
+            onClick={() => nested.onOpenChange(!nested.open)}
+          >
+            <ChevronRightIcon
+              {...stylex.props(styles.chevron, nested.open && styles.chevronOpen)}
+            />
+          </IconButton>
+        </span>
+      )}
+    </div>
+  )
   return (
     <li>
-      <div {...stylex.props(styles.row, navRow)}>
-        {link}
-        {action !== undefined && (
-          <span
-            {...stylex.props(
-              styles.action,
-              current && styles.actionShown,
-              nested && styles.actionBesideToggle,
-            )}
-          >
-            {action}
-          </span>
-        )}
-        {nested && (
-          <span {...stylex.props(styles.toggle)}>
-            <IconButton
-              label={nested.label}
-              size="sm"
-              aria-expanded={nested.open}
-              aria-controls={nestedId}
-              onClick={() => nested.onOpenChange(!nested.open)}
-            >
-              <ChevronRightIcon
-                {...stylex.props(styles.chevron, nested.open && styles.chevronOpen)}
-              />
-            </IconButton>
-          </span>
-        )}
-      </div>
+      {contextMenu === undefined ? row : <ContextMenu trigger={row}>{contextMenu}</ContextMenu>}
       {nestedList}
     </li>
   )

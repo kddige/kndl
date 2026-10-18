@@ -19,6 +19,9 @@ export interface DisclosureProps {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   root: {
     display: "flex",
@@ -43,7 +46,10 @@ const styles = stylex.create({
     paddingInline: space.s2,
     borderWidth: 0,
     borderRadius: radius.md,
-    backgroundColor: { default: "transparent", ":hover": color.surfaceHover },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: color.surfaceHover },
+    },
     color: color.text,
     fontSize: text.sm,
     textAlign: "start",
@@ -51,9 +57,11 @@ const styles = stylex.create({
   },
   chevron: {
     flexShrink: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
+    // Closed, it points to the inline end, whichever way the page reads.
+    transform: { default: "none", ":dir(rtl)": "scaleX(-1)" },
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   chevronOpen: { transform: "rotate(90deg)" },
@@ -72,7 +80,7 @@ const styles = stylex.create({
       "[data-ending-style]": 0,
     },
     transitionProperty: "height",
-    transitionDuration: motion.durationNormal,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeOut,
   },
   boxedPanel: {

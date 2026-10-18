@@ -1,8 +1,8 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs"
 import * as stylex from "@stylexjs/stylex"
-import type { ReactNode } from "react"
+import { type ReactNode, useEffect, useRef } from "react"
 import { focus } from "./shared.ts"
-import { color, control, motion, radius, space, text, weight } from "./tokens.stylex.ts"
+import { color, control, icon, motion, radius, space, text, weight } from "./tokens.stylex.ts"
 
 export interface TabsProps {
   /** A TabList, then one TabPanel per Tab. */
@@ -15,14 +15,23 @@ export interface TabsProps {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
+// Beside a 500-weight label, an icon's stroke thickens to match it.
+const labelIcon = stylex.createTheme(icon, { stroke: "2px" })
+
 const styles = stylex.create({
+  // Too many tabs for the width scroll sideways, and the one cut off at the edge says there's
+  // more. The baseline is drawn inside the list, which clips anything outside its box.
   list: {
     position: "relative",
     display: "flex",
     gap: space.s1,
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: color.border,
+    overflowX: "auto",
+    scrollbarWidth: "none",
+    scrollPaddingInline: space.s4,
+    boxShadow: `inset 0 -1px 0 ${color.border}`,
   },
   tab: {
     display: "inline-flex",
@@ -34,12 +43,15 @@ const styles = stylex.create({
     marginBottom: "1px",
     borderWidth: 0,
     borderRadius: radius.md,
-    backgroundColor: { default: "transparent", ":hover:not([data-disabled])": color.surfaceHover },
+    backgroundColor: {
+      default: "transparent",
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.surfaceHover },
+    },
     color: {
-      default: color.textMuted,
-      ":hover:not([data-disabled])": color.text,
+      default: color.textSecondary,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
       "[data-active]": color.text,
-      "[data-disabled]": color.textSubtle,
+      "[data-disabled]": color.textDisabled,
     },
     fontFamily: "inherit",
     fontSize: text.base,
@@ -54,14 +66,17 @@ const styles = stylex.create({
   indicator: {
     position: "absolute",
     left: 0,
-    bottom: "-1px",
-    height: "2px",
+    bottom: 0,
+    // A border, not a fill: forced colors keep borders and drop backgrounds.
+    height: 0,
+    borderTopWidth: "2px",
+    borderTopStyle: "solid",
+    borderTopColor: color.neutral,
     width: "var(--active-tab-width)",
     transform: "translateX(var(--active-tab-left))",
     borderRadius: radius.full,
-    backgroundColor: color.text,
     transitionProperty: "transform, width",
-    transitionDuration: motion.durationNormal,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   panel: {
@@ -109,8 +124,25 @@ export interface TabProps {
 }
 
 export function Tab({ value, children, disabled = false }: TabProps) {
+  // The active tab stays in view in a list that scrolls, without scrolling the page.
+  const ref = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const tab = ref.current
+    const list = tab?.parentElement
+    if (!tab || !list || !tab.hasAttribute("data-active")) return
+    const start = tab.offsetLeft
+    const end = start + tab.offsetWidth
+    if (start < list.scrollLeft) list.scrollLeft = start
+    else if (end > list.scrollLeft + list.clientWidth) list.scrollLeft = end - list.clientWidth
+  })
   return (
-    <BaseTabs.Tab value={value} disabled={disabled} {...stylex.props(styles.tab, focus.ring)}>
+    <BaseTabs.Tab
+      value={value}
+      disabled={disabled}
+      ref={ref}
+      // Inset: the scrolling list would clip a ring drawn outside the tab.
+      {...stylex.props(styles.tab, labelIcon, focus.ringInset)}
+    >
       {children}
     </BaseTabs.Tab>
   )

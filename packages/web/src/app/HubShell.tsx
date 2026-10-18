@@ -1,6 +1,7 @@
+import { ProtocolVersion } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Outlet, useRouterState } from "@tanstack/react-router"
-import { type MouseEvent, useEffect, useState } from "react"
+import { Outlet, useRouter, useRouterState } from "@tanstack/react-router"
+import { type MouseEvent, useEffect, useRef, useState } from "react"
 import type { Connection } from "../hub/store.ts"
 import { HubUpdateBanner } from "../hubpage/HubUpdateBanner.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -13,15 +14,21 @@ import {
   MenuIcon,
   PlusIcon,
   Spinner,
+  textRole,
   toast,
   UpdateIcon,
+  usePageBarState,
+  PageBarProvider,
+  useDocumentTitle,
   WarningIcon,
 } from "../ui/index.ts"
-import { chrome, color, space } from "../ui/tokens.stylex.ts"
+import { focus, srOnly } from "../ui/shared.ts"
+import { chrome, color, layer, radius, space } from "../ui/tokens.stylex.ts"
 import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
-import { Brand } from "./Brand.tsx"
+import { CommandsProvider } from "./commands.tsx"
+import { commandText } from "./copy.ts"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
 
@@ -33,15 +40,22 @@ const styles = stylex.create({
   sidebar: {
     flexShrink: 0,
     width: "16rem",
-    borderRightWidth: "1px",
-    borderRightStyle: "solid",
-    borderRightColor: color.border,
+    borderInlineEndWidth: "1px",
+    borderInlineEndStyle: "solid",
+    borderInlineEndColor: color.border,
   },
   main: {
     display: "flex",
     flexDirection: "column",
     flex: 1,
     minWidth: 0,
+  },
+  barTitle: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   topBar: {
     display: "flex",
@@ -56,12 +70,36 @@ const styles = stylex.create({
     backgroundColor: color.surface,
   },
   drawer: { display: "flex", flexDirection: "column", height: "100%" },
-  banner: { margin: space.s3, marginBottom: 0 },
+  // The notices across the app, in one region that can never take the page: it scrolls past 40%.
+  banners: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s2,
+    flexShrink: 0,
+    maxHeight: "40dvh",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    paddingBlock: { default: space.s2, ":empty": 0 },
+    paddingInline: space.s4,
+  },
   body: {
     display: "flex",
     flexDirection: "column",
     flex: 1,
     minHeight: 0,
+    // The skip link's target: focus lands here, with no ring, to start reading from.
+    outline: "none",
+  },
+  // Off-screen until a keyboard reaches it, first thing on every page.
+  skip: {
+    position: "absolute",
+    zIndex: layer.toast,
+    top: space.s2,
+    insetInlineStart: { default: "-999px", ":focus": space.s2 },
+    padding: space.s2,
+    borderRadius: radius.md,
+    backgroundColor: color.surface,
+    color: color.text,
   },
   center: {
     display: "grid",
@@ -85,6 +123,21 @@ export function HubShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   // The page the drawer was opened on: going anywhere else closes it.
   const [drawerOn, setDrawerOn] = useState<string | null>(null)
+  // The drawer closed because a link in it was followed: focus goes to the new page, not back to
+  // the menu button.
+  const followedLink = useRef(false)
+
+  // A new page takes focus at its h1 once it has rendered, so a screen reader hears where it is;
+  // not on first load, where focus starts at the top anyway, and not for a search change such as
+  // ?tab=terminal.
+  const router = useRouter()
+  useEffect(
+    () =>
+      router.subscribe("onRendered", (event) => {
+        if (event.fromLocation !== undefined && event.pathChanged) focusPageHeading()
+      }),
+    [router],
+  )
 
   useEffect(() => hub.start(), [hub])
   // Refusals with no request to answer, such as putting a busy Session to sleep.
@@ -94,12 +147,13 @@ export function HubShell() {
         // An answer to a question already closed (#193) says who closed it, and how.
         failure.command === "AnswerQuestion"
           ? toast.show({
-              title: "The question had closed",
+              title: "That question was already answered",
               description: failure.message,
               intent: "warning",
             })
-          : toast.show({
-              title: "The Hub refused that",
+          : // The Hub's own text says how to fix it, such as "The Session is Asleep: wake it first."
+            toast.show({
+              title: `Couldn't ${commandText[failure.command] ?? "do that"}`,
               description: failure.message,
               intent: "danger",
             }),
@@ -108,95 +162,170 @@ export function HubShell() {
   )
 
   if (connection.status === "signedOut") return <SignIn options={connection.options} />
-  if (connection.status === "rejected") {
-    return (
-      <main {...stylex.props(styles.center)}>
-        <EmptyState
-          size="page"
-          icon={<WarningIcon />}
-          title="This Hub can't talk to this page"
-          description={connection.message}
-          action={<Button onClick={() => window.location.reload()}>Reload</Button>}
-        />
-      </main>
-    )
-  }
+  if (connection.status === "rejected") return <Rejected hubProtocol={connection.hubProtocol} />
   if (you === null) return <Connecting connection={connection} />
 
   // Following a link in the drawer closes it, even one to the page already shown.
   const closeOnLink = (event: MouseEvent) => {
     const link = event.target instanceof Element ? event.target.closest("a[href]") : null
-    if (link && link.getAttribute("target") !== "_blank") setDrawerOn(null)
+    if (link && link.getAttribute("target") !== "_blank") {
+      followedLink.current = true
+      setDrawerOn(null)
+    }
   }
 
   return (
-    <div {...stylex.props(styles.shell)}>
-      {wide && (
-        <div {...stylex.props(styles.sidebar)}>
-          <AppSidebar />
-        </div>
-      )}
-      <div {...stylex.props(styles.main)}>
-        {!wide && (
-          <header {...stylex.props(styles.topBar)}>
-            <IconButton label="Open navigation" noTooltip onClick={() => setDrawerOn(pathname)}>
-              <MenuIcon />
-            </IconButton>
-            <Brand />
-            <CreateSessionDialog
-              trigger={
-                <IconButton label="New Session" noTooltip>
-                  <PlusIcon />
-                </IconButton>
-              }
-            />
-          </header>
-        )}
-        {connection.status === "reconnecting" &&
-          (updating ? (
-            // The Hub restarts under its own update (#362), and is back on the new version.
-            <Banner
-              intent="accent"
-              icon={<UpdateIcon />}
-              title="Updating… Hub restarting"
-              sx={styles.banner}
-            >
-              This page reconnects on its own once the Hub is back.
-            </Banner>
-          ) : (
-            <Banner
-              intent="warning"
-              icon={<WarningIcon />}
-              title="Reconnecting to the Hub"
-              sx={styles.banner}
-            >
-              What happens meanwhile shows up once it's back.
-            </Banner>
-          ))}
-        <AppPermissionsBanner sx={styles.banner} />
-        <HubUpdateBanner sx={styles.banner} />
-        <div {...stylex.props(styles.body)}>
-          <Outlet />
-        </div>
-      </div>
-      {!wide && (
-        <Drawer
-          label="Navigation"
-          open={drawerOn === pathname}
-          onOpenChange={(open) => setDrawerOn(open ? pathname : null)}
-        >
-          {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
-          <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
-            <AppSidebar onClose={() => setDrawerOn(null)} />
+    <CommandsProvider>
+      <PageBarProvider>
+        <div {...stylex.props(styles.shell)}>
+          <a href="#content" {...stylex.props(styles.skip, focus.ring)}>
+            Skip to content
+          </a>
+          {wide && (
+            <div {...stylex.props(styles.sidebar)}>
+              <AppSidebar />
+            </div>
+          )}
+          <div {...stylex.props(styles.main)}>
+            {!wide && <PhoneBar onMenu={() => setDrawerOn(pathname)} />}
+            {/* Always mounted, empty while connected, so a screen reader hears the connection change. */}
+            <p role="status" {...stylex.props(srOnly.root)}>
+              {connection.status === "reconnecting"
+                ? updating
+                  ? "Updating the Hub"
+                  : "Reconnecting to the Hub"
+                : ""}
+            </p>
+            <div {...stylex.props(styles.banners)}>
+              {connection.status === "reconnecting" &&
+                (updating ? (
+                  // The Hub restarts under its own update (#362), and is back on the new version.
+                  <Banner slim intent="neutral" icon={<UpdateIcon />} title="Updating the Hub…">
+                    This page reconnects on its own once the Hub is back.
+                  </Banner>
+                ) : (
+                  <Banner
+                    slim
+                    intent="warning"
+                    icon={<WarningIcon />}
+                    title="Reconnecting to the Hub"
+                  >
+                    Changes made elsewhere show up once it's back. Until then, what you do here
+                    isn't sent.
+                  </Banner>
+                ))}
+              <AppPermissionsBanner />
+              <HubUpdateBanner />
+            </div>
+            <div id="content" tabIndex={-1} {...stylex.props(styles.body)}>
+              <Outlet />
+            </div>
           </div>
-        </Drawer>
+          {!wide && (
+            <Drawer
+              label="Navigation"
+              open={drawerOn === pathname}
+              onOpenChange={(open) => {
+                if (open) followedLink.current = false
+                setDrawerOn(open ? pathname : null)
+              }}
+              finalFocus={() => (followedLink.current && pageHeading()) || true}
+            >
+              {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
+              <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
+                <AppSidebar onClose={() => setDrawerOn(null)} />
+              </div>
+            </Drawer>
+          )}
+          {/* Opened from ⌘K, on any page: settings pages have no New Session button. */}
+          <CreateSessionDialog listen />
+        </div>
+      </PageBarProvider>
+    </CommandsProvider>
+  )
+}
+
+/**
+ * The one top bar on a phone (#402): the menu, the page's title, and its one primary action, or
+ * New Session where the page has none. The brand is in the drawer.
+ */
+function PhoneBar({ onMenu }: { onMenu: () => void }) {
+  const { title, action } = usePageBarState()
+  return (
+    <header {...stylex.props(styles.topBar)}>
+      <IconButton label="Open navigation" noTooltip onClick={onMenu}>
+        <MenuIcon />
+      </IconButton>
+      {/* The page's h1 says it to screen readers; this repeats it for the eye. */}
+      <span aria-hidden="true" {...stylex.props(textRole.heading, styles.barTitle)}>
+        {title ?? "kndl"}
+      </span>
+      {action ?? (
+        <CreateSessionDialog
+          trigger={
+            <IconButton label="New Session" noTooltip>
+              <PlusIcon />
+            </IconButton>
+          }
+        />
       )}
-    </div>
+    </header>
+  )
+}
+
+/** The page's h1, where focus lands when a page opens. */
+function pageHeading(): HTMLElement | null {
+  return document.querySelector<HTMLElement>("#content h1, main h1")
+}
+
+/**
+ * Moves focus to the new page's h1. A page still loading has none yet, so it waits for one for up
+ * to a second, unless focus has moved on meanwhile.
+ */
+function focusPageHeading(): void {
+  const from = document.activeElement
+  const until = performance.now() + 1000
+  const attempt = () => {
+    if (document.activeElement !== from) return
+    const heading = pageHeading()
+    if (heading) heading.focus({ preventScroll: true })
+    else if (performance.now() < until) requestAnimationFrame(attempt)
+  }
+  attempt()
+}
+
+/**
+ * The Hub turned this page away: said in people's words, not the protocol's ("the peer", "this
+ * side"). A Hub newer than the page is fixed by reloading; an older one by its Owner updating it.
+ */
+function Rejected({ hubProtocol }: { hubProtocol: number | undefined }) {
+  const ask = "Reload the page. If this keeps happening, ask the Hub's Owner to update the Hub."
+  const { title, description } =
+    hubProtocol === undefined || hubProtocol === ProtocolVersion
+      ? { title: "This Hub can't talk to this page", description: ask }
+      : hubProtocol > ProtocolVersion
+        ? {
+            title: "This page is out of date",
+            description: "The Hub runs a newer version of kndl than this page. Reload to get it.",
+          }
+        : { title: "This page is newer than the Hub", description: ask }
+  useDocumentTitle(`${title} · kndl`)
+  return (
+    <main {...stylex.props(styles.center)}>
+      <EmptyState
+        size="page"
+        icon={<WarningIcon />}
+        title={title}
+        description={description}
+        action={<Button onClick={() => window.location.reload()}>Reload page</Button>}
+      />
+    </main>
   )
 }
 
 function Connecting({ connection }: { connection: Connection }) {
   const struggling = connection.status === "reconnecting" && connection.attempt >= 3
+  useDocumentTitle(`${struggling ? "Can't reach the Hub" : "Connecting to the Hub"} · kndl`)
   return (
     <main {...stylex.props(styles.center)}>
       <EmptyState

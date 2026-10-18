@@ -1,6 +1,7 @@
 import { isDockerPort, type OpenPort, type SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { copyCommand } from "../app/copy.ts"
+import { counted } from "../app/format.ts"
 import {
   Badge,
   Button,
@@ -43,17 +44,17 @@ const styles = stylex.create({
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   addresses: {
-    color: color.textMuted,
+    color: color.textSecondary,
     fontFamily: font.mono,
     fontSize: text.xs,
     overflowWrap: "anywhere",
   },
   forward: { display: "flex", flexDirection: "column", gap: space.s1_5 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   command: {
     display: "flex",
     alignItems: "center",
@@ -84,7 +85,7 @@ export const shortSessionId = (summary: SessionSummary) => summary.id.slice(0, 6
 /** The command that forwards a Session's Open ports to the machine it runs on (#180). */
 export const forwardCommand = (summary: SessionSummary) => `kndl forward ${shortSessionId(summary)}`
 
-const portsText = (count: number) => (count === 1 ? "1 port" : `${count} ports`)
+const portsText = (count: number) => counted(count, { one: "port", other: "ports" })
 
 /**
  * What listens in the Session's Sandbox (#175): a button in its header while anything does, which

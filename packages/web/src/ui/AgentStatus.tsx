@@ -31,6 +31,10 @@ const styles = stylex.create({
     borderRadius: radius.full,
   },
   dotAlone: { width: "0.5rem", height: "0.5rem", verticalAlign: "middle" },
+  // A filled dot is a border half its width thick, so forced colors, which drop backgrounds, keep
+  // it filled.
+  filled: { borderStyle: "solid", borderWidth: "0.1875rem" },
+  filledAlone: { borderWidth: "0.25rem" },
   // A Stopped agent won't go on by itself: a hollow dot, as for a Session that isn't running.
   hollow: {
     backgroundColor: "transparent",
@@ -40,18 +44,18 @@ const styles = stylex.create({
 })
 
 const badges = stylex.create({
-  Running: { backgroundColor: color.sessionActiveSubtle, color: color.sessionActiveText },
-  Done: { backgroundColor: color.successSubtle, color: color.successSubtleText },
-  Stopped: { backgroundColor: color.surfaceActive, color: color.textMuted },
-  Interrupted: { backgroundColor: color.warningSubtle, color: color.warningSubtleText },
+  Running: { backgroundColor: color.sessionActiveTint, color: color.sessionActiveText },
+  Done: { backgroundColor: color.surfaceActive, color: color.textSecondary },
+  Stopped: { backgroundColor: color.surfaceActive, color: color.textSecondary },
+  Interrupted: { backgroundColor: color.warningTint, color: color.warningText },
 })
 
 const dots = stylex.create({
-  Running: { backgroundColor: color.sessionActive },
+  Running: { borderColor: color.sessionActive },
   // Finished: quiet, so the green of a running agent stands out.
-  Done: { backgroundColor: color.textSubtle },
-  Stopped: { borderColor: color.textSubtle },
-  Interrupted: { backgroundColor: color.warning },
+  Done: { borderColor: color.neutral },
+  Stopped: { borderColor: color.neutral },
+  Interrupted: { borderColor: color.warning },
 })
 
 /** Where a subagent is (ADR 0014): running, done, stopped, or interrupted by its Session stopping. */
@@ -61,7 +65,7 @@ export function AgentStatus({ status, variant = "badge", sx }: AgentStatusProps)
       {...stylex.props(
         styles.dot,
         alone && styles.dotAlone,
-        status === "Stopped" && styles.hollow,
+        status === "Stopped" ? styles.hollow : [styles.filled, alone && styles.filledAlone],
         dots[status],
         alone && sx,
       )}

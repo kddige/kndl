@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, dialog, menuItem, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -64,9 +64,9 @@ test("lists the Members, the Owner first, and the Invites not used yet", async (
   expect(alice).toContain("Owner")
   expect(alice).toContain("You")
   expect(bob).toContain("@bob")
-  // The Owner can't be removed, so has no button for it.
-  expect(() => button("Remove Alice Kim")).toThrow()
-  expect(button("Remove Bob Lee")).toBeTruthy()
+  // The Owner can't be removed, so has no menu for it.
+  expect(() => button("Actions for Alice Kim")).toThrow()
+  expect(button("Actions for Bob Lee")).toBeTruthy()
 
   expect(invites()?.textContent).toContain("@carol-dev")
   expect(invites()?.textContent).toContain("Expires in 5 days")
@@ -120,7 +120,7 @@ test("refuses a login GitHub couldn't have", async () => {
 test("revokes an Invite", async () => {
   const { hub } = await openPeople()
   await eventually(() => expect(invites()).not.toBeNull())
-  await step(() => button("Revoke the Invite for @carol-dev").click())
+  await menuItem("Actions for @carol-dev", "Revoke the Invite")
   await eventually(() => expect(invites()).toBeNull())
   expect(hub.received.find((m) => m._tag === "RevokeInvite")).toMatchObject({
     inviteId: "inv-carol",
@@ -130,7 +130,7 @@ test("revokes an Invite", async () => {
 test("removes a Member only once that's confirmed", async () => {
   const { hub } = await openPeople()
   await eventually(() => expect(members()?.querySelectorAll("li").length).toBe(2))
-  await step(() => button("Remove Bob Lee").click())
+  await menuItem("Actions for Bob Lee", "Remove Bob Lee")
   await eventually(() => expect(dialog()?.textContent).toContain("Remove Bob Lee?"))
   expect(dialog()?.textContent).toContain("signed out everywhere at once")
   expect(dialog()?.textContent).toContain("Their Sessions, and the Claude credential they stored")

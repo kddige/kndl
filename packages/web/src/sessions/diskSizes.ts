@@ -2,7 +2,7 @@
 // for each, and what purging several would free.
 
 import type { SessionId } from "@kndl/protocol"
-import { bytes } from "../app/format.ts"
+import { bytes, counted } from "../app/format.ts"
 
 /**
  * What is known of each Session's size: its bytes, or `null` when the Hub couldn't say (its Runner
@@ -50,6 +50,6 @@ export function freedText(freed: Freed): string {
   if (freed.measuring > 0) return "Measuring disk use…"
   if (freed.unknown === freed.count) return "Disk use unknown"
   if (freed.unknown === 0) return `Frees ${bytes(freed.bytes)}`
-  const sizes = freed.unknown === 1 ? "1 size unknown" : `${freed.unknown} sizes unknown`
+  const sizes = `${counted(freed.unknown, { one: "size", other: "sizes" })} unknown`
   return `Frees at least ${bytes(freed.bytes)} (${sizes})`
 }

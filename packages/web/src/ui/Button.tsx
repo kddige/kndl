@@ -3,7 +3,17 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { focus } from "./shared.ts"
 import { Spinner } from "./Spinner.tsx"
-import { color, control, motion, radius, shadow, space, text, weight } from "./tokens.stylex.ts"
+import {
+  color,
+  control,
+  icon as iconStroke,
+  motion,
+  radius,
+  shadow,
+  space,
+  text,
+  weight,
+} from "./tokens.stylex.ts"
 import { Tooltip } from "./Tooltip.tsx"
 
 /**
@@ -33,6 +43,12 @@ export interface ButtonProps extends Omit<BaseButton.Props, "className" | "style
 
 const ENABLED_HOVER = ":hover:not([data-disabled])"
 const ENABLED_ACTIVE = ":active:not([data-disabled])"
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+const MOTION_OK = "@media (prefers-reduced-motion: no-preference)"
+
+// Beside a 500-weight label, an icon's stroke thickens to match it.
+const labelIcon = stylex.createTheme(iconStroke, { stroke: "2px" })
 
 const styles = stylex.create({
   base: {
@@ -53,9 +69,11 @@ const styles = stylex.create({
     cursor: { default: "pointer", "[data-disabled]": "not-allowed", "[data-loading]": "progress" },
     opacity: { default: 1, "[data-disabled]:not([data-loading])": 0.5 },
     userSelect: "none",
-    transitionProperty: "background-color, border-color, color",
-    transitionDuration: motion.durationFast,
-    transitionTimingFunction: motion.easeStandard,
+    // A press scales down, so a click shows it landed; never on a disabled or loading Button.
+    scale: { default: null, [MOTION_OK]: { default: null, [ENABLED_ACTIVE]: motion.pressScale } },
+    transitionProperty: "background-color, border-color, color, scale",
+    transitionDuration: `${motion.durationFast}, ${motion.durationFast}, ${motion.durationFast}, 150ms`,
+    transitionTimingFunction: `${motion.easeStandard}, ${motion.easeStandard}, ${motion.easeStandard}, ease-out`,
   },
   content: {
     display: "inline-flex",
@@ -96,11 +114,18 @@ const sizes = stylex.create({
   iconOnly: { paddingInline: 0 },
 })
 
+// A leading icon looks further in than a letter: its side takes 2px less, judged by eye.
+const iconSide = stylex.create({
+  sm: { paddingInlineStart: `calc(${space.s2} - 2px)` },
+  md: { paddingInlineStart: `calc(${space.s3} - 2px)` },
+  lg: { paddingInlineStart: `calc(${space.s4} - 2px)` },
+})
+
 const intents = stylex.create({
   primary: {
     backgroundColor: {
       default: color.accent,
-      [ENABLED_HOVER]: color.accentHover,
+      [ENABLED_HOVER]: { default: null, [HOVER]: color.accentHover },
       [ENABLED_ACTIVE]: color.accentHover,
       "[data-popup-open]": color.accentHover,
     },
@@ -111,7 +136,7 @@ const intents = stylex.create({
   secondary: {
     backgroundColor: {
       default: color.surface,
-      [ENABLED_HOVER]: color.surfaceHover,
+      [ENABLED_HOVER]: { default: null, [HOVER]: color.surfaceHover },
       [ENABLED_ACTIVE]: color.surfaceActive,
       "[data-popup-open]": color.surfaceActive,
     },
@@ -122,21 +147,21 @@ const intents = stylex.create({
   ghost: {
     backgroundColor: {
       default: "transparent",
-      [ENABLED_HOVER]: color.surfaceHover,
+      [ENABLED_HOVER]: { default: null, [HOVER]: color.surfaceHover },
       [ENABLED_ACTIVE]: color.surfaceActive,
       "[data-popup-open]": color.surfaceActive,
     },
     borderColor: "transparent",
     color: {
-      default: color.textMuted,
-      [ENABLED_HOVER]: color.text,
+      default: color.textSecondary,
+      [ENABLED_HOVER]: { default: null, [HOVER]: color.text },
       "[data-popup-open]": color.text,
     },
   },
   danger: {
     backgroundColor: {
       default: color.danger,
-      [ENABLED_HOVER]: color.dangerHover,
+      [ENABLED_HOVER]: { default: null, [HOVER]: color.dangerHover },
       [ENABLED_ACTIVE]: color.dangerHover,
       "[data-popup-open]": color.dangerHover,
     },
@@ -165,6 +190,7 @@ export function Button({
         styles.base,
         sizes[size],
         iconOnly && sizes.iconOnly,
+        icon !== undefined && !iconOnly && iconSide[size],
         intents[intent],
         focus.ring,
         sx,
@@ -176,7 +202,9 @@ export function Button({
       focusableWhenDisabled={loading || focusableWhenDisabled === true}
     >
       {loading && <Spinner size={size === "lg" ? "md" : "sm"} sx={styles.spinner} />}
-      <span {...stylex.props(styles.content, loading && styles.contentHidden)}>
+      <span
+        {...stylex.props(styles.content, !iconOnly && labelIcon, loading && styles.contentHidden)}
+      >
         {icon}
         {children}
       </span>
