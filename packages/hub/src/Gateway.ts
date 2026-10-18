@@ -14,19 +14,20 @@
 //   noted, so a refusal of it later is tried once more too.
 // - A redirect isn't followed. Bodies stream both ways; answers come back compressed or not, as
 //   sent.
-// - A Session's model call (ADR 0029) goes to its Provider's own API, at the origin pi-ai's
-//   built-in provider has, or its Creator's sign-in names, with the path pi sent. Its Creator's key
-//   takes the Session token's place, in the header pi sent that in, and a sign-in's own headers
-//   are added, as pi-ai's `toAuth` says (PiProviders.ts). Its body is held, to be sent again once
-//   a sign-in refused is refreshed; the answer streams back.
+// - A pi Session's model call (ADR 0029) goes to its Provider's own API, through its Creator's
+//   Connected provider (ConnectedProviders' `call`), if it is one of the calls pi makes there: an
+//   inference or model-listing endpoint of one of the Provider's Models' APIs (PiProviders.ts).
+//   Not a Claude Code Session's. A Session runs a few at once, and the Hub holds a sign-in's
+//   bodies, to send again once a sign-in refused is refreshed, up to ModelCallLimits; an API key's
+//   stream through. The answer streams back.
 
 import type { InstallationId, ModelProvider, SessionId } from "@kndl/protocol"
 import { Context, type Duration, Effect, Layer, Option, Redacted } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { type CallCredential, ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
+import { ConnectedProviders } from "./ConnectedProviders.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
-import { apiOrigin, authorize, type KeyHeader } from "./PiProviders.ts"
+import { type KeyHeader, modelCallAllowed, upstreamUrl } from "./PiProviders.ts"
 import { readAtMost } from "./ReadAtMost.ts"
 import type { SecretsUnavailable } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
@@ -138,36 +139,165 @@ const discard = (response: Response) =>
   Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 /**
- * The most of a model call's body the Hub holds, to send it again once a sign-in is refreshed: a
- * conversation with its images, as pi sends it whole each Turn.
+ * How much of the Hub the Gateway's model calls (ADR 0029) may take at once, so a Sandbox can't
+ * take it all:
+ *
+ * - `perSession`: the calls one Session runs at once, from its request to its answer's end. pi
+ *   makes one at a time for a Session, and one for each Subagent running; past these, `429`.
+ * - `requestBytes`: the most of one call's body, said or streamed; past it, `413`. pi sends the
+ *   whole conversation each Turn, images in base64 and all: 32 MiB is the size of the largest
+ *   request Anthropic's Messages API takes (Google's takes 20 MB of inline data), which more than
+ *   OpenAI's typical conversations need.
+ * - `heldBytes`: the most of all calls' bodies the Hub holds at once, to send again after a
+ *   sign-in refused is refreshed: only a sign-in's are held, as an API key's are never sent again
+ *   and stream through. Past it, `503`.
  */
-export const MaxModelRequestBytes = 64 * 1024 * 1024
+export interface ModelCallLimits {
+  readonly perSession: number
+  readonly requestBytes: number
+  readonly heldBytes: number
+}
+
+export const ModelCallLimits = Context.Reference<ModelCallLimits>("@kndl/hub/ModelCallLimits", {
+  defaultValue: () => ({
+    perSession: 8,
+    requestBytes: 32 * 1024 * 1024,
+    heldBytes: 256 * 1024 * 1024,
+  }),
+})
 
 /** A Session's call to a Provider's own API (ADR 0029), without credentials: those are added. */
 export interface ModelCall {
   readonly method: string
-  /** Below the origin of the Provider's API, with the query: `/v1/responses?stream=true`. */
+  /** Below the origin of the Provider's API, as sent, with the query: `/v1/responses?x=1`. */
   readonly path: string
   /** Without the Session's own credential, which the Gateway holds back. */
   readonly headers: Headers
   /** The header pi sent the Session's token in as its key, where the Creator's key goes. */
   readonly keyHeader: KeyHeader
-  readonly body: Uint8Array | undefined
+  readonly body: ReadableStream<Uint8Array> | null
+  /** The body's length, if its sender said it. */
+  readonly length?: number
   readonly signal?: AbortSignal
+}
+
+/** How a model call's answer ended: all of it sent, given up by the client, or broken off. */
+export interface ModelCallEnded {
+  readonly outcome: "Ended" | "Cancelled" | "Failed"
+  /** The answer's bytes sent on. */
+  readonly bytes: number
 }
 
 /** What sending a Session's model call came to. */
 export type ModelCallSent =
-  /** The Provider's answer, its body unread. */
-  | { readonly _tag: "Answered"; readonly response: Response }
+  /**
+   * The Provider's answer, its body unread, which streams on: `ended` once it has, when the call
+   * no longer counts against its Session's.
+   */
+  | {
+      readonly _tag: "Answered"
+      readonly response: Response
+      readonly ended: Promise<ModelCallEnded>
+    }
   /** The Session isn't Active, or there is no such Session. */
   | { readonly _tag: "NotActive" }
+  /** The Session runs Claude Code, which reaches no Connected provider. */
+  | { readonly _tag: "NotPi" }
+  /** Not one of the calls pi makes to the Provider's API: nothing else is sent. */
+  | { readonly _tag: "NotAllowed" }
+  /** The path would leave the Provider's API. */
+  | { readonly _tag: "BadAddress" }
+  /** The Session runs as many model calls as it may at once. */
+  | { readonly _tag: "Busy"; readonly limit: number }
+  /** The Hub holds as many calls' bodies as it may at once. */
+  | { readonly _tag: "Full" }
+  /** The body is larger than the Gateway takes. */
+  | { readonly _tag: "TooLarge"; readonly limit: number }
+  /** The body could not be read. */
+  | { readonly _tag: "BodyUnreadable" }
   /** Its Creator hasn't connected the Provider, or must connect it again: `message` says which. */
   | { readonly _tag: "NotConnected"; readonly message: string }
   /** The Creator's sign-in couldn't be refreshed just now. */
   | { readonly _tag: "Unavailable"; readonly message: string }
   /** The Provider could not be reached. */
   | { readonly _tag: "Unreachable" }
+
+/**
+ * A request's body as it streams to the Provider, which errors past `max` bytes, and says so in
+ * `over`.
+ */
+const capped = (
+  body: ReadableStream<Uint8Array>,
+  max: number,
+  over: { limit: boolean },
+): ReadableStream<Uint8Array> => {
+  let size = 0
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        size += chunk.byteLength
+        if (size > max) {
+          over.limit = true
+          controller.error(new Error("The request is larger than the Gateway takes"))
+        } else controller.enqueue(chunk)
+      },
+    }),
+  )
+}
+
+/**
+ * An answer's body as it streams back, read only as the client reads it: `ended` once it has all
+ * gone, the client gave it up (or `signal` aborted), or it broke off, with the bytes sent.
+ */
+const tracked = (
+  body: ReadableStream<Uint8Array> | null,
+  signal: AbortSignal | undefined,
+  ended: (end: ModelCallEnded) => void,
+): ReadableStream<Uint8Array> | null => {
+  let bytes = 0
+  let done = false
+  const end = (outcome: ModelCallEnded["outcome"]) => {
+    if (done) return
+    done = true
+    signal?.removeEventListener("abort", aborted)
+    ended({ outcome, bytes })
+  }
+  if (body === null) {
+    end("Ended")
+    return null
+  }
+  const reader = body.getReader()
+  const aborted = () => {
+    end("Cancelled")
+    reader.cancel().catch(() => undefined)
+  }
+  if (signal?.aborted === true) aborted()
+  else signal?.addEventListener("abort", aborted, { once: true })
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const read = await reader.read()
+          if (read.done) {
+            controller.close()
+            end("Ended")
+            return
+          }
+          bytes += read.value.byteLength
+          controller.enqueue(read.value)
+        } catch (error) {
+          controller.error(error)
+          end(done ? "Cancelled" : "Failed")
+        }
+      },
+      cancel(reason) {
+        end("Cancelled")
+        return reader.cancel(reason)
+      },
+    },
+    { highWaterMark: 0 },
+  )
+}
 
 /** The MCP version the check speaks: one every Streamable HTTP server answers. */
 const checkProtocolVersion = "2025-06-18"
@@ -196,9 +326,9 @@ export class Gateway extends Context.Service<
       timeout: Duration.Duration,
     ) => Effect.Effect<Checked, SqlError>
     /**
-     * Sends the Session's model call to the Provider with its Creator's credential, while the
-     * Session is Active: a sign-in that expires within 5 minutes refreshed first, and once more
-     * after the Provider refuses it, with the call sent again.
+     * Sends a pi Session's model call to the Provider with its Creator's credential, while the
+     * Session is Active, if it is one pi makes there, within ModelCallLimits: a sign-in's held, to
+     * be sent again after a refusal (ConnectedProviders' `call`), an API key's streamed.
      */
     readonly model: (
       sessionId: SessionId,
@@ -214,7 +344,7 @@ export class Gateway extends Context.Service<
       const mcpServers = yield* McpServers
       const oauth = yield* McpServerOAuth
       const providers = yield* ConnectedProviders
-      const apis = yield* ProviderApis
+      const limits = yield* ModelCallLimits
 
       /**
        * Where the Session may reach the Installation's MCP server. A token is live only while
@@ -364,6 +494,49 @@ export class Gateway extends Context.Service<
         return sent
       })
 
+      /** The model calls each Session runs now. */
+      const running = new Map<SessionId, number>()
+      /** The bytes of sign-ins' calls the Hub holds now, to send again. */
+      let held = 0
+
+      /**
+       * Reads a sign-in's call's body, to send it again after a refusal, counting it against what
+       * the Hub holds as it comes: the bytes, or why not. What it took is in `reserved`, for the
+       * caller to let go.
+       */
+      const hold = (
+        stream: ReadableStream<Uint8Array>,
+        reserved: { bytes: number },
+      ): Effect.Effect<
+        | Uint8Array
+        | Extract<ModelCallSent, { readonly _tag: "Full" | "TooLarge" | "BodyUnreadable" }>
+      > =>
+        Effect.tryPromise({
+          try: async () => {
+            const reader = stream.getReader()
+            const chunks: Array<Uint8Array> = []
+            let size = 0
+            for (let read = await reader.read(); !read.done; read = await reader.read()) {
+              size += read.value.byteLength
+              const refused =
+                size > limits.requestBytes
+                  ? ({ _tag: "TooLarge", limit: limits.requestBytes } as const)
+                  : held + size - reserved.bytes > limits.heldBytes
+                    ? ({ _tag: "Full" } as const)
+                    : undefined
+              if (refused !== undefined) {
+                await reader.cancel().catch(() => undefined)
+                return refused
+              }
+              held += size - reserved.bytes
+              reserved.bytes = size
+              chunks.push(read.value)
+            }
+            return Buffer.concat(chunks, size)
+          },
+          catch: () => ({ _tag: "BodyUnreadable" }) as const,
+        }).pipe(Effect.catch((unread) => Effect.succeed(unread)))
+
       const model = Effect.fn("Gateway.model")(function* (
         sessionId: SessionId,
         provider: ModelProvider,
@@ -371,54 +544,100 @@ export class Gateway extends Context.Service<
       ): Effect.fn.Return<ModelCallSent, SqlError> {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session) || session.value.state !== "Active") return { _tag: "NotActive" }
-        const creator = session.value.creator.id
-        const credential = yield* Effect.result(providers.credentialFor(creator, provider))
-        if (credential._tag === "Failure") {
-          const { reason, message } = credential.failure
-          return reason === "Unavailable"
-            ? { _tag: "Unavailable", message }
-            : { _tag: "NotConnected", message }
+        if (session.value.harness !== "Pi") return { _tag: "NotPi" }
+        if (upstreamUrl("https://gateway.invalid", call.path) === undefined) {
+          return { _tag: "BadAddress" }
         }
-        const sendCall = (callWith: CallCredential) =>
-          Effect.tryPromise({
-            try: (signal) => {
-              const auth = Redacted.value(callWith.auth)
-              const to = `${apiOrigin(provider, auth)}${call.path}`
-              const headers = new Headers(call.headers)
-              authorize(headers, auth, call.keyHeader)
-              const hasBody = !["GET", "HEAD"].includes(call.method) && call.body !== undefined
-              return apis.fetch(
-                new Request(to, {
-                  method: call.method,
-                  headers,
-                  ...(hasBody && { body: call.body }),
-                  redirect: "manual",
-                  signal:
-                    call.signal === undefined ? signal : AbortSignal.any([signal, call.signal]),
-                } as RequestInit),
-                // Answers stream back as they come, compressed or not.
-                { decompress: false },
-              )
-            },
-            catch: (error) => error,
-          }).pipe(Effect.option)
+        const pathname = call.path.split("?", 1)[0] ?? ""
+        // Claude's aren't sent at all: `call` says so.
+        if (provider !== "anthropic" && !modelCallAllowed(provider, call.method, pathname)) {
+          return { _tag: "NotAllowed" }
+        }
+        if ((call.length ?? 0) > limits.requestBytes) {
+          return { _tag: "TooLarge", limit: limits.requestBytes }
+        }
+        const now = running.get(sessionId) ?? 0
+        if (now >= limits.perSession) return { _tag: "Busy", limit: limits.perSession }
+        running.set(sessionId, now + 1)
+        let released = false
+        const release = () => {
+          if (released) return
+          released = true
+          const left = (running.get(sessionId) ?? 1) - 1
+          if (left > 0) running.set(sessionId, left)
+          else running.delete(sessionId)
+        }
 
-        const first = yield* sendCall(credential.success)
-        if (Option.isNone(first)) return { _tag: "Unreachable" }
-        if (first.value.status !== 401 || credential.success.kind !== "SignIn") {
-          return { _tag: "Answered", response: first.value }
-        }
-        const next = yield* providers.rejected(
-          creator,
-          provider,
-          Redacted.value(credential.success.token),
+        const creator = session.value.creator.id
+        const reserved = { bytes: 0 }
+        const over = { limit: false }
+        const sent = Effect.gen(function* () {
+          let body: Uint8Array | ReadableStream<Uint8Array> | undefined
+          if (call.body !== null && !["GET", "HEAD"].includes(call.method)) {
+            // Only a sign-in's call may be sent again, so only its body is held.
+            if (providers.kindOf(creator, provider) === "SignIn") {
+              const read = yield* hold(call.body, reserved)
+              if (!(read instanceof Uint8Array)) return read
+              body = read
+            } else {
+              body = capped(call.body, limits.requestBytes, over)
+            }
+          }
+          const called = yield* providers
+            .call(creator, provider, {
+              method: call.method,
+              path: call.path,
+              headers: call.headers,
+              keyHeader: call.keyHeader,
+              ...(body !== undefined && { body }),
+              ...(call.signal !== undefined && { signal: call.signal }),
+            })
+            .pipe(Effect.result)
+          if (over.limit) {
+            if (called._tag === "Success" && called.success._tag === "Answered") {
+              yield* discard(called.success.response)
+            }
+            return { _tag: "TooLarge", limit: limits.requestBytes } as const
+          }
+          if (called._tag === "Failure") {
+            const { reason, message } = called.failure
+            return reason === "Unavailable"
+              ? ({ _tag: "Unavailable", message } as const)
+              : ({ _tag: "NotConnected", message } as const)
+          }
+          if (called.success._tag !== "Answered") return called.success
+          const { response } = called.success
+          const ended = Promise.withResolvers<ModelCallEnded>()
+          const answered: ModelCallSent = {
+            _tag: "Answered",
+            response: new Response(
+              tracked(response.body, call.signal, (end) => {
+                release()
+                ended.resolve(end)
+              }),
+              {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              },
+            ),
+            ended: ended.promise,
+          }
+          return answered
+        })
+        return yield* sent.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              held -= reserved.bytes
+              reserved.bytes = 0
+            }),
+          ),
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (exit._tag === "Failure" || exit.value._tag !== "Answered") release()
+            }),
+          ),
         )
-        if (Option.isNone(next)) return { _tag: "Answered", response: first.value }
-        yield* discard(first.value)
-        const again = yield* sendCall(next.value)
-        return Option.isNone(again)
-          ? { _tag: "Unreachable" }
-          : { _tag: "Answered", response: again.value }
       })
 
       return Gateway.of({ authorise, send, check, model })

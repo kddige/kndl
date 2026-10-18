@@ -7,12 +7,12 @@ import { rmSync } from "node:fs"
 import { join } from "node:path"
 import type { AuthPrompt, OAuthCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai"
 import { ParticipantId, ProviderIds } from "@kndl/protocol"
-import { Duration, Effect, Option, Redacted } from "effect"
+import { Clock, Duration, Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
 import { databaseAt } from "./Database.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
-import { generateSecretsKey } from "./Secrets.ts"
+import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import { type Connection, openWeb, stopAll, type Web } from "./testChannels.ts"
 import {
   ensureSetupToken,
@@ -97,7 +97,7 @@ function fakeProviders() {
       const auth = input.headers.get("authorization") ?? ""
       if (url.host === "api.anthropic.com") return fakes.anthropic()
       if (url.host !== "api.openai.com" && url.host !== "api.x.ai") return fakes.other(input)
-      if (url.pathname !== "/v1/models") return new Response("not here", { status: 404 })
+      if (url.pathname !== "/v1/models") return fakes.other(input)
       if (fakes.modelsStatus !== undefined)
         return new Response("{}", { status: fakes.modelsStatus })
       if (auth === `Bearer ${goodKey}` || auth === "Bearer xai-key") {
@@ -649,12 +649,147 @@ describe("signing in to a Provider", () => {
     })
   })
 
+  test("GitHub Copilot Enterprise only on GHE.com, and only to GitHub's or its own addresses", async () => {
+    const { web, fakes } = await scene()
+    fakes.other = () => Response.json({ data: [] })
+    let token = "tid=1;proxy-ep=proxy.enterprise.githubcopilot.com"
+    const asked: Array<string> = []
+    fakes.signIn = async (_provider, interaction) => {
+      const domain = await interaction.prompt({
+        type: "text",
+        message: "GitHub Enterprise URL/domain (blank for github.com)",
+      })
+      asked.push(domain)
+      return { ...oauth(token), enterpriseUrl: domain }
+    }
+    /** Signs in on GitHub Enterprise at `domain`: how it ended. */
+    const enterprise = async (requestId: string, domain: string) => {
+      web.send({ _tag: "StartSignIn", requestId, provider: "github-copilot" })
+      await web.take("SignInStepped", (m) => m.step._tag === "Choose")
+      web.send({ _tag: "AnswerSignIn", requestId, value: "enterprise" })
+      await web.take("SignInStepped", (m) => m.step._tag === "Paste")
+      web.send({ _tag: "AnswerSignIn", requestId, value: domain })
+      return web.take("SignInEnded", (m) => m.requestId === requestId)
+    }
+
+    // The Hub would send the sign-in's requests to any other domain.
+    const elsewhere = await enterprise("e-1", "github.internal.example")
+    expect(elsewhere).toMatchObject({
+      outcome: "Failed",
+      message: expect.stringMatching(/ghe\.com/),
+    })
+    expect(asked).toEqual([])
+
+    // A token naming an address that's neither GitHub's nor its domain's.
+    token = "tid=1;proxy-ep=proxy.evil.example"
+    const offsite = await enterprise("e-2", "company.ghe.com")
+    expect(offsite).toMatchObject({ outcome: "Failed", message: expect.stringMatching(/address/) })
+
+    token = "tid=1;proxy-ep=proxy.enterprise.githubcopilot.com"
+    expect(await enterprise("e-3", "https://Company.ghe.com/")).toMatchObject({
+      outcome: "Connected",
+    })
+    expect(asked).toEqual(["company.ghe.com", "company.ghe.com"])
+  })
+
+  test("a sign-in that takes longer than 10 minutes fails, and its flow is stopped", async () => {
+    const { hub, fakes } = await scene()
+    let signal: AbortSignal | undefined
+    fakes.signIn = async (_provider, interaction) => {
+      signal = interaction.signal
+      return new Promise<OAuthCredential>((_resolve, reject) =>
+        interaction.signal.addEventListener("abort", () => reject(new Error("Login cancelled"))),
+      )
+    }
+    const failed = await hub.run(
+      Effect.flatMap(ConnectedProviders, (providers) =>
+        providers.signIn(alice, "openai", { show: () => {}, ask: () => new Promise(() => {}) }),
+      ).pipe(onClock(0, Duration.minutes(10)), Effect.flip),
+    )
+    expect(failed).toMatchObject({
+      _tag: "ProviderRefusal",
+      message: "The sign-in took too long; start again.",
+    })
+    // ChatGPT's frees the port it listens on.
+    expect(signal?.aborted).toBe(true)
+  })
+
   test("an answer with no step waiting is refused", async () => {
     const { web } = await scene()
     const answer = await request(web, { _tag: "AnswerSignIn", value: "x" })
     expect(answer).toMatchObject({ _tag: "CommandFailed", command: "AnswerSignIn" })
   })
 })
+
+/** A model call of alice's to OpenAI, as the Gateway makes one: its answer's status. */
+const modelCall = () =>
+  Effect.flatMap(ConnectedProviders, (providers) =>
+    providers.call(alice, "openai", {
+      method: "POST",
+      path: "/v1/responses",
+      headers: new Headers({ "content-type": "application/json" }),
+      keyHeader: "authorization",
+      body: new TextEncoder().encode("{}"),
+    }),
+  ).pipe(
+    Effect.flatMap((called) =>
+      called._tag === "Answered"
+        ? Effect.promise(async () => {
+            await called.response.body?.cancel()
+            return called.response.status
+          })
+        : Effect.succeed(0),
+    ),
+  )
+
+/** The bearer each model call was sent with, leaving out the Model lists asked for. */
+const sentWith = (fakes: { readonly seen: ReadonlyArray<Seen> }) =>
+  fakes.seen
+    .filter((seen) => new URL(seen.url).pathname === "/v1/responses")
+    .map((seen) => seen.headers.authorization)
+
+/**
+ * Runs `effect` on a clock read `millis` ahead of the time it is, whose sleeps of `fastFrom` or
+ * longer take a moment instead.
+ */
+const onClock =
+  (millis: number, fastFrom?: Duration.Duration) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Clock.clockWith((clock) =>
+      Effect.provideService(effect, Clock.Clock, {
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() + millis,
+        currentTimeMillis: Effect.map(clock.currentTimeMillis, (now) => now + millis),
+        currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe() + BigInt(millis) * 1_000_000n,
+        currentTimeNanos: Effect.map(
+          clock.currentTimeNanos,
+          (now) => now + BigInt(millis) * 1_000_000n,
+        ),
+        monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: clock.monotonicTimeNanos,
+        sleep: (duration) =>
+          clock.sleep(
+            fastFrom !== undefined && Duration.isGreaterThanOrEqualTo(duration, fastFrom)
+              ? Duration.millis(50)
+              : duration,
+          ),
+      }),
+    )
+
+/** alice's OpenAI credential as the Hub stored it, decrypted. */
+const storedCredential = (hub: TestHub) =>
+  hub.run(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const secrets = yield* Secrets
+      const [row] = yield* sql<{ readonly credential: string }>`
+        SELECT credential FROM connected_providers WHERE provider = 'openai'
+      `
+      if (row === undefined) return ""
+      return Redacted.value(
+        yield* secrets.decrypt(row.credential, "connected-provider:dev:alice:openai"),
+      )
+    }),
+  )
 
 /** alice signed in to ChatGPT with `credential`. */
 async function signedIn(credential: OAuthCredential) {
@@ -675,54 +810,127 @@ describe("a sign-in's tokens", () => {
       await Bun.sleep(20)
       return oauth("access-new")
     }
-    const tokens = await hub.run(
-      Effect.gen(function* () {
-        const providers = yield* ConnectedProviders
-        // Two at once refresh once.
-        return yield* Effect.all(
-          [providers.credentialFor(alice, "openai"), providers.credentialFor(alice, "openai")],
-          { concurrency: 2 },
-        )
-      }),
-    )
-    expect(tokens.map((token) => Redacted.value(token.token))).toEqual(["access-new", "access-new"])
+    fakes.seen.length = 0
+    // Two at once refresh once.
+    await hub.run(Effect.all([modelCall(), modelCall()], { concurrency: 2 }))
+    expect(sentWith(fakes)).toEqual(["Bearer access-new", "Bearer access-new"])
     expect(refreshed).toEqual(["refresh-of-access-old"])
     expect(await storedText(hub)).not.toContain("access-new")
     const values = await hub.run(Effect.map(ConnectedProviders, (p) => p.values()))
     expect(values).toEqual(expect.arrayContaining(["access-old", "access-new"]))
 
     // Kept: the next call needs no refresh.
-    const again = await hub.run(
-      Effect.flatMap(ConnectedProviders, (p) => p.credentialFor(alice, "openai")),
-    )
-    expect(Redacted.value(again.token)).toBe("access-new")
+    fakes.seen.length = 0
+    await hub.run(modelCall())
+    expect(sentWith(fakes)).toEqual(["Bearer access-new"])
     expect(refreshed).toHaveLength(1)
   })
 
-  test("one the Provider refused once is refreshed, and only once for many refusals", async () => {
+  test("one the Provider refused is refreshed, once for many refusals, and the call sent again", async () => {
     const { hub, fakes } = await signedIn(oauth("access-old"))
     let refreshes = 0
     fakes.refresh = async () => {
       refreshes++
+      await Bun.sleep(20)
       return oauth("access-new")
     }
-    const after = await hub.run(
-      Effect.gen(function* () {
-        const providers = yield* ConnectedProviders
-        return yield* Effect.all(
-          [
-            providers.rejected(alice, "openai", "access-old"),
-            providers.rejected(alice, "openai", "access-old"),
-          ],
-          { concurrency: 2 },
-        )
-      }),
-    )
-    expect(after.map((next) => Option.map(next, (n) => Redacted.value(n.token)))).toEqual([
-      Option.some("access-new"),
-      Option.some("access-new"),
+    fakes.other = (sent) =>
+      sent.headers.get("authorization") === "Bearer access-old"
+        ? Response.json({ error: { message: "expired" } }, { status: 401 })
+        : Response.json({ ok: true })
+    fakes.seen.length = 0
+    const statuses = await hub.run(Effect.all([modelCall(), modelCall()], { concurrency: 2 }))
+    expect(statuses).toEqual([200, 200])
+    expect(sentWith(fakes).toSorted()).toEqual([
+      "Bearer access-new",
+      "Bearer access-new",
+      "Bearer access-old",
+      "Bearer access-old",
     ])
     expect(refreshes).toBe(1)
+  })
+
+  test("one refused within a minute of its refresh isn't refreshed again, and is after it", async () => {
+    const { hub, fakes } = await signedIn(oauth("access-0"))
+    let refreshes = 0
+    fakes.refresh = async () => oauth(`access-${++refreshes}`)
+    fakes.other = () => Response.json({ error: { message: "nope" } }, { status: 401 })
+
+    // Refused: refreshed, and sent once more.
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall())).toBe(401)
+    expect(sentWith(fakes)).toEqual(["Bearer access-0", "Bearer access-1"])
+    expect(refreshes).toBe(1)
+
+    // Refused again at once: the refusal stands, with no refresh.
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall())).toBe(401)
+    expect(sentWith(fakes)).toEqual(["Bearer access-1"])
+    expect(refreshes).toBe(1)
+
+    // A minute on, it's refreshed again.
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall().pipe(onClock(61_000)))).toBe(401)
+    expect(sentWith(fakes)).toEqual(["Bearer access-1", "Bearer access-2"])
+    expect(refreshes).toBe(2)
+  })
+
+  test("a refresh that ends after the connection was replaced keeps the new one", async () => {
+    const { hub, web, fakes } = await signedIn(oauth("access-old", 60 * 1000))
+    const refreshing = Promise.withResolvers<void>()
+    const rotate = Promise.withResolvers<void>()
+    fakes.refresh = async () => {
+      refreshing.resolve()
+      await rotate.promise
+      return oauth("access-rotated")
+    }
+    fakes.other = () => Response.json({ ok: true })
+    fakes.seen.length = 0
+    const called = hub.run(modelCall())
+    await refreshing.promise
+
+    // Signed in again meanwhile.
+    fakes.signIn = async () => oauth("access-fresh")
+    web.send({ _tag: "StartSignIn", requestId: "r-2", provider: "openai" })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    rotate.resolve()
+    expect(await called).toBe(200)
+
+    // The call went with the new sign-in, and the rotated tokens weren't kept over it.
+    expect(sentWith(fakes)).toEqual(["Bearer access-fresh"])
+    expect(await storedCredential(hub)).toContain("access-fresh")
+    fakes.seen.length = 0
+    await hub.run(modelCall())
+    expect(sentWith(fakes)).toEqual(["Bearer access-fresh"])
+  })
+
+  test("a refused refresh that ends after the connection was replaced leaves the new one be", async () => {
+    const { hub, web, fakes } = await signedIn(oauth("access-old", 60 * 1000))
+    const refreshing = Promise.withResolvers<void>()
+    const refuse = Promise.withResolvers<void>()
+    fakes.refresh = async () => {
+      refreshing.resolve()
+      await refuse.promise
+      throw new Error("OpenAI OAuth token request failed (400): invalid_grant")
+    }
+    fakes.other = () => Response.json({ ok: true })
+    const called = hub.run(modelCall().pipe(Effect.result))
+    await refreshing.promise
+
+    fakes.signIn = async () => oauth("access-fresh")
+    web.send({ _tag: "StartSignIn", requestId: "r-3", provider: "openai" })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    refuse.resolve()
+    await called
+
+    const state = await request(web, { _tag: "GetProviders" })
+    if (state._tag !== "ProvidersState") throw new Error(`Expected ProvidersState: ${state._tag}`)
+    expect(state.connected).toMatchObject([{ provider: "openai" }])
+    expect(state.connected[0]?.problem).toBeUndefined()
+    expect(await storedText(hub)).not.toContain("refused")
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall())).toBe(200)
+    expect(sentWith(fakes)).toEqual(["Bearer access-fresh"])
   })
 
   test("a refresh the Provider refuses says to connect again", async () => {
@@ -730,9 +938,7 @@ describe("a sign-in's tokens", () => {
     fakes.refresh = async () => {
       throw new Error("OpenAI OAuth token request failed (400): invalid_grant")
     }
-    const failed = await hub.run(
-      Effect.flatMap(ConnectedProviders, (p) => p.credentialFor(alice, "openai")).pipe(Effect.flip),
-    )
+    const failed = await hub.run(modelCall().pipe(Effect.flip))
     expect(failed.reason).toBe("Broken")
     const state = await web.take("ProvidersState", (m) => m.connected[0]?.problem !== undefined)
     expect(state.connected[0]?.problem).toMatch(/connect it again/i)
@@ -846,10 +1052,8 @@ describe("a Hub that restarts", () => {
       { provider: "openai", kind: "ApiKey", label: "good" },
     ])
     expect(welcomed.models).toHaveLength(2)
-    const call = await later.run(
-      Effect.flatMap(ConnectedProviders, (p) => p.credentialFor(alice, "openai")),
-    )
-    expect(Redacted.value(call.token)).toBe(goodKey)
+    await later.run(modelCall())
+    expect(sentWith(second.fakes)).toEqual([`Bearer ${goodKey}`])
     // Asked off the welcome, with the key kept; alice hears once it answered.
     const checked = welcomed.connected[0]?.modelsCheckedAt ?? 0
     const refreshed = await again.take(

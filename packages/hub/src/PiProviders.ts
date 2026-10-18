@@ -206,15 +206,190 @@ export const connectable: ReadonlyArray<ConnectableProvider> = ProviderIds.map((
 export const catalogueOf = (provider: ModelProvider): ReadonlyArray<Model<Api>> =>
   builtIn[provider].getModels()
 
-/**
- * The origin of the Provider's API, `https://api.openai.com`: the one a sign-in's `toAuth` names,
- * else pi-ai's for it.
- */
-export function apiOrigin(provider: ModelProvider, auth?: ModelAuth): string {
-  const base = auth?.baseUrl ?? builtIn[provider].baseUrl ?? catalogueOf(provider)[0]?.baseUrl
+/** The origin of the Provider's API as pi-ai has it, `https://api.openai.com`. */
+export function apiOrigin(provider: ModelProvider): string {
+  const base = builtIn[provider].baseUrl ?? catalogueOf(provider)[0]?.baseUrl
   if (base === undefined) throw new Error(`pi-ai has no address for ${provider}`)
   return new URL(base).origin
 }
+
+/** GitHub's hosts for Copilot's API: `api.individual.githubcopilot.com` and the like. */
+const copilotDomain = "githubcopilot.com"
+/** GitHub Enterprise Cloud with data residency, the one GitHub Enterprise Copilot signs in on. */
+const enterpriseSuffix = ".ghe.com"
+
+/** Whether `host` is `domain` or below it. */
+const within = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`)
+
+/**
+ * The GitHub Enterprise domain a Member answered GitHub Copilot's sign-in with, as pi-ai reads it,
+ * if it is one on GHE.com, `company.ghe.com`: the Hub sends a sign-in's requests there, so not an
+ * address of the Member's choosing.
+ */
+export function enterpriseDomainOf(answer: string): string | undefined {
+  const trimmed = answer.trim()
+  let url: URL
+  try {
+    url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
+  } catch {
+    return undefined
+  }
+  const host = url.hostname
+  const plain =
+    url.protocol === "https:" &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.pathname === "/" &&
+    url.search === "" &&
+    url.hash === ""
+  return plain &&
+    host.endsWith(enterpriseSuffix) &&
+    /^[a-z0-9-]+$/.test(host.slice(0, -enterpriseSuffix.length))
+    ? host
+    : undefined
+}
+
+/**
+ * The origin a call with a sign-in goes to: the one its `toAuth` names, else pi-ai's for the
+ * Provider. Only GitHub Copilot's names one, which must be at githubcopilot.com or the sign-in's
+ * own GHE.com domain, over HTTPS: none otherwise, and the call isn't sent.
+ */
+export function signInOrigin(
+  provider: ModelProvider,
+  credential: Credential,
+  auth: ModelAuth,
+): string | undefined {
+  if (auth.baseUrl === undefined) return apiOrigin(provider)
+  if (provider !== "github-copilot") return undefined
+  let url: URL
+  try {
+    url = new URL(auth.baseUrl)
+  } catch {
+    return undefined
+  }
+  const enterprise =
+    credential.type === "oauth" && typeof credential.enterpriseUrl === "string"
+      ? enterpriseDomainOf(credential.enterpriseUrl)
+      : undefined
+  const trusted =
+    within(url.hostname, copilotDomain) ||
+    (enterprise !== undefined && within(url.hostname, enterprise))
+  return url.protocol === "https:" && url.port === "" && url.username === "" && trusted
+    ? url.origin
+    : undefined
+}
+
+/**
+ * Whether a sign-in's own domain, if it keeps one, is one the Hub may send its refreshes to:
+ * GitHub Copilot's Enterprise domain on GHE.com.
+ */
+export const signInDomainTrusted = (credential: Credential) =>
+  credential.type !== "oauth" ||
+  credential.enterpriseUrl === undefined ||
+  credential.enterpriseUrl === "" ||
+  (typeof credential.enterpriseUrl === "string" &&
+    enterpriseDomainOf(credential.enterpriseUrl) !== undefined)
+
+/**
+ * The address a call goes to: `path`, with its query, below `origin`. None when the path could
+ * leave the origin or climb out of where it points: one not starting with a single `/`, with a
+ * dot segment, a backslash, a control character or whitespace, or an encoded `/`, `\` or `.`,
+ * which a server may decode into one of those.
+ */
+export function upstreamUrl(origin: string, path: string): URL | undefined {
+  if (!path.startsWith("/") || path.startsWith("//")) return undefined
+  const pathname = path.split("?", 1)[0] ?? ""
+  if (/[\\\s\p{Cc}]/u.test(path) || /%(?:2f|5c|2e)/i.test(pathname)) return undefined
+  if (pathname.split("/").some((segment) => segment === "." || segment === "..")) return undefined
+  let url: URL
+  try {
+    url = new URL(path, origin)
+  } catch {
+    return undefined
+  }
+  return url.origin === origin ? url : undefined
+}
+
+// ── What the Gateway sends on ──────────────────────────────────────────────
+
+/** A path below a Model's base, as a pattern: `[^/:]+` for a Model's id in Google's. */
+interface Endpoint {
+  readonly method: "GET" | "POST"
+  readonly path: string
+}
+
+/**
+ * What pi's client for each API calls below a Model's base, as pi-ai 1.3.0's `api/*.js` does, and
+ * where the API lists its Models. Google's API takes the Model's id in the path.
+ */
+const endpointsOf: Partial<Record<Api, ReadonlyArray<Endpoint>>> = {
+  // The OpenAI SDK's `responses.create`.
+  "openai-responses": [
+    { method: "POST", path: "/responses" },
+    { method: "GET", path: "/models" },
+  ],
+  // The OpenAI SDK's `chat.completions.create`.
+  "openai-completions": [
+    { method: "POST", path: "/chat/completions" },
+    { method: "GET", path: "/models" },
+  ],
+  // The Anthropic SDK's `beta.messages.create`, whose base has no `/v1`.
+  "anthropic-messages": [
+    { method: "POST", path: "/v1/messages" },
+    { method: "GET", path: "/v1/models" },
+  ],
+  // `@google/genai`'s `models.generateContentStream`, with the version in the base.
+  "google-generative-ai": [
+    { method: "POST", path: "/models/[^/:]+:streamGenerateContent" },
+    { method: "POST", path: "/models/[^/:]+:generateContent" },
+    { method: "POST", path: "/models/[^/:]+:countTokens" },
+    { method: "GET", path: "/models" },
+  ],
+  // pi-ai's own fetch of Mistral's chat completions.
+  "mistral-conversations": [
+    { method: "POST", path: "/v1/chat/completions" },
+    { method: "GET", path: "/v1/models" },
+  ],
+}
+
+const escapeRegExp = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** Each Provider's endpoints the Gateway sends calls to, by method: a pattern of whole paths. */
+const allowlist = new Map(
+  ProviderIds.map((provider) => {
+    const byMethod = new Map<string, Set<string>>()
+    const add = (method: string, pattern: string) => {
+      const patterns = byMethod.get(method) ?? new Set<string>()
+      patterns.add(pattern)
+      byMethod.set(method, patterns)
+    }
+    for (const model of catalogueOf(provider)) {
+      const base = escapeRegExp(new URL(model.baseUrl).pathname.replace(/\/+$/, ""))
+      for (const endpoint of endpointsOf[model.api] ?? []) {
+        add(endpoint.method, `${base}${endpoint.path.replaceAll(".", "\\.")}`)
+      }
+    }
+    add("GET", escapeRegExp(definitions[provider].models.split("?", 1)[0] ?? ""))
+    return [
+      provider,
+      new Map(
+        [...byMethod].map(([method, patterns]) => [
+          method,
+          new RegExp(`^(?:${[...patterns].join("|")})$`),
+        ]),
+      ),
+    ] as const
+  }),
+)
+
+/**
+ * Whether a Session's call to the Provider is one the Gateway sends on: one of the inference or
+ * model-listing endpoints pi calls for one of its Models' APIs. Not its files, batches,
+ * fine-tuning or anything else the Creator's key could do.
+ */
+export const modelCallAllowed = (provider: ProviderId, method: string, pathname: string) =>
+  allowlist.get(provider)?.get(method.toUpperCase())?.test(pathname) === true
 
 /** The header a request carries its key in, as pi sends it for the Model's API. */
 export type KeyHeader = "authorization" | "x-api-key" | "x-goog-api-key"
@@ -362,10 +537,27 @@ export const reasonIn = (body: string) => {
 export const reasonOf = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, reasonLimit)
 
+/** A request to a Provider's API, without its credential, which goes in `keyHeader`. */
+export interface ApiCall {
+  readonly method: string
+  /** Below the origin of the Provider's API, with the query: `/v1/responses?stream=true`. */
+  readonly path: string
+  readonly headers: Headers
+  readonly keyHeader: KeyHeader
+  /** Bytes, which can be sent again, or a stream, sent once. */
+  readonly body?: Uint8Array | ReadableStream<Uint8Array>
+  readonly signal?: AbortSignal
+}
+
 /** How the Hub asks a Provider for the Models an account has. */
-export function modelsRequest(provider: ProviderId, auth: ModelAuth, signal?: AbortSignal) {
-  const definition = definitions[provider]
+export function modelsCall(provider: ModelProvider): ApiCall {
   const headers = new Headers({ accept: "application/json" })
+  if (provider === "anthropic") {
+    // A Claude credential's setup token, as ClaudeCredentials checks it.
+    headers.set("anthropic-version", "2023-06-01")
+    return { method: "GET", path: "/v1/models?limit=1000", headers, keyHeader: "authorization" }
+  }
+  const definition = definitions[provider]
   if (definition.listing === "Copilot") {
     // The integration headers its API takes only with, as pi-ai's catalogue has them.
     for (const [name, value] of Object.entries(catalogueOf(provider)[0]?.headers ?? {})) {
@@ -373,11 +565,12 @@ export function modelsRequest(provider: ProviderId, auth: ModelAuth, signal?: Ab
     }
     headers.set("X-GitHub-Api-Version", copilotApiVersion)
   }
-  authorize(headers, auth, definition.listing === "Google" ? "x-goog-api-key" : "authorization")
-  return new Request(`${apiOrigin(provider, auth)}${definition.models}`, {
+  return {
+    method: "GET",
+    path: definition.models,
     headers,
-    ...(signal !== undefined && { signal }),
-  })
+    keyHeader: definition.listing === "Google" ? "x-goog-api-key" : "authorization",
+  }
 }
 
 /** Whether a Provider's 400 says the key is wrong, as Google's does. */

@@ -34,6 +34,7 @@ The Hub and Runners read environment variables. Where you set them:
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
 | `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts GitHub's answer about someone's access to a Repo, and how often it checks again. See [Who can do what](/concepts/security-model/#who-can-do-what). |
 | `HUB_MCP_SERVER_CHECK_TIMEOUT_MS` | `5000` (5 seconds) | How long a Session's start waits on each MCP server's check. One that doesn't answer in time doesn't stop the start. |
+| `HUB_CLAUDE_MODELS` | on | `off` offers pi Sessions no Claude Models, so none runs Claude through Claude Code on its Creator's Claude credential. Claude Code Sessions aren't affected. For a Hub whose people shouldn't spend their Claude subscriptions that way, such as if Anthropic changes how it bills Claude Code's headless use. |
 | `KNDL_HOME` | unset | The home. See [Homes](#homes). |
 
 ## Runner

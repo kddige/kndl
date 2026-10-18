@@ -64,17 +64,21 @@ import {
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import { ClaudeCredentials, oauthBeta } from "./ClaudeCredentials.ts"
+import { HubConfig } from "./HubConfig.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
 import {
   accountNameOf,
   accountOf,
+  type ApiCall,
   apiOrigin,
+  authorize,
   catalogueModels,
   connectable,
   currentClaude,
+  enterpriseDomainOf,
   keyAuth,
+  modelsCall,
   modelsListed,
-  modelsRequest,
   nameOf,
   oauthOf,
   parseJson,
@@ -82,6 +86,9 @@ import {
   reasonOf,
   record,
   rejectsKey,
+  signInDomainTrusted,
+  signInOrigin,
+  upstreamUrl,
 } from "./PiProviders.ts"
 import { Secrets } from "./Secrets.ts"
 
@@ -94,10 +101,13 @@ import { Secrets } from "./Secrets.ts"
 export class ProviderApis extends Context.Service<
   ProviderApis,
   {
-    /** Sends a request to a Provider, as `fetch`. */
+    /**
+     * Sends a request to a Provider, as `fetch`: a model call's with Bun's `decompress` and
+     * `timeout` off, so its answer streams back as it comes, for as long as it takes.
+     */
     readonly fetch: (
       request: Request,
-      init?: { readonly decompress?: boolean },
+      init?: { readonly decompress?: boolean; readonly timeout?: boolean },
     ) => Promise<Response>
     /** Runs the Provider's sign-in: pi-ai's `auth.oauth.login`. */
     readonly signIn: (
@@ -131,7 +141,7 @@ export class ProviderApis extends Context.Service<
    */
   static readonly layerTest = (
     fakes: {
-      readonly fetch?: (request: Request) => Promise<Response>
+      readonly fetch?: ProviderApis["Service"]["fetch"]
       readonly signIn?: ProviderApis["Service"]["signIn"]
       readonly refresh?: ProviderApis["Service"]["refresh"]
       readonly toAuth?: ProviderApis["Service"]["toAuth"]
@@ -151,6 +161,11 @@ export class ProviderApis extends Context.Service<
 const modelsLifetime = Duration.toMillis(Duration.days(1))
 /** How long the Hub waits for a Provider to list its Models. */
 const listTimeout = Duration.seconds(15)
+/**
+ * How long a sign-in may take, its Member's steps and all: then it fails, and its flow stops,
+ * freeing what it holds, such as ChatGPT's port 1455 on the Hub's machine.
+ */
+const signInTimeout = Duration.minutes(10)
 
 /** What asking a Provider for its Models came to. */
 type Listed =
@@ -189,6 +204,40 @@ const refusedRefresh = (error: unknown) =>
   /\((?:HTTP |status )?(?:400|401|403)\b|^(?:400|401|403)\b|reconnect|sign in again/i.test(
     reasonOf(error),
   )
+
+/** What the Provider's answer to a call for its Models says: those pi-ai knows, or why not. */
+const readListing = (provider: ModelProvider, kind: ConnectionKind, called: Called) => {
+  const name = nameOf(provider)
+  const unreachable: Listed = { _tag: "Unavailable", message: `${name} couldn't be reached` }
+  if (called._tag !== "Answered") return Effect.succeed(unreachable)
+  const { response } = called
+  return Effect.tryPromise(() => response.text()).pipe(
+    Effect.timeout(listTimeout),
+    Effect.map((body): Listed => {
+      if (rejectsKey(response.status, body)) {
+        return {
+          _tag: "Rejected",
+          message:
+            kind === "ApiKey"
+              ? `${name} rejected this key${reasonIn(body)}`
+              : `${name} refused the sign-in${reasonIn(body)}`,
+        }
+      }
+      if (!response.ok) {
+        return { _tag: "Unavailable", message: `${name} answered ${response.status}` }
+      }
+      const models = modelsListed(provider, parseJson(body))
+      return models === undefined
+        ? { _tag: "Unavailable", message: `${name} didn't list its Models` }
+        : { _tag: "Listed", models }
+    }),
+    Effect.catch(() => Effect.succeed(unreachable)),
+  )
+}
+
+/** Lets an answer's body go unread. */
+const discard = (response: Response) =>
+  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 // ── Sign-in steps ──────────────────────────────────────────────────────────
 
@@ -268,6 +317,8 @@ function askOf(
 
 const github = "github.com"
 const enterprise = "enterprise"
+const enterpriseOnly =
+  "kndl signs in to GitHub Copilot Enterprise on GHE.com only: give your company's domain ending in .ghe.com, such as company.ghe.com."
 
 /**
  * Asks the Member what a pi-ai sign-in prompt asks: as a choice first, for GitHub Copilot's
@@ -296,7 +347,7 @@ async function answerTo(
       signal,
     )
     if (which !== enterprise) return ""
-    return steps.ask(
+    const answer = await steps.ask(
       {
         _tag: "Paste",
         message: "Your GitHub Enterprise address",
@@ -304,6 +355,10 @@ async function answerTo(
       },
       signal,
     )
+    // The Hub sends the sign-in's requests there: GitHub's own, not an address of anyone's choosing.
+    const domain = enterpriseDomainOf(answer)
+    if (domain === undefined) throw new Error(enterpriseOnly)
+    return domain
   }
   return steps.ask(askOf(provider, prompt), signal)
 }
@@ -338,19 +393,22 @@ const notConnected = (provider: ModelProvider) =>
       : `The Session's Creator hasn't connected ${nameOf(provider)}: they connect it on the Account page.`,
   )
 
+/** Why a sign-in whose `toAuth` names an address the Hub doesn't trust can't be used. */
+const untrustedAddress = (provider: ProviderId) =>
+  `${nameOf(provider)}'s sign-in names an address for its API that kndl doesn't send calls to: connect it again on the Account page.`
+
 /** Why a connection can't be kept on a Hub without a secrets key. */
 const noKey = (provider: ProviderId) =>
   `This Hub can't store a ${nameOf(provider)} connection: it needs HUB_SECRETS_KEY in its configuration. Ask whoever runs it to set one.`
 
-/**
- * What a call to a Provider goes with: what pi-ai says its key or sign-in sends (`auth`), and the
- * access token or key itself (`token`), to tell the Hub which one the Provider refused.
- */
-export interface CallCredential {
-  readonly kind: ConnectionKind
-  readonly token: Redacted.Redacted<string>
-  readonly auth: Redacted.Redacted<ModelAuth>
-}
+/** What a call to a Provider came to. */
+export type Called =
+  /** The Provider's answer, its body unread: a redirect isn't followed. */
+  | { readonly _tag: "Answered"; readonly response: Response }
+  /** The Provider could not be reached. */
+  | { readonly _tag: "Unreachable" }
+  /** The call's path would leave the Provider's API: it wasn't sent. */
+  | { readonly _tag: "BadAddress" }
 
 /** A Member's Connected providers changed. */
 export interface ProvidersChanged {
@@ -370,6 +428,8 @@ interface Connection {
   readonly modelsCheckedAt?: number
   readonly modelsProblem?: string
   readonly problem?: string
+  /** When its sign-in was last refreshed, since the Hub started. */
+  readonly refreshedAt?: number
 }
 
 /** Claude's Models as last found for a Claude credential. */
@@ -430,6 +490,11 @@ const tokenOf = (credential: Credential) =>
 
 /** How far ahead of its expiry a sign-in's token is refreshed for a call. */
 const refreshAhead = Duration.toMillis(Duration.minutes(5))
+/**
+ * How long after a refresh a Provider's 401 is answered as it is, with no refresh: a Sandbox that
+ * makes calls the Provider refuses can't make the Hub hammer its token endpoint.
+ */
+const refreshedLately = Duration.toMillis(Duration.minutes(1))
 /** How long the Hub waits for a Provider to refresh a sign-in. */
 const refreshTimeout = Duration.seconds(30)
 
@@ -484,23 +549,25 @@ export class ConnectedProviders extends Context.Service<
     ) => Effect.Effect<void, SqlError>
     /** Forgets every connection of the Member, as when they are removed. */
     readonly forget: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
-    /**
-     * What the Member's call to the Provider goes with now: its sign-in refreshed first if it
-     * expires within 5 minutes.
-     */
-    readonly credentialFor: (
+    /** How the Member connected the Provider, if they have. */
+    readonly kindOf: (
       participantId: ParticipantId,
       provider: ModelProvider,
-    ) => Effect.Effect<CallCredential, ProviderUnusable>
+    ) => ConnectionKind | undefined
     /**
-     * The Provider refused `token`: the sign-in's tokens refreshed, once however many calls it
-     * refused, to send the call with once more; none for an API key, or a refresh that failed.
+     * Sends the call to the Provider's API with the Member's credential: to the origin it or pi-ai
+     * names, the key in the call's `keyHeader`, and a sign-in's own headers over the call's. A
+     * sign-in that expires within 5 minutes is refreshed first. One the Provider refuses with a
+     * 401 is refreshed, once however many calls it refused, and the call sent once more, if its
+     * body can be (bytes, not a stream) and the sign-in wasn't refreshed in the last minute: else
+     * the 401 is the answer. One refreshed is kept, rotated, unless it was disconnected or
+     * connected again meanwhile.
      */
-    readonly rejected: (
+    readonly call: (
       participantId: ParticipantId,
       provider: ModelProvider,
-      token: string,
-    ) => Effect.Effect<Option.Option<CallCredential>>
+      call: ApiCall,
+    ) => Effect.Effect<Called, ProviderUnusable>
     /** Every key and token held, and every one replaced or forgotten since the Hub started. */
     readonly values: () => ReadonlyArray<string>
     /** Each change to a Member's Connected providers, or the Models they can run, from now on. */
@@ -514,6 +581,7 @@ export class ConnectedProviders extends Context.Service<
       const secrets = yield* Secrets
       const claude = yield* ClaudeCredentials
       const apis = yield* ProviderApis
+      const config = yield* HubConfig
       const scope = yield* Effect.scope
       const published = yield* PubSub.unbounded<ProvidersChanged>()
 
@@ -612,53 +680,51 @@ export class ConnectedProviders extends Context.Service<
 
       // ── Asking for Models ──────────────────────────────────────────────
 
-      /** Asks the Provider for its Models with what `auth` says: those pi-ai knows, or why not. */
-      const listModels = (provider: ModelProvider, auth: ModelAuth, kind: ConnectionKind) =>
-        Effect.tryPromise({
-          try: async (signal): Promise<Listed> => {
-            const name = nameOf(provider)
-            const request =
-              provider === "anthropic"
-                ? new Request(`${apiOrigin(provider)}/v1/models?limit=1000`, {
-                    headers: {
-                      authorization: `Bearer ${auth.apiKey ?? ""}`,
-                      "anthropic-beta": oauthBeta,
-                      "anthropic-version": "2023-06-01",
-                    },
-                    signal,
-                  })
-                : modelsRequest(provider, auth, signal)
-            const response = await apis.fetch(request)
-            const body = await response.text()
-            if (rejectsKey(response.status, body)) {
-              return {
-                _tag: "Rejected",
-                message:
-                  kind === "ApiKey"
-                    ? `${name} rejected this key${reasonIn(body)}`
-                    : `${name} refused the sign-in${reasonIn(body)}`,
-              }
-            }
-            if (!response.ok) {
-              return { _tag: "Unavailable", message: `${name} answered ${response.status}` }
-            }
-            const models = modelsListed(provider, parseJson(body))
-            return models === undefined
-              ? { _tag: "Unavailable", message: `${name} didn't list its Models` }
-              : { _tag: "Listed", models }
+      /**
+       * Sends the call to `origin` with what `auth` says: a model call's answer streaming back as
+       * it comes, for as long as it takes; a Model list's within listTimeout.
+       */
+      const send = (
+        origin: string,
+        auth: ModelAuth,
+        call: ApiCall,
+        listing: boolean,
+      ): Effect.Effect<Called> => {
+        const to = upstreamUrl(origin, call.path)
+        if (to === undefined) return Effect.succeed({ _tag: "BadAddress" })
+        const fetched = Effect.tryPromise({
+          try: (signal) => {
+            const headers = new Headers(call.headers)
+            authorize(headers, auth, call.keyHeader)
+            const hasBody = !["GET", "HEAD"].includes(call.method) && call.body !== undefined
+            return apis.fetch(
+              new Request(to.href, {
+                method: call.method,
+                headers,
+                ...(hasBody && { body: call.body, duplex: "half" }),
+                redirect: "manual",
+                signal: call.signal === undefined ? signal : AbortSignal.any([signal, call.signal]),
+              } as RequestInit),
+              listing ? undefined : { decompress: false, timeout: false },
+            )
           },
-          catch: () => undefined,
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: listTimeout,
-            orElse: () => Effect.fail(undefined),
-          }),
-          Effect.catch(() =>
-            Effect.succeed<Listed>({
-              _tag: "Unavailable",
-              message: `${nameOf(provider)} couldn't be reached`,
-            }),
-          ),
+          catch: (error) => error,
+        })
+        return (listing ? Effect.timeout(fetched, listTimeout) : fetched).pipe(
+          Effect.map((response): Called => ({ _tag: "Answered", response })),
+          Effect.catch(() => Effect.succeed<Called>({ _tag: "Unreachable" })),
+        )
+      }
+
+      /** Asks the Provider for its Models with a credential not kept yet: those pi-ai knows. */
+      const listModels = (
+        provider: ModelProvider,
+        origin: string,
+        auth: ModelAuth,
+        kind: ConnectionKind,
+      ) =>
+        send(origin, auth, modelsCall(provider), true).pipe(
+          Effect.flatMap((called) => readListing(provider, kind, called)),
         )
 
       /** Asks Anthropic for Claude's Models under the Member's Claude credential, and keeps them. */
@@ -666,9 +732,12 @@ export class ConnectedProviders extends Context.Service<
         participantId: ParticipantId,
       ) {
         const credential = claude.credentialOf(participantId)
-        if (credential === undefined) return
+        if (credential === undefined || !config.claudeModels) return
         const token = Redacted.value(credential.token)
-        const listed = yield* listModels("anthropic", { apiKey: token }, "SignIn")
+        const call = modelsCall("anthropic")
+        call.headers.set("anthropic-beta", oauthBeta)
+        const called = yield* send(apiOrigin("anthropic"), { apiKey: token }, call, true)
+        const listed = yield* readListing("anthropic", "SignIn", called)
         const models =
           listed._tag === "Listed" && listed.models.length > 0 ? listed.models : currentClaude
         const before = claudeModels.get(participantId)
@@ -688,13 +757,11 @@ export class ConnectedProviders extends Context.Service<
       ): Effect.fn.Return<void, SqlError> {
         const before = connectionOf(participantId, provider)
         if (before === undefined || before.problem !== undefined) return
-        const credential = yield* Effect.option(credentialFor(participantId, provider))
-        if (Option.isNone(credential)) return
-        const listed = yield* listModels(
-          provider,
-          Redacted.value(credential.value.auth),
-          credential.value.kind,
+        const called = yield* Effect.option(
+          callWith(participantId, provider, modelsCall(provider), true),
         )
+        if (Option.isNone(called)) return
+        const listed = yield* readListing(provider, before.kind, called.value)
         const now = yield* Clock.currentTimeMillis
         const current = connectionOf(participantId, provider)
         // Disconnected or connected again meanwhile.
@@ -737,7 +804,7 @@ export class ConnectedProviders extends Context.Service<
         now: number,
       ) {
         const credential = claude.credentialOf(participantId)
-        if (credential === undefined) return []
+        if (credential === undefined || !config.claudeModels) return []
         const token = Redacted.value(credential.token)
         const known = claudeModels.get(participantId)
         if (known?.token !== token || now - known.checkedAt >= modelsLifetime) {
@@ -803,6 +870,11 @@ export class ConnectedProviders extends Context.Service<
       ) {
         const ciphertext = yield* seal(participantId, provider, credential)
         const now = yield* Clock.currentTimeMillis
+        // Later than the one it replaces, which a refresh of that one is told apart by.
+        const connectedAt = Math.max(
+          now,
+          (connectionOf(participantId, provider)?.connectedAt ?? 0) + 1,
+        )
         const kept = listed._tag === "Listed" ? undefined : unlisted(provider, listed, [])
         const models = kept?.models ?? (listed._tag === "Listed" ? listed.models : [])
         const modelsProblem = kept?.modelsProblem ?? null
@@ -810,7 +882,8 @@ export class ConnectedProviders extends Context.Service<
           INSERT INTO connected_providers (participant_id, provider, kind, credential, label,
             connected_at, models, models_checked_at, models_problem, problem)
           VALUES (${participantId}, ${provider}, ${connection.kind}, ${ciphertext},
-            ${connection.label}, ${now}, ${encodeModels(models)}, ${now}, ${modelsProblem}, NULL)
+            ${connection.label}, ${connectedAt}, ${encodeModels(models)}, ${now}, ${modelsProblem},
+            NULL)
           ON CONFLICT (participant_id, provider) DO UPDATE SET kind = excluded.kind,
             credential = excluded.credential, label = excluded.label,
             connected_at = excluded.connected_at, models = excluded.models,
@@ -823,7 +896,7 @@ export class ConnectedProviders extends Context.Service<
         keep(participantId, {
           provider,
           ...connection,
-          connectedAt: now,
+          connectedAt,
           credential,
           models,
           modelsCheckedAt: now,
@@ -842,7 +915,7 @@ export class ConnectedProviders extends Context.Service<
           return yield* new ProviderRefusal({ message: `Paste the ${nameOf(provider)} API key.` })
         }
         if (!secrets.available) return yield* new ProviderRefusal({ message: noKey(provider) })
-        const listed = yield* listModels(provider, { apiKey: key }, "ApiKey")
+        const listed = yield* listModels(provider, apiOrigin(provider), { apiKey: key }, "ApiKey")
         if (listed._tag === "Rejected") {
           return yield* new ProviderRefusal({ message: listed.message })
         }
@@ -862,7 +935,7 @@ export class ConnectedProviders extends Context.Service<
       ) {
         if (!secrets.available) return yield* new ProviderRefusal({ message: noKey(provider) })
         const device = yield* deviceId
-        const credential = yield* Effect.tryPromise({
+        const signedIn = yield* Effect.tryPromise({
           try: (signal) =>
             apis.signIn(
               provider,
@@ -883,12 +956,28 @@ export class ConnectedProviders extends Context.Service<
               { getDeviceId: () => device, agentName: "kndl" },
             ),
           catch: (error) => new ProviderRefusal({ message: reasonOf(error) }),
-        })
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: signInTimeout,
+            orElse: () =>
+              Effect.fail(
+                new ProviderRefusal({ message: "The sign-in took too long; start again." }),
+              ),
+          }),
+        )
+        const credential: OAuthCredential = { ...signedIn, type: "oauth" }
+        if (!signInDomainTrusted(credential)) {
+          return yield* new ProviderRefusal({ message: enterpriseOnly })
+        }
         const auth = yield* Effect.tryPromise({
           try: () => apis.toAuth(provider, credential),
           catch: (error) => new ProviderRefusal({ message: reasonOf(error) }),
         })
-        const listed = yield* listModels(provider, auth, "SignIn")
+        const origin = signInOrigin(provider, credential, auth)
+        if (origin === undefined) {
+          return yield* new ProviderRefusal({ message: untrustedAddress(provider) })
+        }
+        const listed = yield* listModels(provider, origin, auth, "SignIn")
         yield* store(
           participantId,
           provider,
@@ -940,39 +1029,59 @@ export class ConnectedProviders extends Context.Service<
 
       // ── Calls ──────────────────────────────────────────────────────────
 
+      /** The Member's connection to the Provider, if it can take a call. */
+      const usable = (participantId: ParticipantId, provider: ModelProvider) =>
+        Effect.suspend(() => {
+          const connection = connectionOf(participantId, provider)
+          if (connection === undefined) return Effect.fail(notConnected(provider))
+          if (connection.problem !== undefined) {
+            return Effect.fail(unusable("Broken", connection.problem))
+          }
+          return Effect.succeed(connection)
+        })
+
+      /** Whether `connection` is still the Member's, refreshed or not: not connected again. */
+      const still = (participantId: ParticipantId, connection: Connection) =>
+        connectionOf(participantId, connection.provider)?.connectedAt === connection.connectedAt
+
       /**
        * The Member's connection to the Provider, its sign-in refreshed first if `due` says so, one
        * refresh at a time; the rotated credential kept. A refresh the Provider refuses is kept as
-       * the connection's problem.
+       * the connection's problem. Either is kept only on the connection it refreshed: one
+       * disconnected or connected again meanwhile is left as it is now, and is the answer.
        */
       const refreshed = (
         participantId: ParticipantId,
         provider: ModelProvider,
-        due: (credential: OAuthCredential, now: number) => boolean,
+        due: (connection: Connection, credential: OAuthCredential, now: number) => boolean,
       ): Effect.Effect<Connection, ProviderUnusable> => {
-        const usable = Effect.gen(function* () {
-          const connection = connectionOf(participantId, provider)
-          if (connection === undefined) return yield* notConnected(provider)
-          if (connection.problem !== undefined) {
-            return yield* unusable("Broken", connection.problem)
-          }
-          const { credential } = connection
+        const needed = Effect.fnUntraced(function* () {
+          const connection = yield* usable(participantId, provider)
           const now = yield* Clock.currentTimeMillis
-          return credential.type === "oauth" && due(credential, now)
-            ? { refresh: credential, connection }
-            : { connection }
+          const { credential } = connection
+          return {
+            connection,
+            now,
+            refresh:
+              credential.type === "oauth" && due(connection, credential, now)
+                ? credential
+                : undefined,
+          }
         })
         return Effect.gen(function* () {
-          const first = yield* usable
-          if (first.refresh === undefined || provider === "anthropic") return first.connection
-          return yield* lockOf(participantId, provider).withPermits(1)(
+          const first = yield* needed()
+          if (first.refresh === undefined) return first.connection
+          return yield* lockOf(participantId, first.connection.provider).withPermits(1)(
             Effect.gen(function* () {
               // Another call may have refreshed it meanwhile.
-              const { connection, refresh } = yield* usable
+              const { connection, now, refresh } = yield* needed()
               if (refresh === undefined) return connection
               const name = nameOf(provider)
+              if (!signInDomainTrusted(refresh)) {
+                return yield* unusable("Broken", untrustedAddress(connection.provider))
+              }
               const rotated = yield* Effect.tryPromise({
-                try: (signal) => apis.refresh(provider, refresh, signal),
+                try: (signal) => apis.refresh(connection.provider, refresh, signal),
                 catch: (error) => error,
               }).pipe(
                 Effect.timeoutOrElse({
@@ -990,26 +1099,46 @@ export class ConnectedProviders extends Context.Service<
                   )
                 }
                 const problem = `${name} refused to refresh the sign-in (${reason}): connect it again on the Account page.`
-                yield* sql`
+                const marked = yield* sql`
                   UPDATE connected_providers SET problem = ${problem}
-                  WHERE participant_id = ${participantId} AND provider = ${provider}
+                  WHERE participant_id = ${participantId} AND provider = ${connection.provider}
+                    AND connected_at = ${connection.connectedAt}
+                  RETURNING provider
                 `.pipe(Effect.orDie)
-                keep(participantId, { ...connection, problem })
+                const current = connectionOf(participantId, connection.provider)
+                if (
+                  marked.length === 0 ||
+                  current === undefined ||
+                  !still(participantId, connection)
+                ) {
+                  return yield* usable(participantId, provider)
+                }
+                keep(participantId, { ...current, problem })
                 yield* changed(participantId, false)
                 return yield* unusable("Broken", problem)
               }
               const credential: OAuthCredential = { ...rotated.success, type: "oauth" }
-              const ciphertext = yield* seal(participantId, provider, credential).pipe(
+              const ciphertext = yield* seal(participantId, connection.provider, credential).pipe(
                 Effect.mapError((error) => unusable("Unavailable", error.message)),
               )
-              yield* sql`
+              const stored = yield* sql`
                 UPDATE connected_providers SET credential = ${ciphertext}
-                WHERE participant_id = ${participantId} AND provider = ${provider}
+                WHERE participant_id = ${participantId} AND provider = ${connection.provider}
+                  AND connected_at = ${connection.connectedAt}
+                RETURNING provider
               `.pipe(Effect.orDie)
+              const current = connectionOf(participantId, connection.provider)
+              if (
+                stored.length === 0 ||
+                current === undefined ||
+                !still(participantId, connection)
+              ) {
+                retire(credential)
+                return yield* usable(participantId, provider)
+              }
               retire(connection.credential, credential)
-              const next = { ...connection, credential }
-              // Unless disconnected meanwhile.
-              if (connectionOf(participantId, provider) === connection) keep(participantId, next)
+              const next: Connection = { ...current, credential, refreshedAt: now }
+              keep(participantId, next)
               yield* changed(participantId, false)
               return next
             }),
@@ -1017,44 +1146,71 @@ export class ConnectedProviders extends Context.Service<
         })
       }
 
-      /** What a call with the connection goes with: a key itself, or what its sign-in derives. */
-      const callCredential = (connection: Connection) => {
-        const { credential } = connection
-        return Effect.map(
-          credential.type === "oauth"
-            ? Effect.tryPromise({
-                try: () => apis.toAuth(connection.provider, credential),
-                catch: (error) =>
-                  unusable(
-                    "Unavailable",
-                    `${nameOf(connection.provider)}'s sign-in can't be used: ${reasonOf(error)}`,
-                  ),
-              })
-            : Effect.succeed(keyAuth(credential) ?? {}),
-          (auth): CallCredential => ({
-            kind: connection.kind,
-            token: Redacted.make(tokenOf(credential)),
-            auth: Redacted.make(auth),
-          }),
-        )
-      }
+      /** Sends the call with the connection's credential: a key itself, or what its sign-in says. */
+      const sendWith = Effect.fnUntraced(function* (
+        connection: Connection,
+        call: ApiCall,
+        listing: boolean,
+      ) {
+        const { credential, provider } = connection
+        if (credential.type !== "oauth") {
+          return yield* send(apiOrigin(provider), keyAuth(credential) ?? {}, call, listing)
+        }
+        const auth = yield* Effect.tryPromise({
+          try: () => apis.toAuth(provider, credential),
+          catch: (error) =>
+            unusable(
+              "Unavailable",
+              `${nameOf(provider)}'s sign-in can't be used: ${reasonOf(error)}`,
+            ),
+        })
+        const origin = signInOrigin(provider, credential, auth)
+        if (origin === undefined || !signInDomainTrusted(credential)) {
+          return yield* unusable("Broken", untrustedAddress(provider))
+        }
+        return yield* send(origin, auth, call, listing)
+      })
 
-      const credentialFor = (participantId: ParticipantId, provider: ModelProvider) =>
-        refreshed(
+      const callWith = Effect.fnUntraced(function* (
+        participantId: ParticipantId,
+        provider: ModelProvider,
+        call: ApiCall,
+        listing: boolean,
+      ): Effect.fn.Return<Called, ProviderUnusable> {
+        const connection = yield* refreshed(
           participantId,
           provider,
-          (credential, now) => credential.expires - now < refreshAhead,
-        ).pipe(Effect.flatMap(callCredential), Effect.withSpan("ConnectedProviders.credentialFor"))
-
-      const rejected = (participantId: ParticipantId, provider: ModelProvider, token: string) =>
-        refreshed(participantId, provider, (credential) => credential.access === token).pipe(
-          Effect.flatMap((connection) =>
-            tokenOf(connection.credential) === token
-              ? Effect.succeed(Option.none<CallCredential>())
-              : Effect.map(callCredential(connection), Option.some),
+          (_connection, credential, now) => credential.expires - now < refreshAhead,
+        )
+        const first = yield* sendWith(connection, call, listing)
+        const { credential } = connection
+        if (
+          first._tag !== "Answered" ||
+          first.response.status !== 401 ||
+          credential.type !== "oauth" ||
+          call.body instanceof ReadableStream
+        ) {
+          return first
+        }
+        // Refreshed once however many calls it refused, and not again within a minute.
+        const refused = credential.access
+        const next = yield* Effect.option(
+          refreshed(
+            participantId,
+            provider,
+            (again, current, now) =>
+              current.access === refused &&
+              (again.refreshedAt === undefined || now - again.refreshedAt >= refreshedLately),
           ),
-          Effect.catchTag("ProviderUnusable", () => Effect.succeed(Option.none<CallCredential>())),
-          Effect.withSpan("ConnectedProviders.rejected"),
+        )
+        if (Option.isNone(next) || tokenOf(next.value.credential) === refused) return first
+        yield* discard(first.response)
+        return yield* sendWith(next.value, call, listing)
+      })
+
+      const call = (participantId: ParticipantId, provider: ModelProvider, request: ApiCall) =>
+        callWith(participantId, provider, request, false).pipe(
+          Effect.withSpan("ConnectedProviders.call"),
         )
 
       return ConnectedProviders.of({
@@ -1065,8 +1221,8 @@ export class ConnectedProviders extends Context.Service<
         disconnect,
         refreshModels,
         forget,
-        credentialFor,
-        rejected,
+        kindOf: (participantId, provider) => connectionOf(participantId, provider)?.kind,
+        call,
         values: () => [
           ...[...connections.values()].flatMap((held) =>
             [...held.values()].flatMap((connection) => secretsOf(connection.credential)),

@@ -66,6 +66,8 @@ export interface HubConfigInput {
   readonly webDir: string
   /** Where the Hub keeps the CLI binaries it builds, by commit (CliBuilds.ts). */
   readonly cliDir: string
+  /** Whether pi Sessions are offered Claude's Models, through the Claude bridge; true if unset. */
+  readonly claudeModels?: boolean
 }
 
 /** Where browsers reach the Hub: `HUB_PUBLIC_URL`, or the web UI's dev server. */
@@ -197,6 +199,12 @@ export class HubConfig extends Context.Service<
     readonly webDir: string
     /** Where the CLI binaries the Hub serves are built and kept: `cli/` in its home (CliBuilds.ts). */
     readonly cliDir: string
+    /**
+     * Whether pi Sessions are offered Claude's Models (ADR 0029), which run through the Claude
+     * bridge on the Creator's Claude credential: off, ModelCatalog lists none, for when Anthropic's
+     * billing of Claude Code's headless use changes.
+     */
+    readonly claudeModels: boolean
   }
 >()("@kndl/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -294,6 +302,7 @@ export class HubConfig extends Context.Service<
       secretsKey,
       webDir: input.webDir,
       cliDir: input.cliDir,
+      claudeModels: input.claudeModels ?? true,
     })
   })
 
@@ -304,7 +313,8 @@ export class HubConfig extends Context.Service<
    * git credentials, and the Sandbox gets no GitHub token), `KNDL_DEV_LOGIN` (off), `KNDL_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
    * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_REPO_ACCESS_TTL_MS` (5 minutes),
    * `HUB_MCP_SERVER_CHECK_TIMEOUT_MS` (5 seconds),
-   * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
+   * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved), `HUB_WEB_DIR` (DefaultWebDir) and
+   * `HUB_CLAUDE_MODELS` (on: `off` offers pi Sessions no Claude Models).
    * The CLI binaries go in `cli/` in the home (`KNDL_HOME`, or the dev home).
    */
   static readonly layer = Layer.effect(
@@ -348,6 +358,7 @@ export class HubConfig extends Context.Service<
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
         webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),
         cliDir: HomeConfig.pipe(Config.map((home) => join(home.dir, "cli"))),
+        claudeModels: Config.Boolean("HUB_CLAUDE_MODELS").pipe(Config.withDefault(true)),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),

@@ -3,9 +3,12 @@
 // through `/gateway/models/<provider>/…` with the Session's mod token, and `/mod/providers`.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { connect } from "node:net"
 import type { OAuthCredential } from "@earendil-works/pi-ai"
 import { Option, Redacted } from "effect"
 import { ProviderApis } from "./ConnectedProviders.ts"
+import type { ModelCallLimits } from "./Gateway.ts"
+import type { HubConfigInput } from "./HubConfig.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
   type Connection,
@@ -56,9 +59,16 @@ const oauth = (access: string, expiresIn = 60 * 60 * 1000): OAuthCredential => (
 
 /**
  * A Hub whose Providers are fakes, a Runner, and alice on the web with a Claude credential and a
- * Session: its StartSession, with the mod token.
+ * Session: its StartSession, with the mod token. A pi Session unless `harness` says Claude Code.
  */
-async function scene() {
+async function scene(
+  options: {
+    readonly harness?: "Pi" | "ClaudeCode"
+    readonly limits?: Partial<ModelCallLimits>
+    readonly idleTimeout?: number
+    readonly config?: Partial<HubConfigInput>
+  } = {},
+) {
   const seen: Array<Seen> = []
   const fakes = {
     seen,
@@ -68,12 +78,21 @@ async function scene() {
       throw new Error("No refresh here")
     },
     signIn: async (): Promise<OAuthCredential> => oauth("access-1"),
+    /** What the Hub's fetch was given besides the request. */
+    inits: [] as Array<unknown>,
   }
   const hub = await startHub({
-    config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    config: {
+      devLogin: true,
+      secretsKey: Option.some(Redacted.make(generateSecretsKey())),
+      ...options.config,
+    },
+    ...(options.limits !== undefined && { modelCallLimits: options.limits }),
+    ...(options.idleTimeout !== undefined && { idleTimeout: options.idleTimeout }),
     providerApis: ProviderApis.layerTest({
-      fetch: async (input) => {
+      fetch: async (input, init) => {
         const url = new URL(input.url)
+        fakes.inits.push(init)
         seen.push({
           method: input.method,
           url: input.url,
@@ -95,7 +114,9 @@ async function scene() {
       refresh: (_provider, credential) => fakes.refresh(credential),
     }),
   })
-  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
+    harnesses: options.harness === "ClaudeCode" ? ["ClaudeCode"] : ["ClaudeCode", "Pi"],
+  })
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
   const start = await startSession(web, runner)
@@ -141,6 +162,36 @@ const call = (hub: TestHub, path: string, token: string, init: RequestInit = {})
       ...bearer(token),
       ...init.headers,
     },
+  })
+
+/** Whether `check` holds within two seconds. */
+async function eventually(check: () => boolean | Promise<boolean>) {
+  for (let tries = 0; tries < 100; tries++) {
+    if (await check()) return true
+    await Bun.sleep(20)
+  }
+  return check()
+}
+
+/**
+ * A model call's status, sent over a socket with its path exactly as written: fetch would tidy
+ * away `..` and its encodings.
+ */
+const rawPost = (hub: TestHub, path: string, token: string) =>
+  new Promise<number>((resolve, reject) => {
+    const { hostname, port } = new URL(hub.url)
+    const socket = connect(Number(port), hostname, () => {
+      socket.write(
+        `POST ${path} HTTP/1.1\r\nHost: ${hostname}\r\nAuthorization: Bearer ${token}\r\n` +
+          `Content-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
+      )
+    })
+    let answer = ""
+    socket.on("data", (chunk) => {
+      answer += chunk.toString()
+    })
+    socket.on("end", () => resolve(Number(/^HTTP\/1\.1 (\d{3})/.exec(answer)?.[1] ?? 0)))
+    socket.on("error", reject)
   })
 
 describe("the Gateway's model calls", () => {
@@ -279,38 +330,271 @@ describe("the Gateway's model calls", () => {
     expect(fakes.seen.filter((seen) => !seen.url.includes("anthropic"))).toEqual([])
   })
 
-  test("refresh a sign-in that expires soon before the call, and once more after a 401", async () => {
+  test("refresh a sign-in that expires soon before the call", async () => {
     const { hub, web, start, fakes } = await scene()
     await signIn(web, fakes, oauth("access-1", 60 * 1000))
     let refreshes = 0
     fakes.refresh = async () => oauth(`access-${++refreshes + 1}`)
     fakes.seen.length = 0
 
-    // Near expiry: refreshed first.
     const first = await call(hub, "/openai/v1/responses", start.modToken)
     expect(first.status).toBe(200)
     expect(fakes.seen.map((seen) => seen.headers.authorization)).toEqual(["Bearer access-2"])
+  })
+
+  test("refresh a sign-in the Provider refuses and send the call once more, but not again within a minute", async () => {
+    const { hub, web, start, fakes } = await scene()
+    await signIn(web, fakes, oauth("access-1"))
+    let refreshes = 0
+    fakes.refresh = async () => oauth(`access-${++refreshes + 1}`)
+    fakes.seen.length = 0
 
     // The Provider refuses the token: refreshed, and the call sent once more, body and all.
-    fakes.seen.length = 0
     fakes.answer = (request) =>
-      request.headers.get("authorization") === "Bearer access-2"
+      request.headers.get("authorization") === "Bearer access-1"
         ? Response.json({ error: { message: "expired" } }, { status: 401 })
         : Response.json({ ok: true })
-    const second = await call(hub, "/openai/v1/responses", start.modToken)
-    expect(second.status).toBe(200)
+    const first = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(first.status).toBe(200)
     expect(fakes.seen.map((seen) => [seen.headers.authorization, seen.body])).toEqual([
+      ["Bearer access-1", body],
       ["Bearer access-2", body],
-      ["Bearer access-3", body],
     ])
+    expect(refreshes).toBe(1)
 
-    // Refused again: the Provider's 401 is the answer, and it isn't sent a third time.
+    // Refused again, within a minute of its refresh: the Provider's 401 is the answer, with no
+    // refresh, so a Sandbox can't hammer the Provider's token endpoint.
     fakes.seen.length = 0
     fakes.answer = () => Response.json({ error: { message: "nope" } }, { status: 401 })
-    const third = await call(hub, "/openai/v1/responses", start.modToken)
-    expect(third.status).toBe(401)
-    expect(fakes.seen).toHaveLength(2)
+    for (let each = 0; each < 3; each++) {
+      const refused = await call(hub, "/openai/v1/responses", start.modToken)
+      expect(refused.status).toBe(401)
+      expect(await refused.json()).toEqual({ error: { message: "nope" } })
+    }
+    expect(fakes.seen).toHaveLength(3)
+    expect(refreshes).toBe(1)
   })
+
+  test("send only the inference and model-listing calls pi makes: anything else is a 403", async () => {
+    const { hub, web, start, fakes } = await scene()
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "google", apiKey: "google-key" })
+    fakes.seen.length = 0
+    for (const [method, path] of [
+      ["POST", "/openai/v1/files"],
+      ["GET", "/openai/v1/files"],
+      ["POST", "/openai/v1/batches"],
+      ["POST", "/openai/v1/fine_tuning/jobs"],
+      ["DELETE", "/openai/v1/models/ft:gpt-6"],
+      ["GET", "/openai/v1/responses"],
+      ["POST", "/google/v1beta/files"],
+      ["POST", "/google/v1beta/cachedContents"],
+    ] as const) {
+      const refused = await call(hub, path, start.modToken, {
+        method,
+        ...(method !== "POST" && { body: null }),
+      })
+      expect([method, path, refused.status]).toEqual([method, path, 403])
+      expect(await refused.json()).toEqual({
+        error: { message: expect.stringMatching(/only.*model calls/i) },
+      })
+    }
+    expect(fakes.seen).toEqual([])
+
+    const listed = await call(hub, "/openai/v1/models", start.modToken, {
+      method: "GET",
+      body: null,
+    })
+    expect(listed.status).toBe(200)
+    expect(fakes.seen.map((seen) => seen.url)).toEqual(["https://api.openai.com/v1/models"])
+  })
+
+  test("never send a call off the Provider's origin, however its path is written", async () => {
+    const { hub, web, start, fakes } = await scene()
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    fakes.seen.length = 0
+    for (const path of [
+      "/openai//evil.example/v1/responses",
+      "/openai/%2F%2Fevil.example/v1/responses",
+      "/openai/v1/%2fresponses",
+      "/openai/@evil.example/v1/responses",
+      "/openai@evil.example/v1/responses",
+    ]) {
+      const refused = await call(hub, path, start.modToken)
+      expect([path, refused.status >= 400 && refused.status < 500]).toEqual([path, true])
+    }
+    expect(fakes.seen).toEqual([])
+
+    // Sent as written, past what fetch would tidy: the Hub's server resolves the dot segments
+    // before the Gateway sees the path, which is checked and sent as resolved.
+    for (const path of [
+      "/gateway/models/openai/v1/responses/../files",
+      "/gateway/models/openai/v1/%2e%2e/v1/files",
+      "/gateway/models/openai/../../gateway/models/openai/v1/batches",
+    ]) {
+      const status = await rawPost(hub, path, start.modToken)
+      expect([path, status >= 400 && status < 500]).toEqual([path, true])
+    }
+    expect(fakes.seen).toEqual([])
+    const resolved = await rawPost(hub, "/gateway/models/openai/v1/x/../responses", start.modToken)
+    expect(resolved).toBe(200)
+    expect(fakes.seen.map((seen) => seen.url)).toEqual(["https://api.openai.com/v1/responses"])
+  })
+
+  test("refuse a Claude Code Session's model calls: only pi Sessions spend Connected providers", async () => {
+    const { hub, web, start, fakes } = await scene({ harness: "ClaudeCode" })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    fakes.seen.length = 0
+    const refused = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({
+      error: { message: expect.stringMatching(/pi Session/) },
+    })
+    expect(fakes.seen).toEqual([])
+  })
+
+  test("run a few model calls of a Session at once, and answer more with a 429", async () => {
+    const { hub, web, start, fakes } = await scene({ limits: { perSession: 2 } })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    const ends: Array<() => void> = []
+    fakes.answer = () => {
+      const end = Promise.withResolvers<void>()
+      ends.push(end.resolve)
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode("data: {}\n\n"))
+            await end.promise
+            controller.close()
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    }
+    const first = await call(hub, "/openai/v1/responses", start.modToken)
+    const second = await call(hub, "/openai/v1/responses", start.modToken)
+    expect([first.status, second.status]).toEqual([200, 200])
+
+    const third = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(third.status).toBe(429)
+    expect(await third.json()).toEqual({
+      error: { message: expect.stringMatching(/2 model calls/) },
+    })
+
+    // One ends: there's room for another.
+    ends[0]?.()
+    await first.text()
+    expect(
+      await eventually(async () => {
+        const next = await call(hub, "/openai/v1/responses", start.modToken)
+        if (next.status === 200) await next.body?.cancel()
+        return next.status === 200
+      }),
+    ).toBe(true)
+
+    // The client gives one up: there's room again.
+    await second.body?.cancel()
+    expect(
+      await eventually(async () => {
+        const next = await call(hub, "/openai/v1/responses", start.modToken)
+        if (next.status === 200) await next.body?.cancel()
+        return next.status === 200
+      }),
+    ).toBe(true)
+    for (const end of ends) end()
+  })
+
+  test("hold a sign-in's request bodies, to send again, up to what the Hub holds at once", async () => {
+    const { hub, web, start, fakes } = await scene({
+      limits: { heldBytes: 1000, requestBytes: 800 },
+    })
+    await signIn(web, fakes, oauth("access-1"))
+    const big = JSON.stringify({ input: "x".repeat(580) })
+    const answered = Promise.withResolvers<void>()
+    let calls = 0
+    fakes.answer = async () => {
+      if (++calls === 1) await answered.promise
+      return Response.json({ ok: true })
+    }
+    // The first call's body is held while its Provider thinks.
+    const first = call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    await eventually(() => calls === 1)
+    const second = await call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    expect(second.status).toBe(503)
+    expect(await second.json()).toEqual({ error: { message: expect.stringMatching(/holding/i) } })
+    answered.resolve()
+    expect((await first).status).toBe(200)
+    // Let go once its answer came.
+    const third = await call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    expect(third.status).toBe(200)
+  })
+
+  test("stream an API key's request bodies, which are never sent again, so the Hub holds none", async () => {
+    const { hub, web, start, fakes } = await scene({
+      limits: { heldBytes: 1000, requestBytes: 800 },
+    })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    const big = JSON.stringify({ input: "x".repeat(580) })
+    const answered = Promise.withResolvers<void>()
+    let calls = 0
+    fakes.answer = async () => {
+      if (++calls === 1) await answered.promise
+      return Response.json({ ok: true })
+    }
+    const first = call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    await eventually(() => calls === 1)
+    const second = await call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    expect(second.status).toBe(200)
+    answered.resolve()
+    expect((await first).status).toBe(200)
+  })
+
+  test("refuse a request body larger than the Gateway takes, said or streamed", async () => {
+    const { hub, web, start, fakes } = await scene({ limits: { requestBytes: 800 } })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    const tooBig = JSON.stringify({ input: "x".repeat(900) })
+    const said = await call(hub, "/openai/v1/responses", start.modToken, { body: tooBig })
+    expect(said.status).toBe(413)
+    expect(await said.json()).toEqual({ error: { message: expect.any(String) } })
+
+    const streamed = await call(hub, "/openai/v1/responses", start.modToken, {
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let each = 0; each < 10; each++) {
+            controller.enqueue(new TextEncoder().encode("x".repeat(100)))
+          }
+          controller.close()
+        },
+      }),
+    })
+    expect(streamed.status).toBe(413)
+
+    await signIn(web, fakes, oauth("access-1"))
+    const held = await call(hub, "/openai/v1/responses", start.modToken, { body: tooBig })
+    expect(held.status).toBe(413)
+  })
+
+  test("keep a model stream past the Hub's idle timeout, with no timeout of its own upstream", async () => {
+    const { hub, web, start, fakes } = await scene({ idleTimeout: 1 })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    fakes.inits.length = 0
+    fakes.answer = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            // Longer than Bun's idle timeout of 1 second, as it counts it.
+            await Bun.sleep(5500)
+            controller.enqueue(new TextEncoder().encode('data: {"late":true}\n\n'))
+            controller.close()
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    const response = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(response.status).toBe(200)
+    expect(await response.text()).toContain('{"late":true}')
+    expect(fakes.inits).toEqual([expect.objectContaining({ timeout: false, decompress: false })])
+  }, 20_000)
 
   test("a refresh the Provider refuses is a 403 saying to connect again", async () => {
     const { hub, web, start, fakes } = await scene()
@@ -362,6 +646,23 @@ describe("GET /mod/providers", () => {
 
     const refused = await fetch(`${hub.url}/mod/providers`, { headers: bearer("nope") })
     expect(refused.status).toBe(401)
+  })
+
+  test("lists no Claude Models on a Hub with the Claude bridge off (HUB_CLAUDE_MODELS=off)", async () => {
+    const { hub, web, start } = await scene({
+      harness: "ClaudeCode",
+      config: { claudeModels: false },
+    })
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    const answer = (await (
+      await fetch(`${hub.url}/mod/providers`, { headers: bearer(start.modToken) })
+    ).json()) as { models: Array<{ provider: string; id: string }> }
+    expect(answer.models.length).toBeGreaterThan(0)
+    expect(answer.models.filter((model) => model.provider === "anthropic")).toEqual([])
+    const state = await ask(web, { _tag: "GetProviders" })
+    expect(state).toMatchObject({ _tag: "ProvidersState" })
+    const models = (state as unknown as { models: Array<{ provider: string }> }).models
+    expect(models.filter((model) => model.provider === "anthropic")).toEqual([])
   })
 
   test("says which Providers are signed in, whose requests the extension keeps to what a sign-in takes", async () => {

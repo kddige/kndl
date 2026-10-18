@@ -22,6 +22,7 @@ import { CliBuilds } from "./CliBuilds.ts"
 import { ProviderApis } from "./ConnectedProviders.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
+import { ModelCallLimits } from "./Gateway.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, hubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
@@ -200,6 +201,10 @@ export async function startHub(
     readonly clockAhead?: Duration.Duration
     /** The Models each Member's pi Sessions can run (ADR 0029); by default none, for anyone. */
     readonly modelCatalog?: Layer.Layer<ModelCatalog>
+    /** How much of the Hub model calls may take (ModelCallLimits); by default the Hub's own. */
+    readonly modelCallLimits?: Partial<ModelCallLimits>
+    /** How long Bun keeps a quiet connection open, in seconds; by default the Hub's. */
+    readonly idleTimeout?: number
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -209,7 +214,7 @@ export async function startHub(
       BunHttpServer.layer({
         hostname: "127.0.0.1",
         port: 0,
-        idleTimeout: idleTimeoutSeconds,
+        idleTimeout: options.idleTimeout ?? idleTimeoutSeconds,
         websocket: websocketOptions,
       }),
     ),
@@ -232,6 +237,14 @@ export async function startHub(
     ),
     Layer.provideMerge(
       options.clockAhead === undefined ? Layer.empty : clockAhead(options.clockAhead),
+    ),
+    Layer.provideMerge(
+      options.modelCallLimits === undefined
+        ? Layer.empty
+        : Layer.succeed(ModelCallLimits, {
+            ...ModelCallLimits.defaultValue(),
+            ...options.modelCallLimits,
+          }),
     ),
   )
   const scope = Scope.makeUnsafe()
