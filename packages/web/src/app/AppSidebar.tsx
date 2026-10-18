@@ -1,6 +1,5 @@
 import {
   type AgentSummary,
-  type BuildVersion,
   describeBuild,
   MaxSessionNameLength,
   type SessionId,
@@ -31,6 +30,7 @@ import {
   Menu,
   MenuGroup,
   MenuItem,
+  MenuSeparator,
   MoreIcon,
   NavItem,
   NavSection,
@@ -71,12 +71,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     fontVariantNumeric: "tabular-nums",
   },
-  version: {
-    color: color.textSubtle,
-    fontSize: text.xs,
-    fontFamily: font.mono,
-    userSelect: "text",
-  },
+  version: { fontFamily: font.mono, userSelect: "text" },
   you: {
     display: "flex",
     alignItems: "center",
@@ -114,17 +109,6 @@ const styles = stylex.create({
     width: "1rem",
   },
 })
-
-/**
- * The version tag (ADR 0025): the Release on `stable`, `dev-` and the commit on `dev`, and `ref-`
- * and the commit on what `--ref` pinned, which clears the Channel. An install from before Channels
- * records none and follows main, so it's `dev` too.
- */
-function versionTag({ release, branch, channel, commit }: BuildVersion): string {
-  if (release !== undefined && channel !== "dev") return release
-  const dev = channel === "dev" || (channel === undefined && branch === "main")
-  return `${dev ? "dev" : "ref"}-${commit.slice(0, 9)}`
-}
 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
 function sectionOf(
@@ -202,13 +186,6 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
           )}
         </>
       }
-      aboveFooter={
-        hubVersion && (
-          <p title={describeBuild(hubVersion)} {...stylex.props(styles.version)}>
-            {versionTag(hubVersion)}
-          </p>
-        )
-      }
       footer={
         <>
           {runners && (
@@ -241,6 +218,21 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
                   Sign out
                 </MenuItem>
               </MenuGroup>
+              {hubVersion && (
+                <>
+                  <MenuSeparator />
+                  {/* The kndl the Hub runs, whole: what to quote in a bug report. */}
+                  <MenuGroup
+                    label={
+                      <span {...stylex.props(styles.version)}>
+                        kndl {describeBuild(hubVersion)}
+                      </span>
+                    }
+                  >
+                    {null}
+                  </MenuGroup>
+                </>
+              )}
             </Menu>
           )}
         </>

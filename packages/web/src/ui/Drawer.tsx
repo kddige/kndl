@@ -52,8 +52,9 @@ const styles = stylex.create({
       default: "none",
       [MOTION_OK]: {
         default: "none",
-        "[data-starting-style]": "translateX(-100%)",
-        "[data-ending-style]": "translateX(-100%)",
+        // From the inline start: the left, or the right in a right-to-left page.
+        "[data-starting-style]": { default: "translateX(-100%)", ":dir(rtl)": "translateX(100%)" },
+        "[data-ending-style]": { default: "translateX(-100%)", ":dir(rtl)": "translateX(100%)" },
       },
     },
     opacity: {

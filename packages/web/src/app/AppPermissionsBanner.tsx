@@ -18,9 +18,9 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s1_5,
     margin: 0,
-    paddingLeft: space.s4,
+    paddingInlineStart: space.s4,
   },
-  item: { paddingLeft: space.s0_5 },
+  item: { paddingInlineStart: space.s0_5 },
   name: { fontWeight: weight.semibold },
   link: {
     display: "inline-flex",

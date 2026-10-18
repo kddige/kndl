@@ -34,9 +34,9 @@ const styles = stylex.create({
   sidebar: {
     flexShrink: 0,
     width: "16rem",
-    borderRightWidth: "1px",
-    borderRightStyle: "solid",
-    borderRightColor: color.border,
+    borderInlineEndWidth: "1px",
+    borderInlineEndStyle: "solid",
+    borderInlineEndColor: color.border,
   },
   main: {
     display: "flex",

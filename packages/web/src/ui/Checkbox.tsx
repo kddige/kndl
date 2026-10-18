@@ -90,7 +90,10 @@ const styles = stylex.create({
     height: "0.75rem",
     borderRadius: radius.full,
     backgroundColor: color.onAccent,
-    transform: { default: "translateX(0)", "[data-checked]": "translateX(0.75rem)" },
+    transform: {
+      default: "translateX(0)",
+      "[data-checked]": { default: "translateX(0.75rem)", ":dir(rtl)": "translateX(-0.75rem)" },
+    },
     transitionProperty: "transform",
     transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,

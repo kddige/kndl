@@ -94,7 +94,7 @@ const styles = stylex.create({
   // With the thumb inset at the ends, its centre runs from half a thumb in to half a thumb short
   // of the end: the dots sit where it stops.
   dotAt: (fraction: number) => ({
-    left: `calc(${thumb} / 2 + (100% - ${thumb}) * ${fraction})`,
+    insetInlineStart: `calc(${thumb} / 2 + (100% - ${thumb}) * ${fraction})`,
   }),
   thumb: {
     width: thumb,

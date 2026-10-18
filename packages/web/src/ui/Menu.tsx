@@ -6,6 +6,8 @@ import { popup } from "./shared.ts"
 import { color, space, text } from "./tokens.stylex.ts"
 
 const styles = stylex.create({
+  // It points to the inline end, whichever way the page reads.
+  submenuChevron: { transform: { default: "none", ":dir(rtl)": "scaleX(-1)" } },
   /** A row with a second line under its label. */
   itemTwoLine: {
     paddingBlock: space.s1_5,
@@ -227,7 +229,7 @@ export function MenuSubmenu({ label, value, disabled = false, children, sx }: Me
         {label}
         <span {...stylex.props(styles.end)}>
           {value}
-          <ChevronRightIcon />
+          <ChevronRightIcon {...stylex.props(styles.submenuChevron)} />
         </span>
       </BaseMenu.SubmenuTrigger>
       <BaseMenu.Portal>

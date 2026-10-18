@@ -58,6 +58,8 @@ const styles = stylex.create({
   chevron: {
     flexShrink: 0,
     color: color.textSubtle,
+    // Closed, it points to the inline end, whichever way the page reads.
+    transform: { default: "none", ":dir(rtl)": "scaleX(-1)" },
     transitionProperty: "transform",
     transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,

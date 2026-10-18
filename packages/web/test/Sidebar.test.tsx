@@ -123,7 +123,7 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
   ])
   expect(current()).toEqual(["claude/readme-run"])
   // No single "Sessions" heading over them, and no links out to GitHub.
-  expect([...(nav()?.querySelectorAll("div[id]") ?? [])].map((el) => el.textContent)).toEqual([
+  expect([...(nav()?.querySelectorAll("h2[id]") ?? [])].map((el) => el.textContent)).toEqual([
     "kddige/dotfiles",
     "kddige/kndl",
   ])

@@ -1,7 +1,7 @@
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import * as stylex from "@stylexjs/stylex"
-import { type ReactElement, type ReactNode, useId } from "react"
+import { type ReactElement, type ReactNode, useEffect, useId, useRef } from "react"
 import { IconButton } from "./Button.tsx"
 import { ChevronRightIcon } from "./icons.tsx"
 import { navRow } from "./markers.stylex.ts"
@@ -57,6 +57,19 @@ const styles = stylex.create({
     overscrollBehavior: "contain",
     paddingBlock: space.s2,
     paddingInline: space.s2,
+    // A shade at an edge only while there's more past it: two covers in the Sidebar's own fill
+    // scroll with the list and hide the shades, which stay put.
+    backgroundColor: color.surface,
+    backgroundImage: [
+      `linear-gradient(${color.surface} 30%, transparent)`,
+      `linear-gradient(transparent, ${color.surface} 70%)`,
+      `radial-gradient(farthest-side at 50% 0, ${color.borderStrong}, transparent)`,
+      `radial-gradient(farthest-side at 50% 100%, ${color.borderStrong}, transparent)`,
+    ].join(", "),
+    backgroundPosition: "0 0, 0 100%, 0 0, 0 100%",
+    backgroundSize: "100% 2.5rem, 100% 2.5rem, 100% 0.75rem, 100% 0.75rem",
+    backgroundRepeat: "no-repeat",
+    backgroundAttachment: "local, local, scroll, scroll",
   },
   footer: {
     display: "flex",
@@ -77,10 +90,7 @@ const styles = stylex.create({
     fontSize: text.xs,
     fontWeight: weight.medium,
     color: color.textSubtle,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    userSelect: "none",
+    overflowWrap: "anywhere",
   },
   list: {
     display: "flex",
@@ -210,6 +220,8 @@ const styles = stylex.create({
   },
   chevron: {
     color: color.textSubtle,
+    // Closed, it points to the inline end, whichever way the page reads.
+    transform: { default: "none", ":dir(rtl)": "scaleX(-1)" },
     transitionProperty: "transform",
     transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
@@ -261,8 +273,8 @@ export function Sidebar({ label, header, children, aboveFooter, footer, sx }: Si
 
 export interface NavSectionProps {
   /**
-   * A short heading over the section, such as a Repo's `owner/name`; cut short when too long, with
-   * the whole of it as a tooltip. Omit it for the top section.
+   * A short heading over the section, such as a Repo's `owner/name`, wrapping when too long. Omit
+   * it for the top section.
    */
   label?: string
   /** NavItems. */
@@ -275,9 +287,9 @@ export function NavSection({ label, children }: NavSectionProps) {
   return (
     <div {...stylex.props(styles.section)}>
       {label && (
-        <div id={id} title={label} {...stylex.props(styles.sectionLabel)}>
+        <h2 id={id} {...stylex.props(styles.sectionLabel)}>
           {label}
-        </div>
+        </h2>
       )}
       <ul {...(label && { "aria-labelledby": id })} {...stylex.props(styles.list)}>
         {children}
@@ -341,9 +353,15 @@ export function NavItem({
 }: NavItemProps) {
   const nestedId = useId()
   const iconSlot = icon && <span {...stylex.props(styles.slot)}>{icon}</span>
+  // Where you are is never hidden past the list's edge: the current row scrolls into view.
+  const linkRef = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    if (current) linkRef.current?.scrollIntoView?.({ block: "nearest" })
+  }, [current])
   const link = useRender({
     defaultTagName: "a",
     render,
+    ref: linkRef,
     props: mergeProps<"a">(
       {
         ...stylex.props(
