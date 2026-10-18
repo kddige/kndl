@@ -75,6 +75,22 @@ const refuse = (client: ProviderWebClient, message: Command, why: string) =>
     CommandFailed.make({ command: message._tag, requestId: message.requestId, message: why }),
   )
 
+/** Answers the command's refusal, or the Hub's failure, to the web client. */
+const answeringFailures =
+  (client: ProviderWebClient, message: Command) =>
+  <R>(effect: Effect.Effect<void, ProviderRefusal | SqlError, R>) =>
+    effect.pipe(
+      Effect.catchTags({
+        ProviderRefusal: (refused) => Effect.sync(() => refuse(client, message, refused.message)),
+        SqlError: (error) =>
+          Effect.logError("A Connected provider command failed", error).pipe(
+            Effect.andThen(
+              Effect.sync(() => refuse(client, message, "The Hub could not do that; try again.")),
+            ),
+          ),
+      }),
+    )
+
 export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRelayHost) {
   const providers = yield* ConnectedProviders
   const scope = yield* Effect.scope
@@ -178,22 +194,6 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         Effect.forkIn(scope),
       )
   })
-
-  /** Answers the command's refusal, or the Hub's failure, to the web client. */
-  const answeringFailures =
-    (client: ProviderWebClient, message: Command) =>
-    <R>(effect: Effect.Effect<void, ProviderRefusal | SqlError, R>) =>
-      effect.pipe(
-        Effect.catchTags({
-          ProviderRefusal: (refused) => Effect.sync(() => refuse(client, message, refused.message)),
-          SqlError: (error) =>
-            Effect.logError("A Connected provider command failed", error).pipe(
-              Effect.andThen(
-                Effect.sync(() => refuse(client, message, "The Hub could not do that; try again.")),
-              ),
-            ),
-        }),
-      )
 
   /**
    * Runs a command that waits on a Provider, up to a minute, off the web client's other

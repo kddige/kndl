@@ -466,6 +466,10 @@ interface Row {
   readonly problem: string | null
 }
 
+/** A connection's refresh lock's key. */
+const lockKey = (participantId: ParticipantId, provider: ProviderId) =>
+  `${participantId}\n${provider}`
+
 /** What a credential is encrypted with, so a ciphertext can't be moved to another person. */
 const contextOf = (participantId: ParticipantId, provider: ProviderId) =>
   `connected-provider:${participantId}:${provider}`
@@ -694,9 +698,6 @@ export class ConnectedProviders extends Context.Service<
 
       const changed = (participantId: ParticipantId, answered: boolean) =>
         PubSub.publish(published, { participantId, answered })
-
-      const lockKey = (participantId: ParticipantId, provider: ProviderId) =>
-        `${participantId}\n${provider}`
 
       const lockOf = (participantId: ParticipantId, provider: ProviderId) => {
         const key = lockKey(participantId, provider)

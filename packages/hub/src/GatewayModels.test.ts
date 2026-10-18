@@ -556,7 +556,7 @@ describe("the Gateway's model calls", () => {
     await signIn(web, fakes, oauth("access-1"))
     const chunk = new TextEncoder().encode("x".repeat(300))
     const sent = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
-    const body = new ReadableStream<Uint8Array>({
+    const streamed = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(chunk)
         sent.resolve(controller)
@@ -571,7 +571,7 @@ describe("the Gateway's model calls", () => {
             path: "/v1/responses",
             headers: new Headers({ "content-type": "application/json" }),
             keyHeader: "authorization",
-            body,
+            body: streamed,
           }),
         )
         yield* Effect.sleep(50)
@@ -603,7 +603,7 @@ describe("the Gateway's model calls", () => {
     }
     expect((await call(hub, "/openai/v1/responses", start.modToken)).status).toBe(403)
     let pulled = 0
-    const body = new ReadableStream<Uint8Array>({
+    const pulling = new ReadableStream<Uint8Array>({
       pull(controller) {
         if (++pulled > 3) controller.close()
         else controller.enqueue(new TextEncoder().encode("{}"))
@@ -616,7 +616,7 @@ describe("the Gateway's model calls", () => {
           path: "/v1/responses",
           headers: new Headers({ "content-type": "application/json" }),
           keyHeader: "authorization",
-          body,
+          body: pulling,
         }),
       ),
     )
