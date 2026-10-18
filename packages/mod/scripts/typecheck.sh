@@ -25,7 +25,9 @@ bun run build >/dev/null
 env -u KNDL_URL -u KNDL_SESSION_ID -u KNDL_MOD_TOKEN -u KNDL_CONVERSATION_ID \
   CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude --plugin-dir plugins/hub-link \
   --plugin-dir plugins/hub-link-commands --strict-mcp-config -p /cost >/dev/null
-# Each plugin, against the mod runtime only; then the Bun unit tests, against Bun.
+# Each plugin, against the mod runtime only; then the Bun unit tests, against Bun; then the pi
+# extension, against pi's own declarations.
 tsc --noEmit -p plugins/hub-link
 tsc --noEmit -p plugins/hub-link-commands
 tsc --noEmit -p tsconfig.spec.json
+tsc --noEmit -p pi

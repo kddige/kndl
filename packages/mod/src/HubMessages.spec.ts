@@ -25,6 +25,7 @@ import {
   repliedPrefix,
   resultSummary,
   sharedSessionNote,
+  sharedSessionNoteFor,
   startsDelivered,
   steeredPrompt,
   taskNotificationAgent,
@@ -199,6 +200,25 @@ test("helloBody says hello in the protocol's shape: this mod steers (#195), and 
     model: "claude-test",
     steers: true,
     attaches: true,
+  } as never)
+})
+
+test("helloBody says a mod that switches models so (ADR 0029): a pi Session's", () => {
+  const body = helloBody({
+    sessionId: "s1",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    model: "openai/gpt-test",
+    switchesModels: true,
+  })
+  expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
+    _tag: "ModHello",
+    protocolVersion: ProtocolVersion,
+    sessionId: "s1",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    model: "openai/gpt-test",
+    steers: true,
+    attaches: true,
+    switchesModels: true,
   } as never)
 })
 
@@ -553,6 +573,14 @@ describe("attachments (#276)", () => {
     expect(context).toContain("Image #1 shot.png: id att-1")
     expect(context).toContain("Image #2 photo.jpg: id att-2")
     expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
+  })
+
+  test("another Harness names its own attachment tool in what Claude is told (ADR 0029)", () => {
+    const context = attachmentContext([shot], "attachment")
+    expect(context).toContain("by calling attachment once per file")
+    expect(context).not.toContain(attachmentToolName)
+    expect(sharedSessionNoteFor("attachment")).toContain("call attachment with its id")
+    expect(sharedSessionNoteFor(attachmentToolName)).toBe(sharedSessionNote)
   })
 
   test("a steered prompt marks its files inside the frame, for Claude to open by marker alone (#278)", () => {

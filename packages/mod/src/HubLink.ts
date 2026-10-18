@@ -14,6 +14,7 @@
 
 import { MaxCommandWaitMs } from "@kndl/protocol"
 import type { ModCommand } from "@kndl/protocol"
+import type { HelloFields } from "./HubMessages.ts"
 import {
   checkEvent,
   eventsBody,
@@ -44,12 +45,11 @@ export interface HubLinkOptions {
   readonly hubUrl: string
   /** The Session's mod token. */
   readonly modToken: string
-  /** What the hello says. */
-  readonly hello: {
-    readonly sessionId: string
-    readonly conversationId: string
-    readonly model: string
-  }
+  /**
+   * What the hello says; a function is read each time it says hello, as when the Hub restarted
+   * since a pi Session switched its model.
+   */
+  readonly hello: HelloFields | (() => HelloFields)
   readonly fetch: HubFetch
   /**
    * Calls `fn` once, `ms` from now, on its own: not in the dispatch of the hook that asked, which a
@@ -150,7 +150,9 @@ export class HubLink {
       response = await this.options.fetch(`${this.url}/mod/hello`, {
         method: "POST",
         headers: this.headers,
-        body: helloBody(this.options.hello),
+        body: helloBody(
+          typeof this.options.hello === "function" ? this.options.hello() : this.options.hello,
+        ),
       })
     } catch (error) {
       this.options.log(`hub-link: hello failed: ${error}`)

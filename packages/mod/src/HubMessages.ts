@@ -41,15 +41,20 @@ export const clip = (text: string, max = MaxToolSummaryLength) => {
   return `${text.slice(0, Math.max(0, kept))}${clipNote(text.length - Math.max(0, kept))}`
 }
 
+/** What a mod's hello says of it. */
+export interface HelloFields {
+  readonly sessionId: string
+  readonly conversationId: string
+  readonly model: string
+  /** It takes a SwitchModel (ADR 0029): kndl's pi extension does, the Claude Code plugins don't. */
+  readonly switchesModels?: true
+}
+
 /**
  * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), and marks the
  * files of a steered prompt, a message to a subagent and a reply (#278).
  */
-export const helloBody = (hello: {
-  readonly sessionId: string
-  readonly conversationId: string
-  readonly model: string
-}) =>
+export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
   JSON.stringify(
     Schema.encodeSync(ModHello)(
       Schema.decodeUnknownSync(ModHello)({
@@ -58,6 +63,7 @@ export const helloBody = (hello: {
         ...hello,
         steers: true,
         attaches: true,
+        ...(switchesModels === true && { switchesModels }),
       }),
     ),
   )
@@ -235,12 +241,15 @@ export const deliveredPrompt = (
  * What Claude reads beside a prompt with files, and the people never see: to open each one before
  * answering. The marker alone would do; this makes sure it isn't skipped.
  */
-export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>) => {
+export const attachmentContext = (
+  attachments: ReadonlyArray<MarkedFile>,
+  toolName: string = attachmentToolName,
+) => {
   const labels = attachmentLabels(attachments)
   const files = attachments.map((file, index) => `${labels[index]} ${file.name}: id ${file.id}`)
   return [
     `This message has ${attachmentCount(attachments)} attached. Look at each before you answer,`,
-    `by calling ${attachmentToolName} once per file with its id: ${files.join("; ")}.`,
+    `by calling ${toolName} once per file with its id: ${files.join("; ")}.`,
   ].join(" ")
 }
 
@@ -324,17 +333,22 @@ export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): Attachmen
 
 /**
  * What the model is told about the Session being shared, in the system prompt: others watch, and
- * only the person who started it drives it (ADR 0026).
+ * only the person who started it drives it (ADR 0026); with the name its Harness gives the
+ * attachment tool.
  */
-export const sharedSessionNote = [
-  "This session is shared through kndl: other people may watch it, and your subagents, live in a",
-  "web UI, but only the person who started it sends it prompts, answers your questions, and",
-  "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
-  '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
-  "You run in a sandbox VM where the repository is checked out. A line such as",
-  '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
-  `a file its sender attached: to see it, call ${attachmentToolName} with its id.`,
-].join(" ")
+export const sharedSessionNoteFor = (toolName: string) =>
+  [
+    "This session is shared through kndl: other people may watch it, and your subagents, live in a",
+    "web UI, but only the person who started it sends it prompts, answers your questions, and",
+    "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
+    '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
+    "You run in a sandbox VM where the repository is checked out. A line such as",
+    '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
+    `a file its sender attached: to see it, call ${toolName} with its id.`,
+  ].join(" ")
+
+/** {@link sharedSessionNoteFor} the Claude Code plugins' attachment tool. */
+export const sharedSessionNote = sharedSessionNoteFor(attachmentToolName)
 
 /**
  * Whether a Turn that starts with `text` is the one a delivered prompt, `delivered`, started.
