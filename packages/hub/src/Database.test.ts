@@ -7,6 +7,7 @@ import {
   ConversationId,
   EnvironmentVersion,
   ParticipantId,
+  RunnerId,
   SessionId,
 } from "@kndl/protocol"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
@@ -44,12 +45,22 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0040, pi-ai's vocabulary (ADR 0029): the migrator
+ * Takes the database back to before migration 0042, a Session's Harness (ADR 0029): the migrator
  * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
- * The JSON it rewrote is left as it is: a test inserts what it needs after this.
+ */
+const beforeSessionHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE sessions DROP COLUMN harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0040, pi-ai's vocabulary (ADR 0029), and 0042. The
+ * JSON it rewrote is left as it is: a test inserts what it needs after this.
  */
 const beforeNeutralVocabulary = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeSessionHarness
   yield* sql`ALTER TABLE sessions RENAME COLUMN thinking_level TO effort`
   yield* sql`ALTER TABLE sessions RENAME COLUMN conversation_id TO claude_session_id`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'neutral_vocabulary'`
@@ -303,6 +314,53 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0042, a Session's Harness", () => {
+  test("a Session from before runs Claude Code, and a new one keeps its Harness", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeSessionHarness
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, 'sonnet')
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const pi = yield* sessions.create({
+          id: SessionId.make("s-2"),
+          repo: "o/r",
+          baseBranch: "main",
+          workBranch: "claude/s-2",
+          state: "Active",
+          runnerId: RunnerId.make("r-1"),
+          creatorId: ParticipantId.make("p-1"),
+          createdAt: 2,
+          harness: "Pi",
+          model: "openai/gpt-6-sol",
+        })
+        const before = Option.getOrThrow(yield* sessions.get(SessionId.make("s-1")))
+        return { before, pi }
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(after.before).not.toHaveProperty("harness")
+    expect(after.before.model).toBe("sonnet")
+    expect(after.pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol" })
+  })
+})
 
 describe("migration 0040, pi-ai's vocabulary", () => {
   test("keeps each Session's history, thinking level and conversation, in pi-ai's names", async () => {

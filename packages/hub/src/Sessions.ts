@@ -4,6 +4,7 @@ import {
   type AgentSummary,
   ConversationId,
   EnvironmentVersion,
+  Harness,
   installationsDiffer,
   ModelName,
   OpenQuestion,
@@ -35,6 +36,8 @@ export interface NewSession {
   /** The Creator, a signed-in Participant: it runs on their Claude credential (ADR 0026). */
   readonly creatorId: ParticipantId
   readonly createdAt: number
+  /** What runs its agent (ADR 0029), for life; absent for Claude Code. */
+  readonly harness?: Harness
   /** Its model and thinking level (#128); absent for Claude Code's default. */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
@@ -76,6 +79,7 @@ interface SessionRow {
   readonly environmentVersion: number | null
   readonly latestEnvironmentVersion: number | null
   readonly lastOutput: string | null
+  readonly harness: string | null
   readonly model: string | null
   readonly thinkingLevel: string | null
   readonly modelPending: number
@@ -103,6 +107,7 @@ export interface Archiving {
 
 const decodeState = Schema.decodeUnknownSync(SessionState)
 const decodeAgentStatus = Schema.decodeUnknownSync(AgentStatus)
+const decodeHarness = Schema.decodeUnknownOption(Harness)
 const decodeModel = Schema.decodeUnknownOption(ModelName)
 const decodeThinkingLevel = Schema.decodeUnknownOption(ThinkingLevel)
 const decodeConversationId = Schema.decodeUnknownOption(ConversationId)
@@ -112,6 +117,15 @@ const encodeOpenQuestion = Schema.encodeSync(OpenQuestionJson)
 const InstallationsJson = Schema.fromJsonString(Schema.Array(SessionInstallation))
 const decodeInstallations = Schema.decodeUnknownOption(InstallationsJson)
 const encodeInstallations = Schema.encodeSync(InstallationsJson)
+
+/**
+ * The Harness a row holds (ADR 0029), said only when it isn't Claude Code, as for a Session from
+ * before, whose is null.
+ */
+const harnessOf = (row: { readonly harness: string | null }): { readonly harness?: Harness } => {
+  const harness = Option.getOrUndefined(decodeHarness(row.harness))
+  return harness === undefined || harness === "ClaudeCode" ? {} : { harness }
+}
 
 /** The model and thinking level a row holds, without a value the Hub would no longer take. */
 const settingOf = (row: {
@@ -171,6 +185,7 @@ const toSummary = (
     }),
     // Only an Asleep Session's: once it is woken, what its last Claude Code printed is history.
     ...(row.lastOutput !== null && row.state === "Asleep" && { lastOutput: row.lastOutput }),
+    ...harnessOf(row),
     ...settingOf(row),
     ...(row.modelPending !== 0 && { modelPending: true }),
     ...(row.keepAwakeById !== null &&
@@ -403,7 +418,7 @@ export class Sessions extends Context.Service<
               SELECT e.version, e.repo, e.repo = s.repo AS exact FROM environments e
               WHERE e.repo = s.repo COLLATE NOCASE
             ) ORDER BY exact DESC, repo LIMIT 1) AS latestEnvironmentVersion,
-          s.last_output AS lastOutput, s.model, s.thinking_level AS thinkingLevel,
+          s.last_output AS lastOutput, s.harness, s.model, s.thinking_level AS thinkingLevel,
           s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
@@ -436,12 +451,12 @@ export class Sessions extends Context.Service<
       const create = Effect.fn("Sessions.create")(function* (session: NewSession) {
         yield* sql`
           INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model,
-            thinking_level
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, harness,
+            model, thinking_level
           ) VALUES (
             ${session.id}, ${session.repo}, ${session.baseBranch}, ${session.workBranch},
             ${session.state}, ${session.runnerId}, ${session.creatorId}, ${session.createdAt},
-            ${session.model ?? null}, ${session.thinkingLevel ?? null}
+            ${session.harness ?? null}, ${session.model ?? null}, ${session.thinkingLevel ?? null}
           )
         `
         return Option.getOrThrow(yield* get(session.id))

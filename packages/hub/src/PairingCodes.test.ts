@@ -257,6 +257,7 @@ describe("Runners", () => {
             updater: null,
             models: null,
             sysinfo: null,
+            harnesses: null,
           },
         ])
 
@@ -286,6 +287,7 @@ describe("Runners", () => {
             updater,
             models,
             sysinfo: null,
+            harnesses: null,
           }),
         )
 

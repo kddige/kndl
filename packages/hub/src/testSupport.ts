@@ -40,6 +40,7 @@ import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
+import { ModelCatalog } from "./ModelCatalog.ts"
 import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
 
@@ -121,6 +122,7 @@ export type Services =
   | HubVersion
   | HubUpdates
   | HubUpdateRuns
+  | ModelCatalog
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
@@ -191,6 +193,8 @@ export async function startHub(
     readonly mcpServerIcons?: Layer.Layer<McpServerIcons>
     /** How far ahead of the time it is the Hub's clock reads, as after a long time down. */
     readonly clockAhead?: Duration.Duration
+    /** The Models each Member's pi Sessions can run (ADR 0029); by default none, for anyone. */
+    readonly modelCatalog?: Layer.Layer<ModelCatalog>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -206,6 +210,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.modelCatalog ?? ModelCatalog.fixed([])),
     Layer.provideMerge(options.hubUpdateRuns ?? HubUpdateRuns.off),
     Layer.provideMerge(options.hubUpdates ?? HubUpdates.off),
     Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),

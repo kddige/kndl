@@ -790,6 +790,11 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`UPDATE runners SET models = NULL`
   }),
+  // What runs a Session's agent (ADR 0029): null for a Session from before, which runs Claude Code.
+  "0042_session_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN harness TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

@@ -1,5 +1,5 @@
 import { MaxCommandWaitMs } from "@kndl/protocol"
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { AttachmentRoutes } from "./AttachmentRoutes.ts"
 import { Attachments } from "./Attachments.ts"
 import { AuthRoutes } from "./AuthRoutes.ts"
@@ -19,6 +19,7 @@ import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServerOAuthRoutes } from "./McpServerOAuthRoutes.ts"
 import { McpServers } from "./McpServers.ts"
 import { Members } from "./Members.ts"
+import { ModelCatalog } from "./ModelCatalog.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -63,8 +64,9 @@ export const HubRoutes = Layer.mergeAll(
  * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
  * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
  * Claude credentials (ClaudeCheck), where MCP server packages are read from (McpServerSources.ts),
- * the Hub's version (HubVersion.ts), its check for a newer kndl (HubUpdates.ts) and the updates
- * its Owner starts from the web (HubUpdateRuns.ts).
+ * the Hub's version (HubVersion.ts), its check for a newer kndl (HubUpdates.ts), the updates
+ * its Owner starts from the web (HubUpdateRuns.ts) and the Models each Member's pi Sessions can
+ * run (ModelCatalog.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   // How a request reaches an Installation's MCP server (#254): for a Session's start, and the
@@ -106,6 +108,12 @@ export const HubServices = SessionRelay.layer.pipe(
   // refuses to start.
   Layer.provideMerge(Secrets.layer),
 )
+
+// Replaced by ConnectedProviders' ModelCatalog layer
+/** The Models each Member's pi Sessions can run (ADR 0029): none, until the Hub connects Providers. */
+export const ModelCatalogPlaceholder = Layer.succeed(ModelCatalog, {
+  modelsFor: () => Effect.succeed([]),
+})
 
 /**
  * How long Bun keeps a quiet connection open, in seconds. Bun's default of 10 would cut off the

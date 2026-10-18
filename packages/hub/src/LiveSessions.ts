@@ -157,6 +157,8 @@ interface Pieces {
   readonly steers: SessionSet
   /** Sessions whose mod said in its hello that it marks files beyond prompts (#278). */
   readonly attaches: SessionSet
+  /** Sessions whose mod said in its hello that it takes a SwitchModel (ADR 0029). */
+  readonly switchesModels: SessionSet
   /**
    * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
    * Prompts wait for that hello.
@@ -256,15 +258,22 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
    */
   readonly relaunched: (id: SessionId) => void
   /**
-   * The Session's mod said hello, saying whether it steers (#195) and marks the files of a steered
-   * prompt, a message to a subagent or a reply (#278): prompts may go to it.
+   * The Session's mod said hello, saying whether it steers (#195), marks the files of a steered
+   * prompt, a message to a subagent or a reply (#278), and switches models (ADR 0029): prompts
+   * may go to it.
    */
   readonly modHello: (
     id: SessionId,
-    hello: { readonly steers: boolean; readonly attaches: boolean },
+    hello: {
+      readonly steers: boolean
+      readonly attaches: boolean
+      readonly switchesModels: boolean
+    },
   ) => void
   /** Whether the Session's mod said it marks the files of a message or a reply (#278). */
   readonly modAttaches: (id: SessionId) => boolean
+  /** Whether the Session's mod said it takes a SwitchModel (ADR 0029). */
+  readonly modSwitchesModels: (id: SessionId) => boolean
 
   // ── Steering (ADR 0018) ──
 
@@ -429,6 +438,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steering",
     "steers",
     "attaches",
+    "switchesModels",
     "starting",
     "starts",
     "openPorts",
@@ -451,6 +461,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steering",
     "steers",
     "attaches",
+    "switchesModels",
     "starting",
     "starts",
     "openPorts",
@@ -473,6 +484,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steering",
     "steers",
     "attaches",
+    "switchesModels",
     // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
     // drops off before it stops it leaves nothing to show after a restore.
     "openPorts",
@@ -489,10 +501,10 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // A start under way is settled by what it says when it is back, too.
     "starts",
     "restarts",
-    // `inFlight`, `starting`, `steering`, `steers`, `installationTrouble` and the streams are
-    // kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its own,
-    // so they stay true while it is Frozen. A Runner back without it ends them with ClaudeGone.
-    // Going Frozen clears `openPorts`.
+    // `inFlight`, `starting`, `steering`, the mod's flags, `installationTrouble` and the streams
+    // are kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its
+    // own, so they stay true while it is Frozen. A Runner back without it ends them with
+    // ClaudeGone. Going Frozen clears `openPorts`.
   ],
   // Nothing is left of it: whatever another way left behind goes too.
   Purged: [
@@ -500,6 +512,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steering",
     "steers",
     "attaches",
+    "switchesModels",
     "starting",
     "stopping",
     "restarting",
@@ -534,6 +547,7 @@ export const makeLiveSessions = (): LiveSessions => {
     steering: new Map(),
     steers: new Set(),
     attaches: new Set(),
+    switchesModels: new Set(),
     starting: new Set(),
     stopping: new Map(),
     restarting: new Map(),
@@ -582,14 +596,17 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.steering.delete(id)
       pieces.starting.add(id)
     },
-    modHello: (id, { steers, attaches }) => {
+    modHello: (id, { steers, attaches, switchesModels }) => {
       if (steers) pieces.steers.add(id)
       else pieces.steers.delete(id)
       if (attaches) pieces.attaches.add(id)
       else pieces.attaches.delete(id)
+      if (switchesModels) pieces.switchesModels.add(id)
+      else pieces.switchesModels.delete(id)
       pieces.starting.delete(id)
     },
     modAttaches: (id) => pieces.attaches.has(id),
+    modSwitchesModels: (id) => pieces.switchesModels.has(id),
     steer: (id, { promptId, by, turnRunning, queued, hasAttachments }) => {
       const verdict = steerVerdict({
         queued,
