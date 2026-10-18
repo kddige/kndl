@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { ConversationId, InstallationId, type SessionId } from "@kndl/protocol"
-import { claudeLaunch, gatewayMcpServers, HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
+import { claudeLaunch, gatewayMcpServers } from "./ClaudeLaunch.ts"
+import { HarnessVariable, ModEnvironment } from "./HarnessEnvironment.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 test("the mod's plugins read every variable the Runner sets for them, by the same name", async () => {

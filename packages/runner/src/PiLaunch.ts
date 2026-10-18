@@ -5,22 +5,13 @@
 // pi reaches every Provider through the Hub's Gateway, on the Session token alone, so a pi Session
 // runs without its Creator's Claude credential. When it has one, pi gets it too, with the pinned
 // Claude Code, which the extension's Claude bridge runs for Claude's Models: on pi's own process
-// alone (`tmux -e`), as Claude Code gets it (ClaudeEnvironment.ts). pi passes its environment on to
-// Claude Code, so what is kept out of Claude Code's is kept out of pi's, and so is every Provider's
-// key pi-ai would call that Provider with itself, around the Gateway.
+// alone (`tmux -e`), as Claude Code gets it. pi passes its environment on to Claude Code, so what is
+// kept out of Claude Code's is kept out of pi's, and so is every Provider's key pi-ai would call
+// that Provider with itself, around the Gateway (HarnessEnvironment.ts).
 
 import { posix } from "node:path"
-import {
-  type ClaudeCredential,
-  type GatewayServer,
-  type ModelName,
-  PiProviderKeyVariables,
-  type SessionId,
-  type ThinkingLevel,
-} from "@kndl/protocol"
-import { Redacted } from "effect"
-import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvironment.ts"
-import { HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
+import type { GatewayServer, ModelName, SessionId, ThinkingLevel } from "@kndl/protocol"
+import { HarnessVariable, ModEnvironment } from "./HarnessEnvironment.ts"
 import { claudeStateEnv } from "./sandbox/ClaudeState.ts"
 import { piExtension, piStateGuestPath } from "./sandbox/SessionLayout.ts"
 
@@ -113,46 +104,5 @@ export function piLaunch(options: PiLaunchOptions): PiLaunch {
         ? {}
         : { ...claudeStateEnv, [ClaudeCodeVariable]: options.claudePath }),
     },
-  }
-}
-
-/** What pi is kept from whatever its Creator has: Claude Code's, and every Provider's key. */
-const keptOutOfAnyPi: ReadonlyArray<string> = [
-  ...new Set([...KeptOutOfClaude, ...PiProviderKeyVariables]),
-]
-
-/**
- * The variables kept out of pi's own process's environment: {@link KeptOutOfClaude}; every
- * Provider key variable pi-ai reads ({@link PiProviderKeyVariables}), so pi reaches a Provider
- * through the Gateway alone, never on a key from a Variable (ADR 0029); and, without its Creator's
- * Claude credential, a setup token from anywhere else, as from a Variable, which would have the
- * Claude bridge spend someone else's (ADR 0026).
- */
-export const keptOutOfPi = (credential: ClaudeCredential | undefined): ReadonlyArray<string> =>
-  credential === undefined ? [...keptOutOfAnyPi, ClaudeTokenVariable] : keptOutOfAnyPi
-
-/**
- * The environment pi and its extension run with in the Sandbox: `base`, what the Sandbox and the
- * launch give it, less {@link keptOutOfPi}, then the relay and the Session token for the
- * extension, and, when the Creator has one, their Claude credential for the Claude bridge, with
- * what keeps Claude Code quiet.
- */
-export function piEnvironment(options: {
-  readonly base: Readonly<Record<string, string>>
-  /** The relay as the guest reaches it, such as `http://host.microsandbox.internal:7778`. */
-  readonly relayUrl: string
-  readonly sessionToken: Redacted.Redacted<string>
-  /** The Session's Creator's, when the Hub gave it as the Session started or woke. */
-  readonly credential?: ClaudeCredential
-}): Record<string, string> {
-  const env: Record<string, string> = { ...options.base }
-  for (const name of keptOutOfPi(options.credential)) delete env[name]
-  return {
-    ...env,
-    [ModEnvironment.hubUrl]: options.relayUrl,
-    [ModEnvironment.modToken]: Redacted.value(options.sessionToken),
-    ...(options.credential === undefined
-      ? {}
-      : { ...QuietClaude, [ClaudeTokenVariable]: Redacted.value(options.credential.token) }),
   }
 }

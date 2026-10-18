@@ -13,7 +13,7 @@
 // - streams every response back as it comes, with no buffering and no idle timeout: the mod's
 //   command polls wait up to 25 s, and an MCP answer streams for as long as its tool runs.
 //
-// Claude Code talks to Anthropic itself, on its Creator's Claude credential (ClaudeEnvironment.ts):
+// Claude Code talks to Anthropic itself, on its Creator's Claude credential (HarnessEnvironment.ts):
 // nothing for Anthropic comes here. The relay never logs a mod token or a Session token.
 
 import type { SessionId } from "@kndl/protocol"

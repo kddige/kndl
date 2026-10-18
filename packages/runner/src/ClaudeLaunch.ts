@@ -7,29 +7,8 @@ import {
   type SessionId,
   type ThinkingLevel,
 } from "@kndl/protocol"
+import { HarnessVariable, ModEnvironment } from "./HarnessEnvironment.ts"
 import { gatewayPlugin, modPlugins } from "./sandbox/SessionLayout.ts"
-
-/**
- * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
- * the mod relay's and the Session token (ClaudeEnvironment.ts); the launch sets the rest.
- *
- * The conversation is the one Claude Code was launched as. A `claude` run inside the Session
- * inherits all of them, but is another conversation, which the mod doesn't link (#321).
- */
-export const ModEnvironment = {
-  hubUrl: "KNDL_URL",
-  sessionId: "KNDL_SESSION_ID",
-  modToken: "KNDL_MOD_TOKEN",
-  conversationId: "KNDL_CONVERSATION_ID",
-} as const
-
-/**
- * The variable that says which Harness a Session's process is (ADR 0029): `Pi` for pi, and
- * `ClaudeCode` for Claude Code. Read back from it after a Runner restart, as its Session token is,
- * to know how to start it again, its Harness being able to change while it runs (ADR 0030). A
- * Claude Code started before pi has none.
- */
-export const HarnessVariable = "KNDL_HARNESS"
 
 export interface ClaudeLaunchOptions {
   /** Claude Code's executable in the Sandbox. */

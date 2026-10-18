@@ -25,9 +25,9 @@ import {
 } from "@kndl/protocol"
 import { devHome } from "@kndl/protocol/home"
 import { Effect, Layer, Redacted } from "effect"
-import { claudeEnvironment, KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { modelProbeFlags, PinnedClaudeModels, probeModels } from "./ClaudeModels.ts"
+import { harnessEnvironment } from "./HarnessEnvironment.ts"
 import { HubLink } from "./HubLink.ts"
 import { makeModRelay, serveModRelay } from "./relay/ModRelay.ts"
 import { makeSessionTokens, SessionTokens } from "./relay/SessionTokens.ts"
@@ -114,7 +114,8 @@ test.skipIf(!enabled)(
         conversation: { _tag: "New", id: conversation },
         model: "haiku",
       })
-      const env = claudeEnvironment({
+      const { env, unset } = harnessEnvironment({
+        harness: "ClaudeCode",
         base: { ...started.claude.env, ...launch.env },
         relayUrl: relay.guestUrl,
         sessionToken,
@@ -125,7 +126,7 @@ test.skipIf(!enabled)(
         cwd: workspaceGuestPath,
         argv: launch.argv,
         env,
-        unset: KeptOutOfClaude,
+        unset,
         size: { cols: 120, rows: 40 },
       })
 

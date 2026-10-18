@@ -12,7 +12,7 @@
 // glibc build everywhere else, such as on Debian (spike #46). An Environment's build checks its
 // image and records which one its Sandboxes use; Sandboxes without an Environment boot the
 // default Alpine image and use the musl build. Nothing here gives the Sandbox a Claude credential:
-// the launch sets its Creator's setup token on Claude Code's own process (ClaudeEnvironment.ts).
+// the launch sets its Creator's setup token on Claude Code's own process (HarnessEnvironment.ts).
 
 import { createHash } from "node:crypto"
 import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"

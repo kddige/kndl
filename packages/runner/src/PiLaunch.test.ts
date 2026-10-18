@@ -1,25 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { dirname, join } from "node:path"
-import { findEnvKeys } from "@earendil-works/pi-ai/compat"
-import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all"
-import {
-  type ClaudeCredential,
-  credentialFromSecret,
-  type GatewayServer,
-  PiProviderKeyVariables,
-  type SessionId,
-} from "@kndl/protocol"
-import { Redacted } from "effect"
-import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
-import { HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
-import {
-  keptOutOfPi,
-  McpServersVariable,
-  piEnvironment,
-  piLaunch,
-  PiSessionIdPattern,
-} from "./PiLaunch.ts"
-import { PinnedPiVersion } from "./sandbox/SandboxPi.ts"
+import type { GatewayServer, SessionId } from "@kndl/protocol"
+import { HarnessVariable, ModEnvironment } from "./HarnessEnvironment.ts"
+import { McpServersVariable, piLaunch, PiSessionIdPattern } from "./PiLaunch.ts"
 
 const options = {
   nodePath: "/opt/kndl/pi/node-v24.22.0-musl/bin/node",
@@ -29,12 +11,6 @@ const options = {
   mod: "/opt/kndl/mod/m1",
   conversationId: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
 } as const
-
-// Fake only: shaped like a setup token, valid nowhere.
-const setupToken = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
-const credential = credentialFromSecret(setupToken) as ClaudeCredential
-const sessionToken = Redacted.make("chp_session")
-const relayUrl = "http://host.microsandbox.internal:7778"
 
 describe("piLaunch", () => {
   test("runs pi's TUI on the bundle's Node.js, with the mod's extension and the Repo's .pi/", () => {
@@ -112,90 +88,5 @@ describe("piLaunch", () => {
     expect(PiSessionIdPattern.test("-rm")).toBe(false)
     expect(PiSessionIdPattern.test("a b")).toBe(false)
     expect(HarnessVariable).toBe("KNDL_HARNESS")
-  })
-})
-
-describe("piEnvironment", () => {
-  test("gives the extension the relay and the Session token, and the bridge the Creator's setup token", () => {
-    expect(
-      piEnvironment({ base: { LANG: "C.UTF-8" }, relayUrl, sessionToken, credential }),
-    ).toEqual({
-      LANG: "C.UTF-8",
-      KNDL_URL: relayUrl,
-      KNDL_MOD_TOKEN: "chp_session",
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      DISABLE_AUTOUPDATER: "1",
-      CLAUDE_CODE_OAUTH_TOKEN: setupToken,
-    })
-  })
-
-  test("without a Claude credential, gives pi no setup token, not even a Variable's", () => {
-    expect(
-      piEnvironment({
-        base: { LANG: "C.UTF-8", CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-from-a-Variable" },
-        relayUrl,
-        sessionToken,
-      }),
-    ).toEqual({ LANG: "C.UTF-8", KNDL_URL: relayUrl, KNDL_MOD_TOKEN: "chp_session" })
-  })
-
-  test("keeps out what would sign Claude Code in another way, as pi passes its environment on", () => {
-    const base = Object.fromEntries(KeptOutOfClaude.map((name) => [name, "from a Variable"]))
-    for (const given of [credential, undefined]) {
-      const env = piEnvironment({
-        base,
-        relayUrl,
-        sessionToken,
-        ...(given === undefined ? {} : { credential: given }),
-      })
-      for (const name of KeptOutOfClaude) expect(env).not.toHaveProperty(name)
-    }
-  })
-})
-
-describe("keptOutOfPi", () => {
-  test("keeps out every Provider key variable pi-ai reads, so pi reaches Providers through the Gateway alone", () => {
-    const fromVariables = {
-      LANG: "C.UTF-8",
-      OPENAI_API_KEY: "sk-from-a-Variable",
-      GEMINI_API_KEY: "from a Variable",
-      COPILOT_GITHUB_TOKEN: "from a Variable",
-      ANTHROPIC_OAUTH_TOKEN: "from a Variable",
-      HF_TOKEN: "from a Variable",
-    }
-    for (const given of [credential, undefined]) {
-      const kept = keptOutOfPi(given)
-      for (const name of PiProviderKeyVariables) expect(kept).toContain(name)
-      const env = piEnvironment({
-        base: fromVariables,
-        relayUrl,
-        sessionToken,
-        ...(given === undefined ? {} : { credential: given }),
-      })
-      expect(env["LANG"]).toBe("C.UTF-8")
-      for (const name of Object.keys(fromVariables).filter((each) => each !== "LANG"))
-        expect(env).not.toHaveProperty(name)
-    }
-  })
-
-  test("names each variable once", () => {
-    for (const given of [credential, undefined]) {
-      const kept = keptOutOfPi(given)
-      expect(new Set(kept).size).toBe(kept.length)
-    }
-  })
-
-  test("the Provider key variables are pi-ai's, as the pi the Runner pins has it", async () => {
-    const piAi = dirname(dirname(Bun.resolveSync("@earendil-works/pi-ai", import.meta.dir)))
-    const { version } = (await Bun.file(join(piAi, "package.json")).json()) as { version: string }
-    expect(version).toBe(PinnedPiVersion)
-    // With every variable set, pi-ai finds each of a Provider's key variables.
-    const everything = new Proxy({}, { get: () => "set" }) as Record<string, string>
-    const read = new Set(
-      [...getBuiltinProviders(), "radius"].flatMap(
-        (provider) => findEnvKeys(provider, everything) ?? [],
-      ),
-    )
-    expect([...read].toSorted()).toEqual([...PiProviderKeyVariables].toSorted())
   })
 })
