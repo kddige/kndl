@@ -52,7 +52,7 @@ const pi = await Bun.build({
   entrypoints: [join(root, "pi/src/index.ts")],
   target: "node",
   format: "esm",
-  external: ["@earendil-works/*", "typebox"],
+  external: ["@earendil-works/*"],
 })
 if (!pi.success) {
   for (const message of pi.logs) console.error(message)

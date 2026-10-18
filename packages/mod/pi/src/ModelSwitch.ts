@@ -1,8 +1,9 @@
 // A pi Session's SwitchModel (ADR 0029): the Hub asks for one of its Creator's Models, and pi runs
-// the next Turns on it. The extension registered the Models `/mod/providers` listed when pi
-// started, so a Provider the Creator connected since has none in pi yet: the switch asks the Hub
-// again, registers what it lists, and tries once more. When it still can't, it says why, and the
-// Session keeps the model it ran on (`ModelSwitchFailed`).
+// the next Turns on it. The extension pointed pi at the Gateway for the Models `/mod/providers`
+// listed when pi started, so one of a Provider the Creator connected since isn't there yet: when
+// pi has no model of that name through kndl, the switch asks the Hub again, registers what it
+// lists, and tries once more. When it still can't, it says why (`ModelSwitchFailed`), and the Hub
+// keeps the Session on the model it ran on.
 //
 // pi has built-in models for every Provider, which call the Provider directly with whatever key
 // pi finds, such as a Variable's. A Session runs only on those kndl gave pi: the Gateway's, and

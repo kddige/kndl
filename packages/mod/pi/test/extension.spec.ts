@@ -165,10 +165,15 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     running = startPi(
       home,
       hub,
+      // With a Repo extension of its own, loaded after kndl's, which handles some prompts itself.
       [
-        ...["--no-session", "--no-skills", "--no-context-files", "--model", "openai/gpt-4.1"],
-        // A Repo extension of its own, loaded after kndl's, which handles some prompts itself.
-        ...["-e", join(import.meta.dir, "fixtures", "swallow.js")],
+        "--no-session",
+        "--no-skills",
+        "--no-context-files",
+        "--model",
+        "openai/gpt-4.1",
+        "-e",
+        join(import.meta.dir, "fixtures", "swallow.js"),
       ],
       { KNDL_MCP_SERVERS: JSON.stringify([{ installationId: "inst-1", server: "linear" }]) },
     )
@@ -290,7 +295,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       text: "[swallow] this",
       sender: ada,
     }
-    for (const _delivery of [1, 2]) {
+    for (let delivery = 1; delivery <= 2; delivery++) {
       const from = hub.events.length
       hub.send(swallowed)
       const events = await hub.eventsUntil(from, (event) => event._tag === "PromptFailed")
