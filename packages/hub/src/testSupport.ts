@@ -41,7 +41,7 @@ import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
-import { ModelCatalog } from "./ModelCatalog.ts"
+import type { ModelCatalog } from "./ModelCatalog.ts"
 import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
 

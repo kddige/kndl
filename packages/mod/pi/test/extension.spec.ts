@@ -458,7 +458,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     )
     // The agent's request went through the Gateway, with the Session token, knowing only its task.
     const child = hub.gatewayRequests[requests + 1]
-    expect(child?.path).toBe("/gateway/models/openai/responses")
+    expect(child?.path).toBe("/gateway/models/openai/v1/responses")
     expect(child?.authorization).toBe(`Bearer ${modToken}`)
     const asked = JSON.stringify(child?.body)
     expect(asked).toContain("Count the files here.")
