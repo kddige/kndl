@@ -9,6 +9,7 @@ import {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react"
+import { notSent } from "../app/copy.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { QuestionPicksState } from "../hub/store.ts"
 import type { QuestionView } from "../hub/transcript.ts"
@@ -25,7 +26,6 @@ import {
   InfoIcon,
   Input,
   PencilIcon,
-  toast,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, leading, radius, shadow, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -204,7 +204,7 @@ export function QuestionDock({
           ? {
               onAnswer: (answer: QuestionAnswerFromWeb) => {
                 const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
-                if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                if (!sent) notSent("Answer")
                 return sent
               },
               onPick,

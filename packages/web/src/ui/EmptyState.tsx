@@ -10,7 +10,10 @@ export interface EmptyStateProps {
   description?: ReactNode
   /** A 16px icon, shown enlarged in a tile. */
   icon?: ReactNode
-  /** The next step, usually one primary Button. */
+  /**
+   * The next step, usually one primary Button. A failure's empty state always offers a way out,
+   * such as Try again.
+   */
   action?: ReactNode
   /** `compact` inside a panel or list; `page` when it's the whole view. */
   size?: "compact" | "page"

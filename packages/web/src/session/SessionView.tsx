@@ -13,6 +13,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { notSent } from "../app/copy.ts"
 import {
   day,
   environmentChanged,
@@ -255,7 +256,7 @@ function LoadedSession({
     if (runningAgents === 0) interruption.go()
     else setConfirming(interruption)
   }
-  const asked = useRestart(summary, () => command(hub.restartSession(summary.id)))
+  const asked = useRestart(summary, () => command("Restart", hub.restartSession(summary.id)))
   const restart: Restart = {
     asked: asked.asked,
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
@@ -319,7 +320,9 @@ function LoadedSession({
     setPicked({ from, to: next, sent: false })
     const go = () =>
       setPicked(
-        command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
+        command("Model change", hub.setSessionModel(summary.id, next))
+          ? { from, to: next, sent: true }
+          : null,
       )
     const cancel = () => setPicked(null)
     const to = harnessOfModel(next.model)
@@ -391,6 +394,7 @@ function LoadedSession({
   const send = (prompt: string, attachments: ReadonlyArray<AttachmentId>) =>
     asking
       ? command(
+          "Reply",
           hub.answerQuestion(
             summary.id,
             asking.toolCallId,
@@ -398,7 +402,7 @@ function LoadedSession({
             attachments,
           ),
         )
-      : command(hub.sendPrompt(summary.id, prompt, attachments))
+      : command("Prompt", hub.sendPrompt(summary.id, prompt, attachments))
   const attach = (file: File, options: UploadOptions) =>
     hub.uploadAttachment(summary.id, file, options)
   // A prompt can be steered into a Turn the Hub has running and isn't stopping (#195). One being
@@ -426,11 +430,11 @@ function LoadedSession({
 
   // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it.
   const remove = () => {
-    if (!command(hub.archiveSession(summary.id))) return
+    if (!command("Delete", hub.archiveSession(summary.id))) return
     toast.show({
       title: "Session deleted",
       description: `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
-      action: { label: "Undo", onAction: () => command(hub.restoreSession(summary.id)) },
+      action: { label: "Undo", onAction: () => command("Restore", hub.restoreSession(summary.id)) },
     })
     void navigate({ to: "/" })
   }
@@ -449,9 +453,11 @@ function LoadedSession({
               defaultValue={title}
               placeholder={summary.workBranch}
               maxLength={MaxSessionNameLength}
+              // A rename that isn't sent keeps the field open, with what was typed.
               onCommit={(typed) => {
-                setRenaming(false)
-                renameSession(hub, summary, typed)
+                const sent = renameSession(hub, summary, typed)
+                if (sent) setRenaming(false)
+                return sent
               }}
               onCancel={() => setRenaming(false)}
               sx={[styles.nameField, fieldText.title]}
@@ -511,7 +517,9 @@ function LoadedSession({
                   <Switch
                     label="Keep awake"
                     checked={summary.keepAwake !== undefined}
-                    onCheckedChange={(on) => command(hub.setKeepAwake(summary.id, on))}
+                    onCheckedChange={(on) =>
+                      command("Keep awake", hub.setKeepAwake(summary.id, on))
+                    }
                     sx={styles.keepAwake}
                   />
                 </span>
@@ -527,7 +535,7 @@ function LoadedSession({
                   interrupting({
                     title: "Put the Session to sleep?",
                     action: "Sleep now",
-                    go: () => command(hub.sleepSession(summary.id)),
+                    go: () => command("Sleep", hub.sleepSession(summary.id)),
                   })
                 }
               >
@@ -604,7 +612,7 @@ function LoadedSession({
                     startLog={startLog}
                     drives={drives}
                     restart={restart}
-                    onWake={() => command(hub.wakeSession(summary.id))}
+                    onWake={() => command("Wake", hub.wakeSession(summary.id))}
                     onRestore={() => restoreSession(hub, summary.id)}
                     onEnterValues={() =>
                       void navigate({
@@ -646,7 +654,7 @@ function LoadedSession({
                     drives
                       ? (prompt) => {
                           if (!hub.cancelPrompt(summary.id, prompt.id)) {
-                            toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                            notSent("Cancel")
                           }
                         }
                       : undefined
@@ -654,7 +662,7 @@ function LoadedSession({
                   onSteer={
                     drives && steerable
                       ? (prompt) => {
-                          if (command(hub.steerPrompt(summary.id, prompt.id)))
+                          if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
                             setSteering((ids) => new Set(ids).add(prompt.id))
                         }
                       : undefined
@@ -725,8 +733,8 @@ const replyCopy = {
 } as const
 
 /** Says so when a command couldn't be sent for want of a connection to the Hub. */
-function command(sent: boolean): boolean {
-  if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+function command(what: string, sent: boolean): boolean {
+  if (!sent) notSent(what)
   return sent
 }
 

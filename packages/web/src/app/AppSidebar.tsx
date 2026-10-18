@@ -383,9 +383,11 @@ function SessionRow({
               defaultValue={title}
               placeholder={session.workBranch}
               maxLength={MaxSessionNameLength}
+              // A rename that isn't sent keeps the field open, with what was typed.
               onCommit={(typed) => {
-                setRenaming(false)
-                renameSession(hub, session, typed)
+                const sent = renameSession(hub, session, typed)
+                if (sent) setRenaming(false)
+                return sent
               }}
               onCancel={() => setRenaming(false)}
             />

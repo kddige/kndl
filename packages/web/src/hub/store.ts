@@ -70,7 +70,12 @@ export type Connection =
   /** The Hub turned the socket away because no one is signed in. */
   | { readonly status: "signedOut"; readonly options: SignInOptions }
   /** The Hub refused the hello (a protocol mismatch): reloading is the only way on. */
-  | { readonly status: "rejected"; readonly message: string }
+  | {
+      readonly status: "rejected"
+      readonly message: string
+      /** The protocol version the Hub speaks, when it said: to tell which side is out of date. */
+      readonly hubProtocol?: number
+    }
 
 /** A Session the client has joined: its log so far, who's in it and what's queued. */
 export interface JoinedSession {
@@ -336,7 +341,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
         connection: { status: "online" },
       }
     case "HandshakeRejected":
-      return { ...state, connection: { status: "rejected", message: action.message } }
+      return {
+        ...state,
+        connection: {
+          status: "rejected",
+          message: action.message,
+          hubProtocol: action.protocolVersion,
+        },
+      }
     case "RunnerList":
       return { ...state, runners: action.runners }
     case "RunnerRemoved":

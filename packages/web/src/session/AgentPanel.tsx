@@ -1,8 +1,9 @@
 import type { AgentId, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
+import { notSent } from "../app/copy.ts"
 import { useHub } from "../app/hub.tsx"
 import type { AgentView } from "../hub/transcript.ts"
-import { AgentStatus, ArrowLeftIcon, Button, BranchIcon, EmptyState, toast } from "../ui/index.ts"
+import { AgentStatus, ArrowLeftIcon, Button, BranchIcon, EmptyState } from "../ui/index.ts"
 import { color, font, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Composer, type ComposerCopy } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
@@ -58,8 +59,8 @@ const styles = stylex.create({
 })
 
 /** Whether a command went to the Hub; says so if not. */
-function sent(ok: boolean): boolean {
-  if (!ok) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+function sent(what: string, ok: boolean): boolean {
+  if (!ok) notSent(what)
   return ok
 }
 
@@ -149,11 +150,11 @@ export function AgentPanel({
           copy={copy}
           running={running}
           onSend={(message, attachments) =>
-            sent(hub.messageAgent(session.id, agent.agentId, message, attachments))
+            sent("Message", hub.messageAgent(session.id, agent.agentId, message, attachments))
           }
           onStop={
             cantDrive === undefined
-              ? () => sent(hub.stopAgent(session.id, agent.agentId))
+              ? () => sent("Stop", hub.stopAgent(session.id, agent.agentId))
               : undefined
           }
           disabledReason={disabledReason}

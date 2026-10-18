@@ -114,13 +114,19 @@ export function SharedVariablesView() {
   const [editing, setEditing] = useState<SharedVariable | "new" | null>(null)
   const [deleting, setDeleting] = useState<SharedVariable | null>(null)
 
+  // Bumped by Try again, after a failed load.
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!online) return
     hub.getSharedVariables().then(
       () => setLoadError(null),
       (error: unknown) => setLoadError(messageOf(error)),
     )
-  }, [hub, online])
+  }, [hub, online, attempt])
+  const retry = () => {
+    setLoadError(null)
+    setAttempt((n) => n + 1)
+  }
 
   const sorted = variables?.toSorted((a, b) => a.name.localeCompare(b.name)) ?? null
   const needed = (sorted ?? []).filter(needsValue)
@@ -158,6 +164,7 @@ export function SharedVariablesView() {
                 icon={<WarningIcon />}
                 title="Can't load the shared variables"
                 description={loadError}
+                action={<Button onClick={retry}>Try again</Button>}
               />
             ) : (
               <div {...stylex.props(styles.loading)}>

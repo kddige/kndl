@@ -275,13 +275,19 @@ export function McpServersView({
     setInstalling({ mcpServer, installation })
   }, [opening, opened, state, owner])
 
+  // Bumped by Try again, after a failed load.
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     if (!online) return
     hub.getMcpServers().then(
       () => setLoadError(null),
       (error: unknown) => setLoadError(messageOf(error)),
     )
-  }, [hub, online])
+  }, [hub, online, attempt])
+  const retry = () => {
+    setLoadError(null)
+    setAttempt((n) => n + 1)
+  }
 
   const add = (
     <div {...stylex.props(styles.actions)}>
@@ -309,6 +315,7 @@ export function McpServersView({
                 icon={<WarningIcon />}
                 title="Can't load the MCP servers"
                 description={loadError}
+                action={<Button onClick={retry}>Try again</Button>}
               />
             ) : (
               <div {...stylex.props(styles.loading)}>

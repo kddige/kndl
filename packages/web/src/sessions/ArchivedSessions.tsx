@@ -8,6 +8,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
+import { notSent } from "../app/copy.ts"
 import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
@@ -609,7 +610,7 @@ async function purgeSessions(
 /** Restores an Archived Session, saying so, or that the Hub isn't connected. */
 export function restoreSession(hub: HubClient, sessionId: SessionId): void {
   if (!hub.restoreSession(sessionId)) {
-    toast.show({ title: "Not connected to the Hub", intent: "warning" })
+    notSent("Restore")
     return
   }
   toast.show({ title: "Session restored", description: "It's Asleep: the next prompt wakes it." })

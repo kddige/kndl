@@ -1,3 +1,4 @@
+import { ProtocolVersion } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router"
 import { type MouseEvent, useEffect, useRef, useState } from "react"
@@ -24,6 +25,7 @@ import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
 import { Brand } from "./Brand.tsx"
+import { commandText } from "./copy.ts"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
 
@@ -135,12 +137,13 @@ export function HubShell() {
         // An answer to a question already closed (#193) says who closed it, and how.
         failure.command === "AnswerQuestion"
           ? toast.show({
-              title: "The question had closed",
+              title: "That question was already answered",
               description: failure.message,
               intent: "warning",
             })
-          : toast.show({
-              title: "The Hub refused that",
+          : // The Hub's own text says how to fix it, such as "The Session is Asleep: wake it first."
+            toast.show({
+              title: `Couldn't ${commandText[failure.command] ?? "do that"}`,
               description: failure.message,
               intent: "danger",
             }),
@@ -149,7 +152,7 @@ export function HubShell() {
   )
 
   if (connection.status === "signedOut") return <SignIn options={connection.options} />
-  if (connection.status === "rejected") return <Rejected message={connection.message} />
+  if (connection.status === "rejected") return <Rejected hubProtocol={connection.hubProtocol} />
   if (you === null) return <Connecting connection={connection} />
 
   // Following a link in the drawer closes it, even one to the page already shown.
@@ -204,7 +207,8 @@ export function HubShell() {
               </Banner>
             ) : (
               <Banner slim intent="warning" icon={<WarningIcon />} title="Reconnecting to the Hub">
-                What happens meanwhile shows up once it's back.
+                Changes made elsewhere show up once it's back. Until then, what you do here isn't
+                sent.
               </Banner>
             ))}
           <AppPermissionsBanner />
@@ -255,16 +259,30 @@ function focusPageHeading(): void {
   attempt()
 }
 
-function Rejected({ message }: { message: string }) {
-  useDocumentTitle("This Hub can't talk to this page · kndl")
+/**
+ * The Hub turned this page away: said in people's words, not the protocol's ("the peer", "this
+ * side"). A Hub newer than the page is fixed by reloading; an older one by its Owner updating it.
+ */
+function Rejected({ hubProtocol }: { hubProtocol: number | undefined }) {
+  const ask = "Reload the page. If this keeps happening, ask the Hub's Owner to update the Hub."
+  const { title, description } =
+    hubProtocol === undefined || hubProtocol === ProtocolVersion
+      ? { title: "This Hub can't talk to this page", description: ask }
+      : hubProtocol > ProtocolVersion
+        ? {
+            title: "This page is out of date",
+            description: "The Hub runs a newer version of kndl than this page. Reload to get it.",
+          }
+        : { title: "This page is newer than the Hub", description: ask }
+  useDocumentTitle(`${title} · kndl`)
   return (
     <main {...stylex.props(styles.center)}>
       <EmptyState
         size="page"
         icon={<WarningIcon />}
-        title="This Hub can't talk to this page"
-        description={message}
-        action={<Button onClick={() => window.location.reload()}>Reload</Button>}
+        title={title}
+        description={description}
+        action={<Button onClick={() => window.location.reload()}>Reload page</Button>}
       />
     </main>
   )

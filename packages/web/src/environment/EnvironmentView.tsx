@@ -292,6 +292,16 @@ export function EnvironmentView({
               icon={<WarningIcon />}
               title="Can't load the Environment"
               description={loadError}
+              action={
+                <Button
+                  onClick={() => {
+                    setLoadError(null)
+                    setAttempt((n) => n + 1)
+                  }}
+                >
+                  Try again
+                </Button>
+              }
             />
           ) : (
             <div {...stylex.props(styles.loading)}>
