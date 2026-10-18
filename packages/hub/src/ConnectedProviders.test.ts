@@ -7,7 +7,7 @@ import { rmSync } from "node:fs"
 import { join } from "node:path"
 import type { AuthPrompt, OAuthCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai"
 import { ParticipantId, ProviderIds } from "@kndl/protocol"
-import { Clock, Duration, Effect, Option, Redacted } from "effect"
+import { Clock, Duration, Effect, Fiber, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
 import { databaseAt } from "./Database.ts"
@@ -875,6 +875,61 @@ describe("a sign-in's tokens", () => {
     expect(await hub.run(modelCall().pipe(onClock(61_000)))).toBe(401)
     expect(sentWith(fakes)).toEqual(["Bearer access-1", "Bearer access-2"])
     expect(refreshes).toBe(2)
+  })
+
+  test("one refreshed for a call given up meanwhile is kept all the same", async () => {
+    const { hub, fakes } = await signedIn(oauth("access-old", 60 * 1000))
+    const refreshing = Promise.withResolvers<void>()
+    const rotate = Promise.withResolvers<void>()
+    const refreshed: Array<string> = []
+    fakes.refresh = async (_provider, credential) => {
+      refreshed.push(credential.refresh)
+      refreshing.resolve()
+      // The Provider rotated it, its old refresh token spent: its answer comes all the same.
+      await rotate.promise
+      return oauth("access-rotated")
+    }
+    fakes.other = () => Response.json({ ok: true })
+    await hub.run(
+      Effect.gen(function* () {
+        const call = yield* Effect.forkChild(modelCall())
+        yield* Effect.promise(() => refreshing.promise)
+        // As when pi gives the call up, and the Hub's server interrupts it.
+        yield* Fiber.interrupt(call)
+      }),
+    )
+    rotate.resolve()
+
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall())).toBe(200)
+    expect(sentWith(fakes)).toEqual(["Bearer access-rotated"])
+    expect(refreshed).toEqual(["refresh-of-access-old"])
+    expect(await storedCredential(hub)).toContain("access-rotated")
+  })
+
+  test("one refreshed is kept for calls even when the Hub couldn't store it", async () => {
+    const { hub, fakes } = await signedIn(oauth("access-old", 60 * 1000))
+    const refreshed: Array<string> = []
+    fakes.refresh = async (_provider, credential) => {
+      refreshed.push(credential.refresh)
+      return oauth("access-rotated")
+    }
+    fakes.other = () => Response.json({ ok: true })
+    // The database refuses to store it.
+    await hub.run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`
+          CREATE TRIGGER no_rotation BEFORE UPDATE OF credential ON connected_providers
+          BEGIN SELECT RAISE(ABORT, 'disk full'); END
+        `
+      }),
+    )
+    fakes.seen.length = 0
+    expect(await hub.run(modelCall())).toBe(200)
+    expect(await hub.run(modelCall())).toBe(200)
+    expect(sentWith(fakes)).toEqual(["Bearer access-rotated", "Bearer access-rotated"])
+    expect(refreshed).toEqual(["refresh-of-access-old"])
   })
 
   test("a refresh that ends after the connection was replaced keeps the new one", async () => {

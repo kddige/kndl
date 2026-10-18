@@ -56,10 +56,12 @@ import {
   Context,
   Duration,
   Effect,
+  Fiber,
   Layer,
   Option,
   PubSub,
   Redacted,
+  type Result,
   type Scope,
   Schema,
   Semaphore,
@@ -1076,6 +1078,18 @@ export class ConnectedProviders extends Context.Service<
         connectionOf(participantId, connection.provider)?.connectedAt === connection.connectedAt
 
       /**
+       * Whether `connection` is still the Member's after an update of its row, as the rows it
+       * returned say: as the Hub holds it, when the update failed.
+       */
+      const stillHeld = (
+        participantId: ParticipantId,
+        connection: Connection,
+        updated: Result.Result<ReadonlyArray<unknown>, unknown>,
+      ) =>
+        still(participantId, connection) &&
+        (updated._tag === "Failure" || updated.success.length > 0)
+
+      /**
        * The Member's connection to the Provider, its sign-in refreshed first if `due` says so, one
        * refresh at a time; the rotated credential kept. A refresh the Provider refuses is kept as
        * the connection's problem. Either is kept only on the connection it refreshed: one
@@ -1102,7 +1116,9 @@ export class ConnectedProviders extends Context.Service<
         return Effect.gen(function* () {
           const first = yield* needed()
           if (first.refresh === undefined) return first.connection
-          return yield* lockOf(participantId, first.connection.provider).withPermits(1)(
+          // On the layer's scope, not the call's: a Provider may spend the old refresh token as it
+          // rotates it, so a call given up meanwhile mustn't lose the new one.
+          const refreshing = lockOf(participantId, first.connection.provider).withPermits(1)(
             Effect.gen(function* () {
               // Another call may have refreshed it meanwhile.
               const { connection, now, refresh } = yield* needed()
@@ -1135,45 +1151,53 @@ export class ConnectedProviders extends Context.Service<
                   WHERE participant_id = ${participantId} AND provider = ${connection.provider}
                     AND connected_at = ${connection.connectedAt}
                   RETURNING provider
-                `.pipe(Effect.orDie)
-                const current = connectionOf(participantId, connection.provider)
-                if (
-                  marked.length === 0 ||
-                  current === undefined ||
-                  !still(participantId, connection)
-                ) {
+                `.pipe(Effect.result)
+                if (!stillHeld(participantId, connection, marked)) {
                   return yield* usable(participantId, provider)
                 }
+                if (marked._tag === "Failure") {
+                  yield* Effect.logError(
+                    `Could not store that ${name} refused a refresh`,
+                    marked.failure,
+                  )
+                }
+                const current = connectionOf(participantId, connection.provider) ?? connection
                 keep(participantId, { ...current, problem })
                 yield* changed(participantId, false)
                 return yield* unusable("Broken", problem)
               }
               const credential: OAuthCredential = { ...rotated.success, type: "oauth" }
-              const ciphertext = yield* seal(participantId, connection.provider, credential).pipe(
-                Effect.mapError((error) => unusable("Unavailable", error.message)),
+              const stored = yield* seal(participantId, connection.provider, credential).pipe(
+                Effect.flatMap(
+                  (ciphertext) => sql`
+                    UPDATE connected_providers SET credential = ${ciphertext}
+                    WHERE participant_id = ${participantId} AND provider = ${connection.provider}
+                      AND connected_at = ${connection.connectedAt}
+                    RETURNING provider
+                  `,
+                ),
+                Effect.result,
               )
-              const stored = yield* sql`
-                UPDATE connected_providers SET credential = ${ciphertext}
-                WHERE participant_id = ${participantId} AND provider = ${connection.provider}
-                  AND connected_at = ${connection.connectedAt}
-                RETURNING provider
-              `.pipe(Effect.orDie)
-              const current = connectionOf(participantId, connection.provider)
-              if (
-                stored.length === 0 ||
-                current === undefined ||
-                !still(participantId, connection)
-              ) {
+              if (!stillHeld(participantId, connection, stored)) {
                 retire(credential)
                 return yield* usable(participantId, provider)
               }
+              // Used for calls all the same: the Provider may have spent the old one.
+              if (stored._tag === "Failure") {
+                yield* Effect.logError(
+                  `Could not store ${name}'s refreshed sign-in: it is used until the Hub restarts`,
+                  stored.failure,
+                )
+              }
               retire(connection.credential, credential)
+              const current = connectionOf(participantId, connection.provider) ?? connection
               const next: Connection = { ...current, credential, refreshedAt: now }
               keep(participantId, next)
               yield* changed(participantId, false)
               return next
             }),
           )
+          return yield* Fiber.join(yield* Effect.forkIn(refreshing, scope))
         })
       }
 
