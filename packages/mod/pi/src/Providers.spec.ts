@@ -21,6 +21,9 @@ const listed: ModProviders = {
 
 const catalog = (provider: string) => getModels(provider as never)
 
+/** A registered model's compat flags, which only a chat model has. */
+const compatOf = (model: unknown) => (model as { readonly compat?: unknown }).compat
+
 describe("the Gateway providers (ADR 0029)", () => {
   test("each Provider but Claude's is pi's own, pointed at the Gateway with the Session token, with only the listed Models", () => {
     const registered = gatewayProviders(listed, {
@@ -53,8 +56,6 @@ describe("the Gateway providers (ADR 0029)", () => {
       { ...listed, signedIn: ["openai"] },
       { hubUrl: "http://hub.test", modToken: "t", catalog },
     )
-    /** A registered model's compat flags, which only a chat model has. */
-    const compatOf = (model: unknown) => (model as { readonly compat?: unknown }).compat
     for (const model of openai?.config.models ?? []) {
       expect(compatOf(model)).toMatchObject({
         supportsMaxOutputTokens: false,
