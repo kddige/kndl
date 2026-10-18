@@ -393,14 +393,14 @@ export const SessionsLive = Layer.effect(
           const credential = yield* hubClaudeCredential.fetch(sessionId)
           return launch(request, credential, (mod, directories, sandbox) =>
             Effect.map(conversationFor(request, directories), (conversation) => {
-              const started = claudeLaunch({
+              const claudeLine = claudeLaunch({
                 claudePath: sandbox.claude.path,
                 sessionId,
                 mod,
                 conversation,
                 ...settingOf(request),
               })
-              return { argv: started.argv, env: { ...sandbox.claude.env, ...started.env } }
+              return { argv: claudeLine.argv, env: { ...sandbox.claude.env, ...claudeLine.env } }
             }),
           )
         }
@@ -422,7 +422,7 @@ export const SessionsLive = Layer.effect(
         )
         return launch(request, credential, (mod, _directories, sandbox) =>
           Effect.map(piConversationFor(request), (conversationId) => {
-            const started = piLaunch({
+            const piLine = piLaunch({
               nodePath: sandbox.pi.node,
               cliPath: pi.cli,
               sessionId,
@@ -431,7 +431,7 @@ export const SessionsLive = Layer.effect(
               ...settingOf(request),
               ...(credential === undefined ? {} : { claudePath: sandbox.claude.path }),
             })
-            return { argv: started.argv, env: { ...sandbox.pi.env, ...started.env } }
+            return { argv: piLine.argv, env: { ...sandbox.pi.env, ...piLine.env } }
           }),
         )
       })
