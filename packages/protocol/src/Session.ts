@@ -525,17 +525,23 @@ export const SessionSummary = Schema.Struct({
    */
   lastOutput: Schema.optionalKey(Schema.String),
   /**
-   * The model its Claude Code runs, as `--model` takes it (#128): absent for Claude Code's
-   * default. Shared: anyone with access may change it, from the next Turn on.
+   * The model it is set to (#128), which names its Harness (`harnessOfModel`, ADR 0030): Claude
+   * Code's as `--model` takes it, absent for Claude Code's default; or pi's, `<provider>/<id>`. Its
+   * Creator may change it, from the next Turn on. While a switch of Harness waits, it is the new
+   * Harness's, and `harness` still the one running.
    */
   model: Schema.optionalKey(ModelName),
-  /** What runs its agent (ADR 0029); absent for a Session from before, which runs Claude Code. */
+  /**
+   * What runs its agent now (ADR 0029, 0030); absent for a Session from before, which runs Claude
+   * Code.
+   */
   harness: Schema.optionalKey(Harness),
-  /** Its thinking level (#128): absent for Claude Code's default. */
+  /** Its thinking level (#128): absent for the model's usual level. */
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**
-   * Present while its Claude Code still runs on the model and thinking level from before it was
-   * changed: they apply once no Turn runs, when the Hub restarts Claude Code with them.
+   * Present while its Harness still runs on the model and thinking level from before they were
+   * changed: they apply once no Turn runs, when pi switches to them, or Claude Code, or the other
+   * Harness, starts again with them.
    */
   modelPending: Schema.optionalKey(Schema.Literal(true)),
   /**

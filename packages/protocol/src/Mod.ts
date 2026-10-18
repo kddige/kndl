@@ -39,15 +39,18 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 // ── mod to Hub ─────────────────────────────────────────────────────────────
 
 /**
- * The mod's first message, once Claude Code's session has started, and again whenever the Hub
+ * The mod's first message, once its Harness's session has started, and again whenever the Hub
  * answers 409.
  */
 export const ModHello = Schema.TaggedStruct("ModHello", {
   protocolVersion: CurrentProtocolVersion,
   sessionId: SessionId,
-  /** Its Harness's conversation, to resume when the Session wakes: `claude --resume` takes it. */
+  /**
+   * Its Harness's conversation, to resume when the Session wakes on it: `claude --resume` and pi's
+   * `--session-id` take it.
+   */
   conversationId: ConversationId,
-  /** The model Claude Code runs, as it names it. */
+  /** The model the Harness runs, as it names it: Claude Code's id, or pi's `<provider>/<id>`. */
   model: Schema.NonEmptyString,
   /**
    * It takes a {@link DeliverIntoTurn} (#195). A mod from before doesn't say so, and the Hub
@@ -66,8 +69,10 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    */
   switchesModels: Schema.optionalKey(Schema.Literal(true)),
   /**
-   * It takes a {@link DeliverHandoff} (ADR 0030), and serves its agent `GET /mod/history`. A mod
-   * from before doesn't say so: a Session switched to its Harness starts without the handoff.
+   * It takes a {@link DeliverHandoff} (ADR 0030), and serves its agent `GET /mod/history`.
+   *
+   * @deprecated Every mod of this protocol version takes one, so the Hub need not ask. Kept, still
+   * optional, until the Hub no longer reads it and the mods no longer send it; then it goes.
    */
   takesHandoffs: Schema.optionalKey(Schema.Literal(true)),
 })

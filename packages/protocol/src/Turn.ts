@@ -139,6 +139,12 @@ export type TurnEndReason = typeof TurnEndReason.Type
  * them. `cost` is what the Harness reports it cost, in US dollars, when it reports one.
  */
 export const TurnUsage = Schema.Struct({
+  /**
+   * The model of the Turn's last request, as its Harness names it: on Claude Code, the API's id,
+   * `claude-opus-5-5`, without the `[1m]` of an alias's (`sameModel`); on pi, a pi Session's model
+   * name, `<provider>/<id>` (`providerModelName`), `openai/gpt-6-sol` or
+   * `anthropic/claude-opus-5-5`.
+   */
   model: Schema.NonEmptyString,
   input: Schema.Natural,
   output: Schema.Natural,

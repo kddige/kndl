@@ -40,8 +40,8 @@ export type AgentId = typeof AgentId.Type
 
 /**
  * A Session's conversation as its Harness names it, which the Harness takes back to resume it
- * when the Session wakes: Claude Code's session id. The mod sends it from the Sandbox, and the
- * Runner names files on the host after it, so only a plain name decodes: never `../` or a path.
+ * when the Session wakes: Claude Code's session id, or pi's. The mod sends it from the Sandbox, and
+ * the Runner names files on the host after it, so only a plain name decodes: never `../` or a path.
  */
 export const ConversationId = Schema.String.check(
   Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),

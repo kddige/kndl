@@ -257,11 +257,11 @@ export const RunnerWelcome = Schema.TaggedStruct("RunnerWelcome", {
 export type RunnerWelcome = typeof RunnerWelcome.Type
 
 /**
- * Start Claude Code for a Session: for a new Session, after cloning its Repo onto its Work
- * branch, which it creates from the base branch unless it is the base branch (ADR 0023); to wake
- * an Asleep one, with `resume` and the Workspace already in place. Claude Code runs on its
- * Creator's setup token, which the Runner asks for first with a {@link FetchClaudeCredential}: a
- * refusal fails the start, with the Hub's message (ADR 0026).
+ * Start a Session's Harness: for a new Session, after cloning its Repo onto its Work branch, which
+ * it creates from the base branch unless it is the base branch (ADR 0023); to wake an Asleep one,
+ * with `resume` and the Workspace already in place. The Runner asks for its Creator's setup token
+ * first with a {@link FetchClaudeCredential}: Claude Code runs on it, so a refusal fails its start,
+ * with the Hub's message (ADR 0026); pi runs without it, without Claude's Models (ADR 0029).
  */
 export const StartSession = Schema.TaggedStruct("StartSession", {
   sessionId: SessionId,
@@ -286,15 +286,21 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * own: the Session's Creator (#110). Absent from a Hub older than that.
    */
   gitIdentity: Schema.optionalKey(GitIdentity),
-  /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
   /**
    * What runs its agent (ADR 0029); absent, Claude Code. A pi Session's `model` is a Provider's
    * Model, `openai/gpt-6-sol`, and its Claude credential is fetched only for Claude's Models: a
    * refusal doesn't fail its start.
    */
   harness: Schema.optionalKey(Harness),
+  /**
+   * The model to start the Harness on (#128): Claude Code's `--model`, absent for its default; or
+   * pi's, a Provider's Model.
+   */
   model: Schema.optionalKey(ModelName),
-  /** The thinking level to start Claude Code at, its `--effort` (#128); absent for its default. */
+  /**
+   * The thinking level to start the Harness at (#128): Claude Code's `--effort`, pi's
+   * `--thinking`; absent for the model's usual level.
+   */
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**
    * An MCP server for each Installation on for its Repo (ADR 0020); absent for none. Sent only to
@@ -305,11 +311,12 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
 export type StartSession = typeof StartSession.Type
 
 /**
- * Start a running Session's Claude Code again with its model and thinking level as they are set now
- * (#128): Claude Code alone, resuming its conversation, with its Sandbox left running. The Hub
- * sends it only while no Turn runs, and only to a Runner whose hello says it `relaunches`.
- * Answered as a StartSession is, with SessionStarted, or SessionStartFailed when Claude Code
- * didn't start again, as when the Hub refuses its setup token.
+ * Start a running Session's Harness again with its model and thinking level as they are set now
+ * (#128): the Harness alone, resuming its conversation, with its Sandbox left running; or the other
+ * Harness in its place, for a model of the other's (ADR 0030). The Hub sends it only while no Turn
+ * runs, and only to a Runner whose hello says it `relaunches`. Answered as a StartSession is, with
+ * SessionStarted, or SessionStartFailed when the Harness didn't start, as when the Hub refuses
+ * Claude Code its setup token.
  */
 export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,
