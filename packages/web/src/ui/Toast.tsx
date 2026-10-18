@@ -161,7 +161,7 @@ const styles = stylex.create({
 })
 
 const markers = stylex.create({
-  neutral: { backgroundColor: color.textTertiary },
+  neutral: { backgroundColor: color.neutral },
   success: { backgroundColor: color.success },
   warning: { backgroundColor: color.warning },
   danger: { backgroundColor: color.danger },

@@ -1088,7 +1088,7 @@ function Banners() {
         The Session carries on when it's back.
       </Banner>
       <Banner
-        intent="accent"
+        intent="neutral"
         icon={<Spinner size="sm" />}
         title="Starting…"
         detail={
@@ -1101,7 +1101,7 @@ function Banners() {
       >
         Building the Environment, then running its Start script.
       </Banner>
-      <Banner intent="accent" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
+      <Banner intent="neutral" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
       <Banner title="Neutral, with nothing else" />
     </Section>
   )

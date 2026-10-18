@@ -11,11 +11,25 @@ import * as stylex from "@stylexjs/stylex"
 const DARK = "@media (prefers-color-scheme: dark)"
 const REDUCED_MOTION = "@media (prefers-reduced-motion: reduce)"
 
+// Values two roles share because they mean the same thing, declared once so they can't drift apart:
+// a Session that's Active is green like success, an Archived one is muted like the chrome, and the
+// light labels on solid fills are one colour.
+const light = {
+  surface: "oklch(99.5% 0.004 85)",
+  surfaceMuted: "oklch(96.3% 0.01 82)",
+  textSecondary: "oklch(47% 0.024 55)",
+  textTertiary: "oklch(53.5% 0.022 60)",
+  onFill: "oklch(98.5% 0.012 85)",
+  success: "oklch(61% 0.145 150)",
+  successTint: "oklch(95.8% 0.03 150)",
+  successText: "oklch(42% 0.105 152)",
+}
+
 const lightColor = {
   // Surfaces
   bg: "oklch(97.9% 0.009 85)",
-  surface: "oklch(99.5% 0.004 85)",
-  surfaceMuted: "oklch(96.3% 0.01 82)",
+  surface: light.surface,
+  surfaceMuted: light.surfaceMuted,
   surfaceHover: "oklch(94.7% 0.012 80)",
   surfaceActive: "oklch(92.3% 0.015 78)",
   surfaceInverse: "oklch(25% 0.018 48)",
@@ -23,26 +37,36 @@ const lightColor = {
 
   // Text
   text: "oklch(24% 0.018 47)",
-  textSecondary: "oklch(47% 0.024 55)",
-  textTertiary: "oklch(53.5% 0.022 60)",
+  textSecondary: light.textSecondary,
+  textTertiary: light.textTertiary,
+  textDisabled: light.textTertiary,
   textInverse: "oklch(97.5% 0.012 85)",
 
-  // Lines
+  // Lines: `border` edges cards and panels, `separator` is a divider line drawn as a fill, and
+  // `borderStrong` is a decorative edge. A control's edge is `borderControl`, the only thing that
+  // shows where a field or an unchecked box is, so it keeps 3:1 against the surfaces it sits on.
   border: "oklch(89.2% 0.015 80)",
+  separator: "oklch(89.2% 0.015 80)",
   borderStrong: "oklch(83.5% 0.021 78)",
+  borderControl: "oklch(83.5% 0.021 78)",
+  borderControlHover: light.textTertiary,
   focus: "oklch(60% 0.125 85)",
+
+  // Controls: a solid neutral dot, marker or indicator, and a Switch's thumb on its off track
+  neutral: light.textTertiary,
+  controlThumb: light.onFill,
 
   // Intents: `{intent}` is the solid, then `{intent}Hover`, `on{Intent}` for text on the solid,
   // `{intent}Tint` for a tinted background, and `{intent}Text`, valid on the tint, `surface` and `bg`
   accent: "oklch(41% 0.07 50)",
   accentHover: "oklch(36% 0.062 48)",
-  onAccent: "oklch(98.5% 0.012 85)",
+  onAccent: light.onFill,
   accentTint: "oklch(92.6% 0.03 72)",
   accentText: "oklch(38% 0.065 45)",
 
   danger: "oklch(56.5% 0.175 30)",
   dangerHover: "oklch(51% 0.17 29)",
-  onDanger: "oklch(98.5% 0.012 85)",
+  onDanger: light.onFill,
   dangerTint: "oklch(95.2% 0.028 15)",
   dangerText: "oklch(52% 0.17 34)",
 
@@ -50,14 +74,14 @@ const lightColor = {
   warningTint: "oklch(95.8% 0.048 92)",
   warningText: "oklch(45% 0.095 65)",
 
-  success: "oklch(61% 0.145 150)",
-  successTint: "oklch(95.8% 0.03 150)",
-  successText: "oklch(42% 0.105 152)",
+  success: light.success,
+  successTint: light.successTint,
+  successText: light.successText,
 
   // Session states (GLOSSARY.md), in the same shape: a dot colour, its tint, and its text
-  sessionActive: "oklch(61% 0.145 150)",
-  sessionActiveTint: "oklch(95.8% 0.03 150)",
-  sessionActiveText: "oklch(42% 0.105 152)",
+  sessionActive: light.success,
+  sessionActiveTint: light.successTint,
+  sessionActiveText: light.successText,
   sessionAsleep: "oklch(60% 0.065 295)",
   sessionAsleepTint: "oklch(95.6% 0.016 300)",
   sessionAsleepText: "oklch(44% 0.065 295)",
@@ -65,8 +89,8 @@ const lightColor = {
   sessionFrozenTint: "oklch(95.8% 0.022 225)",
   sessionFrozenText: "oklch(43% 0.09 230)",
   sessionArchived: "oklch(68% 0.014 70)",
-  sessionArchivedTint: "oklch(96.3% 0.01 82)",
-  sessionArchivedText: "oklch(47% 0.024 55)",
+  sessionArchivedTint: light.surfaceMuted,
+  sessionArchivedText: light.textSecondary,
 
   // A chart's one series (#356): a cool blue that reads apart from the warm accent and the warning
   // amber a chart draws thresholds in, checked against the surface with the dataviz validator
@@ -79,23 +103,41 @@ const lightColor = {
   avatarFgChroma: "0.09",
 }
 
-const darkColor: typeof lightColor = {
-  bg: "oklch(18% 0.014 298)",
+const dark: typeof light = {
   surface: "oklch(20.8% 0.016 300)",
   surfaceMuted: "oklch(23.4% 0.017 300)",
+  textSecondary: "oklch(74% 0.018 305)",
+  textTertiary: "oklch(63.5% 0.02 305)",
+  onFill: "oklch(98.5% 0.012 85)",
+  success: "oklch(74% 0.15 150)",
+  successTint: "oklch(29.5% 0.045 155)",
+  successText: "oklch(85% 0.105 152)",
+}
+
+const darkColor: typeof lightColor = {
+  bg: "oklch(18% 0.014 298)",
+  surface: dark.surface,
+  surfaceMuted: dark.surfaceMuted,
   surfaceHover: "oklch(26% 0.018 302)",
   surfaceActive: "oklch(29.5% 0.02 302)",
   surfaceInverse: "oklch(93% 0.014 80)",
   overlay: "oklch(8% 0.02 300 / 0.6)",
 
   text: "oklch(93% 0.016 80)",
-  textSecondary: "oklch(74% 0.018 305)",
-  textTertiary: "oklch(63.5% 0.02 305)",
+  textSecondary: dark.textSecondary,
+  textTertiary: dark.textTertiary,
+  textDisabled: dark.textTertiary,
   textInverse: "oklch(21% 0.02 298)",
 
   border: "oklch(30.5% 0.018 302)",
+  separator: "oklch(30.5% 0.018 302)",
   borderStrong: "oklch(36.5% 0.022 303)",
+  borderControl: "oklch(36.5% 0.022 303)",
+  borderControlHover: dark.textTertiary,
   focus: "oklch(85% 0.15 92)",
+
+  neutral: dark.textTertiary,
+  controlThumb: "oklch(20% 0.02 298)",
 
   accent: "oklch(64% 0.09 52)",
   accentHover: "oklch(69% 0.088 55)",
@@ -105,7 +147,7 @@ const darkColor: typeof lightColor = {
 
   danger: "oklch(54% 0.2 28)",
   dangerHover: "oklch(50% 0.195 27)",
-  onDanger: "oklch(98.5% 0.012 85)",
+  onDanger: dark.onFill,
   dangerTint: "oklch(29.5% 0.075 18)",
   dangerText: "oklch(79% 0.11 20)",
 
@@ -113,13 +155,13 @@ const darkColor: typeof lightColor = {
   warningTint: "oklch(31% 0.055 92)",
   warningText: "oklch(87% 0.1 90)",
 
-  success: "oklch(74% 0.15 150)",
-  successTint: "oklch(29.5% 0.045 155)",
-  successText: "oklch(85% 0.105 152)",
+  success: dark.success,
+  successTint: dark.successTint,
+  successText: dark.successText,
 
-  sessionActive: "oklch(74% 0.15 150)",
-  sessionActiveTint: "oklch(29.5% 0.045 155)",
-  sessionActiveText: "oklch(85% 0.105 152)",
+  sessionActive: dark.success,
+  sessionActiveTint: dark.successTint,
+  sessionActiveText: dark.successText,
   sessionAsleep: "oklch(68% 0.065 295)",
   sessionAsleepTint: "oklch(29.5% 0.035 298)",
   sessionAsleepText: "oklch(84% 0.045 295)",
@@ -127,8 +169,8 @@ const darkColor: typeof lightColor = {
   sessionFrozenTint: "oklch(29.5% 0.04 230)",
   sessionFrozenText: "oklch(85% 0.07 225)",
   sessionArchived: "oklch(56% 0.014 300)",
-  sessionArchivedTint: "oklch(23.4% 0.017 300)",
-  sessionArchivedText: "oklch(74% 0.018 305)",
+  sessionArchivedTint: dark.surfaceMuted,
+  sessionArchivedText: dark.textSecondary,
 
   chartSeries: "oklch(66% 0.11 240)",
 
@@ -150,11 +192,21 @@ export const color = stylex.defineVars({
   text: { default: lightColor.text, [DARK]: darkColor.text },
   textSecondary: { default: lightColor.textSecondary, [DARK]: darkColor.textSecondary },
   textTertiary: { default: lightColor.textTertiary, [DARK]: darkColor.textTertiary },
+  textDisabled: { default: lightColor.textDisabled, [DARK]: darkColor.textDisabled },
   textInverse: { default: lightColor.textInverse, [DARK]: darkColor.textInverse },
 
   border: { default: lightColor.border, [DARK]: darkColor.border },
+  separator: { default: lightColor.separator, [DARK]: darkColor.separator },
   borderStrong: { default: lightColor.borderStrong, [DARK]: darkColor.borderStrong },
+  borderControl: { default: lightColor.borderControl, [DARK]: darkColor.borderControl },
+  borderControlHover: {
+    default: lightColor.borderControlHover,
+    [DARK]: darkColor.borderControlHover,
+  },
   focus: { default: lightColor.focus, [DARK]: darkColor.focus },
+
+  neutral: { default: lightColor.neutral, [DARK]: darkColor.neutral },
+  controlThumb: { default: lightColor.controlThumb, [DARK]: darkColor.controlThumb },
 
   accent: { default: lightColor.accent, [DARK]: darkColor.accent },
   accentHover: { default: lightColor.accentHover, [DARK]: darkColor.accentHover },

@@ -202,7 +202,7 @@ export function HubShell() {
           {connection.status === "reconnecting" &&
             (updating ? (
               // The Hub restarts under its own update (#362), and is back on the new version.
-              <Banner slim intent="accent" icon={<UpdateIcon />} title="Updating the Hub…">
+              <Banner slim intent="neutral" icon={<UpdateIcon />} title="Updating the Hub…">
                 This page reconnects on its own once the Hub is back.
               </Banner>
             ) : (

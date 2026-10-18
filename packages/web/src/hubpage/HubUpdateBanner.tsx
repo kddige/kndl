@@ -27,7 +27,7 @@ export function HubUpdateBanner() {
   return (
     <Banner
       slim
-      intent="accent"
+      intent="neutral"
       icon={<UpdateIcon />}
       title={text.title}
       action={

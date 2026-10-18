@@ -828,7 +828,7 @@ function StartingBanner({
   const pi = summary.harness === "Pi"
   return (
     <Banner
-      intent="accent"
+      intent="neutral"
       icon={<Spinner size="sm" />}
       title={restarting ? "Restarting…" : "Starting…"}
       detail={
@@ -910,7 +910,7 @@ function StateBanner({
       if (environmentChanged(summary) && environment !== undefined) {
         return (
           <Banner
-            intent="accent"
+            intent="neutral"
             icon={<InfoIcon />}
             title="Environment changed"
             action={restartButton}
@@ -929,7 +929,7 @@ function StateBanner({
       // Installations change no Environment version (ADR 0020): Claude Code is given them as it starts.
       return (
         <Banner
-          intent="accent"
+          intent="neutral"
           icon={<InfoIcon />}
           title="MCP servers changed"
           action={restartButton}

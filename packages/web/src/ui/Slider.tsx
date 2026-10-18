@@ -63,7 +63,7 @@ const styles = stylex.create({
     width: "100%",
     height: thumb,
     borderRadius: radius.full,
-    backgroundColor: color.surfaceActive,
+    backgroundColor: color.borderControl,
     // The focused element is Base UI's visually hidden range input inside the thumb, so the
     // shared focus.ring, which rings the focused element itself, can't show: the ring goes on
     // the track, around the input, for keyboard focus only.
@@ -84,7 +84,7 @@ const styles = stylex.create({
     marginInlineStart: "-0.125rem",
     marginTop: "-0.125rem",
     borderRadius: radius.full,
-    backgroundColor: color.textTertiary,
+    backgroundColor: color.neutral,
     pointerEvents: "none",
   },
   dotFilled: {
@@ -104,7 +104,7 @@ const styles = stylex.create({
     boxShadow: shadow.sm,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.borderStrong,
+    borderColor: color.borderControl,
   },
   hidden: {
     opacity: 0,

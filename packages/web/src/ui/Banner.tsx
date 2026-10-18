@@ -3,11 +3,12 @@ import type { ReactNode } from "react"
 import { color, leading, radius, space, text, weight } from "./tokens.stylex.ts"
 
 /**
- * - `neutral`, `accent`: information.
+ * - `neutral`: information. The accent stays off Banners: it marks the one primary action and
+ *   where you are, and a tint of it reads too close to a warning.
  * - `warning`, `danger`: something is wrong or about to be.
  * - `frozen`, `asleep`: a Session in that state, in the same colours as its SessionStatus.
  */
-export type BannerIntent = "neutral" | "accent" | "warning" | "danger" | "frozen" | "asleep"
+export type BannerIntent = "neutral" | "warning" | "danger" | "frozen" | "asleep"
 
 export interface BannerProps {
   title: ReactNode
@@ -83,11 +84,6 @@ const intents = stylex.create({
     backgroundColor: color.surfaceMuted,
     borderColor: color.border,
     color: color.text,
-  },
-  accent: {
-    backgroundColor: color.accentTint,
-    borderColor: "transparent",
-    color: color.accentText,
   },
   warning: {
     backgroundColor: color.warningTint,

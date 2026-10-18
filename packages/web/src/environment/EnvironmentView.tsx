@@ -543,7 +543,7 @@ function EnvironmentEditor({
       )}
 
       {pendingSession && !environment && (
-        <Banner intent="accent" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
+        <Banner intent="neutral" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
           A Repo needs an Environment before its first Session. This one starts from the defaults:
           change what you need, run a Test build, and apply it. Your Session on{" "}
           {branchText(pendingSession.branch)} starts once it's applied.
@@ -552,7 +552,7 @@ function EnvironmentEditor({
 
       {pendingSession && environment && (
         <Banner
-          intent="accent"
+          intent="neutral"
           icon={<InfoIcon />}
           title={`${repo} has an Environment`}
           action={

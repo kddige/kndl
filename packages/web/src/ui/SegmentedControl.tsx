@@ -44,7 +44,7 @@ const styles = stylex.create({
     paddingInline: space.s3,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: "transparent", "[data-checked]": color.borderStrong },
+    borderColor: { default: "transparent", "[data-checked]": color.borderControl },
     borderRadius: radius.sm,
     backgroundColor: { default: "transparent", "[data-checked]": color.surface },
     boxShadow: { default: "none", "[data-checked]": shadow.sm },

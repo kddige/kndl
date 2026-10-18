@@ -39,7 +39,7 @@ const styles = stylex.create({
     lineHeight: leading.tight,
     color: color.text,
   },
-  labelDisabled: { color: color.textTertiary },
+  labelDisabled: { color: color.textDisabled },
   labelStrong: { fontWeight: weight.medium },
   description: { fontSize: text.sm, lineHeight: leading.snug, color: color.textSecondary },
   box: {
@@ -53,7 +53,7 @@ const styles = stylex.create({
     padding: 0,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: color.borderStrong, "[data-checked]": color.accent },
+    borderColor: { default: color.borderControl, "[data-checked]": color.accent },
     borderRadius: radius.sm,
     // Disabled shows as faded, checked or not, so a fixed tick still reads as ticked.
     backgroundColor: { default: color.surface, "[data-checked]": color.accent },
@@ -79,7 +79,7 @@ const styles = stylex.create({
     padding: "0.125rem",
     borderWidth: 0,
     borderRadius: radius.full,
-    backgroundColor: { default: color.borderStrong, "[data-checked]": color.accent },
+    backgroundColor: { default: color.borderControl, "[data-checked]": color.accent },
     opacity: { default: 1, "[data-disabled]": 0.6 },
     transitionProperty: "background-color",
     transitionDuration: motion.durationFast,
@@ -89,7 +89,7 @@ const styles = stylex.create({
     width: "0.75rem",
     height: "0.75rem",
     borderRadius: radius.full,
-    backgroundColor: color.onAccent,
+    backgroundColor: { default: color.controlThumb, "[data-checked]": color.onAccent },
     transform: {
       default: "translateX(0)",
       "[data-checked]": { default: "translateX(0.75rem)", ":dir(rtl)": "translateX(-0.75rem)" },

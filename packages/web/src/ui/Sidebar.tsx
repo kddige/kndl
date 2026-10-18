@@ -89,7 +89,7 @@ const styles = stylex.create({
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textTertiary,
+    color: color.textSecondary,
     overflowWrap: "anywhere",
   },
   list: {

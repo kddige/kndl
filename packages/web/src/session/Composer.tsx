@@ -26,7 +26,7 @@ const styles = stylex.create({
     padding: space.s2,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: color.borderStrong, ":focus-within": color.focus },
+    borderColor: { default: color.borderControl, ":focus-within": color.focus },
     borderRadius: radius.lg,
     backgroundColor: color.surface,
     boxShadow: shadow.sm,

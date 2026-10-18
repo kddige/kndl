@@ -61,7 +61,7 @@ const styles = stylex.create({
   note: {
     paddingBlock: space.s1,
     paddingInline: space.s2,
-    color: color.textTertiary,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   // Its count changes as Runners connect: figures of one width keep the line still.

@@ -213,7 +213,7 @@ export function ProvidersSection({ claude }: { claude: ReactNode }) {
         </p>
       </div>
       {nothing && (
-        <Banner intent="accent" icon={<PlugIcon />} title="Connect a Provider to start Sessions">
+        <Banner intent="neutral" icon={<PlugIcon />} title="Connect a Provider to start Sessions">
           A Session runs on its Creator's own accounts. Add your Claude setup token, or sign in or
           paste an API key for any Provider below.
         </Banner>

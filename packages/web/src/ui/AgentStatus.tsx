@@ -41,7 +41,7 @@ const styles = stylex.create({
 
 const badges = stylex.create({
   Running: { backgroundColor: color.sessionActiveTint, color: color.sessionActiveText },
-  Done: { backgroundColor: color.successTint, color: color.successText },
+  Done: { backgroundColor: color.surfaceActive, color: color.textSecondary },
   Stopped: { backgroundColor: color.surfaceActive, color: color.textSecondary },
   Interrupted: { backgroundColor: color.warningTint, color: color.warningText },
 })
@@ -49,8 +49,8 @@ const badges = stylex.create({
 const dots = stylex.create({
   Running: { backgroundColor: color.sessionActive },
   // Finished: quiet, so the green of a running agent stands out.
-  Done: { backgroundColor: color.textTertiary },
-  Stopped: { borderColor: color.textTertiary },
+  Done: { backgroundColor: color.neutral },
+  Stopped: { borderColor: color.neutral },
   Interrupted: { backgroundColor: color.warning },
 })
 

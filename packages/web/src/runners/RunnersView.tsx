@@ -171,7 +171,7 @@ const styles = stylex.create({
   actions: { display: "flex", gap: space.s2 },
   dot: { width: "0.5rem", height: "0.5rem", borderRadius: "50%", flexShrink: 0 },
   online: { backgroundColor: color.success },
-  offline: { backgroundColor: color.borderStrong },
+  offline: { backgroundColor: color.neutral },
   dialogBody: { display: "flex", flexDirection: "column", gap: space.s3 },
   command: {
     display: "flex",
@@ -689,7 +689,11 @@ function MintedCode({ minted }: { minted: PairingCodeCreated }) {
   if (outcome._tag === "Used") {
     const runner = outcome.runner
     return (
-      <Banner intent="accent" icon={<CheckIcon />} title={`Paired ${runner?.name ?? "the Runner"}`}>
+      <Banner
+        intent="neutral"
+        icon={<CheckIcon />}
+        title={`Paired ${runner?.name ?? "the Runner"}`}
+      >
         {runner?.isOnline
           ? `${runner.name} is online.`
           : "Waiting for it to connect: the join command starts its service."}

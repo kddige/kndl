@@ -83,7 +83,7 @@ export const popup = stylex.create({
     borderRadius: radius.md,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.text, "[data-disabled]": color.textTertiary },
+    color: { default: color.text, "[data-disabled]": color.textDisabled },
     backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceHover },
     cursor: { default: "default", "[data-disabled]": "not-allowed" },
     userSelect: "none",
@@ -107,7 +107,7 @@ export const popup = stylex.create({
     height: "1px",
     marginBlock: space.s1,
     marginInline: `calc(${space.s1} * -1)`,
-    backgroundColor: color.border,
+    backgroundColor: color.separator,
     borderWidth: 0,
   },
   groupLabel: {
@@ -116,7 +116,7 @@ export const popup = stylex.create({
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textTertiary,
+    color: color.textSecondary,
     userSelect: "none",
   },
 })

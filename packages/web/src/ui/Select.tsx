@@ -46,7 +46,7 @@ const styles = stylex.create({
     paddingInlineEnd: space.s2,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: { default: color.borderStrong, "[data-invalid]": color.danger },
+    borderColor: { default: color.borderControl, "[data-invalid]": color.danger },
     borderRadius: radius.md,
     backgroundColor: {
       default: color.surface,
@@ -55,7 +55,7 @@ const styles = stylex.create({
       "[data-disabled]": color.surfaceMuted,
     },
     boxShadow: shadow.sm,
-    color: { default: color.text, "[data-disabled]": color.textTertiary },
+    color: { default: color.text, "[data-disabled]": color.textDisabled },
     fontFamily: "inherit",
     fontSize: text.base,
     lineHeight: 1,
