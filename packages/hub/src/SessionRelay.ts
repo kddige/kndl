@@ -2278,6 +2278,23 @@ export class SessionRelay extends Context.Service<
         ) => peer.send(CommandFailed.make({ command: message._tag, message: why, ...about }))
 
         /**
+         * Answers a command the database failed with a refusal to try again, logging the failure
+         * as `what`.
+         */
+        const triedAgain =
+          (message: WebToHub, what: string) =>
+          <A, R>(effect: Effect.Effect<A, SqlError, R>) =>
+            effect.pipe(
+              Effect.catchTag("SqlError", (error) =>
+                Effect.logError(what, error).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                  ),
+                ),
+              ),
+            )
+
+        /**
          * What Repo access says of a command (ADR 0003), asked off the lock: what GitHub said, to
          * record under it, and why the command is refused, if it is. A Session in a Repo the
          * person has no access to is refused as if there were no such Session, and a command about
@@ -3049,15 +3066,10 @@ export class SessionRelay extends Context.Service<
               }),
             )
           }).pipe(
-            Effect.catchTags({
-              ClaudeCredentialRefusal: (error) => Effect.sync(() => refuse(message, error.message)),
-              SqlError: (error) =>
-                Effect.logError("A Claude credential command failed", error).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
-                  ),
-                ),
-            }),
+            Effect.catchTag("ClaudeCredentialRefusal", (error) =>
+              Effect.sync(() => refuse(message, error.message)),
+            ),
+            triedAgain(message, "A Claude credential command failed"),
           )
 
         /**
@@ -3080,15 +3092,7 @@ export class SessionRelay extends Context.Service<
                 yield* forwardsSignedOut(you.id, tokens)
               }),
             )
-          }).pipe(
-            Effect.catchTag("SqlError", (error) =>
-              Effect.logError("A CLI token command failed", error).pipe(
-                Effect.andThen(
-                  Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
-                ),
-              ),
-            ),
-          )
+          }).pipe(triedAgain(message, "A CLI token command failed"))
 
         /**
          * Checks the GitHub App's permissions now, off the lock since it waits on GitHub. Anyone
@@ -3297,97 +3301,59 @@ export class SessionRelay extends Context.Service<
           peer.send(BranchesListed.make({ requestId, repo, ...listed.success }))
         })
 
-        return (message) =>
-          isMemberCommand(message)
-            ? memberRelay.receiveWeb(client, message)
-            : isMcpServerCommand(message)
-              ? mcpServerRelay.receiveWeb(client, message)
-              : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
-                ? claudeCredentialCommand(message)
-                : isProviderCommand(message)
-                  ? providerRelay.receiveWeb(client, message)
-                  : message._tag === "RevokeCliToken"
-                    ? revokeCliToken(message)
-                    : message._tag === "CheckAppPermissions"
-                      ? checkAppPermissions(message.requestId)
-                      : message._tag === "CheckHubUpdate" || message._tag === "UpdateHub"
-                        ? (message._tag === "CheckHubUpdate"
-                            ? checkHubUpdate(message)
-                            : updateHub(message)
-                          ).pipe(
-                            Effect.catchTag("SqlError", (error) =>
-                              Effect.logError("A Hub update command failed", error).pipe(
-                                Effect.andThen(
-                                  Effect.sync(() =>
-                                    refuse(message, "The Hub could not do that; try again."),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        : message._tag === "GetSessionDiskUsage"
-                          ? getSessionDiskUsage(message).pipe(
-                              Effect.catchTag("SqlError", (error) =>
-                                Effect.logError("A disk usage request failed", error).pipe(
-                                  Effect.andThen(
-                                    Effect.sync(() =>
-                                      refuse(message, "The Hub could not do that; try again."),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            )
-                          : message._tag === "ListRepos"
-                            ? listRepos(message)
-                            : message._tag === "ListBranches"
-                              ? listBranches(message)
-                              : message._tag === "CheckRepo"
-                                ? checkRepo(message).pipe(
-                                    Effect.catchTag("SqlError", (error) =>
-                                      Effect.logError("A Repo check failed", error).pipe(
-                                        Effect.andThen(
-                                          Effect.sync(() =>
-                                            refuse(
-                                              message,
-                                              "The Hub could not do that; try again.",
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                : authorize(message).pipe(
-                                    Effect.flatMap((verdict) =>
-                                      Effect.gen(function* () {
-                                        const command =
-                                          verdict.refusal === undefined
-                                            ? yield* respelled(message)
-                                            : message
-                                        return yield* serialized(
-                                          Effect.gen(function* () {
-                                            const { learned, refusal } = verdict
-                                            if (learned !== undefined)
-                                              yield* accessKnown(you, learned.repo, learned.allowed)
-                                            if (refusal !== undefined)
-                                              return refuse(message, refusal)
-                                            return yield* handle(command)
-                                          }),
-                                        )
-                                      }),
-                                    ),
-                                    Effect.catchTag("SqlError", (error) =>
-                                      Effect.logError("A web command failed", error).pipe(
-                                        Effect.andThen(
-                                          Effect.sync(() =>
-                                            refuse(
-                                              message,
-                                              "The Hub could not do that; try again.",
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  )
+        /** A command about a Session, or that changes what the Hub holds: under the lock. */
+        const sessionCommand = (message: RelayedCommand) =>
+          authorize(message).pipe(
+            Effect.flatMap((verdict) =>
+              Effect.gen(function* () {
+                const command = verdict.refusal === undefined ? yield* respelled(message) : message
+                return yield* serialized(
+                  Effect.gen(function* () {
+                    const { learned, refusal } = verdict
+                    if (learned !== undefined) {
+                      yield* accessKnown(you, learned.repo, learned.allowed)
+                    }
+                    if (refusal !== undefined) return refuse(message, refusal)
+                    return yield* handle(command)
+                  }),
+                )
+              }),
+            ),
+            triedAgain(message, "A web command failed"),
+          )
+
+        return (message) => {
+          if (isMemberCommand(message)) return memberRelay.receiveWeb(client, message)
+          if (isMcpServerCommand(message)) return mcpServerRelay.receiveWeb(client, message)
+          if (isProviderCommand(message)) return providerRelay.receiveWeb(client, message)
+          switch (message._tag) {
+            case "SetClaudeCredential":
+            case "RemoveClaudeCredential":
+              return claudeCredentialCommand(message)
+            case "RevokeCliToken":
+              return revokeCliToken(message)
+            case "CheckAppPermissions":
+              return checkAppPermissions(message.requestId)
+            case "CheckHubUpdate":
+              return checkHubUpdate(message).pipe(
+                triedAgain(message, "A Hub update command failed"),
+              )
+            case "UpdateHub":
+              return updateHub(message).pipe(triedAgain(message, "A Hub update command failed"))
+            case "GetSessionDiskUsage":
+              return getSessionDiskUsage(message).pipe(
+                triedAgain(message, "A disk usage request failed"),
+              )
+            case "ListRepos":
+              return listRepos(message)
+            case "ListBranches":
+              return listBranches(message)
+            case "CheckRepo":
+              return checkRepo(message).pipe(triedAgain(message, "A Repo check failed"))
+            default:
+              return sessionCommand(message)
+          }
+        }
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
