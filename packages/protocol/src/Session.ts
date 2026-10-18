@@ -237,6 +237,11 @@ export const RunnerSummary = Schema.Struct({
    */
   models: Schema.optionalKey(RunnerModels),
   /**
+   * The Harnesses it runs Sessions on, as its last hello said (ADR 0029); absent for one that runs
+   * Claude Code alone.
+   */
+  harnesses: Schema.optionalKey(Schema.Array(Harness)),
+  /**
    * What its host looked like when it last sampled it (#350), kept after it disconnects, for the
    * page to show greyed out; absent from a Runner too old to sample, and before its first sample.
    * Its history is asked for apart, with a GetRunnerHistory.
