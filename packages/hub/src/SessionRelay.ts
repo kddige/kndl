@@ -4012,9 +4012,14 @@ export class SessionRelay extends Context.Service<
         if (event._tag === "ModelSwitchFailed") {
           // The Session runs on what it ran on (ADR 0029): its setting says so again, at the
           // thinking level set, which pi kept, and its history why. Only a Model of its Creator's
-          // is taken as the one it runs on: the Sandbox says it.
+          // is taken as the one it runs on: the Sandbox says it. Not over a model set since, which
+          // its own switch follows.
           const session = yield* sessions.get(sessionId)
-          if (Option.isSome(session)) {
+          if (
+            Option.isSome(session) &&
+            session.value.model === event.asked &&
+            session.value.modelPending !== true
+          ) {
             const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
             if (findProviderModel(creatorModels, event.model) !== undefined) {
               const { thinkingLevel } = session.value

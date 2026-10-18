@@ -2529,6 +2529,34 @@ describe("pi Sessions (ADR 0029)", () => {
     expect(summaries.some((m) => m.session.model === "openai/not-the-creators")).toBe(false)
   })
 
+  test("a switch that failed after a newer one was asked for leaves the newer one set", async () => {
+    const { hub } = await piHub([gpt, grok, claudeOpus])
+    const { web, sessionId, mod } = await sessionScene(hub, piSession)
+    expect((await mod.hello({ switchesModels: true })).status).toBe(200)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
+    await web.take("SessionUpdated", (m) => m.session.model === "openai/gpt-6-sol")
+    web.send({ _tag: "SetSessionModel", sessionId, model: "xai/grok-5" })
+    await web.take("SessionUpdated", (m) => m.session.model === "xai/grok-5")
+    expect((await mod.next("SwitchModel", 500)).map((command) => command.model)).toEqual([
+      "openai/gpt-6-sol",
+      "xai/grok-5",
+    ])
+    const before = (await web.untaken("SessionUpdated")).length
+
+    // pi says the first failed only now.
+    await mod.post({
+      _tag: "ModelSwitchFailed",
+      asked: "openai/gpt-6-sol",
+      model: "anthropic/claude-opus-5-5",
+      message: "no such model",
+    })
+    await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")
+    const since = (await web.untaken("SessionUpdated")).slice(before)
+    expect(since.map((m) => m.session.model)).toEqual(["xai/grok-5"])
+  })
+
   test("its Harness is started again with it, for a mod that doesn't switch models", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, piSession)
