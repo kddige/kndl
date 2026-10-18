@@ -4,10 +4,8 @@
 //
 // - Connecting: with an API key, which the Hub lists the Provider's Models with first, refusing a
 //   key the Provider rejects; or by signing in with a subscription, through pi-ai's own flow, run
-//   on the Hub (ProviderRelay.ts passes its steps on). Sign in with ChatGPT, and OpenRouter's,
-//   end on `127.0.0.1` on the Hub's machine, which the Member's browser can't reach: they paste
-//   the address it landed on instead. GitHub Copilot's asks which GitHub first, as a choice. One
-//   per Member and Provider: connecting again replaces it.
+//   on the Hub, whose steps ProviderRelay.ts shows the Member. One per Member and Provider:
+//   connecting again replaces it.
 // - Storing: pi-ai's credential JSON, encrypted as a Claude credential is (Secrets.ts), bound to
 //   its owner and Provider. Write-only: its owner sees its kind and a label (the account the
 //   sign-in named, or an API key's last 4 characters), never a token. A row the Hub can't decrypt
@@ -26,8 +24,6 @@
 // - Every key and token, and every one replaced or forgotten since the Hub started, until a
 //   sign-in's expires, is masked in what Sessions print (Redaction.ts), as Claude credentials are.
 // - Removing a Member forgets theirs.
-// - Each Member chooses which Harness runs Claude's Models in their new Sessions (ADR 0030): Claude
-//   Code unless they chose pi, kept with them as a Participant.
 
 import { randomUUID } from "node:crypto"
 import type {
@@ -43,13 +39,11 @@ import {
   type ConnectableProvider,
   type ConnectedProvider,
   type ConnectionKind,
-  type Harness,
   type ModelProvider,
   type ParticipantId,
   type ProviderId,
   ProviderIds,
   ProviderModel,
-  type SignInStep,
 } from "@kndl/protocol"
 import {
   Clock,
@@ -258,123 +252,17 @@ const readListing = (provider: ModelProvider, kind: ConnectionKind, called: Call
   )
 }
 
-// ── Sign-in steps ──────────────────────────────────────────────────────────
-
-/** How a sign-in shows its steps to the Member who started it (ProviderRelay.ts). */
-export interface SignInSteps {
-  /** Shows the Member what to do, or what the flow is doing. */
-  readonly show: (step: SignInStep) => void
-  /** Asks the Member to paste or choose something: their answer. Rejects once `signal` aborts. */
-  readonly ask: (
-    step: Extract<SignInStep, { readonly _tag: "Paste" | "Choose" }>,
-    signal: AbortSignal,
-  ) => Promise<string>
-}
+// ── Signing in ─────────────────────────────────────────────────────────────
 
 /**
- * The sign-ins that land the browser on the Hub's own loopback, `127.0.0.1`, which is the Member's
- * machine, not the Hub's, unless they are the same: they paste the address it landed on instead.
+ * How a sign-in reaches the Member who started it, in pi-ai's own terms: ProviderRelay.ts words
+ * each event and prompt for them.
  */
-const loopback: Partial<Record<ProviderId, { readonly name: string; readonly address: string }>> = {
-  openai: { name: "ChatGPT", address: "http://127.0.0.1:1455/" },
-  openrouter: { name: "OpenRouter", address: "http://127.0.0.1" },
-}
-
-const loopbackOpen = (name: string) =>
-  `Sign in to ${name} in the page this opens. It then lands on a page at 127.0.0.1 that may not load: that's expected. Copy that page's address from the address bar and paste it below.`
-const loopbackPaste = (address: string) =>
-  `Paste the address of the page your browser landed on after you signed in: it starts with ${address}.`
-
-/** The step a pi-ai sign-in event shows the Member. */
-function stepOf(provider: ProviderId, event: AuthEvent): SignInStep | undefined {
-  const landing = loopback[provider]
-  switch (event.type) {
-    case "auth_url":
-      return {
-        _tag: "OpenUrl",
-        url: event.url,
-        ...(landing !== undefined
-          ? { instructions: loopbackOpen(landing.name) }
-          : event.instructions !== undefined && { instructions: event.instructions }),
-      }
-    case "device_code":
-      return { _tag: "EnterCode", url: event.verificationUri, code: event.userCode }
-    case "progress":
-    case "info":
-      // Where the Hub listens for the browser is no use to the Member, whose browser can't reach it.
-      if (landing !== undefined && /listening/i.test(event.message)) return undefined
-      return { _tag: "Progress", message: event.message }
-  }
-}
-
-/** The step a pi-ai sign-in prompt asks of the Member. */
-function askOf(
-  provider: ProviderId,
-  prompt: AuthPrompt,
-): Extract<SignInStep, { readonly _tag: "Paste" | "Choose" }> {
-  const landing = loopback[provider]
-  switch (prompt.type) {
-    case "select":
-      return {
-        _tag: "Choose",
-        message: prompt.message,
-        options: prompt.options.map(({ id, label }) => ({ id, label })),
-      }
-    case "manual_code":
-    case "text":
-    case "secret":
-      return {
-        _tag: "Paste",
-        message:
-          landing !== undefined && prompt.type === "manual_code"
-            ? loopbackPaste(landing.address)
-            : prompt.message,
-        ...(prompt.placeholder !== undefined && { placeholder: prompt.placeholder }),
-      }
-  }
-}
-
-const github = "github.com"
-const enterprise = "enterprise"
-
-/**
- * Asks the Member what a pi-ai sign-in prompt asks: as a choice first, for GitHub Copilot's
- * question of which GitHub, which takes a blank answer for github.com.
- */
-async function answerTo(
-  provider: ProviderId,
-  prompt: AuthPrompt,
-  steps: SignInSteps,
-  signal: AbortSignal,
-): Promise<string> {
-  if (
-    provider === "github-copilot" &&
-    prompt.type === "text" &&
-    /enterprise/i.test(prompt.message)
-  ) {
-    const which = await steps.ask(
-      {
-        _tag: "Choose",
-        message: "Which GitHub is your Copilot subscription on?",
-        options: [
-          { id: github, label: "GitHub.com" },
-          { id: enterprise, label: "GitHub Enterprise" },
-        ],
-      },
-      signal,
-    )
-    if (which !== enterprise) return ""
-    // As typed: pi-ai takes a domain or an address, and refuses one it can't read.
-    return steps.ask(
-      {
-        _tag: "Paste",
-        message: "Your GitHub Enterprise address",
-        placeholder: prompt.placeholder ?? "company.ghe.com",
-      },
-      signal,
-    )
-  }
-  return steps.ask(askOf(provider, prompt), signal)
+export interface SignInInteraction {
+  /** Something to show the Member: what to do, or what the flow is doing. */
+  readonly notify: (event: AuthEvent) => void
+  /** Something to ask the Member: their answer. Rejects once `signal` aborts. */
+  readonly prompt: (prompt: AuthPrompt, signal: AbortSignal) => Promise<string>
 }
 
 // ── Storing ────────────────────────────────────────────────────────────────
@@ -547,13 +435,14 @@ export class ConnectedProviders extends Context.Service<
       apiKey: Redacted.Redacted<string>,
     ) => Effect.Effect<void, ProviderRefusal | SqlError>
     /**
-     * Runs the Provider's sign-in, its steps shown as `steps` says, then lists its Models and keeps
-     * it as the Member's connection to it, replacing any before. Interrupting it cancels the flow.
+     * Runs the Provider's sign-in, asking the Member through `interaction`, then lists its Models
+     * and keeps it as the Member's connection to it, replacing any before. Interrupting it cancels
+     * the flow.
      */
     readonly signIn: (
       participantId: ParticipantId,
       provider: ProviderId,
-      steps: SignInSteps,
+      interaction: SignInInteraction,
     ) => Effect.Effect<void, ProviderRefusal | SqlError>
     /** Forgets the Member's connection to the Provider: whether they had one. */
     readonly disconnect: (
@@ -564,16 +453,6 @@ export class ConnectedProviders extends Context.Service<
     readonly refreshModels: (
       participantId: ParticipantId,
       provider?: ProviderId,
-    ) => Effect.Effect<void, SqlError>
-    /**
-     * Which Harness runs Claude's Models in the Member's new Sessions (ADR 0030): Claude Code, on
-     * their setup token, unless they chose pi.
-     */
-    readonly claudeHarness: (participantId: ParticipantId) => Effect.Effect<Harness, SqlError>
-    /** Sets which Harness runs Claude's Models in the Member's new Sessions. */
-    readonly setClaudeHarness: (
-      participantId: ParticipantId,
-      harness: Harness,
     ) => Effect.Effect<void, SqlError>
     /** Forgets every connection of the Member, as when they are removed. */
     readonly forget: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
@@ -1002,7 +881,7 @@ export class ConnectedProviders extends Context.Service<
       const signIn = Effect.fn("ConnectedProviders.signIn")(function* (
         participantId: ParticipantId,
         provider: ProviderId,
-        steps: SignInSteps,
+        interaction: SignInInteraction,
       ) {
         if (!secrets.available) return yield* new ProviderRefusal({ message: noKey(provider) })
         const device = yield* deviceId
@@ -1012,15 +891,10 @@ export class ConnectedProviders extends Context.Service<
               provider,
               {
                 signal,
-                notify: (event) => {
-                  const step = stepOf(provider, event)
-                  if (step !== undefined) steps.show(step)
-                },
+                notify: interaction.notify,
                 prompt: (prompt) =>
-                  answerTo(
-                    provider,
+                  interaction.prompt(
                     prompt,
-                    steps,
                     prompt.signal === undefined ? signal : AbortSignal.any([signal, prompt.signal]),
                   ),
               },
@@ -1304,29 +1178,8 @@ export class ConnectedProviders extends Context.Service<
           Effect.withSpan("ConnectedProviders.call"),
         )
 
-      const claudeHarness = Effect.fn("ConnectedProviders.claudeHarness")(function* (
-        participantId: ParticipantId,
-      ) {
-        const chosen = yield* sql<{ readonly harness: string | null }>`
-          SELECT claude_harness AS harness FROM participants WHERE id = ${participantId}
-        `
-        return chosen[0]?.harness === "Pi" ? ("Pi" as const) : ("ClaudeCode" as const)
-      })
-
-      const setClaudeHarness = Effect.fn("ConnectedProviders.setClaudeHarness")(function* (
-        participantId: ParticipantId,
-        harness: Harness,
-      ) {
-        yield* sql`
-          UPDATE participants SET claude_harness = ${harness === "Pi" ? harness : null}
-          WHERE id = ${participantId}
-        `
-      })
-
       return ConnectedProviders.of({
         state,
-        claudeHarness,
-        setClaudeHarness,
         modelsFor,
         connectKey,
         signIn,

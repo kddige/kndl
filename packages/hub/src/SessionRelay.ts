@@ -2161,7 +2161,7 @@ export class SessionRelay extends Context.Service<
         const first = defaultProviderModel(yield* modelCatalog.modelsFor(creator.id))
         if (
           first?.provider === "anthropic" &&
-          (yield* connectedProviders.claudeHarness(creator.id)) === "ClaudeCode"
+          (yield* members.claudeHarness(creator.id)) === "ClaudeCode"
         ) {
           return on("ClaudeCode", level)
         }

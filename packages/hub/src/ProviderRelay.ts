@@ -6,16 +6,20 @@
 //   that changes: a connection made or lost, a refresh refused, the Models found again, or their
 //   Claude credential changed, since Claude's Models are among them. No one else is sent them.
 // - Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030) is theirs to set
-//   (SetClaudeHarness), sent with the rest.
+//   (SetClaudeHarness), kept with them as a Member (Members.ts), sent with the rest.
 // - Connecting with an API key waits for the Provider to list its Models with it, and asking for
 //   the Models again waits for each Provider: both off the lock, and off the connection's other
 //   commands, which are answered meanwhile.
 // - A sign-in runs the Provider's flow on the Hub, off the connection's own messages, so the
 //   Member can answer its steps: each is sent to the connection that started it (SignInStepped),
-//   and then how it ended (SignInEnded). One sign-in per Member at a time: a new one, from any of
+//   and then how it ended (SignInEnded). The steps are pi-ai's, in the Hub's words where pi-ai's
+//   don't fit: Sign in with ChatGPT, and OpenRouter's, end on `127.0.0.1` on the Hub's machine,
+//   which the Member's browser can't reach, so they paste the address it landed on instead, and
+//   GitHub Copilot's asks which GitHub first, as a choice. One sign-in per Member at a time: a new one, from any of
 //   their connections, cancels the last. It is cancelled too when its connection goes, or the
 //   Member is removed.
 
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai"
 import {
   CommandFailed,
   type HubToWeb,
@@ -26,12 +30,14 @@ import {
   ProvidersState,
   type RequestId,
   SignInEnded,
+  type SignInStep,
   SignInStepped,
   type WebToHub,
 } from "@kndl/protocol"
 import { Cause, Effect, Exit, Fiber, Option, Redacted, Schema, type Scope } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { ConnectedProviders, type ProviderRefusal } from "./ConnectedProviders.ts"
+import { Members } from "./Members.ts"
 import type { Peer } from "./Peers.ts"
 
 const isProviderMessage = Schema.is(ProviderCommand)
@@ -69,6 +75,119 @@ interface SignIn {
   fiber?: Fiber.Fiber<void>
 }
 
+// ── A sign-in's steps, in the Hub's words ──────────────────────────────────
+
+/** A step that asks the Member to paste or choose something. */
+type Asking = Extract<SignInStep, { readonly _tag: "Paste" | "Choose" }>
+
+/** Asks the Member a step: their answer. Rejects once `signal` aborts. */
+type Ask = (step: Asking, signal: AbortSignal) => Promise<string>
+
+/**
+ * The sign-ins that land the browser on the Hub's own loopback, `127.0.0.1`, which is the Member's
+ * machine, not the Hub's, unless they are the same: they paste the address it landed on instead.
+ */
+const loopback: Partial<Record<ProviderId, { readonly name: string; readonly address: string }>> = {
+  openai: { name: "ChatGPT", address: "http://127.0.0.1:1455/" },
+  openrouter: { name: "OpenRouter", address: "http://127.0.0.1" },
+}
+
+const loopbackOpen = (name: string) =>
+  `Sign in to ${name} in the page this opens. It then lands on a page at 127.0.0.1 that may not load: that's expected. Copy that page's address from the address bar and paste it below.`
+const loopbackPaste = (address: string) =>
+  `Paste the address of the page your browser landed on after you signed in: it starts with ${address}.`
+
+/** The step a pi-ai sign-in event shows the Member. */
+function stepOf(provider: ProviderId, event: AuthEvent): SignInStep | undefined {
+  const landing = loopback[provider]
+  switch (event.type) {
+    case "auth_url":
+      return {
+        _tag: "OpenUrl",
+        url: event.url,
+        ...(landing !== undefined
+          ? { instructions: loopbackOpen(landing.name) }
+          : event.instructions !== undefined && { instructions: event.instructions }),
+      }
+    case "device_code":
+      return { _tag: "EnterCode", url: event.verificationUri, code: event.userCode }
+    case "progress":
+    case "info":
+      // Where the Hub listens for the browser is no use to the Member, whose browser can't reach it.
+      if (landing !== undefined && /listening/i.test(event.message)) return undefined
+      return { _tag: "Progress", message: event.message }
+  }
+}
+
+/** The step a pi-ai sign-in prompt asks of the Member. */
+function askOf(provider: ProviderId, prompt: AuthPrompt): Asking {
+  const landing = loopback[provider]
+  switch (prompt.type) {
+    case "select":
+      return {
+        _tag: "Choose",
+        message: prompt.message,
+        options: prompt.options.map(({ id, label }) => ({ id, label })),
+      }
+    case "manual_code":
+    case "text":
+    case "secret":
+      return {
+        _tag: "Paste",
+        message:
+          landing !== undefined && prompt.type === "manual_code"
+            ? loopbackPaste(landing.address)
+            : prompt.message,
+        ...(prompt.placeholder !== undefined && { placeholder: prompt.placeholder }),
+      }
+  }
+}
+
+const github = "github.com"
+const enterprise = "enterprise"
+
+/**
+ * Asks the Member what a pi-ai sign-in prompt asks: as a choice first, for GitHub Copilot's
+ * question of which GitHub, which takes a blank answer for github.com.
+ */
+async function answerTo(
+  provider: ProviderId,
+  prompt: AuthPrompt,
+  ask: Ask,
+  signal: AbortSignal,
+): Promise<string> {
+  if (
+    provider === "github-copilot" &&
+    prompt.type === "text" &&
+    /enterprise/i.test(prompt.message)
+  ) {
+    const which = await ask(
+      {
+        _tag: "Choose",
+        message: "Which GitHub is your Copilot subscription on?",
+        options: [
+          { id: github, label: "GitHub.com" },
+          { id: enterprise, label: "GitHub Enterprise" },
+        ],
+      },
+      signal,
+    )
+    if (which !== enterprise) return ""
+    // As typed: pi-ai takes a domain or an address, and refuses one it can't read.
+    return ask(
+      {
+        _tag: "Paste",
+        message: "Your GitHub Enterprise address",
+        placeholder: prompt.placeholder ?? "company.ghe.com",
+      },
+      signal,
+    )
+  }
+  return ask(askOf(provider, prompt), signal)
+}
+
+// ── The relay ──────────────────────────────────────────────────────────────
+
 /** Tells the web client its command was refused, and why. */
 const refuse = (client: ProviderWebClient, message: Command, why: string) =>
   client.peer.send(
@@ -93,6 +212,7 @@ const answeringFailures =
 
 export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRelayHost) {
   const providers = yield* ConnectedProviders
+  const members = yield* Members
   const scope = yield* Effect.scope
   /** The sign-in running for each Member. */
   const signIns = new Map<ParticipantId, SignIn>()
@@ -105,7 +225,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     return ProvidersState.make({
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
-      claudeHarness: yield* providers.claudeHarness(participantId),
+      claudeHarness: yield* members.claudeHarness(participantId),
     })
   })
 
@@ -152,25 +272,30 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
           ...(message !== undefined && { message }),
         }),
       )
+    const show = (step: SignInStep) => peer.send(SignInStepped.make({ requestId, provider, step }))
+    const ask: Ask = (step, signal) =>
+      new Promise<string>((resolve, reject) => {
+        const withdraw = () => {
+          if (signIn.answer === answer) delete signIn.answer
+          reject(new Error("Login cancelled"))
+        }
+        const answer = (value: string) => {
+          delete signIn.answer
+          signal.removeEventListener("abort", withdraw)
+          resolve(value)
+        }
+        if (signal.aborted) return withdraw()
+        signal.addEventListener("abort", withdraw, { once: true })
+        signIn.answer = answer
+        show(step)
+      })
     signIn.fiber = yield* providers
       .signIn(you.id, provider, {
-        show: (step) => peer.send(SignInStepped.make({ requestId, provider, step })),
-        ask: (step, signal) =>
-          new Promise<string>((resolve, reject) => {
-            const withdraw = () => {
-              if (signIn.answer === answer) delete signIn.answer
-              reject(new Error("Login cancelled"))
-            }
-            const answer = (value: string) => {
-              delete signIn.answer
-              signal.removeEventListener("abort", withdraw)
-              resolve(value)
-            }
-            if (signal.aborted) return withdraw()
-            signal.addEventListener("abort", withdraw, { once: true })
-            signIn.answer = answer
-            peer.send(SignInStepped.make({ requestId, provider, step }))
-          }),
+        notify: (event) => {
+          const step = stepOf(provider, event)
+          if (step !== undefined) show(step)
+        },
+        prompt: (prompt, signal) => answerTo(provider, prompt, ask, signal),
       })
       .pipe(
         Effect.onExit((exit) =>
@@ -255,7 +380,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
             .pipe(Effect.andThen(changed(you.id, asker))),
         )
       case "SetClaudeHarness": {
-        yield* providers.setClaudeHarness(you.id, message.harness)
+        yield* members.setClaudeHarness(you.id, message.harness)
         return yield* changed(you.id, asker)
       }
     }

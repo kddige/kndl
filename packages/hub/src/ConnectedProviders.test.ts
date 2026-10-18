@@ -749,7 +749,10 @@ describe("signing in to a Provider", () => {
     }
     const failed = await hub.run(
       Effect.flatMap(ConnectedProviders, (providers) =>
-        providers.signIn(alice, "openai", { show: () => {}, ask: () => new Promise(() => {}) }),
+        providers.signIn(alice, "openai", {
+          notify: () => {},
+          prompt: () => new Promise(() => {}),
+        }),
       ).pipe(onClock(0, Duration.minutes(10)), Effect.flip),
     )
     expect(failed).toMatchObject({
