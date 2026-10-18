@@ -85,13 +85,15 @@ export interface NewSession {
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   /**
-   * What runs its agent (ADR 0029): absent, pi when the Runner runs it, else Claude Code. Only a
-   * URL that asks for Claude Code sets it.
+   * What runs its agent (ADR 0029, 0030), as CreateSession takes it: a model names its own, which
+   * this must agree with; absent with no model, the Hub picks. New Session sets it for Claude
+   * Code's default alone, where the Runner might run pi.
    */
   readonly harness?: Harness
   /**
    * The model to start it on: one of the Runner's Claude Code's, or, for a pi Session, one of the
-   * Creator's Models, as `openai/gpt-6-sol`. Absent, the Harness's default (#128).
+   * Creator's Models, as `openai/gpt-6-sol`. Absent, Claude Code's default, or on pi the Creator's
+   * default Model (#128).
    */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
