@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { ConversationId, InstallationId, type SessionId } from "@kndl/protocol"
-import { claudeLaunch, gatewayMcpServers, ModEnvironment } from "./ClaudeLaunch.ts"
+import { claudeLaunch, gatewayMcpServers, HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 test("the mod's plugins read every variable the Runner sets for them, by the same name", async () => {
@@ -33,6 +33,8 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")
+  // Read back after a Runner restart, as its Harness can change while it runs (ADR 0030).
+  expect(env[HarnessVariable]).toBe("ClaudeCode")
   // The Hub's URL and the mod token are the mod relay's to give.
   expect(env).not.toHaveProperty(ModEnvironment.hubUrl)
   expect(env).not.toHaveProperty(ModEnvironment.modToken)

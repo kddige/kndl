@@ -18,15 +18,9 @@ import type {
 } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvironment.ts"
-import { ModEnvironment } from "./ClaudeLaunch.ts"
+import { HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
 import { claudeStateEnv } from "./sandbox/ClaudeState.ts"
 import { piExtension, piStateGuestPath } from "./sandbox/SessionLayout.ts"
-
-/**
- * The variable that says which Harness a Session's process is (ADR 0029), `Pi` for pi: read back
- * from it after a Runner restart, as its Session token is, to know how to start it again.
- */
-export const HarnessVariable = "KNDL_HARNESS"
 
 /** The variable pi's Claude bridge finds the pinned Claude Code by. */
 export const ClaudeCodeVariable = "KNDL_CLAUDE_CODE"

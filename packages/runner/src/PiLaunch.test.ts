@@ -7,14 +7,8 @@ import {
 } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
-import { ModEnvironment } from "./ClaudeLaunch.ts"
-import {
-  HarnessVariable,
-  McpServersVariable,
-  piEnvironment,
-  piLaunch,
-  PiSessionIdPattern,
-} from "./PiLaunch.ts"
+import { HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
+import { McpServersVariable, piEnvironment, piLaunch, PiSessionIdPattern } from "./PiLaunch.ts"
 
 const options = {
   nodePath: "/opt/kndl/pi/node-v24.22.0-musl/bin/node",

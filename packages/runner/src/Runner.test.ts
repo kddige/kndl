@@ -636,6 +636,7 @@ describe("Sessions", () => {
       KNDL_SESSION_ID: "s-1",
       // The conversation it was launched as, the one the mod links (#321).
       KNDL_CONVERSATION_ID: spec?.argv[2] ?? "",
+      KNDL_HARNESS: "ClaudeCode",
       // The mod relay, for the Hub, and the Session token for it: never the mod token (ADR 0026).
       KNDL_URL: "http://host.microsandbox.internal:7778",
       KNDL_MOD_TOKEN: sessionToken,
@@ -1306,7 +1307,7 @@ describe("Sessions", () => {
 const startPiSession = (id: string, extra: Record<string, unknown> = {}) =>
   startSession(id, { harness: "Pi", model: "openai/gpt-6-sol", ...extra })
 
-/** A RelaunchSession for Session s-1, resuming `resume`, on `model`. */
+/** A RelaunchSession for pi Session s-1, resuming `resume`, on `model`. */
 const relaunchSession = (resume: string, model: string, modToken = "chm_mod.second") => ({
   _tag: "RelaunchSession",
   sessionId: "s-1",
@@ -1314,8 +1315,28 @@ const relaunchSession = (resume: string, model: string, modToken = "chm_mod.seco
   workBranch: "claude/s-1",
   resume,
   modToken,
+  harness: "Pi",
   model,
 })
+
+/**
+ * A RelaunchSession for Session s-1 onto `harness` (ADR 0030), with `extra`: a new conversation
+ * unless it says which to resume.
+ */
+const switchHarness = (harness: string, extra: Record<string, unknown> = {}) => ({
+  _tag: "RelaunchSession",
+  sessionId: "s-1",
+  repo: "acme/app",
+  workBranch: "claude/s-1",
+  modToken: "chm_mod.switched",
+  harness,
+  ...extra,
+})
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** A conversation Claude Code had in Session s-1, with a transcript to resume. */
+const claudeConversation = "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"
 
 /** What the copy of the mod that pi was `launched` with holds as its pi extension, on the host. */
 function piExtensionOf(h: Harness, launched: number) {
@@ -1511,5 +1532,252 @@ describe("pi Sessions (ADR 0029)", () => {
     })
     expect(h.tmux.launched).toEqual([])
     expect(h.workspaces.prepared).toEqual([])
+  })
+})
+
+describe("switching a Session's Harness (ADR 0030)", () => {
+  test("switches Claude Code to pi in the same Sandbox, on a new conversation", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const claude = h.tmux.pane("s-1")
+    const claudeConversationId = h.tmux.launched[0]?.argv[2]
+
+    h.hub.send(switchHarness("Pi", { model: "openai/gpt-6-sol", thinkingLevel: "high" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    // Claude Code stopped as on a relaunch, not as an exit of its own.
+    expect(claude.terminated).toBe(true)
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    const [, spec] = h.tmux.launched
+    expect(spec?.cwd).toBe("/workspace")
+    expect(spec?.argv).toEqual([
+      fakeSandboxNodePath,
+      piReady.cli,
+      "--approve",
+      "-e",
+      expect.stringMatching(new RegExp(`^${modGuestPath}/[0-9a-z]+/pi/kndl\\.js$`)),
+      "--session-id",
+      expect.stringMatching(uuid),
+      "--model",
+      "openai/gpt-6-sol",
+      "--thinking",
+      "high",
+    ])
+    // A new conversation: pi has none of the Session's yet.
+    expect(spec?.argv[6]).not.toBe(claudeConversationId)
+    expect(spec?.env).toMatchObject({
+      LANG: "C.UTF-8",
+      PI_CODING_AGENT_DIR: "/var/lib/kndl/claude/pi",
+      KNDL_HARNESS: "Pi",
+      KNDL_CONVERSATION_ID: spec?.argv[6] ?? "",
+      KNDL_CLAUDE_CODE: fakeSandboxClaudePath,
+      CLAUDE_CODE_OAUTH_TOKEN: setupToken,
+    })
+    expect(spec?.env["KNDL_MOD_TOKEN"]).toStartWith("chp_")
+    expect(spec?.env["KNDL_MOD_TOKEN"]).not.toBe(h.tmux.launched[0]?.env["KNDL_MOD_TOKEN"])
+    expect(piExtensionOf(h, 1)).toBe("// pi built 1\n")
+    // The same Sandbox and Workspace, readied for pi as a pi Session's start readies its own.
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 Pi"])
+    expect(h.workspaces.prepared).toHaveLength(1)
+    expect(h.hub.all("SandboxNote")).toEqual([])
+
+    h.tmux.pane("s-1").output("pi here")
+    await eventually(() => h.hub.all("TerminalFrame").some((frame) => frame.data === "pi here"))
+  })
+
+  test("switches pi to Claude Code resuming its conversation, and back to pi resuming pi's", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startPiSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const piConversation = h.tmux.launched[0]?.argv[6] ?? ""
+    writeTranscript(h, claudeConversation)
+
+    h.hub.send(switchHarness("ClaudeCode", { resume: claudeConversation, model: "opus[1m]" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    const claude = h.tmux.launched[1]
+    expect(claude?.argv.slice(0, 3)).toEqual([
+      fakeSandboxClaudePath,
+      "--resume",
+      claudeConversation,
+    ])
+    expect(claude?.argv.slice(-2)).toEqual(["--model", "opus[1m]"])
+    expect(claude?.env).toMatchObject({
+      CLAUDE_CONFIG_DIR: "/claude",
+      KNDL_CONVERSATION_ID: claudeConversation,
+      KNDL_HARNESS: "ClaudeCode",
+      CLAUDE_CODE_OAUTH_TOKEN: setupToken,
+    })
+    expect(claude?.env).not.toHaveProperty("PI_CODING_AGENT_DIR")
+    expect(claude?.unset).toEqual(KeptOutOfClaude)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 ClaudeCode"])
+
+    h.hub.send(
+      switchHarness("Pi", {
+        resume: piConversation,
+        model: "openai/gpt-6-sol",
+        modToken: "chm_mod.third",
+      }),
+    )
+    await eventually(() => h.hub.all("SessionStarted").length === 3)
+
+    expect(h.tmux.launched[2]?.argv.slice(0, 2)).toEqual([fakeSandboxNodePath, piReady.cli])
+    expect(h.tmux.launched[2]?.argv.slice(5)).toEqual([
+      "--session-id",
+      piConversation,
+      "--model",
+      "openai/gpt-6-sol",
+    ])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 ClaudeCode", "ready s-1 Pi"])
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    expect(h.hub.all("SandboxNote")).toEqual([])
+  })
+
+  test("runs Claude Code on a relaunch that names no Harness, as the contract says", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startPiSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.send({ ...switchHarness("ClaudeCode"), harness: undefined })
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    expect(h.tmux.launched[1]?.argv[0]).toBe(fakeSandboxClaudePath)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 ClaudeCode"])
+  })
+
+  test("starts a new conversation on a relaunch of the same Harness that names none to resume", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const first = h.tmux.launched[0]?.argv[2]
+
+    h.hub.send(switchHarness("ClaudeCode", { model: "sonnet" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    const [flag, id] = h.tmux.launched[1]?.argv.slice(1, 3) ?? []
+    expect(flag).toBe("--session-id")
+    expect(id).toMatch(uuid)
+    expect(id).not.toBe(first)
+    // Its Sandbox was readied for Claude Code as it started.
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+    expect(h.hub.all("SandboxNote")).toEqual([])
+  })
+
+  test("remembers the Harness a Session switched to across a Runner restart", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    h.hub.send(switchHarness("Pi", { model: "openai/gpt-6-sol" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    const piConversation = h.tmux.launched[1]?.argv[6] ?? ""
+
+    await restartRunner(h)
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
+    await eventually(() => h.sandboxes.calls.includes("keep s-1"))
+    h.hub.send(relaunchSession(piConversation, "xai/grok-5", "chm_mod.third"))
+    await eventually(() => h.hub.all("SessionStarted").length === 3)
+
+    // pi again, in a Sandbox already readied for it.
+    expect(h.tmux.launched[2]?.argv.slice(0, 2)).toEqual([fakeSandboxNodePath, piReady.cli])
+    expect(h.tmux.launched[2]?.argv.slice(5, 7)).toEqual(["--session-id", piConversation])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 Pi", "keep s-1"])
+  })
+
+  test("remembers a switch back to Claude Code across a Runner restart", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startPiSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    h.hub.send(switchHarness("ClaudeCode"))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    await restartRunner(h)
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
+    await eventually(() => h.sandboxes.calls.includes("keep s-1"))
+    h.hub.send(switchHarness("ClaudeCode", { modToken: "chm_mod.third", model: "sonnet" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 3)
+
+    expect(h.tmux.launched[2]?.argv[0]).toBe(fakeSandboxClaudePath)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 ClaudeCode", "keep s-1"])
+  })
+
+  test("fails a switch to pi when the Runner has no pi, leaving the Session asleep", async () => {
+    const h = startRunner(undefined, undefined, undefined, StaticPiBundle(undefined))
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.send(switchHarness("Pi", { model: "openai/gpt-6-sol" }))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")[0]).toMatchObject({
+      sessionId: "s-1",
+      message: expect.stringContaining("doesn't run pi"),
+    })
+    expect(h.tmux.launched).toHaveLength(1)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.relay.calls).toContain("revoke s-1")
+  })
+
+  test("fails a switch to pi whose Sandbox can't be readied for it, leaving the Session asleep", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    h.sandboxes.readyFails.set(sessionId("s-1"), "its Sandbox was made before pi")
+
+    h.hub.send(switchHarness("Pi", { model: "openai/gpt-6-sol" }))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")[0]).toMatchObject({
+      message: expect.stringContaining("made before pi"),
+    })
+    expect(h.tmux.launched).toHaveLength(1)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "ready s-1 Pi", "stop s-1 Sleep"])
+  })
+
+  test("fails a switch to Claude Code the Hub refuses the setup token for, leaving the Session asleep", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startPiSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.claudeCredential = {
+      _tag: "ClaudeCredentialRefused",
+      message: "Ada has no Claude setup token.",
+    }
+    h.hub.send(switchHarness("ClaudeCode", { model: "opus[1m]" }))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")[0]).toMatchObject({
+      message: "Ada has no Claude setup token.",
+    })
+    expect(h.tmux.launched).toHaveLength(1)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+  })
+
+  test("switches to pi without Claude's Models when the Hub refuses the setup token", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.claudeCredential = {
+      _tag: "ClaudeCredentialRefused",
+      message: "Ada has no Claude setup token.",
+    }
+    h.hub.send(switchHarness("Pi", { model: "openai/gpt-6-sol" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    const env = h.tmux.launched[1]?.env ?? {}
+    expect(Object.keys(env).filter((name) => name.includes("CLAUDE"))).toEqual([])
+    expect(h.tmux.launched[1]?.unset).toEqual([...KeptOutOfClaude, "CLAUDE_CODE_OAUTH_TOKEN"])
+    expect(h.hub.all("SessionStartFailed")).toEqual([])
   })
 })

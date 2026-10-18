@@ -23,6 +23,14 @@ export const ModEnvironment = {
   conversationId: "KNDL_CONVERSATION_ID",
 } as const
 
+/**
+ * The variable that says which Harness a Session's process is (ADR 0029): `Pi` for pi, and
+ * `ClaudeCode` for Claude Code. Read back from it after a Runner restart, as its Session token is,
+ * to know how to start it again, its Harness being able to change while it runs (ADR 0030). A
+ * Claude Code started before pi has none.
+ */
+export const HarnessVariable = "KNDL_HARNESS"
+
 export interface ClaudeLaunchOptions {
   /** Claude Code's executable in the Sandbox. */
   readonly claudePath: string
@@ -103,6 +111,7 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       DISABLE_INSTALLATION_CHECKS: "1",
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.conversationId]: options.conversation.id,
+      [HarnessVariable]: "ClaudeCode",
     },
   }
 }

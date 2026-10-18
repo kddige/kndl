@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, posix } from "node:path"
 import type { RepoName, RunnerToHub, SandboxStateReport, SessionId } from "@kndl/protocol"
 import { Effect, Layer, Schedule } from "effect"
 import { HubGit } from "./HubGit.ts"
@@ -556,6 +556,80 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
           ).toBe(true)
         }),
       { pi: true },
+    ))
+
+  test("readies a Claude Code Session's running Sandbox for pi, and back, as a switch needs (ADR 0030)", () =>
+    withSandboxes(
+      (root) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const world = yield* FakeSandboxBackend
+          const backend = yield* SandboxBackend
+          const directories = yield* directoriesIn(root)
+          const started = yield* sandboxes.start(s1, directories, target)
+          const config = posix.join(claudeStateGuestPath, ".claude.json")
+          yield* backend.writeFile(s1, config, "{}")
+
+          yield* sandboxes.readyFor(s1, "Pi", started)
+          const script = new TextDecoder().decode(
+            yield* backend.readFile(s1, "/tmp/kndl-pi-needs.sh"),
+          )
+          expect(script).toContain(`'${started.pi.node}' --version`)
+          expect(script).toContain(`mkdir -p '${piStateGuestPath}'`)
+          expect(
+            world.execCalls.some((call) => call.request.args?.at(-1) === "/tmp/kndl-pi-needs.sh"),
+          ).toBe(true)
+          // Claude Code's state is seeded as at a start, for pi's Claude bridge.
+          const seeded = () =>
+            Effect.map(backend.readFile(s1, config), (data) =>
+              JSON.parse(new TextDecoder().decode(data)),
+            )
+          expect(yield* seeded()).toMatchObject({ hasCompletedOnboarding: true })
+
+          yield* backend.writeFile(s1, config, "{}")
+          yield* sandboxes.readyFor(s1, "ClaudeCode", started)
+          expect(yield* seeded()).toMatchObject({ hasCompletedOnboarding: true })
+        }),
+      { pi: true },
+    ))
+
+  test("won't ready for pi a Sandbox kept from before pi's mount, saying why", () => {
+    let withoutPi = false
+    return withSandboxes(
+      (root) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const backend = yield* SandboxBackend
+          const directories = yield* directoriesIn(root)
+          const started = yield* sandboxes.start(s1, directories, target)
+          withoutPi = true
+
+          const failed = yield* Effect.flip(sandboxes.readyFor(s1, "Pi", started))
+          expect(failed.message).toContain("made before pi")
+          const piNeeds = backend.readFile(s1, "/tmp/kndl-pi-needs.sh").pipe(Effect.option)
+          expect((yield* piNeeds)._tag).toBe("None")
+        }),
+      {
+        pi: true,
+        onExec: ({ request }) =>
+          Effect.succeed(
+            withoutPi && (request.args?.[1] ?? "").includes(`test -d ${sandboxPiGuestDir}`)
+              ? { exitCode: 1 }
+              : {},
+          ),
+      },
+    )
+  })
+
+  test("a Runner without a pi bundle won't ready a Sandbox for pi", () =>
+    withSandboxes((root) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const directories = yield* directoriesIn(root)
+        const started = yield* sandboxes.start(s1, directories, target)
+        const failed = yield* Effect.flip(sandboxes.readyFor(s1, "Pi", started))
+        expect(failed.message).toContain("have no pi")
+      }),
     ))
 
   test("a pi Session's Sandbox where pi's Node.js can't run fails to start, saying why", () =>

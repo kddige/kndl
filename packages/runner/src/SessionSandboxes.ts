@@ -30,6 +30,7 @@ import { availableParallelism, tmpdir, totalmem } from "node:os"
 import { join } from "node:path"
 import type {
   GitAnswer,
+  Harness,
   RepoName,
   RunTestBuild,
   SandboxState,
@@ -65,7 +66,7 @@ import { HubVariables, variablesEnv } from "./HubVariables.ts"
 import { PiBundle } from "./PiBundle.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SandboxError, Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude, SandboxPi, SandboxTarget } from "./Sandbox.ts"
+import type { SandboxClaude, SandboxPi, SandboxStarted, SandboxTarget } from "./Sandbox.ts"
 import { claudeStateEnv, ensureTranscript, seedClaudeState } from "./sandbox/ClaudeState.ts"
 import {
   bindDependencyFoldersScript,
@@ -630,28 +631,58 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           },
           sessionLog(sessionId),
         )
-        yield* seedClaudeState(backend, sessionId)
         const node = sandboxNodePath(libc)
-        if (harness === "Pi") {
-          if (piMounts.length === 0)
-            return yield* new SandboxError({ message: "this Runner's Sandboxes have no pi" })
-          yield* runScript(
-            backend,
-            sessionId,
-            {
-              label: "Readying pi",
-              name: "pi-needs",
-              script: piNeedsScript(node, piStateGuestPath),
-              cwd: "/",
-            },
-            sessionLog(sessionId),
-          )
-        }
+        yield* readyHarness(sessionId, node, harness ?? "ClaudeCode")
         return {
           claude: { path: claudePath, env: { ...env, ...claudeStateEnv } } satisfies SandboxClaude,
           pi: { node, env } satisfies SandboxPi,
         }
       })
+
+    /**
+     * Readies the running Sandbox for a Harness, once tmux runs there: Claude Code's state seeded,
+     * which pi's Claude bridge runs on too, and, for pi, its `node` running, with libgcc installed
+     * on musl if it doesn't, and pi's state directory made.
+     */
+    const readyHarness = (sessionId: SessionId, node: string, harness: Harness) =>
+      Effect.gen(function* () {
+        yield* seedClaudeState(backend, sessionId)
+        if (harness !== "Pi") return
+        if (piMounts.length === 0)
+          return yield* new SandboxError({ message: "this Runner's Sandboxes have no pi" })
+        yield* runScript(
+          backend,
+          sessionId,
+          {
+            label: "Readying pi",
+            name: "pi-needs",
+            script: piNeedsScript(node, piStateGuestPath),
+            cwd: "/",
+          },
+          sessionLog(sessionId),
+        )
+      })
+
+    // A Sandbox started for one Harness is readied for the other as the other's start would have
+    // (ADR 0030). One kept across a Runner restart may be older than pi's mount, which only its
+    // next start makes anew.
+    const readyFor = (sessionId: SessionId, harness: Harness, started: SandboxStarted) =>
+      Effect.gen(function* () {
+        if (harness === "Pi" && piMounts.length > 0 && !(yield* hasRunnerMounts(sessionId, true))) {
+          return yield* new SandboxError({
+            message: "its Sandbox was made before pi, so it runs pi once it sleeps and wakes",
+          })
+        }
+        yield* readyHarness(sessionId, started.pi.node, harness)
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.fail(
+            new SandboxError({
+              message: `the Sandbox could not be readied for ${harness === "Pi" ? "pi" : "Claude Code"}: ${failureMessage(cause)}`,
+            }),
+          ),
+        ),
+      )
 
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
     const startPlain = (
@@ -1002,6 +1033,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       start,
       running: runningSandboxes,
       keep,
+      readyFor,
       hasTranscript,
       stop,
       purge,

@@ -28,20 +28,14 @@ import {
 } from "effect"
 import { ClaudeSessionIdPattern } from "./ClaudeConfig.ts"
 import { claudeEnvironment, ClaudeTokenVariable, KeptOutOfClaude } from "./ClaudeEnvironment.ts"
-import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
+import { claudeLaunch, HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
 import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
 import { PiBundle, type PiReady } from "./PiBundle.ts"
-import {
-  HarnessVariable,
-  keptOutOfPi,
-  piEnvironment,
-  piLaunch,
-  PiSessionIdPattern,
-} from "./PiLaunch.ts"
+import { keptOutOfPi, piEnvironment, piLaunch, PiSessionIdPattern } from "./PiLaunch.ts"
 import { ModRelay } from "./relay/ModRelay.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
@@ -100,6 +94,9 @@ const message = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** The Harness's name, as a Session's history and the Runner's log say it. */
+const harnessName = (harness: Harness) => (harness === "Pi" ? "pi" : "Claude Code")
+
 /** `text` with every occurrence of each of `values` masked, character for character. */
 export function withoutValues(text: string, values: ReadonlyArray<string> = []): string {
   return values.reduce(
@@ -132,7 +129,10 @@ export const SessionsLive = Layer.effect(
     const launchSecrets = new Map<SessionId, ReadonlyArray<string>>()
     /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
     const sandboxStarts = new Map<SessionId, SandboxStarted>()
-    /** What each started Session runs (ADR 0029), for a relaunch to start it again. */
+    /**
+     * What each started Session runs now (ADR 0029), for a relaunch to start it again, or to switch
+     * it to the other (ADR 0030).
+     */
     const harnesses = new Map<SessionId, Harness>()
     /** Sessions kept running across a restart, whose Session token waits for a mod token. */
     const held = new Set<SessionId>()
@@ -503,8 +503,12 @@ export const SessionsLive = Layer.effect(
      * Hub sends it only while no Turn runs. A Claude Code that won't start again, as when the Hub
      * refuses the setup token, leaves the Session as a failed start does, asleep.
      *
-     * A pi Session's pi starts again the same way, as the Harness it started as (ADR 0029). The Hub
-     * switches a pi Session's model in pi itself, while it runs, but a relaunch still works.
+     * A pi Session's pi starts again the same way. The Hub switches a pi Session's model in pi
+     * itself, while it runs, but a relaunch still works.
+     *
+     * A relaunch onto the other Harness switches the Session's (ADR 0030): the one stops as above,
+     * and the other starts in the same Sandbox, readied for it first as its start would have, on
+     * the conversation the Hub names, or a new one. Absent, the Harness is Claude Code.
      */
     const relaunch = (request: RelaunchSession) =>
       serialized(request.sessionId)(
@@ -512,12 +516,13 @@ export const SessionsLive = Layer.effect(
           const { sessionId } = request
           const session = running.get(sessionId)
           const sandbox = sandboxStarts.get(sessionId)
-          const harness = harnesses.get(sessionId) ?? "ClaudeCode"
+          const was = harnesses.get(sessionId) ?? "ClaudeCode"
+          const harness = request.harness ?? "ClaudeCode"
           if (session === undefined || sandbox === undefined) {
             return yield* hub.send(
               RunnerToHub.cases.SessionStartFailed.make({
                 sessionId,
-                message: `${harness === "Pi" ? "pi" : "Claude Code"} was not running to restart with the new model`,
+                message: `${harnessName(was)} was not running to restart with the new model`,
               }),
             )
           }
@@ -526,19 +531,25 @@ export const SessionsLive = Layer.effect(
           yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           yield* tmux.kill(sessionId)
           yield* forget(sessionId)
-          const launched = yield* readyHarness(request, harness).pipe(
-            Effect.flatMap((launch) =>
-              launch(sessionDirectories(config.sessionsRoot, sessionId), sandbox),
-            ),
-            Effect.exit,
-          )
+          const launched = yield* Effect.gen(function* () {
+            const launch = yield* readyHarness(request, harness)
+            if (harness !== was) {
+              yield* sandboxes.readyFor(sessionId, harness, sandbox)
+              harnesses.set(sessionId, harness)
+            }
+            yield* launch(sessionDirectories(config.sessionsRoot, sessionId), sandbox)
+          }).pipe(Effect.exit)
 
           if (Exit.isSuccess(launched)) {
             const model = [
               request.model ?? "default model",
               request.thinkingLevel ?? "default thinking level",
             ]
-            yield* Effect.logInfo(`Session ${sessionId} restarted on ${model.join(", ")}`)
+            yield* Effect.logInfo(
+              harness === was
+                ? `Session ${sessionId} restarted on ${model.join(", ")}`
+                : `Session ${sessionId} switched from ${harnessName(was)} to ${harnessName(harness)}, on ${model.join(", ")}`,
+            )
             return yield* started(sessionId)
           }
           const reason = message(launched.cause)
@@ -652,8 +663,9 @@ export const SessionsLive = Layer.effect(
     // the mod (ModEnvironment.modToken). It lets only this Session in, so a guest that changed it
     // gains nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped. Claude
     // Code runs on with the setup token it was started with, read back too only to keep it out
-    // of what it prints as it exits. Which Harness runs is read back the same way: pi's launch
-    // says so (HarnessVariable), and Claude Code's, older than pi, doesn't.
+    // of what it prints as it exits. Which Harness runs is read back the same way, as a Session may
+    // have switched since it started (ADR 0030): each launch says so (HarnessVariable), but a Claude
+    // Code started before pi, which doesn't.
     const adopt = Effect.gen(function* () {
       yield* tmux.retireHostServer
       const kept: Array<SessionId> = []
@@ -682,7 +694,7 @@ export const SessionsLive = Layer.effect(
         }
         kept.push(sessionId)
         yield* Effect.logInfo(
-          `Session ${sessionId}: ${harness === "Pi" ? "pi" : "Claude Code"} kept running across the restart`,
+          `Session ${sessionId}: ${harnessName(harness)} kept running across the restart`,
         )
       }
       yield* sandboxes.reconcile(kept)

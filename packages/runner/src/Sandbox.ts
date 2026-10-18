@@ -93,6 +93,17 @@ export class Sandboxes extends Context.Service<
       directories: SessionDirectories,
     ) => Effect.Effect<SandboxStarted, SandboxError>
     /**
+     * Readies the Session's running Sandbox for `harness`, one it didn't start with, as its start
+     * would have (ADR 0030): Claude Code's state seeded, and, for pi, Node.js running there and
+     * pi's state directory made. `started` is what its start or {@link keep} said it runs. Fails
+     * for pi in a Sandbox without the pi bundle's mount.
+     */
+    readonly readyFor: (
+      sessionId: SessionId,
+      harness: Harness,
+      started: SandboxStarted,
+    ) => Effect.Effect<void, SandboxError>
+    /**
      * Whether Claude Code in the Session's started Sandbox has a transcript of conversation `id`
      * to resume. One Claude Code wrote on the host, before it moved into the Sandbox, is copied
      * in first (ADR 0013).

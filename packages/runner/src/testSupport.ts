@@ -390,6 +390,8 @@ export class FakeSandboxes {
   readonly diskUsages = new Map<SessionId, number>()
   /** The Sessions whose `diskUsage` fails. */
   readonly diskUsageFails = new Set<SessionId>()
+  /** Why readying a Session's Sandbox for another Harness fails, by Session; it doesn't if unset. */
+  readonly readyFails = new Map<SessionId, string>()
 
   /** `claudePath`: the Claude Code each Sandbox runs. */
   constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
@@ -417,6 +419,14 @@ export class FakeSandboxes {
             claude: { path: this.claudePath, env: this.claudeEnv },
             pi: { node: fakeSandboxNodePath, env: this.piEnv },
           }
+        }),
+      readyFor: (id, harness) =>
+        Effect.suspend(() => {
+          this.calls.push(`ready ${id} ${harness}`)
+          const fails = this.readyFails.get(id)
+          return fails === undefined
+            ? Effect.void
+            : Effect.fail(new SandboxError({ message: fails }))
         }),
       hasTranscript: (_id, _directories, conversation) =>
         Effect.sync(() => this.transcripts.has(conversation)),
