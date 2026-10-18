@@ -1104,6 +1104,50 @@ describe("a Hub that restarts", () => {
       }),
     )
   })
+
+  test("asks a sign-in's Models a day old once, when its refresh can't be had just now", async () => {
+    const dir = testDatabaseDir("kndl-providers-")
+    dirs.push(dir)
+    const database = databaseAt(join(dir, "hub.db"))
+    const first = fakeProviders()
+    const hub = await startHub({ config: withKey, providerApis: first.layer, database })
+    const web = await openWeb(hub, "alice", undefined, { setupToken: false })
+    await web.take("ProvidersState")
+    first.fakes.signIn = async () => oauth("access-old")
+    web.send({ _tag: "StartSignIn", requestId: "t-1", provider: "openai" })
+    await web.take("SignInEnded")
+    await stopAll()
+
+    // A day later its token has expired, and OpenAI's token endpoint is down.
+    const second = fakeProviders()
+    let refreshes = 0
+    second.fakes.refresh = async () => {
+      refreshes++
+      throw new Error("fetch failed")
+    }
+    const later = await startHub({
+      config: withKey,
+      providerApis: second.layer,
+      database,
+      clockAhead: Duration.hours(25),
+    })
+    const again = await openWeb(later, "alice", undefined, { setupToken: false })
+    const welcomed = await again.take("ProvidersState")
+    const checked = welcomed.connected[0]?.modelsCheckedAt ?? 0
+    const told = await again.take(
+      "ProvidersState",
+      (m) => (m.connected[0]?.modelsCheckedAt ?? 0) > checked,
+    )
+    // The Models found before stay, saying why they weren't asked for again.
+    expect(told.connected[0]?.models).toEqual(welcomed.connected[0]?.models)
+    expect(told.connected[0]?.modelsProblem).toMatch(/couldn't refresh the sign-in just now/)
+    // Asked once: neither alice's web nor anything else asking for her Models asks OpenAI again.
+    for (let i = 0; i < 3; i++) await request(again, { _tag: "GetProviders" })
+    await later.run(Effect.flatMap(ModelCatalog, (catalog) => catalog.modelsFor(alice)))
+    await Bun.sleep(100)
+    expect(refreshes).toBe(1)
+    expect(await again.untaken("ProvidersState")).toEqual([])
+  })
 })
 
 describe("removing a Member", () => {

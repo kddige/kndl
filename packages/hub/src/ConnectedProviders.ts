@@ -763,22 +763,34 @@ export class ConnectedProviders extends Context.Service<
         if (JSON.stringify(shown) !== JSON.stringify(models)) yield* changed(participantId, false)
       })
 
-      /** Asks the Provider for the Member's Models, and keeps what it said. */
+      /**
+       * Asks the Provider for the Member's Models, and keeps what it said: whether that changed
+       * what they see. A sign-in that can't be refreshed or used just now lists none, as a Provider
+       * that didn't answer, so it isn't asked again until the next ask is due.
+       */
       const askModels = Effect.fn("ConnectedProviders.askModels")(function* (
         participantId: ParticipantId,
         provider: ProviderId,
-      ): Effect.fn.Return<void, SqlError> {
+      ): Effect.fn.Return<boolean, SqlError> {
         const before = connectionOf(participantId, provider)
-        if (before === undefined || before.problem !== undefined) return
-        const called = yield* Effect.option(
+        if (before === undefined || before.problem !== undefined) return false
+        const called = yield* Effect.result(
           callWith(participantId, provider, modelsCall(provider), true),
         )
-        if (Option.isNone(called)) return
-        const listed = yield* readListing(provider, before.kind, called.value)
+        const listed: Listed =
+          called._tag === "Success"
+            ? yield* readListing(provider, before.kind, called.success)
+            : { _tag: "Unavailable", message: called.failure.message }
         const now = yield* Clock.currentTimeMillis
         const current = connectionOf(participantId, provider)
-        // Disconnected or connected again meanwhile.
-        if (current === undefined || current.connectedAt !== before.connectedAt) return
+        // Disconnected or connected again meanwhile, or its refresh refused, which said so.
+        if (
+          current === undefined ||
+          current.connectedAt !== before.connectedAt ||
+          current.problem !== undefined
+        ) {
+          return false
+        }
         const { modelsProblem: _, ...rest } = current
         const next: Connection =
           listed._tag === "Listed"
@@ -790,9 +802,13 @@ export class ConnectedProviders extends Context.Service<
           WHERE participant_id = ${participantId} AND provider = ${provider}
         `
         keep(participantId, next)
+        return true
       })
 
-      /** Asks off the call, once at a time for each list, telling the Member's web clients after. */
+      /**
+       * Asks off the call, once at a time for each list, telling the Member's web clients after,
+       * if what they see changed.
+       */
       const askInBackground = (participantId: ParticipantId, provider: ModelProvider) => {
         const key = `${participantId}\n${provider}`
         if (asking.has(key)) return Effect.void
@@ -800,7 +816,9 @@ export class ConnectedProviders extends Context.Service<
         const ask: Effect.Effect<void, SqlError> =
           provider === "anthropic"
             ? askClaude(participantId)
-            : askModels(participantId, provider).pipe(Effect.andThen(changed(participantId, false)))
+            : askModels(participantId, provider).pipe(
+                Effect.flatMap((kept) => (kept ? changed(participantId, false) : Effect.void)),
+              )
         return ask.pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Could not ask for a Provider's Models", cause),
