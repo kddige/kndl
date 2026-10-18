@@ -1680,13 +1680,10 @@ export class SessionRelay extends Context.Service<
         )
 
       /**
-       * Switches the Session's model and thinking level to those set now (ADR 0029), once they
-       * changed while it ran, for a mod that switches models: between Turns, as `relaunch`, but
-       * in place. The mod takes its commands in order, so the next prompt runs on the new model.
-       */
-      /**
        * Why a subagent can't be messaged or stopped now (ADR 0030): it ran on the other Harness,
-       * which alone has it. Undefined when it ran on the Session's, or the Session has no such agent.
+       * which alone has it. That is the one running the Session, or, for one that isn't running,
+       * the one it wakes on, its model's. Undefined when it ran on that one, or the Session has no
+       * such agent.
        */
       const agentElsewhere = Effect.fn("SessionRelay.agentElsewhere")(function* (
         session: SessionSummary,
@@ -1694,11 +1691,18 @@ export class SessionRelay extends Context.Service<
         verb: "message" | "stop",
       ) {
         const agent = yield* sessions.agentOf(session.id, agentId)
-        if (Option.isNone(agent) || agent.value.harness === harnessNow(session)) return undefined
+        const running = session.state === "Active" || session.state === "Frozen"
+        const reaches = running ? harnessNow(session) : harnessSet(session)
+        if (Option.isNone(agent) || agent.value.harness === reaches) return undefined
         const name = harnesses.of({ harness: agent.value.harness }).name
         return `${agent.value.description} ran on ${name}: switch the Session back to a ${name} model to ${verb} it.`
       })
 
+      /**
+       * Switches the Session's model and thinking level to those set now (ADR 0029), once they
+       * changed while it ran, for a mod that switches models: between Turns, as `relaunch`, but
+       * in place. The mod takes its commands in order, so the next prompt runs on the new model.
+       */
       const switchModel = Effect.fn("SessionRelay.switchModel")(function* (
         session: SessionSummary,
       ) {

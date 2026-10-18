@@ -2829,6 +2829,29 @@ describe("switching Harness (ADR 0030)", () => {
     )
   })
 
+  test("an agent of the Harness an Asleep Session leaves as it wakes can't be messaged", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
+    const { runner, web, sessionId, mod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(turnStarted("t-1"), agentStarted("a-1", "Find the flaky test"))
+    await mod.post(agentStatus("a-1", "Done"))
+    // pi is picked mid-Turn, then Claude Code exits before the Session switches.
+    web.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
+    await web.take("SessionUpdated", (m) => m.session.modelPending === true)
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    expect(
+      (await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session,
+    ).toMatchObject({ model: "openai/gpt-6-sol" })
+
+    web.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "go on" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "Find the flaky test ran on Claude Code: switch the Session back to a Claude Code model to message it.",
+    )
+    expect(await runner.untaken("StartSession")).toEqual([])
+  })
+
   test("an Asleep Session switches as it wakes, and a mod that takes no handoff starts without one", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
