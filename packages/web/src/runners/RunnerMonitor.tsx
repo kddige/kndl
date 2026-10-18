@@ -35,16 +35,12 @@ import {
 const chartHeight = 132
 
 const styles = stylex.create({
+  // Under its Runner's row, indented with the row's detail: no frame of its own.
   monitor: {
     display: "flex",
     flexDirection: "column",
     gap: space.s4,
-    paddingBlock: space.s4,
-    paddingInline: space.s4,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-    backgroundColor: color.bg,
+    paddingBlockStart: space.s1,
     // The tiles and charts lay out by the room the Monitor has, not the window's.
     containerType: "inline-size",
   },
@@ -186,19 +182,11 @@ const thresholdPaint = "var(--kndl-chart-threshold)"
  * A Runner's Monitor: its last sample as tiles, and its history as charts. `id` names it for the
  * toggle that opens it.
  */
-export function RunnerMonitor({
-  id,
-  runner,
-  now,
-}: {
-  id: string
-  runner: RunnerSummary
-  now: number
-}) {
+export function RunnerMonitor({ runner, now }: { runner: RunnerSummary; now: number }) {
   const history = useRunnerHistory(runner, now)
   const sysinfo = runner.sysinfo
   return (
-    <section id={id} aria-label={`${runner.name}'s monitor`} {...stylex.props(styles.monitor)}>
+    <section aria-label={`${runner.name}'s monitor`} {...stylex.props(styles.monitor)}>
       <div {...stylex.props(styles.head)}>
         <h3 {...stylex.props(styles.title)}>Host</h3>
         {sysinfo && (

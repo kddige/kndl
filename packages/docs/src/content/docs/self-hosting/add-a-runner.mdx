@@ -44,7 +44,7 @@ The Runner is named after the machine's short hostname. To name it yourself, add
 
 - A code works **once**, within **15 minutes**, and is shown only once.
 - Anyone with it can pair a machine, so share it only with whoever sets up the Runner.
-- **Pairing codes not used yet**, on the **Runners** page, lists open codes. **Revoke** ends one. A Runner already paired keeps working.
+- **Pairing codes not used yet**, on the **Runners** page, lists open codes. **Revoke the code**, in a code's **⋯** menu, ends it. A Runner already paired keeps working.
 - Case, dashes and spaces don't matter, so a code read aloud works.
 
 ## Pair it with a Runner token
@@ -74,7 +74,9 @@ The **Runners** page lists each Runner: online or offline, its version, and its 
 
 ![The Runners page, with studio online and its Monitor open, showing tiles and charts of its disk, memory and load, and ci-box offline, behind the Hub and low on disk.](../../../assets/screenshots/runners.png)
 
-- **Monitor** opens the Runner's host under its row: free disk, available memory, load and uptime as it last sampled them, and charts of the last 7 days. A row says **low disk** when under 10 GiB, or a tenth of the disk, is free. Sessions still start; it's a warning.
+Each row's **⋯** menu holds what you can do to the Runner, named after it, such as **Re-pair build-box**:
+
+- **Monitor** opens the Runner's host under its row, as a click on the row does: free disk, available memory, load and uptime as it last sampled them, and charts of the last 7 days. A row says **low disk** when under 10 GiB, or a tenth of the disk, is free. Sessions still start; it's a warning.
 - **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place, with its name and Sessions, and the old token stops working. Use it for a reinstalled machine or a lost token.
 - **Remove** disconnects the Runner and revokes its token. Archive its Sessions first.
 
@@ -84,7 +86,7 @@ While a Runner is offline, its Sessions are [Frozen](/concepts/session-lifecycle
 
 A Runner's name is its identity: its Sessions belong to the Runner of that name.
 
-- **A name the Hub has** can't be taken by a new Runner. `kndl runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up. Use **Re-pair** instead.
+- **A name the Hub has** can't be taken by a new Runner. `kndl runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up. Use **Re-pair** in its **⋯** menu instead.
 - **A removed Runner's name** is free again. A machine paired under it takes over the removed Runner's Archived Sessions.
 - **For a clean slate**, pair under a new name: `--name build-box-2`.
 
