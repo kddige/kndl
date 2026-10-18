@@ -46,6 +46,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, font, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
+import { SearchButton } from "./commands.tsx"
 import { counted, environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 import { isSettingsPath, lastSettingsPath, useRememberPlace } from "./lastPlaces.ts"
@@ -177,6 +178,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       header={
         <>
           <Brand />
+          <SearchButton />
           <CreateSessionDialog
             trigger={
               <IconButton label="New Session" size="sm">

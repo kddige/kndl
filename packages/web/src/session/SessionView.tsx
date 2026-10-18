@@ -13,6 +13,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { useCommands } from "../app/commands.tsx"
 import { notSent } from "../app/copy.ts"
 import {
   day,
@@ -441,6 +442,45 @@ function LoadedSession({
     restart: state === "Active" && !busy ? restart.ask : undefined,
     remove,
   }
+  // ⌘K offers its Creator what the ⋯ menu does (#399).
+  const kept = summary.keepAwake !== undefined
+  const canSleep = actions.sleep !== undefined
+  const canRestart = actions.restart !== undefined
+  const thisSession = useMemo(
+    () =>
+      drives && !archived
+        ? {
+            label: "This Session",
+            commands: [
+              { id: "rename", label: "Rename", run: actions.rename },
+              {
+                id: "keep-awake",
+                label: kept ? "Stop keeping awake" : "Keep awake",
+                run: () => actions.setKeepAwake(!kept),
+              },
+              ...(actions.sleep ? [{ id: "sleep", label: "Sleep now", run: actions.sleep }] : []),
+              ...(actions.restart
+                ? [{ id: "restart", label: "Restart", run: actions.restart }]
+                : []),
+              ...(canTerminal
+                ? [
+                    {
+                      id: "terminal",
+                      label: terminalOpen ? "Close the terminal" : "Open the terminal",
+                      run: () => showTerminal(!terminalOpen),
+                    },
+                  ]
+                : []),
+              { id: "delete", label: "Delete Session", run: actions.remove },
+            ],
+          }
+        : undefined,
+    // Rebuilt when what it offers changes, not on every render.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    [drives, archived, kept, canSleep, canRestart, canTerminal, terminalOpen, summary.id],
+  )
+  useCommands(thisSession)
+
   // On a phone the terminal takes the view, so the conversation steps aside while it's open.
   const wide = useMediaQuery(WIDE)
   const conversationShown = wide || !terminalOpen

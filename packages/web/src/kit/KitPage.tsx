@@ -75,6 +75,8 @@ import {
   TrashIcon,
   WarningIcon,
   textRole,
+  CommandPalette,
+  type CommandGroup,
 } from "../ui/index.ts"
 import { color, font, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
@@ -665,6 +667,64 @@ function Overlays() {
   )
 }
 
+const PALETTE_GROUPS: ReadonlyArray<CommandGroup> = [
+  {
+    label: "Actions",
+    commands: [
+      {
+        id: "new",
+        label: "New Session",
+        shortcut: "C",
+        run: () => toast.show({ title: "New Session" }),
+      },
+    ],
+  },
+  {
+    label: "Sessions",
+    commands: [
+      {
+        id: "s1",
+        label: "Fix flaky login test",
+        meta: "kddige/kndl",
+        run: () => toast.show({ title: "Opened" }),
+      },
+      {
+        id: "s2",
+        label: "Release 0.4",
+        meta: "kddige/kndl",
+        run: () => toast.show({ title: "Opened" }),
+      },
+      {
+        id: "s3",
+        label: "claude/zsh-prompt",
+        meta: "kddige/dotfiles",
+        run: () => toast.show({ title: "Opened" }),
+      },
+    ],
+  },
+  {
+    label: "Settings",
+    commands: [{ id: "runners", label: "Runners", run: () => toast.show({ title: "Runners" }) }],
+  },
+]
+
+function Palette() {
+  const [open, setOpen] = useState(false)
+  return (
+    <Section
+      title="CommandPalette"
+      note="⌘K in the app. Every typed word must match a label or its meta; Enter runs the active one."
+    >
+      <Row label="palette">
+        <Button icon={<SearchIcon />} onClick={() => setOpen(true)}>
+          Open the palette
+        </Button>
+        <CommandPalette open={open} onOpenChange={setOpen} groups={PALETTE_GROUPS} />
+      </Row>
+    </Section>
+  )
+}
+
 function Toasts() {
   return (
     <Section title="Toast" note="F6 moves focus to the toasts. Hover or focus pauses them.">
@@ -1239,6 +1299,7 @@ export function KitPage() {
         </Section>
 
         <Overlays />
+        <Palette />
         <Toasts />
         <Banners />
         <Disclosures />

@@ -15,6 +15,12 @@ export {
   type ComboboxProps,
 } from "./Combobox.tsx"
 export { Checkbox, Switch, type CheckboxProps } from "./Checkbox.tsx"
+export {
+  type Command,
+  type CommandGroup,
+  CommandPalette,
+  type CommandPaletteProps,
+} from "./CommandPalette.tsx"
 export { Dialog, DialogClose, type DialogSize } from "./Dialog.tsx"
 export { Disclosure } from "./Disclosure.tsx"
 export { Drawer } from "./Drawer.tsx"

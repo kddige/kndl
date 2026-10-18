@@ -40,6 +40,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { branchSearch } from "./branches.ts"
+import { onNewSession } from "./newSession.ts"
 
 const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
@@ -117,7 +118,14 @@ export const useClaudeCodeAsked = () =>
  * Code, it runs Claude Code on your own setup token: without one, it says to add one first.
  * Opened by `trigger`, a primary "New Session" Button unless given.
  */
-export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
+export function CreateSessionDialog({
+  trigger,
+  listen = false,
+}: {
+  trigger?: ReactElement
+  /** Open whenever `openNewSession()` is called, as the shell's own, trigger-less one does. */
+  listen?: boolean
+}) {
   const hub = useHub()
   const runners = useHubState((state) => state.runners)
   // Null once the Hub says they have stored none; undefined until it says.
@@ -130,6 +138,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const claudeCodeAsked = useClaudeCodeAsked()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  useEffect(() => (listen ? onNewSession(() => setOpen(true)) : undefined), [listen])
   const sessions = useHubState((state) => state.sessions) ?? []
   const you = useHubState((state) => state.you)
   const [repo, setRepo] = useState("")
@@ -369,13 +378,13 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         setOpen(next)
         if (!next) reset()
       }}
-      trigger={
-        trigger ?? (
+      {...(!listen && {
+        trigger: trigger ?? (
           <Button intent="primary" icon={<PlusIcon />}>
             New Session
           </Button>
-        )
-      }
+        ),
+      })}
       title="New Session"
       description="A Session works on a branch of the Repo, in a Sandbox on a Runner."
       footer={

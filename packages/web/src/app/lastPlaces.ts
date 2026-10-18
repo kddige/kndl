@@ -4,6 +4,7 @@
 import { useEffect } from "react"
 
 const lastSession = "kndl-last-session"
+const recent = "kndl-recent-sessions"
 const lastSettings = "kndl-last-settings"
 
 /** The settings-style pages, which show the Settings nav in the sidebar. */
@@ -34,8 +35,16 @@ function write(key: string, value: string): void {
 /** Remembers the page shown, if it's a Session or a settings page. */
 export function useRememberPlace(pathname: string): void {
   useEffect(() => {
-    if (pathname.startsWith("/sessions/")) write(lastSession, pathname)
-    else if (isSettingsPath(pathname)) write(lastSettings, pathname)
+    if (pathname.startsWith("/sessions/")) {
+      write(lastSession, pathname)
+      const id = pathname.split("/")[2]
+      if (id !== undefined) {
+        write(
+          recent,
+          JSON.stringify([id, ...recentSessions().filter((other) => other !== id)].slice(0, 20)),
+        )
+      }
+    } else if (isSettingsPath(pathname)) write(lastSettings, pathname)
   }, [pathname])
 }
 
@@ -44,3 +53,13 @@ export const lastSessionPath = (): string => read(lastSession, "/")
 
 /** The last settings page shown, or Runners. */
 export const lastSettingsPath = (): string => read(lastSettings, "/runners")
+
+/** The Sessions this tab showed, latest first, by id. */
+export function recentSessions(): ReadonlyArray<string> {
+  try {
+    const parsed: unknown = JSON.parse(read(recent, "[]"))
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []
+  } catch {
+    return []
+  }
+}
