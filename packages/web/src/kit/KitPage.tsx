@@ -199,7 +199,7 @@ const SWATCHES = [
   ["surfaceMuted", color.surfaceMuted],
   ["border", color.border],
   ["text", color.text],
-  ["textMuted", color.textSecondary],
+  ["textSecondary", color.textSecondary],
   ["accent", color.accent],
   ["danger", color.danger],
   ["warning", color.warning],
