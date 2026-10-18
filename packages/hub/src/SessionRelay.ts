@@ -666,6 +666,12 @@ export class SessionRelay extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
     /** The Session's mod said hello. */
     readonly modHello: (sessionId: SessionId, hello: ModHello) => Effect.Effect<void, SqlError>
+    /**
+     * The Session's mod said hello in a protocol version the Hub doesn't speak: one from before an
+     * update, in a Claude Code its Runner kept running across it (ADR 0011). It can take nothing,
+     * so an Active Session sleeps, and wakes on the Runner's own mod.
+     */
+    readonly modOutdated: (sessionId: SessionId) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
     readonly modEvents: (
       sessionId: SessionId,
@@ -3876,6 +3882,14 @@ export class SessionRelay extends Context.Service<
         yield* deliverNext(sessionId)
       }, serialized)
 
+      const modOutdated = Effect.fn("SessionRelay.modOutdated")(function* (sessionId: SessionId) {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session) || session.value.state !== "Active") return
+        yield* putToSleep(session.value, {
+          message: "Its mod is from before the Hub's update, so it sleeps, to wake on the new one",
+        })
+      }, serialized)
+
       /**
        * The attachments a mod's event is logged with (#276, #278): its queued prompt's, when it
        * names one still queued; otherwise the Session's own for the ids the mod claims, their
@@ -4510,6 +4524,7 @@ export class SessionRelay extends Context.Service<
         cliTokensChanged,
         membersChanged: memberRelay.membersChanged,
         modHello,
+        modOutdated,
         modEvents,
         openTunnel,
         installationFailed,

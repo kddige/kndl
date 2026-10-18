@@ -707,6 +707,57 @@ describe("a Runner going offline", () => {
     expect(await back.untaken("StopSession")).toEqual([])
   })
 
+  test("puts to sleep a Session kept running across an update whose mod speaks an older protocol, waking it on the new mod for the prompt that waited", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "SendPrompt", sessionId, text: "after the update?" })
+    await web.take("PromptQueueChanged", queueIs("after the update?"))
+
+    // The Runner was turned away for its protocol version, updated, and restarted under the
+    // Session (ADR 0011): its Claude Code runs on, with the mod it started with.
+    const back = await openRunner(hub, runnerToken, [sessionId], undefined, true, {
+      withoutModToken: [sessionId],
+    })
+    const { modToken } = await back.take("ModTokenReissued")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    const old = await fetch(`${hub.url}/mod/hello`, {
+      method: "POST",
+      headers: { ...bearer(modToken), "content-type": "application/json" },
+      body: JSON.stringify({
+        _tag: "ModHello",
+        protocolVersion: ProtocolVersion - 1,
+        sessionId,
+        claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+        model: "claude-opus",
+      }),
+    })
+    expect(old.status).toBe(400)
+
+    // That mod can't take the prompt, so the Session sleeps, and the prompt wakes it on the new.
+    expect(await back.take("StopSession")).toEqual({
+      _tag: "StopSession",
+      sessionId,
+      reason: "Sleep",
+    })
+    back.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
+    ).toMatchObject({
+      message: "Its mod is from before the Hub's update, so it sleeps, to wake on the new one",
+    })
+    const start = await back.take("StartSession")
+    expect(start).toMatchObject({ sessionId, resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" })
+    back.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const renewed = new Mod(hub, sessionId, start.modToken)
+    expect((await renewed.hello()).status).toBe(200)
+    expect((await renewed.deliveries(500)).map((command) => command.text)).toEqual([
+      "after the update?",
+    ])
+  })
+
   test("wakes a Session whose Claude Code stopped while it was away, if prompts wait", async () => {
     const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
     joinSession(web, sessionId)

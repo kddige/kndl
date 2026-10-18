@@ -99,7 +99,13 @@ export const ModRoutes = HttpRouter.use(
         const request = yield* HttpServerRequest.HttpServerRequest
         const message = yield* request.json
         const mismatch = checkHandshake(message)
-        if (mismatch !== undefined) return yield* replyToHello(mismatch, { status: 400 })
+        if (mismatch !== undefined) {
+          // A mod from before an update, which its Session's Claude Code still runs (ADR 0011).
+          if (mismatch.reason === "ProtocolVersionMismatch") {
+            yield* relay.modOutdated(grant.sessionId).pipe(Effect.orDie)
+          }
+          return yield* replyToHello(mismatch, { status: 400 })
+        }
         const hello = Schema.decodeUnknownExit(ModHello)(message)
         if (hello._tag === "Failure") {
           return yield* replyToHello(
