@@ -35,7 +35,7 @@ export const textRole = stylex.create({
     lineHeight: leading.tight,
     letterSpacing: tracking.wide,
     textTransform: "uppercase",
-    color: color.textMuted,
+    color: color.textSecondary,
     fontVariantNumeric: "tabular-nums",
   },
   /** Running text and controls: 13px. */
@@ -49,7 +49,7 @@ export const textRole = stylex.create({
     fontSize: text.sm,
     fontWeight: weight.normal,
     lineHeight: leading.snug,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontVariantNumeric: "tabular-nums",
   },
 })

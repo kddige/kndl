@@ -113,7 +113,7 @@ const styles = stylex.create({
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
-  muted: { color: color.textMuted },
+  muted: { color: color.textSecondary },
 })
 
 /**

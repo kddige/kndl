@@ -147,7 +147,7 @@ const styles = stylex.create({
   },
   description: {
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
     textWrap: "pretty",
@@ -161,7 +161,7 @@ const styles = stylex.create({
 })
 
 const markers = stylex.create({
-  neutral: { backgroundColor: color.textSubtle },
+  neutral: { backgroundColor: color.textTertiary },
   success: { backgroundColor: color.success },
   warning: { backgroundColor: color.warning },
   danger: { backgroundColor: color.danger },

@@ -4,7 +4,7 @@ import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
   fact: { display: "flex", flexDirection: "column", gap: space.s0_5, minWidth: 0 },
-  term: { color: color.textMuted, fontSize: text.sm },
+  term: { color: color.textSecondary, fontSize: text.sm },
   detail: {
     margin: 0,
     fontSize: text.base,

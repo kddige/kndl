@@ -39,9 +39,9 @@ const styles = stylex.create({
     lineHeight: leading.tight,
     color: color.text,
   },
-  labelDisabled: { color: color.textSubtle },
+  labelDisabled: { color: color.textTertiary },
   labelStrong: { fontWeight: weight.medium },
-  description: { fontSize: text.sm, lineHeight: leading.snug, color: color.textMuted },
+  description: { fontSize: text.sm, lineHeight: leading.snug, color: color.textSecondary },
   box: {
     display: "inline-flex",
     alignItems: "center",

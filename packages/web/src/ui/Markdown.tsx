@@ -24,7 +24,7 @@ const styles = stylex.create({
   // Prose stops at about 75 characters a line; code blocks and tables run as wide as they need.
   paragraph: { whiteSpace: "pre-line", maxWidth: "60ch" },
   // Headings sit under the host's: a Markdown h1 is a section heading, never a page title.
-  h3: { color: color.textMuted },
+  h3: { color: color.textSecondary },
   list: {
     maxWidth: "60ch",
     display: "flex",
@@ -36,7 +36,7 @@ const styles = stylex.create({
   numbers: { listStyleType: "decimal" },
   item: {
     display: "list-item",
-    "::marker": { color: color.textSubtle },
+    "::marker": { color: color.textTertiary },
   },
   itemBody: {
     display: "flex",
@@ -52,7 +52,7 @@ const styles = stylex.create({
     borderInlineStartWidth: "2px",
     borderInlineStartStyle: "solid",
     borderInlineStartColor: color.borderStrong,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   rule: {
     height: 0,
@@ -85,7 +85,7 @@ const styles = stylex.create({
     fontSize: "0.9em",
   },
   strong: { fontWeight: weight.semibold },
-  link: { color: color.accentSubtleText },
+  link: { color: color.accentText },
   tableWrap: { overflowX: "auto" },
   table: {
     borderCollapse: "collapse",

@@ -51,9 +51,9 @@ const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
   panel: { display: "flex", flexDirection: "column", gap: space.s4, paddingTop: space.s4 },
   mono: { fontFamily: font.mono },
-  muted: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug, margin: 0 },
+  muted: { color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug, margin: 0 },
   error: {
-    color: color.dangerSubtleText,
+    color: color.dangerText,
     fontSize: text.sm,
     lineHeight: leading.snug,
     whiteSpace: "pre-line",
@@ -61,7 +61,7 @@ const styles = stylex.create({
   },
   upload: { display: "flex", flexDirection: "column", gap: space.s1_5 },
   label: { fontSize: text.sm, fontWeight: weight.medium },
-  file: { fontSize: text.sm, color: color.textMuted },
+  file: { fontSize: text.sm, color: color.textSecondary },
   chosen: { fontSize: text.sm, lineHeight: leading.snug, margin: 0 },
   clearedList: { margin: 0, paddingInlineStart: space.s4 },
   reading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
@@ -74,7 +74,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
-  term: { color: color.textMuted },
+  term: { color: color.textSecondary },
   fact: { margin: 0, overflowWrap: "anywhere" },
   changes: {
     width: "100%",
@@ -92,8 +92,8 @@ const styles = stylex.create({
     borderBottomColor: color.border,
     overflowWrap: "anywhere",
   },
-  head: { color: color.textMuted, fontWeight: weight.medium },
-  before: { color: color.textMuted, textDecoration: "line-through" },
+  head: { color: color.textSecondary, fontWeight: weight.medium },
+  before: { color: color.textSecondary, textDecoration: "line-through" },
   scroll: { overflowX: "auto", borderRadius: radius.md },
 })
 

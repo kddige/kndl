@@ -38,18 +38,18 @@ const styles = stylex.create({
     fontSize: text.base,
     fontWeight: weight.medium,
     lineHeight: leading.tight,
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
+    color: { default: color.text, "[data-disabled]": color.textTertiary },
   },
   description: {
     fontSize: text.sm,
     lineHeight: leading.snug,
-    color: color.textMuted,
+    color: color.textSecondary,
     textWrap: "pretty",
   },
   error: {
     fontSize: text.sm,
     lineHeight: leading.snug,
-    color: color.dangerSubtleText,
+    color: color.dangerText,
   },
   control: {
     width: "100%",
@@ -60,12 +60,12 @@ const styles = stylex.create({
     borderStyle: "solid",
     borderColor: {
       default: color.borderStrong,
-      ":hover:not([data-disabled]):not(:focus)": { default: null, [HOVER]: color.textSubtle },
+      ":hover:not([data-disabled]):not(:focus)": { default: null, [HOVER]: color.textTertiary },
       "[data-invalid]": color.danger,
     },
     borderRadius: radius.md,
     backgroundColor: { default: color.surface, "[data-disabled]": color.surfaceMuted },
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
+    color: { default: color.text, "[data-disabled]": color.textTertiary },
     fontFamily: "inherit",
     fontSize: { default: text.base, [TOUCH]: text.lg },
     lineHeight: leading.normal,
@@ -73,7 +73,7 @@ const styles = stylex.create({
     transitionProperty: "border-color",
     transitionDuration: motion.durationFast,
     transitionTimingFunction: motion.easeStandard,
-    "::placeholder": { color: color.textSubtle },
+    "::placeholder": { color: color.textTertiary },
   },
   // :focus, not :focus-visible: a text field shows where typing goes however it was focused.
   controlFocus: {

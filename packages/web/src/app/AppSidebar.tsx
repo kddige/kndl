@@ -61,13 +61,13 @@ const styles = stylex.create({
   note: {
     paddingBlock: space.s1,
     paddingInline: space.s2,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.sm,
   },
   // Its count changes as Runners connect: figures of one width keep the line still.
   runners: {
     paddingInline: space.s2,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     fontVariantNumeric: "tabular-nums",
   },
@@ -98,10 +98,10 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  more: { flexShrink: 0, color: color.textSubtle },
+  more: { flexShrink: 0, color: color.textTertiary },
   warning: { display: "inline-flex", color: color.warning },
-  busy: { display: "inline-flex", color: color.textMuted },
-  keptAwake: { display: "inline-flex", color: color.textMuted },
+  busy: { display: "inline-flex", color: color.textSecondary },
+  keptAwake: { display: "inline-flex", color: color.textSecondary },
   waiting: {
     display: "inline-flex",
     alignItems: "center",

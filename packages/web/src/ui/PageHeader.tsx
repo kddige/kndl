@@ -64,7 +64,7 @@ const styles = stylex.create({
   },
   description: {
     maxWidth: "60ch",
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
     textWrap: "pretty",

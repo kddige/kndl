@@ -36,10 +36,10 @@ const styles = stylex.create({
   },
   row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   why: { flex: "1 1 14rem", minWidth: 0, fontSize: text.sm },
-  muted: { color: color.textMuted, fontSize: text.sm },
+  muted: { color: color.textSecondary, fontSize: text.sm },
   name: { fontWeight: weight.semibold },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     fontSize: text.sm,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,

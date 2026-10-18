@@ -94,7 +94,7 @@ const styles = stylex.create({
   },
   title: { textWrap: "balance" },
   description: {
-    color: color.textMuted,
+    color: color.textSecondary,
     lineHeight: leading.snug,
     textWrap: "pretty",
   },

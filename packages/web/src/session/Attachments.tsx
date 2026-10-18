@@ -26,7 +26,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: color.surfaceMuted,
   },
-  failed: { color: color.dangerSubtleText },
+  failed: { color: color.dangerText },
   thumbnail: {
     flexShrink: 0,
     width: "2rem",
@@ -43,7 +43,7 @@ const styles = stylex.create({
     height: "2rem",
     borderRadius: radius.sm,
     backgroundColor: color.surface,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
     fontWeight: weight.semibold,
   },
@@ -54,8 +54,8 @@ const styles = stylex.create({
     fontSize: text.xs,
   },
   name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  note: { color: color.textSubtle, overflow: "hidden", textOverflow: "ellipsis" },
-  refused: { margin: 0, color: color.dangerSubtleText, fontSize: text.xs },
+  note: { color: color.textTertiary, overflow: "hidden", textOverflow: "ellipsis" },
+  refused: { margin: 0, color: color.dangerText, fontSize: text.xs },
 })
 
 /** Uploads a file to attach to the prompt: the Hub's id for it. */

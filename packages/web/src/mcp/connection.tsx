@@ -44,7 +44,7 @@ const styles = stylex.create({
     flexWrap: "wrap",
     alignItems: "center",
     gap: space.s1_5,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   mono: { fontFamily: font.mono },
@@ -74,7 +74,7 @@ const styles = stylex.create({
   },
   callbackField: { display: "flex", flexDirection: "column", gap: space.s1_5 },
   label: { fontSize: text.base, color: color.text },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 /** An Installation whose authorization server asked for a client entered by hand (#218). */

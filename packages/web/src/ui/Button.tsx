@@ -153,7 +153,7 @@ const intents = stylex.create({
     },
     borderColor: "transparent",
     color: {
-      default: color.textMuted,
+      default: color.textSecondary,
       [ENABLED_HOVER]: { default: null, [HOVER]: color.text },
       "[data-popup-open]": color.text,
     },

@@ -81,7 +81,7 @@ const styles = stylex.create({
   value: {
     fontFamily: font.mono,
     fontSize: text.sm,
-    color: color.textMuted,
+    color: color.textSecondary,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -92,17 +92,17 @@ const styles = stylex.create({
     flexWrap: "wrap",
     alignItems: "center",
     gap: space.s1_5,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     borderRadius: radius.sm,
   },
   mono: { fontFamily: font.mono },
   actions: { display: "flex", gap: space.s2 },
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
-  error: { color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 

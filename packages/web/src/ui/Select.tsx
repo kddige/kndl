@@ -55,7 +55,7 @@ const styles = stylex.create({
       "[data-disabled]": color.surfaceMuted,
     },
     boxShadow: shadow.sm,
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
+    color: { default: color.text, "[data-disabled]": color.textTertiary },
     fontFamily: "inherit",
     fontSize: text.base,
     lineHeight: 1,
@@ -79,12 +79,12 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
   },
   placeholder: {
-    color: color.textSubtle,
+    color: color.textTertiary,
   },
   icon: {
     display: "inline-flex",
     flexShrink: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   popup: {
     minWidth: "var(--anchor-width)",

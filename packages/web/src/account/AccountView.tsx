@@ -63,14 +63,14 @@ const styles = stylex.create({
   },
   sectionHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
   sectionTitle: { margin: 0 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   steps: {
     display: "flex",
     flexDirection: "column",
     gap: space.s1,
     margin: 0,
     paddingInlineStart: space.s5,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
@@ -103,7 +103,7 @@ const styles = stylex.create({
     borderTopColor: color.border,
   },
   choiceLabel: { fontSize: text.base, fontWeight: weight.medium },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
   tokens: {
     display: "flex",
@@ -126,7 +126,7 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: color.border,
   },
-  tokenIcon: { flexShrink: 0, display: "flex", color: color.textMuted },
+  tokenIcon: { flexShrink: 0, display: "flex", color: color.textSecondary },
   tokenText: { display: "flex", flexDirection: "column", gap: space.s0_5, flex: 1, minWidth: 0 },
   machine: {
     fontFamily: font.mono,
@@ -136,7 +136,7 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  tokenMeta: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  tokenMeta: { color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   tokenAction: { flexShrink: 0 },
   commandRow: {
     display: "flex",

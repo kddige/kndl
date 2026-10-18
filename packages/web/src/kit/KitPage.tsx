@@ -97,7 +97,7 @@ const styles = stylex.create({
   },
   sectionTitle: { textWrap: "balance" },
   stack: { display: "flex", flexDirection: "column", gap: space.s3 },
-  sectionNote: { color: color.textMuted, fontSize: text.sm },
+  sectionNote: { color: color.textSecondary, fontSize: text.sm },
   card: {
     display: "flex",
     flexDirection: "column",
@@ -118,7 +118,7 @@ const styles = stylex.create({
   rowLabel: {
     width: "6rem",
     flexShrink: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.sm,
   },
   grid: {
@@ -139,7 +139,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     fontSize: text.sm,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   chip: {
     width: "1.5rem",
@@ -151,9 +151,9 @@ const styles = stylex.create({
     borderColor: color.border,
   },
   chipColor: (value: string) => ({ backgroundColor: value }),
-  panel: { paddingTop: space.s3, color: color.textMuted },
-  detail: { padding: space.s3, color: color.textMuted },
-  mono: { fontFamily: font.mono, fontSize: text.sm, color: color.textMuted },
+  panel: { paddingTop: space.s3, color: color.textSecondary },
+  detail: { padding: space.s3, color: color.textSecondary },
+  mono: { fontFamily: font.mono, fontSize: text.sm, color: color.textSecondary },
   pre: { margin: 0, padding: space.s3, fontFamily: font.mono, fontSize: text.sm },
   popoverList: {
     display: "flex",
@@ -188,7 +188,7 @@ const styles = stylex.create({
   },
   phoneFrame: { maxWidth: "24rem" },
   brand: { flex: 1, fontWeight: weight.semibold },
-  footerNote: { paddingInline: space.s2, color: color.textMuted, fontSize: text.sm },
+  footerNote: { paddingInline: space.s2, color: color.textSecondary, fontSize: text.sm },
   warningIcon: { display: "inline-flex", color: color.warning },
   themeSelect: { minWidth: "7rem" },
 })
@@ -199,7 +199,7 @@ const SWATCHES = [
   ["surfaceMuted", color.surfaceMuted],
   ["border", color.border],
   ["text", color.text],
-  ["textMuted", color.textMuted],
+  ["textMuted", color.textSecondary],
   ["accent", color.accent],
   ["danger", color.danger],
   ["warning", color.warning],

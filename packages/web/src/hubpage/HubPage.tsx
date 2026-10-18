@@ -89,12 +89,12 @@ const styles = stylex.create({
     margin: 0,
     fontSize: text.sm,
   },
-  term: { color: color.textMuted },
+  term: { color: color.textSecondary },
   value: { margin: 0, minWidth: 0, overflowWrap: "anywhere" },
   channel: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   mono: { fontFamily: font.mono },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
-  failedTitle: { color: color.dangerSubtleText },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
+  failedTitle: { color: color.dangerText },
   headline: {
     display: "flex",
     flexWrap: "wrap",
@@ -104,7 +104,7 @@ const styles = stylex.create({
   },
   headlineText: { display: "flex", flexDirection: "column", gap: space.s1, minWidth: 0 },
   headlineTitle: { margin: 0 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   /** Update, beside the link to GitHub. */
   actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   link: {
@@ -132,7 +132,7 @@ const styles = stylex.create({
     gap: space.s2,
     margin: 0,
   },
-  releaseDate: { color: color.textMuted, fontSize: text.sm, fontWeight: weight.normal },
+  releaseDate: { color: color.textSecondary, fontSize: text.sm, fontWeight: weight.normal },
   commits: {
     display: "flex",
     flexDirection: "column",
@@ -143,7 +143,7 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   commit: { display: "flex", gap: space.s3, minWidth: 0 },
-  sha: { flexShrink: 0, color: color.textMuted, fontFamily: font.mono },
+  sha: { flexShrink: 0, color: color.textSecondary, fontFamily: font.mono },
   title: { minWidth: 0, overflowWrap: "anywhere" },
   loading: { display: "flex", alignItems: "center", gap: space.s2 },
 })

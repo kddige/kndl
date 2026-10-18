@@ -35,7 +35,7 @@ import { color, font, leading, radius, space, text, weight } from "../ui/tokens.
 const styles = stylex.create({
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
   grow: { flex: 1 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   strong: { color: color.text, fontWeight: weight.semibold, overflowWrap: "anywhere" },
   codeRow: {
     display: "flex",
@@ -65,11 +65,11 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   loading: { display: "grid", placeItems: "center", minHeight: "100dvh" },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 /** What `kndl login` put in the page's address. */

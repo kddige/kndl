@@ -43,7 +43,7 @@ import { branchSearch } from "./branches.ts"
 
 const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
-  error: { color: color.dangerSubtleText, fontSize: text.sm },
+  error: { color: color.dangerText, fontSize: text.sm },
   link: { color: "inherit", fontWeight: weight.semibold, borderRadius: radius.sm },
   note: { display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: space.s1_5 },
 })

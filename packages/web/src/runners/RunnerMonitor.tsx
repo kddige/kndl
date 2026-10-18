@@ -61,7 +61,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     fontWeight: weight.semibold,
   },
-  age: { margin: 0, color: color.textMuted, fontSize: text.sm },
+  age: { margin: 0, color: color.textSecondary, fontSize: text.sm },
   offline: { opacity: 0.55 },
   tiles: {
     display: "grid",
@@ -85,7 +85,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: color.surface,
   },
-  tileLabel: { color: color.textMuted, fontSize: text.xs, fontWeight: weight.medium },
+  tileLabel: { color: color.textSecondary, fontSize: text.xs, fontWeight: weight.medium },
   tileValue: {
     margin: 0,
     color: color.text,
@@ -99,11 +99,11 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     lineHeight: leading.snug,
   },
-  low: { color: color.warningSubtleText },
+  low: { color: color.warningText },
   charts: {
     display: "grid",
     gridTemplateColumns: {
@@ -127,7 +127,7 @@ const styles = stylex.create({
     backgroundColor: color.surface,
     // The chart's own paint: the series in its token, a threshold in the warning colour, axes and
     // grid in muted text (its default is currentColor), and its tooltip as the app's surfaces.
-    color: color.textSubtle,
+    color: color.textTertiary,
     "--ts-chart-1": color.chartSeries,
     "--kndl-chart-threshold": color.warning,
     "--ts-chart-tooltip-background": color.surface,
@@ -145,7 +145,7 @@ const styles = stylex.create({
     gap: space.s2,
   },
   chartTitle: { color: color.text, fontSize: text.sm, fontWeight: weight.medium },
-  chartSpan: { color: color.textMuted, fontSize: text.xs },
+  chartSpan: { color: color.textSecondary, fontSize: text.xs },
   chartBody: {
     height: `${chartHeight}px`,
     fontSize: text.xs,
@@ -156,7 +156,7 @@ const styles = stylex.create({
     display: "grid",
     placeItems: "center",
     height: `${chartHeight}px`,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     textAlign: "center",
   },
@@ -165,7 +165,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1_5,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
   },
   thresholdKey: {
@@ -175,7 +175,7 @@ const styles = stylex.create({
     borderTopStyle: "dashed",
     borderTopColor: color.warning,
   },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
 })
 
 /** A paint the chart resolves against the card it's in, so it follows the light or dark theme. */

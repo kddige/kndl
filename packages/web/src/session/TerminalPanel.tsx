@@ -34,11 +34,11 @@ const styles = stylex.create({
     flexWrap: "wrap",
     gap: space.s2,
     minHeight: "1.5rem",
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   note: { flex: 1, minWidth: 0 },
-  size: { fontFamily: font.mono, fontSize: text.xs, color: color.textSubtle },
+  size: { fontFamily: font.mono, fontSize: text.xs, color: color.textTertiary },
   frame: {
     position: "relative",
     flex: 1,

@@ -45,7 +45,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
   },
-  hint: { flex: 1, minWidth: 0, color: color.textSubtle, fontSize: text.xs },
+  hint: { flex: 1, minWidth: 0, color: color.textTertiary, fontSize: text.xs },
   dropTarget: {
     position: "absolute",
     inset: 0,
@@ -56,8 +56,8 @@ const styles = stylex.create({
     borderStyle: "dashed",
     borderColor: color.focus,
     borderRadius: radius.lg,
-    backgroundColor: color.accentSubtle,
-    color: color.accentSubtleText,
+    backgroundColor: color.accentTint,
+    color: color.accentText,
     fontSize: text.sm,
     // The drop lands on the form beneath.
     pointerEvents: "none",

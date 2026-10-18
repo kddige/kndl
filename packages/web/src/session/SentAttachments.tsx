@@ -46,7 +46,7 @@ const styles = stylex.create({
     textDecoration: { default: "none", ":hover": "underline" },
   },
   fileName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  fileSize: { color: color.textSubtle },
+  fileSize: { color: color.textTertiary },
 })
 
 /**

@@ -20,7 +20,7 @@ const styles = stylex.create({
     minWidth: 0,
   },
   description: {
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   /** The slot at the end of a row: a radio item's check, a submenu's value and chevron. */
@@ -30,7 +30,7 @@ const styles = stylex.create({
     gap: space.s1,
     flexShrink: 0,
     marginInlineStart: "auto",
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   check: {
     display: "inline-flex",

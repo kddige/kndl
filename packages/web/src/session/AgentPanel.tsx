@@ -46,7 +46,7 @@ const styles = stylex.create({
     gap: space.s1,
     fontFamily: font.mono,
     fontSize: text.sm,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   dock: {
     display: "flex",

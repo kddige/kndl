@@ -51,7 +51,7 @@ const styles = stylex.create({
     textDecoration: "none",
     backgroundColor: { default: "transparent", ":hover": color.surfaceHover },
   },
-  icon: { flexShrink: 0, color: color.textMuted },
+  icon: { flexShrink: 0, color: color.textSecondary },
   main: { display: "flex", flexDirection: "column", gap: space.s0_5, flex: 1, minWidth: 0 },
   repo: {
     fontWeight: weight.medium,
@@ -59,8 +59,8 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  count: { color: color.textMuted, fontSize: text.sm },
-  chevron: { flexShrink: 0, color: color.textSubtle },
+  count: { color: color.textSecondary, fontSize: text.sm },
+  chevron: { flexShrink: 0, color: color.textTertiary },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 

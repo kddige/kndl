@@ -102,19 +102,19 @@ const styles = stylex.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: space.s1_5,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   actions: { display: "flex", alignItems: "center", gap: space.s2 },
   size: {
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     fontVariantNumeric: "tabular-nums",
     textAlign: "end",
     whiteSpace: "nowrap",
   },
   toolbarEnd: { display: "flex", alignItems: "center", gap: space.s3 },
-  freed: { color: color.textMuted, fontSize: text.sm },
+  freed: { color: color.textSecondary, fontSize: text.sm },
   freedTotal: {
     margin: 0,
     marginBlockStart: space.s3,
@@ -139,7 +139,7 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   purgingTitle: { fontFamily: font.mono },
-  purgingRepo: { color: color.textMuted },
+  purgingRepo: { color: color.textSecondary },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 

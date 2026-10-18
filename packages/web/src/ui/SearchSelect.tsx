@@ -68,7 +68,7 @@ const styles = stylex.create({
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   input: {
     flex: 1,
@@ -81,7 +81,7 @@ const styles = stylex.create({
     fontFamily: font.sans,
     fontSize: { default: text.base, [TOUCH]: text.lg },
     outline: "none",
-    "::placeholder": { color: color.textSubtle },
+    "::placeholder": { color: color.textTertiary },
   },
   list: {
     flex: 1,
@@ -109,7 +109,7 @@ const styles = stylex.create({
     margin: 0,
     paddingBlock: space.s3,
     paddingInline: space.s3,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
 })

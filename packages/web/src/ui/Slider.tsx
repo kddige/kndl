@@ -84,7 +84,7 @@ const styles = stylex.create({
     marginInlineStart: "-0.125rem",
     marginTop: "-0.125rem",
     borderRadius: radius.full,
-    backgroundColor: color.textSubtle,
+    backgroundColor: color.textTertiary,
     pointerEvents: "none",
   },
   dotFilled: {

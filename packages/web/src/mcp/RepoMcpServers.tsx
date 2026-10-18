@@ -41,10 +41,10 @@ const styles = stylex.create({
   first: { borderTopWidth: 0 },
   name: { fontWeight: weight.semibold },
   notOn: { opacity: 0.7 },
-  muted: { color: color.textMuted, fontSize: text.sm },
+  muted: { color: color.textSecondary, fontSize: text.sm },
   grow: { flex: 1, minWidth: 0 },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
   },

@@ -83,7 +83,7 @@ export const popup = stylex.create({
     borderRadius: radius.md,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.text, "[data-disabled]": color.textSubtle },
+    color: { default: color.text, "[data-disabled]": color.textTertiary },
     backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceHover },
     cursor: { default: "default", "[data-disabled]": "not-allowed" },
     userSelect: "none",
@@ -91,14 +91,14 @@ export const popup = stylex.create({
     scrollMargin: space.s1,
   },
   itemDanger: {
-    color: color.dangerSubtleText,
-    backgroundColor: { default: "transparent", "[data-highlighted]": color.dangerSubtle },
+    color: color.dangerText,
+    backgroundColor: { default: "transparent", "[data-highlighted]": color.dangerTint },
   },
   /** The icon slot at the start of a row; takes the row's colour when the row is dangerous. */
   itemIcon: {
     display: "inline-flex",
     flexShrink: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   itemIconDanger: {
     color: "currentColor",
@@ -116,7 +116,7 @@ export const popup = stylex.create({
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textSubtle,
+    color: color.textTertiary,
     userSelect: "none",
   },
 })

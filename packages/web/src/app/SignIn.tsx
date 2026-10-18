@@ -46,20 +46,20 @@ const styles = stylex.create({
     lineHeight: leading.tight,
     overflowWrap: "anywhere",
   },
-  lede: { margin: 0, color: color.textMuted, lineHeight: leading.snug },
+  lede: { margin: 0, color: color.textSecondary, lineHeight: leading.snug },
   divider: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    color: color.textSubtle,
+    color: color.textTertiary,
     fontSize: text.xs,
     "::before": { content: '""', flex: 1, height: "1px", backgroundColor: color.border },
     "::after": { content: '""', flex: 1, height: "1px", backgroundColor: color.border },
   },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   full: { width: "100%" },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm },
 })
 
 /** A card alone in the middle of the page: signing in, and approving the CLI. */

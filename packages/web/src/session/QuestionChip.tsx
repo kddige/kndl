@@ -29,16 +29,16 @@ const styles = stylex.create({
   },
   open: {
     borderColor: color.warning,
-    backgroundColor: color.warningSubtle,
+    backgroundColor: color.warningTint,
   },
-  asking: { fontWeight: weight.medium, color: color.warningSubtleText, flexShrink: 0 },
+  asking: { fontWeight: weight.medium, color: color.warningText, flexShrink: 0 },
   headers: {
     flex: 1,
     minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: color.textMuted,
+    color: color.textSecondary,
   },
   outcome: {
     flex: 1,
@@ -49,7 +49,7 @@ const styles = stylex.create({
   },
   status: { display: "inline-flex", flexShrink: 0 },
   answered: { color: color.success },
-  closed: { color: color.textSubtle },
+  closed: { color: color.textTertiary },
   body: {
     display: "flex",
     flexDirection: "column",
@@ -68,9 +68,9 @@ const styles = stylex.create({
     margin: 0,
     paddingInlineStart: space.s5,
   },
-  description: { color: color.textMuted },
+  description: { color: color.textSecondary },
   chosen: { fontWeight: weight.semibold },
-  answer: { color: color.textMuted },
+  answer: { color: color.textSecondary },
 })
 
 /** The amber dot that pulses while Claude waits for an answer (#193). */

@@ -26,7 +26,7 @@ const styles = stylex.create({
   person: { display: "flex", alignItems: "center", gap: space.s2, minWidth: 0 },
   text: { display: "flex", flexDirection: "column", minWidth: 0, lineHeight: leading.snug },
   name: { fontSize: text.sm },
-  forwarding: { color: color.textMuted, fontSize: text.xs, overflowWrap: "anywhere" },
+  forwarding: { color: color.textSecondary, fontSize: text.xs, overflowWrap: "anywhere" },
 })
 
 /** "forwarding from macbook", or from more than one machine (#180). */

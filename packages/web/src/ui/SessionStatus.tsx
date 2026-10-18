@@ -54,10 +54,10 @@ const styles = stylex.create({
 })
 
 const badges = stylex.create({
-  active: { backgroundColor: color.sessionActiveSubtle, color: color.sessionActiveText },
-  asleep: { backgroundColor: color.sessionAsleepSubtle, color: color.sessionAsleepText },
-  frozen: { backgroundColor: color.sessionFrozenSubtle, color: color.sessionFrozenText },
-  archived: { backgroundColor: color.sessionArchivedSubtle, color: color.sessionArchivedText },
+  active: { backgroundColor: color.sessionActiveTint, color: color.sessionActiveText },
+  asleep: { backgroundColor: color.sessionAsleepTint, color: color.sessionAsleepText },
+  frozen: { backgroundColor: color.sessionFrozenTint, color: color.sessionFrozenText },
+  archived: { backgroundColor: color.sessionArchivedTint, color: color.sessionArchivedText },
 })
 
 const dots = stylex.create({

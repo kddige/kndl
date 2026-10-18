@@ -111,7 +111,7 @@ const styles = stylex.create({
     gap: space.s2,
     flexWrap: "wrap",
   },
-  sectionNote: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  sectionNote: { color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   script: { fontFamily: font.mono, fontSize: text.sm, minHeight: "6rem" },
   mono: { fontFamily: font.mono },
   pair: {
@@ -134,14 +134,14 @@ const styles = stylex.create({
   rowKind: { flex: "0 0 8.5rem" },
   rowValue: { flex: "2 1 14rem", minWidth: "10rem" },
   rowBuild: { flex: "0 0 auto", alignSelf: "center" },
-  rowError: { flexBasis: "100%", color: color.dangerSubtleText, fontSize: text.sm },
+  rowError: { flexBasis: "100%", color: color.dangerText, fontSize: text.sm },
   kindSelect: { minWidth: 0, width: "100%" },
   valueSelect: { minWidth: 0, width: "100%" },
   valueLine: { display: "flex", alignItems: "center", gap: space.s2 },
   grow: { flex: 1, minWidth: 0 },
   actions: { display: "flex", gap: space.s2, flexWrap: "wrap" },
   link: {
-    color: color.accentSubtleText,
+    color: color.accentText,
     textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
   },
@@ -150,12 +150,12 @@ const styles = stylex.create({
   problems: {
     margin: 0,
     paddingInlineStart: space.s5,
-    color: color.dangerSubtleText,
+    color: color.dangerText,
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
   status: { display: "flex", alignItems: "center", gap: space.s2, fontSize: text.sm },
-  statusText: { color: color.textMuted },
+  statusText: { color: color.textSecondary },
   testBar: { display: "flex", alignItems: "flex-end", gap: space.s2, flexWrap: "wrap" },
   runnerSelect: { minWidth: "14rem" },
   applyBar: {
@@ -165,8 +165,8 @@ const styles = stylex.create({
     gap: space.s2,
     flexWrap: "wrap",
   },
-  applyNote: { flex: 1, color: color.textMuted, fontSize: text.sm, minWidth: "12rem" },
-  error: { color: color.dangerSubtleText, fontSize: text.sm },
+  applyNote: { flex: 1, color: color.textSecondary, fontSize: text.sm, minWidth: "12rem" },
+  error: { color: color.dangerText, fontSize: text.sm },
   history: {
     display: "flex",
     flexDirection: "column",
@@ -187,7 +187,7 @@ const styles = stylex.create({
   },
   firstVersion: { borderTopWidth: 0 },
   versionNumber: { fontWeight: weight.semibold, minWidth: "4.5rem" },
-  muted: { color: color.textMuted },
+  muted: { color: color.textSecondary },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 

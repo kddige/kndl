@@ -54,7 +54,7 @@ const styles = stylex.create({
   },
   sectionHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
   sectionTitle: { margin: 0 },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   mono: { fontFamily: font.mono },
   facts: {
@@ -64,7 +64,7 @@ const styles = stylex.create({
     margin: 0,
   },
   actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
   models: {
     display: "flex",
@@ -83,7 +83,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     lineHeight: leading.snug,
   },
-  modelId: { color: color.textMuted, fontFamily: font.mono, fontSize: text.xs },
+  modelId: { color: color.textSecondary, fontFamily: font.mono, fontSize: text.xs },
   signIn: {
     display: "flex",
     flexDirection: "column",
@@ -107,7 +107,7 @@ const styles = stylex.create({
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
   // The Providers not connected: a titled list of lines each.
@@ -166,7 +166,7 @@ const styles = stylex.create({
     borderColor: color.border,
     borderRadius: radius.full,
     backgroundColor: color.surface,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.xs,
     fontWeight: weight.semibold,
   },

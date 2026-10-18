@@ -89,7 +89,7 @@ const styles = stylex.create({
     paddingInline: space.s2,
     fontSize: text.xs,
     fontWeight: weight.medium,
-    color: color.textSubtle,
+    color: color.textTertiary,
     overflowWrap: "anywhere",
   },
   list: {
@@ -112,7 +112,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.textMuted, ":hover": { default: null, [HOVER]: color.text } },
+    color: { default: color.textSecondary, ":hover": { default: null, [HOVER]: color.text } },
     backgroundColor: {
       default: "transparent",
       ":hover": { default: null, [HOVER]: color.surfaceHover },
@@ -187,7 +187,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     flexShrink: 0,
-    color: color.textSubtle,
+    color: color.textTertiary,
   },
   // Over the end of the row, shown while the row is hovered or holds focus. Hidden, it takes no
   // pointer, so a tap there still follows the link.
@@ -219,7 +219,7 @@ const styles = stylex.create({
     transform: "translateY(-50%)",
   },
   chevron: {
-    color: color.textSubtle,
+    color: color.textTertiary,
     // Closed, it points to the inline end, whichever way the page reads.
     transform: { default: "none", ":dir(rtl)": "scaleX(-1)" },
     transitionProperty: "transform",

@@ -23,8 +23,8 @@ const lightColor = {
 
   // Text
   text: "oklch(24% 0.018 47)",
-  textMuted: "oklch(47% 0.024 55)",
-  textSubtle: "oklch(53.5% 0.022 60)",
+  textSecondary: "oklch(47% 0.024 55)",
+  textTertiary: "oklch(53.5% 0.022 60)",
   textInverse: "oklch(97.5% 0.012 85)",
 
   // Lines
@@ -32,39 +32,40 @@ const lightColor = {
   borderStrong: "oklch(83.5% 0.021 78)",
   focus: "oklch(60% 0.125 85)",
 
-  // Intents: a solid fill, its hover, the text on it, and a subtle tint with its text
+  // Intents: `{intent}` is the solid, then `{intent}Hover`, `on{Intent}` for text on the solid,
+  // `{intent}Tint` for a tinted background, and `{intent}Text`, valid on the tint, `surface` and `bg`
   accent: "oklch(41% 0.07 50)",
   accentHover: "oklch(36% 0.062 48)",
   onAccent: "oklch(98.5% 0.012 85)",
-  accentSubtle: "oklch(92.6% 0.03 72)",
-  accentSubtleText: "oklch(38% 0.065 45)",
+  accentTint: "oklch(92.6% 0.03 72)",
+  accentText: "oklch(38% 0.065 45)",
 
   danger: "oklch(56.5% 0.175 30)",
   dangerHover: "oklch(51% 0.17 29)",
   onDanger: "oklch(98.5% 0.012 85)",
-  dangerSubtle: "oklch(95.2% 0.028 15)",
-  dangerSubtleText: "oklch(52% 0.17 34)",
+  dangerTint: "oklch(95.2% 0.028 15)",
+  dangerText: "oklch(52% 0.17 34)",
 
   warning: "oklch(72.5% 0.15 68)",
-  warningSubtle: "oklch(95.8% 0.048 92)",
-  warningSubtleText: "oklch(45% 0.095 65)",
+  warningTint: "oklch(95.8% 0.048 92)",
+  warningText: "oklch(45% 0.095 65)",
 
   success: "oklch(61% 0.145 150)",
-  successSubtle: "oklch(95.8% 0.03 150)",
-  successSubtleText: "oklch(42% 0.105 152)",
+  successTint: "oklch(95.8% 0.03 150)",
+  successText: "oklch(42% 0.105 152)",
 
-  // Session states (GLOSSARY.md): a dot colour, a tint, and the text on the tint
+  // Session states (GLOSSARY.md), in the same shape: a dot colour, its tint, and its text
   sessionActive: "oklch(61% 0.145 150)",
-  sessionActiveSubtle: "oklch(95.8% 0.03 150)",
+  sessionActiveTint: "oklch(95.8% 0.03 150)",
   sessionActiveText: "oklch(42% 0.105 152)",
   sessionAsleep: "oklch(60% 0.065 295)",
-  sessionAsleepSubtle: "oklch(95.6% 0.016 300)",
+  sessionAsleepTint: "oklch(95.6% 0.016 300)",
   sessionAsleepText: "oklch(44% 0.065 295)",
   sessionFrozen: "oklch(65% 0.11 225)",
-  sessionFrozenSubtle: "oklch(95.8% 0.022 225)",
+  sessionFrozenTint: "oklch(95.8% 0.022 225)",
   sessionFrozenText: "oklch(43% 0.09 230)",
   sessionArchived: "oklch(68% 0.014 70)",
-  sessionArchivedSubtle: "oklch(96.3% 0.01 82)",
+  sessionArchivedTint: "oklch(96.3% 0.01 82)",
   sessionArchivedText: "oklch(47% 0.024 55)",
 
   // A chart's one series (#356): a cool blue that reads apart from the warm accent and the warning
@@ -88,8 +89,8 @@ const darkColor: typeof lightColor = {
   overlay: "oklch(8% 0.02 300 / 0.6)",
 
   text: "oklch(93% 0.016 80)",
-  textMuted: "oklch(74% 0.018 305)",
-  textSubtle: "oklch(63.5% 0.02 305)",
+  textSecondary: "oklch(74% 0.018 305)",
+  textTertiary: "oklch(63.5% 0.02 305)",
   textInverse: "oklch(21% 0.02 298)",
 
   border: "oklch(30.5% 0.018 302)",
@@ -99,34 +100,34 @@ const darkColor: typeof lightColor = {
   accent: "oklch(64% 0.09 52)",
   accentHover: "oklch(69% 0.088 55)",
   onAccent: "oklch(20% 0.02 298)",
-  accentSubtle: "oklch(33% 0.04 56)",
-  accentSubtleText: "oklch(86% 0.06 68)",
+  accentTint: "oklch(33% 0.04 56)",
+  accentText: "oklch(86% 0.06 68)",
 
   danger: "oklch(54% 0.2 28)",
   dangerHover: "oklch(50% 0.195 27)",
   onDanger: "oklch(98.5% 0.012 85)",
-  dangerSubtle: "oklch(29.5% 0.075 18)",
-  dangerSubtleText: "oklch(79% 0.11 20)",
+  dangerTint: "oklch(29.5% 0.075 18)",
+  dangerText: "oklch(79% 0.11 20)",
 
   warning: "oklch(77% 0.145 68)",
-  warningSubtle: "oklch(31% 0.055 92)",
-  warningSubtleText: "oklch(87% 0.1 90)",
+  warningTint: "oklch(31% 0.055 92)",
+  warningText: "oklch(87% 0.1 90)",
 
   success: "oklch(74% 0.15 150)",
-  successSubtle: "oklch(29.5% 0.045 155)",
-  successSubtleText: "oklch(85% 0.105 152)",
+  successTint: "oklch(29.5% 0.045 155)",
+  successText: "oklch(85% 0.105 152)",
 
   sessionActive: "oklch(74% 0.15 150)",
-  sessionActiveSubtle: "oklch(29.5% 0.045 155)",
+  sessionActiveTint: "oklch(29.5% 0.045 155)",
   sessionActiveText: "oklch(85% 0.105 152)",
   sessionAsleep: "oklch(68% 0.065 295)",
-  sessionAsleepSubtle: "oklch(29.5% 0.035 298)",
+  sessionAsleepTint: "oklch(29.5% 0.035 298)",
   sessionAsleepText: "oklch(84% 0.045 295)",
   sessionFrozen: "oklch(75% 0.1 225)",
-  sessionFrozenSubtle: "oklch(29.5% 0.04 230)",
+  sessionFrozenTint: "oklch(29.5% 0.04 230)",
   sessionFrozenText: "oklch(85% 0.07 225)",
   sessionArchived: "oklch(56% 0.014 300)",
-  sessionArchivedSubtle: "oklch(23.4% 0.017 300)",
+  sessionArchivedTint: "oklch(23.4% 0.017 300)",
   sessionArchivedText: "oklch(74% 0.018 305)",
 
   chartSeries: "oklch(66% 0.11 240)",
@@ -147,8 +148,8 @@ export const color = stylex.defineVars({
   overlay: { default: lightColor.overlay, [DARK]: darkColor.overlay },
 
   text: { default: lightColor.text, [DARK]: darkColor.text },
-  textMuted: { default: lightColor.textMuted, [DARK]: darkColor.textMuted },
-  textSubtle: { default: lightColor.textSubtle, [DARK]: darkColor.textSubtle },
+  textSecondary: { default: lightColor.textSecondary, [DARK]: darkColor.textSecondary },
+  textTertiary: { default: lightColor.textTertiary, [DARK]: darkColor.textTertiary },
   textInverse: { default: lightColor.textInverse, [DARK]: darkColor.textInverse },
 
   border: { default: lightColor.border, [DARK]: darkColor.border },
@@ -158,60 +159,60 @@ export const color = stylex.defineVars({
   accent: { default: lightColor.accent, [DARK]: darkColor.accent },
   accentHover: { default: lightColor.accentHover, [DARK]: darkColor.accentHover },
   onAccent: { default: lightColor.onAccent, [DARK]: darkColor.onAccent },
-  accentSubtle: { default: lightColor.accentSubtle, [DARK]: darkColor.accentSubtle },
-  accentSubtleText: { default: lightColor.accentSubtleText, [DARK]: darkColor.accentSubtleText },
+  accentTint: { default: lightColor.accentTint, [DARK]: darkColor.accentTint },
+  accentText: { default: lightColor.accentText, [DARK]: darkColor.accentText },
 
   danger: { default: lightColor.danger, [DARK]: darkColor.danger },
   dangerHover: { default: lightColor.dangerHover, [DARK]: darkColor.dangerHover },
   onDanger: { default: lightColor.onDanger, [DARK]: darkColor.onDanger },
-  dangerSubtle: { default: lightColor.dangerSubtle, [DARK]: darkColor.dangerSubtle },
-  dangerSubtleText: { default: lightColor.dangerSubtleText, [DARK]: darkColor.dangerSubtleText },
+  dangerTint: { default: lightColor.dangerTint, [DARK]: darkColor.dangerTint },
+  dangerText: { default: lightColor.dangerText, [DARK]: darkColor.dangerText },
 
   warning: { default: lightColor.warning, [DARK]: darkColor.warning },
-  warningSubtle: { default: lightColor.warningSubtle, [DARK]: darkColor.warningSubtle },
-  warningSubtleText: {
-    default: lightColor.warningSubtleText,
-    [DARK]: darkColor.warningSubtleText,
+  warningTint: { default: lightColor.warningTint, [DARK]: darkColor.warningTint },
+  warningText: {
+    default: lightColor.warningText,
+    [DARK]: darkColor.warningText,
   },
 
   success: { default: lightColor.success, [DARK]: darkColor.success },
-  successSubtle: { default: lightColor.successSubtle, [DARK]: darkColor.successSubtle },
-  successSubtleText: {
-    default: lightColor.successSubtleText,
-    [DARK]: darkColor.successSubtleText,
+  successTint: { default: lightColor.successTint, [DARK]: darkColor.successTint },
+  successText: {
+    default: lightColor.successText,
+    [DARK]: darkColor.successText,
   },
 
   sessionActive: { default: lightColor.sessionActive, [DARK]: darkColor.sessionActive },
-  sessionActiveSubtle: {
-    default: lightColor.sessionActiveSubtle,
-    [DARK]: darkColor.sessionActiveSubtle,
+  sessionActiveTint: {
+    default: lightColor.sessionActiveTint,
+    [DARK]: darkColor.sessionActiveTint,
   },
   sessionActiveText: {
     default: lightColor.sessionActiveText,
     [DARK]: darkColor.sessionActiveText,
   },
   sessionAsleep: { default: lightColor.sessionAsleep, [DARK]: darkColor.sessionAsleep },
-  sessionAsleepSubtle: {
-    default: lightColor.sessionAsleepSubtle,
-    [DARK]: darkColor.sessionAsleepSubtle,
+  sessionAsleepTint: {
+    default: lightColor.sessionAsleepTint,
+    [DARK]: darkColor.sessionAsleepTint,
   },
   sessionAsleepText: {
     default: lightColor.sessionAsleepText,
     [DARK]: darkColor.sessionAsleepText,
   },
   sessionFrozen: { default: lightColor.sessionFrozen, [DARK]: darkColor.sessionFrozen },
-  sessionFrozenSubtle: {
-    default: lightColor.sessionFrozenSubtle,
-    [DARK]: darkColor.sessionFrozenSubtle,
+  sessionFrozenTint: {
+    default: lightColor.sessionFrozenTint,
+    [DARK]: darkColor.sessionFrozenTint,
   },
   sessionFrozenText: {
     default: lightColor.sessionFrozenText,
     [DARK]: darkColor.sessionFrozenText,
   },
   sessionArchived: { default: lightColor.sessionArchived, [DARK]: darkColor.sessionArchived },
-  sessionArchivedSubtle: {
-    default: lightColor.sessionArchivedSubtle,
-    [DARK]: darkColor.sessionArchivedSubtle,
+  sessionArchivedTint: {
+    default: lightColor.sessionArchivedTint,
+    [DARK]: darkColor.sessionArchivedTint,
   },
   sessionArchivedText: {
     default: lightColor.sessionArchivedText,

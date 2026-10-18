@@ -79,10 +79,10 @@ const styles = stylex.create({
     columnGap: space.s3,
     rowGap: space.s1,
     margin: 0,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
   },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: { margin: 0, color: color.textSecondary, fontSize: text.sm, lineHeight: leading.snug },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   link: {
     display: "flex",
@@ -107,7 +107,7 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     userSelect: "all",
   },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: { margin: 0, color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 

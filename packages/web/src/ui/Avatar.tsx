@@ -59,7 +59,7 @@ const styles = stylex.create({
   },
   overflow: {
     backgroundColor: color.surfaceActive,
-    color: color.textMuted,
+    color: color.textSecondary,
   },
 })
 

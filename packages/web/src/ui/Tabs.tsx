@@ -48,10 +48,10 @@ const styles = stylex.create({
       ":hover:not([data-disabled])": { default: null, [HOVER]: color.surfaceHover },
     },
     color: {
-      default: color.textMuted,
+      default: color.textSecondary,
       ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
       "[data-active]": color.text,
-      "[data-disabled]": color.textSubtle,
+      "[data-disabled]": color.textTertiary,
     },
     fontFamily: "inherit",
     fontSize: text.base,

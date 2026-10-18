@@ -49,7 +49,7 @@ const styles = stylex.create({
     backgroundColor: { default: "transparent", "[data-checked]": color.surface },
     boxShadow: { default: "none", "[data-checked]": shadow.sm },
     color: {
-      default: color.textMuted,
+      default: color.textSecondary,
       ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
       "[data-checked]": color.text,
     },

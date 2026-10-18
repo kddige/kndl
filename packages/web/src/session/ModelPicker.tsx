@@ -73,7 +73,7 @@ const styles = stylex.create({
     gap: space.s1,
     minWidth: 0,
     paddingInline: space.s2,
-    color: color.textMuted,
+    color: color.textSecondary,
     fontSize: text.sm,
     fontWeight: weight.medium,
   },
