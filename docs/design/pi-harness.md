@@ -33,12 +33,17 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
 - **The relay** already relays `/gateway/*`, swapping the Session token for the mod token.
 - **The Hub Gateway** routes `/gateway/models/<provider>/<rest>`:
   - **Authentication:** the mod token, as the MCP Gateway does. That gives the Session, and from it the Creator.
-  - **Refusal:** a Provider the Creator hasn't connected gets a 403 with a clear message in the Provider's error shape (`{"error":{"message":…}}`).
+  - **Refusals,** each in the Provider's error shape (`{"error":{"message":…}}`):
+    - a Session that isn't pi's: 403. A Claude Code Session's Sandbox spends no Connected provider;
+    - a Provider the Creator hasn't connected: 403;
+    - a path or method its APIs' clients don't call: 403. Only inference and listing Models are allowed, as pi-ai 1.3.0's clients call them (`modelCallAllowed` in `PiProviders.ts`), so a Sandbox can't use the Creator's key for files, batches or fine-tuning;
+    - a 9th call at once from one Session: 429. Over 256 MiB of request bodies held across the Hub: 503. A request over 32 MiB: 413.
   - **What the credential sends:** an API key is itself the key. A sign-in's is what pi-ai's `toAuth(credential)` says: a key (most), headers of its own (Kimi's `Authorization: Bearer`), and maybe another address for the Provider's API (GitHub Copilot's, for each account: `https://api.business.githubcopilot.com` for a Business seat).
-  - **Upstream:** the origin of the Provider's API, the sign-in's address when `toAuth` names one, else pi-ai's for the Provider, plus `/<rest>` plus the query.
+  - **Upstream:** the origin of the Provider's API, the sign-in's address when `toAuth` names one, else pi-ai's for the Provider, plus `/<rest>` plus the query, built with `new URL` and checked to stay on that origin. Dot segments, encoded slashes and dots, backslashes and anything not starting with one `/` are refused. A GitHub Copilot sign-in's address must be HTTPS on `githubcopilot.com` or its own Enterprise domain, which must be `<name>.ghe.com`.
   - **Headers:** `authorization`, `x-api-key` and `x-goog-api-key` are dropped. The Creator's key goes in the one pi sent the Session token in as its key: `x-goog-api-key`, else `x-api-key`, else `Authorization: Bearer`. A sign-in's own headers are set over them.
-  - **Body:** the request body is buffered, since requests are small JSON, so the request can be retried once after a refresh when the Provider answers 401. The response streams back as it comes.
-- **Refresh:** a sign-in's token is refreshed before a call when it expires within 5 minutes, and once after a 401. Refreshes are serialized per credential, and the rotated credential is stored.
+  - **Body:** a sign-in's request is buffered, so it can be sent again once after a refresh when the Provider answers 401; an API key's streams through. The response streams back as it comes, with neither the Hub's idle timeout nor fetch's own cutting a quiet stream, and the call is logged when its stream ends.
+- **Refresh:** a sign-in's token is refreshed before a call when it expires within 5 minutes, and after a 401 only if it wasn't refreshed in the last minute, so a Sandbox can't hammer the Provider's token endpoint. Refreshes are serialized per credential; the rotated credential is stored only if the connection is still the one refreshed (`connected_at`), so a reconnect meanwhile wins. Every call, and listing Models, goes through `ConnectedProviders.call`.
+- **Claude's Models** can be turned off on a Hub with `HUB_CLAUDE_MODELS=off`: the Hub lists none, so no pi Session runs the Claude bridge.
 
 ## Connected providers
 
