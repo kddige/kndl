@@ -14,7 +14,9 @@
 //   hash, so a changed lockfile installs anew beside the old one.
 //
 // Everything lands under a temporary name and is renamed into place, so preparing it is safe to
-// run concurrently, and a cut-short download is tried again.
+// run concurrently, and a cut-short download is tried again. A preparation that takes too long is
+// stopped, its download and install with it, and what one cut short by a killed Runner left is
+// swept away by the next.
 //
 // Upgrading pi: change the version in packages/runner/pi/package.json and here, run
 // `bun install --ignore-scripts` in a copy of that directory outside the repository (inside it,
@@ -27,6 +29,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -34,7 +37,7 @@ import {
   writeFile,
 } from "node:fs/promises"
 import { join, posix, resolve } from "node:path"
-import { Data, Effect } from "effect"
+import { Data, Duration, Effect } from "effect"
 import type { Libc } from "./SandboxClaude.ts"
 
 /** The pi version pi Sessions run, as packages/runner/pi/package.json pins it. */
@@ -130,10 +133,14 @@ export interface PiBundleReady {
   readonly appDir: string
 }
 
-/** Runs a command on the host: its exit code and what it printed to stderr. */
+/**
+ * Runs a command on the host: its exit code and what it printed to stderr. One whose `signal`
+ * aborts is stopped.
+ */
 export type RunCommand = (
   argv: ReadonlyArray<string>,
   cwd: string,
+  signal?: AbortSignal,
 ) => Promise<{ readonly exitCode: number; readonly stderr: string }>
 
 export interface EnsurePiOptions {
@@ -146,12 +153,22 @@ export interface EnsurePiOptions {
   readonly nodeVersion?: string
   readonly nodeBuilds?: Readonly<Record<string, NodeBuild>>
   readonly packageDir?: string
-  readonly fetch?: (url: string) => Promise<Response>
+  /** Gets a URL, stopping when `signal` aborts; defaults to `fetch`. */
+  readonly fetch?: (url: string, signal?: AbortSignal) => Promise<Response>
   /** Runs `bun install` and `tar`; defaults to spawning them. */
   readonly run?: RunCommand
   /** The Bun that installs pi: the one the Runner runs on. */
   readonly bun?: string
 }
+
+/** The names of the temporary directories a preparation works in, under the cache. */
+const stagingPrefixes = [".download-node-", ".install-pi-"]
+
+/**
+ * How old a temporary directory in the cache is when no preparation can still be working in it:
+ * the Runner gives one 5 minutes, and stops it then (PiBundle.ts).
+ */
+export const StaleStagingAge = Duration.hours(1)
 
 const exists = (path: string) =>
   stat(path).then(
@@ -159,10 +176,35 @@ const exists = (path: string) =>
     () => false,
   )
 
-const spawnCommand: RunCommand = async (argv, cwd) => {
-  const child = Bun.spawn([...argv], { cwd, stdin: "ignore", stdout: "ignore", stderr: "pipe" })
+const spawnCommand: RunCommand = async (argv, cwd, signal) => {
+  const child = Bun.spawn([...argv], {
+    cwd,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+    ...(signal === undefined ? {} : { signal }),
+  })
   const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
   return { exitCode, stderr }
+}
+
+/**
+ * Removes the temporary directories of preparations that were cut short and never cleaned up, as
+ * by a Runner killed while it prepared: those older than {@link StaleStagingAge}, so another
+ * Runner's on the same cache, still under way, is left be.
+ */
+const sweepStaging = async (cacheDir: string) => {
+  const before = Date.now() - Duration.toMillis(StaleStagingAge)
+  for (const name of await readdir(cacheDir)) {
+    if (!stagingPrefixes.some((prefix) => name.startsWith(prefix))) continue
+    const path = join(cacheDir, name)
+    const modified = await stat(path).then(
+      (found) => found.mtimeMs,
+      () => undefined,
+    )
+    if (modified !== undefined && modified < before)
+      await rm(path, { recursive: true, force: true })
+  }
 }
 
 /** Moves a finished `staging` into place at `target`, unless someone else finished first. */
@@ -175,7 +217,12 @@ const settle = async (staging: string, target: string, done: string) => {
 }
 
 /** Makes sure the cache holds Node.js's executable for `libc`, downloading it if not. */
-const ensureNode = async (options: EnsurePiOptions, libc: Libc, run: RunCommand) => {
+const ensureNode = async (
+  options: EnsurePiOptions,
+  libc: Libc,
+  run: RunCommand,
+  signal: AbortSignal,
+) => {
   const version = options.nodeVersion ?? PinnedNodeVersion
   const target = join(options.cacheDir, nodeDir(version, libc))
   const binary = join(target, "bin", "node")
@@ -183,15 +230,17 @@ const ensureNode = async (options: EnsurePiOptions, libc: Libc, run: RunCommand)
   const arch = options.arch ?? process.arch
   const build = (options.nodeBuilds ?? PinnedNodeBuilds)[nodeBuildKey(arch, libc)]
   if (build === undefined) throw new Error(`no ${libc} build of Node.js for ${arch}`)
-  const get = options.fetch ?? ((url: string) => fetch(url))
+  const get =
+    options.fetch ?? ((url: string, stop?: AbortSignal) => fetch(url, { signal: stop ?? null }))
 
-  const tarball = await get(build.url)
+  const tarball = await get(build.url, signal)
   if (!tarball.ok) throw new Error(`downloading ${build.url}: ${tarball.status}`)
   const bytes = new Uint8Array(await tarball.arrayBuffer())
   if (createHash("sha256").update(bytes).digest("hex") !== build.sha256)
     throw new Error(`${build.url} failed its checksum`)
+  signal.throwIfAborted()
 
-  const staging = await mkdtemp(join(options.cacheDir, `.download-node-${libc}-`))
+  const staging = await mkdtemp(join(options.cacheDir, `${stagingPrefixes[0]}${libc}-`))
   try {
     await writeFile(join(staging, "node.tar.gz"), bytes)
     // The tarball's one top directory is named as the file is.
@@ -199,8 +248,10 @@ const ensureNode = async (options: EnsurePiOptions, libc: Libc, run: RunCommand)
     const tar = await run(
       ["tar", "-xzf", "node.tar.gz", "--strip-components", "1", `${top}/bin/node`],
       staging,
+      signal,
     )
     if (tar.exitCode !== 0) throw new Error(`unpacking ${build.url}: ${tar.stderr.trim()}`)
+    signal.throwIfAborted()
     await rm(join(staging, "node.tar.gz"))
     await chmod(join(staging, "bin", "node"), 0o755)
     await chmod(join(staging, "bin"), 0o755)
@@ -211,7 +262,7 @@ const ensureNode = async (options: EnsurePiOptions, libc: Libc, run: RunCommand)
 }
 
 /** Makes sure the cache holds the pi install of the committed lockfile, installing it if not. */
-const ensureApp = async (options: EnsurePiOptions, run: RunCommand) => {
+const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: AbortSignal) => {
   const packageDir = options.packageDir ?? piPackageDir
   const manifest = await readFile(join(packageDir, "package.json"))
   const lockfile = await readFile(join(packageDir, "bun.lock"))
@@ -221,7 +272,7 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand) => {
   const cli = join(target, piCliInInstall)
   if (await exists(cli)) return appDir
 
-  const staging = await mkdtemp(join(options.cacheDir, `.install-pi-`))
+  const staging = await mkdtemp(join(options.cacheDir, stagingPrefixes[1] ?? ".install-pi-"))
   try {
     await copyFile(join(packageDir, "package.json"), join(staging, "package.json"))
     await copyFile(join(packageDir, "bun.lock"), join(staging, "bun.lock"))
@@ -229,7 +280,9 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand) => {
     const install = await run(
       [options.bun ?? process.execPath, "install", "--frozen-lockfile", "--ignore-scripts"],
       staging,
+      signal,
     )
+    signal.throwIfAborted()
     if (install.exitCode !== 0)
       throw new Error(`installing pi: ${install.stderr.trim() || `exit ${install.exitCode}`}`)
     const installed = JSON.parse(
@@ -251,17 +304,20 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand) => {
 
 /**
  * Makes sure the cache holds Node.js for each libc and the pinned pi install, getting what it
- * lacks, and says where the install is.
+ * lacks, and says where the install is. What earlier preparations cut short left behind goes
+ * first. Interrupted, as when it takes too long, it stops its downloads and installs, and
+ * removes what they had made.
  */
 export const ensurePiBundle = (options: EnsurePiOptions) =>
   Effect.tryPromise({
-    try: async (): Promise<PiBundleReady> => {
+    try: async (signal): Promise<PiBundleReady> => {
       const run = options.run ?? spawnCommand
       await mkdir(options.cacheDir, { recursive: true, mode: 0o700 })
+      await sweepStaging(options.cacheDir)
       const [appDir] = await Promise.all([
-        ensureApp(options, run),
+        ensureApp(options, run, signal),
         ...(options.libcs ?? (["musl", "glibc"] as const)).map((libc) =>
-          ensureNode(options, libc, run),
+          ensureNode(options, libc, run, signal),
         ),
       ])
       return { appDir }

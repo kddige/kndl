@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import {
   ensurePiBundle,
   type NodeBuild,
@@ -227,5 +227,65 @@ describe("the Sandbox's pi", () => {
     )
     expect(other.message).toContain(`installed pi 1.2.0, not ${PinnedPiVersion}`)
     expect((await readdir(cacheDir)).filter((name) => name.startsWith("pi-"))).toEqual([])
+  })
+
+  test("stops downloading and installing when interrupted, as on a timeout, and keeps nothing of it", async () => {
+    const { builds } = await nodeReleases()
+    const cacheDir = join(dir, "cache")
+    const aborted: Array<string> = []
+    const started: Array<string> = []
+    /** Stands in for what never ends by itself: it ends when its signal aborts. */
+    const hangs = (what: string, signal: AbortSignal | undefined) =>
+      new Promise<never>((_, reject) => {
+        started.push(what)
+        signal?.addEventListener("abort", () => {
+          aborted.push(what)
+          reject(new Error(`${what} aborted`))
+        })
+      })
+    const preparing = Effect.runFork(
+      ensurePiBundle({
+        cacheDir,
+        arch: "arm64",
+        nodeVersion: "24.0.0",
+        nodeBuilds: builds,
+        fetch: (url, signal) => hangs(url, signal),
+        run: (argv, _cwd, signal) => hangs(argv.join(" "), signal),
+        bun: "/usr/bin/bun",
+      }),
+    )
+    while (started.length < 3) await Bun.sleep(5)
+
+    await Effect.runPromise(Fiber.interrupt(preparing))
+    expect(aborted.toSorted()).toEqual(started.toSorted())
+    // Its staging directories go once their work has stopped.
+    for (let tries = 0; (await readdir(cacheDir)).length > 0 && tries < 200; tries++)
+      await Bun.sleep(5)
+    expect(await readdir(cacheDir)).toEqual([])
+  })
+
+  test("sweeps away what a preparation cut short left, as by a Runner killed, but not one under way", async () => {
+    const { builds, fetch } = await nodeReleases()
+    const cacheDir = join(dir, "cache")
+    const left = [".download-node-musl-a1b2c3", ".install-pi-d4e5f6"]
+    for (const name of [...left, ".install-pi-now"]) {
+      await mkdir(join(cacheDir, name, "node_modules"), { recursive: true })
+    }
+    const anHourAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    for (const name of left) await utimes(join(cacheDir, name), anHourAgo, anHourAgo)
+
+    const ready = await Effect.runPromise(
+      ensurePiBundle({
+        cacheDir,
+        arch: "arm64",
+        nodeVersion: "24.0.0",
+        nodeBuilds: builds,
+        fetch,
+        run: host().run,
+      }),
+    )
+    expect((await readdir(cacheDir)).toSorted()).toEqual(
+      [".install-pi-now", ready.appDir, "node-v24.0.0-glibc", "node-v24.0.0-musl"].toSorted(),
+    )
   })
 })

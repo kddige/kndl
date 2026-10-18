@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Logger } from "effect"
-import { preparePi } from "./PiBundle.ts"
-import { SandboxPiError } from "./sandbox/SandboxPi.ts"
+import { Effect, Fiber, Logger } from "effect"
+import { TestClock } from "effect/testing"
+import { PreparePiTimeout, preparePi } from "./PiBundle.ts"
+import { ensurePiBundle, SandboxPiError } from "./sandbox/SandboxPi.ts"
 
 const dirs: Array<string> = []
 afterEach(() => {
@@ -62,6 +63,44 @@ describe("preparePi", () => {
     )
     expect(ready).toBeUndefined()
     expect(logs).toEqual(["Warn: Sessions run Claude Code alone: could not get pi: offline"])
+  })
+
+  test("runs Claude Code alone once getting pi takes too long, and stops getting it", async () => {
+    const logs: Array<string> = []
+    const cacheDir = modDir(false)
+    const stopped: Array<string> = []
+    const asked: Array<string> = []
+    /** A download or an install that never ends by itself: it ends when its signal aborts. */
+    const hangs = (what: string, signal: AbortSignal | undefined) =>
+      new Promise<never>((_, reject) => {
+        asked.push(what)
+        signal?.addEventListener("abort", () => {
+          stopped.push(what)
+          reject(new Error(`${what} stopped`))
+        })
+      })
+    const ready = await run(
+      Effect.gen(function* () {
+        const preparing = yield* Effect.forkChild(
+          preparePi({
+            modDir: modDir(true),
+            ensure: ensurePiBundle({
+              cacheDir,
+              libcs: ["musl"],
+              fetch: (url, signal) => hangs(url, signal),
+              run: (argv, _cwd, signal) => hangs(argv.join(" "), signal),
+            }),
+          }),
+        )
+        while (asked.length < 2) yield* Effect.promise(() => Bun.sleep(5))
+        yield* TestClock.adjust(PreparePiTimeout)
+        return yield* Fiber.join(preparing)
+      }).pipe(Effect.provide(TestClock.layer())),
+      logs,
+    )
+    expect(ready).toBeUndefined()
+    expect(logs).toEqual(["Warn: Sessions run Claude Code alone: getting pi took longer than 5m"])
+    expect(stopped).toHaveLength(2)
   })
 
   test("runs Claude Code alone when the mod's pi extension isn't built, getting nothing", async () => {
