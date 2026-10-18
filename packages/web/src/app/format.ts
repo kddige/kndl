@@ -37,6 +37,11 @@ export function count(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+/** US dollars, with cents' fractions under a dollar: "$0.0372", "$1.25". */
+export function dollars(n: number): string {
+  return `$${n.toFixed(n < 1 ? 4 : 2)}`
+}
+
 /** A size in binary units, with a decimal under ten: "512 B", "9.5 GiB", "186 GiB". */
 export function bytes(n: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"]

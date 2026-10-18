@@ -190,7 +190,7 @@ export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", 
 
 /**
  * What the fake Runners' Claude Code has (#128), as a Runner on Claude Code 2.1.289 said it in its
- * hello. Kept from that build, whose Haiku 4.5 takes no effort level, so the UI shows a model that
+ * hello. Kept from that build, whose Haiku 4.5 takes no thinking level, so the UI shows a model that
  * takes none; the pinned build's are PinnedClaudeModels (packages/runner/src/ClaudeModels.ts).
  */
 export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
@@ -199,7 +199,7 @@ export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
     id: "claude-opus-5-5",
     label: "Opus 5.5",
     description: "Best for everyday, complex tasks",
-    effort: true,
+    reasoning: true,
   },
   models: [
     {
@@ -207,38 +207,38 @@ export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       description: "Best for everyday, complex tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "fable",
       id: "claude-fable-5-1",
       label: "Fable 5.1",
       description: "Most capable for your hardest and longest-running tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "sonnet",
       id: "claude-sonnet-5-5",
       label: "Sonnet 5.5",
       description: "Efficient for routine tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "haiku",
       id: "claude-haiku-4-5-20251001",
       label: "Haiku 4.5",
       description: "Fastest for quick answers",
-      effort: false,
+      reasoning: false,
     },
     {
       alias: "opus[1m]",
       id: "claude-opus-5-5[1m]",
       label: "Opus 5.5 (1M context)",
       description: "Opus with a 1M-token context, for long sessions",
-      effort: true,
+      reasoning: true,
     },
   ],
-  efforts: ["low", "medium", "high", "xhigh", "max"],
+  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
 }
 
 const GiB = 1024 ** 3
@@ -381,7 +381,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         environment: { version: 1, latestVersion: 2 },
         // Alice switched it after the first Turn, which ran on Claude Code's default (#128).
         model: "sonnet",
-        effort: "high",
+        thinkingLevel: "high",
         // Alice keeps it up while Bob tries its dev server (ADR 0016).
         keepAwake: { by: you, at: now - 30 * 60_000 },
       },
@@ -418,7 +418,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
           by: you,
           model: "sonnet",
           modelLabel: "Sonnet 5.5",
-          effort: "high",
+          thinkingLevel: "high",
         },
       ],
     },
@@ -698,7 +698,7 @@ function agentRun(turnId: string, agentId: string, body: TurnBody): Array<Sessio
       },
     )
   }
-  events.push({ _tag: "TurnEnded", turnId, agentId, reason: "Answered", durationMs: 41_000 })
+  events.push({ _tag: "TurnEnded", turnId, agentId, reason: "stop", durationMs: 41_000 })
   return events
 }
 
@@ -761,14 +761,15 @@ function sessionTurn(
   events.push({
     _tag: "TurnEnded",
     turnId,
-    reason: "Answered",
+    reason: "stop",
     durationMs: 18_400,
     usage: {
       model: "claude-opus-5-5",
-      inputTokens: 3_100,
-      outputTokens: 420,
-      cacheReadInputTokens: 22_000,
-      cacheCreationInputTokens: 1_200,
+      input: 3_100,
+      output: 420,
+      cacheRead: 22_000,
+      cacheWrite: 1_200,
+      cost: 0.0372,
     },
   })
   return events

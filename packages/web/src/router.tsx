@@ -1,7 +1,5 @@
 import {
   type AgentId,
-  type EffortLevel,
-  EffortLevels,
   branchNameProblem,
   InviteOnlyPath,
   InvitePath,
@@ -9,6 +7,8 @@ import {
   type RunnerId,
   type SessionId,
   SetupPath,
+  type ThinkingLevel,
+  ThinkingLevels,
 } from "@kndl/protocol"
 import {
   createRootRoute,
@@ -130,16 +130,16 @@ interface SetupSearch {
   from?: string
   direct?: true
   runner?: string
-  /** Its model and effort (#128); the Hub checks them when it starts it. */
+  /** Its model and thinking level (#128); the Hub checks them when it starts it. */
   model?: string
-  effort?: EffortLevel
+  thinking?: ThinkingLevel
 }
 
 /**
  * The setup's search, read: a branch git would refuse is left out, as if the search had none.
  */
 function readSetupSearch(search: Record<string, unknown>): SetupSearch {
-  const { branch, from, direct, runner, model, effort } = search
+  const { branch, from, direct, runner, model, thinking } = search
   const refused = nonEmpty(from)
     ? newBranchProblem(String(branch), from) !== undefined || branchNameProblem(from) !== undefined
     : branchNameProblem(String(branch)) !== undefined
@@ -150,14 +150,16 @@ function readSetupSearch(search: Record<string, unknown>): SetupSearch {
         ...((direct === true || direct === "true") && !nonEmpty(from) && { direct: true as const }),
         ...(nonEmpty(runner) && { runner }),
         ...(nonEmpty(model) && { model }),
-        ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
+        ...(ThinkingLevels.some((level) => level === thinking) && {
+          thinking: thinking as ThinkingLevel,
+        }),
       }
     : {}
 }
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the
+ * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?thinking=) once the
  * Environment is applied.
  */
 const environmentRoute = createRoute({
@@ -167,7 +169,7 @@ const environmentRoute = createRoute({
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
     // Read again: the router merges in its parents' search as the URL had it, whatever this refused.
-    const { branch, from, direct, runner, model, effort } = readSetupSearch(
+    const { branch, from, direct, runner, model, thinking } = readSetupSearch(
       environmentRoute.useSearch(),
     )
     return (
@@ -185,7 +187,7 @@ const environmentRoute = createRoute({
                 }),
                 ...(runner !== undefined && { runnerId: runner as RunnerId }),
                 ...(model !== undefined && { model }),
-                ...(effort !== undefined && { effort }),
+                ...(thinking !== undefined && { thinkingLevel: thinking }),
               }
         }
       />

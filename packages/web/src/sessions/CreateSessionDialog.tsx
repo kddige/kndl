@@ -270,7 +270,10 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           search: {
             ...branchSearch(choice),
             ...(runner !== anyRunner && { runner }),
-            ...modelSetting,
+            ...(modelSetting.model !== undefined && { model: modelSetting.model }),
+            ...(modelSetting.thinkingLevel !== undefined && {
+              thinking: modelSetting.thinkingLevel,
+            }),
           },
         })
         return

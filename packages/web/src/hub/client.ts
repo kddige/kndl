@@ -17,7 +17,6 @@ import {
   type CommandFailed,
   MaxDiskUsageSessions,
   type EnvironmentDraft,
-  type EffortLevel,
   type EnvironmentDraftChecked,
   type EnvironmentState,
   type EnvironmentVersion,
@@ -56,6 +55,7 @@ import {
   type TerminalFrame,
   type TerminalSize,
   type TestBuild,
+  type ThinkingLevel,
   type ToolCallId,
   WebToHub,
 } from "@kndl/protocol"
@@ -82,7 +82,7 @@ export interface NewSession {
   readonly runnerId?: RunnerId
   /** The model to start it on; Claude Code's default without one (#128). */
   readonly model?: ModelName
-  readonly effort?: EffortLevel
+  readonly thinkingLevel?: ThinkingLevel
 }
 
 /** The Hub has no GitHub App to list Repos or branches with: asking again can't help. */
@@ -378,19 +378,19 @@ export class HubClient {
   }
 
   /**
-   * Sets the model and effort a Session runs, for everyone in it (#128); an absent one is Claude
+   * Sets the model and thinking level a Session runs, for everyone in it (#128); an absent one is Claude
    * Code's default. A running Turn finishes on the old one: the new one runs from the next Turn.
    * Every open tab gets the change as a SessionUpdated, and the transcript a ModelSwitched.
    */
   setSessionModel(
     sessionId: SessionId,
-    setting: { readonly model?: ModelName; readonly effort?: EffortLevel },
+    setting: { readonly model?: ModelName; readonly thinkingLevel?: ThinkingLevel },
   ): boolean {
     return this.#send({
       _tag: "SetSessionModel",
       sessionId,
       ...(setting.model !== undefined && { model: setting.model }),
-      ...(setting.effort !== undefined && { effort: setting.effort }),
+      ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
     })
   }
 
@@ -446,7 +446,7 @@ export class HubClient {
         branch: input.branch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
         ...(input.model !== undefined && { model: input.model }),
-        ...(input.effort !== undefined && { effort: input.effort }),
+        ...(input.thinkingLevel !== undefined && { thinkingLevel: input.thinkingLevel }),
       },
       "SessionCreated",
     )

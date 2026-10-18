@@ -1,4 +1,4 @@
-import { type EffortLevel, findModel, type RunnerModels } from "@kndl/protocol"
+import { findModel, type RunnerModels, type ThinkingLevel } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import {
@@ -13,12 +13,12 @@ import {
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
-  effortNames,
-  effortNotes,
-  effortsOf,
   type ModelSetting,
   modelName,
   modelOf,
+  thinkingLevelNames,
+  thinkingLevelNotes,
+  thinkingLevelsOf,
 } from "./models.ts"
 
 const styles = stylex.create({
@@ -49,7 +49,7 @@ const styles = stylex.create({
     maxWidth: "100%",
     gap: space.s1,
   },
-  effortTrigger: {
+  thinkingTrigger: {
     flexShrink: 0,
   },
   // The setting as someone watching sees it: the pickers' labels, as text.
@@ -89,9 +89,9 @@ export interface ModelPickerProps {
 }
 
 /**
- * The model a Session runs and its effort level, as two small buttons side by side, as claude.ai
+ * The model a Session runs and its thinking level, as two small buttons side by side, as claude.ai
  * and ChatGPT pick them (#128): one named by the model opens the Runner's models, the other named
- * by the level opens a slider over the levels its Claude Code takes. The effort button is left
+ * by the level opens a slider over the levels its Claude Code takes. The thinking button is left
  * out for a model that takes no level.
  */
 export function ModelPicker({
@@ -103,9 +103,9 @@ export function ModelPicker({
   appearance = "bar",
 }: ModelPickerProps) {
   const current = modelOf(models, value)
-  const efforts = effortsOf(models)
+  const levels = thinkingLevelsOf(models)
   // A model the Runner doesn't list takes no level here: the Hub would refuse one for it.
-  const takesEffort = current?.effort === true && efforts.length > 0
+  const takesLevel = current?.reasoning === true && levels.length > 0
   const name = modelName(models, value)
 
   const chooseModel = (row: string) => {
@@ -113,13 +113,14 @@ export function ModelPicker({
     onChange({
       ...(row !== defaultRow && { model: row }),
       // A model that takes no level drops the one set; the Hub refuses it with one.
-      ...(value.effort !== undefined && model?.effort === true && { effort: value.effort }),
+      ...(value.thinkingLevel !== undefined &&
+        model?.reasoning === true && { thinkingLevel: value.thinkingLevel }),
     })
   }
-  const chooseEffort = (effort: EffortLevel | undefined) =>
+  const chooseLevel = (thinkingLevel: ThinkingLevel | undefined) =>
     onChange({
       ...(value.model !== undefined && { model: value.model }),
-      ...(effort !== undefined && { effort }),
+      ...(thinkingLevel !== undefined && { thinkingLevel }),
     })
 
   return (
@@ -154,11 +155,11 @@ export function ModelPicker({
           ))}
         </MenuRadioGroup>
       </Menu>
-      {takesEffort && (
-        <EffortPicker
-          efforts={efforts}
-          value={value.effort}
-          onChange={chooseEffort}
+      {takesLevel && (
+        <ThinkingPicker
+          levels={levels}
+          value={value.thinkingLevel}
+          onChange={chooseLevel}
           disabled={disabled}
           side={side}
           appearance={appearance}
@@ -169,8 +170,8 @@ export function ModelPicker({
 }
 
 /**
- * The model a Session runs and its effort level, named as the picker names them, for someone who
- * can't change them: watching a Session they didn't start (ADR 0026).
+ * The model a Session runs and its thinking level, named as the picker names them, for someone
+ * who can't change them: watching a Session they didn't start (ADR 0026).
  */
 export function ModelSettingLabel({
   models,
@@ -181,19 +182,19 @@ export function ModelSettingLabel({
 }) {
   const name = modelName(models, value)
   // As the picker: a level only for a model that takes one.
-  const effort =
-    modelOf(models, value)?.effort === true &&
-    effortsOf(models).length > 0 &&
-    value.effort !== undefined
-      ? effortNames[value.effort]
+  const level =
+    modelOf(models, value)?.reasoning === true &&
+    thinkingLevelsOf(models).length > 0 &&
+    value.thinkingLevel !== undefined
+      ? thinkingLevelNames[value.thinkingLevel]
       : undefined
   return (
-    <span title="The model and effort this Session runs on" {...stylex.props(styles.shown)}>
+    <span title="The model and thinking level this Session runs on" {...stylex.props(styles.shown)}>
       <span {...stylex.props(styles.label)}>{name}</span>
-      {effort !== undefined && (
+      {level !== undefined && (
         <>
           <span aria-hidden="true">·</span>
-          <span>{effort}</span>
+          <span>{level}</span>
         </>
       )}
     </span>
@@ -201,31 +202,31 @@ export function ModelSettingLabel({
 }
 
 /**
- * The effort button and its slider. The slider shows where it is dragged or stepped to, and sets
+ * The thinking button and its slider. The slider shows where it is dragged or stepped to, and sets
  * the level where it is let go or clicked, on Enter, or when it closes other than by Escape on a
  * level other than the one set; Escape takes it back. A change between Turns restarts Claude Code, and while agents run asks first, so
  * stepping through the levels doesn't set each.
  */
-function EffortPicker({
-  efforts,
+function ThinkingPicker({
+  levels,
   value,
   onChange,
   disabled,
   side,
   appearance,
 }: {
-  efforts: ReadonlyArray<EffortLevel>
-  /** The level set; undefined when none is, and Claude Code picks. */
-  value: EffortLevel | undefined
-  onChange: (effort: EffortLevel | undefined) => void
+  levels: ReadonlyArray<ThinkingLevel>
+  /** The level set; undefined when none is, and the Harness picks. */
+  value: ThinkingLevel | undefined
+  onChange: (level: ThinkingLevel | undefined) => void
   disabled: boolean
   side: MenuSide
   appearance: Appearance
 }) {
-  const [moved, setMoved] = useState<EffortLevel | undefined>(undefined)
+  const [moved, setMoved] = useState<ThinkingLevel | undefined>(undefined)
   const shown = moved ?? value
-  const setName = value === undefined ? "Default" : effortNames[value]
-  const commit = (level: EffortLevel) => {
+  const setName = value === undefined ? "Default" : thinkingLevelNames[value]
+  const commit = (level: ThinkingLevel) => {
     setMoved(undefined)
     if (level !== value) onChange(level)
   }
@@ -234,9 +235,9 @@ function EffortPicker({
     <Popover
       side={side}
       align="start"
-      label="Effort"
-      title={shown === undefined ? "Default" : effortNames[shown]}
-      description={shown === undefined ? "Claude Code picks the level." : effortNotes[shown]}
+      label="Thinking"
+      title={shown === undefined ? "Default" : thinkingLevelNames[shown]}
+      description={shown === undefined ? "The Harness picks the level." : thinkingLevelNotes[shown]}
       onOpenChange={(open, reason) => {
         if (open || moved === undefined) return
         // Escape takes back what was moved; any other way out sets it.
@@ -248,18 +249,18 @@ function EffortPicker({
         <Button
           {...look(appearance)}
           disabled={disabled}
-          aria-label={`Effort: ${setName}`}
-          sx={[styles.trigger, styles.effortTrigger]}
+          aria-label={`Thinking: ${setName}`}
+          sx={[styles.trigger, styles.thinkingTrigger]}
         >
-          <span {...stylex.props(styles.label)}>{value === undefined ? "Effort" : setName}</span>
+          <span {...stylex.props(styles.label)}>{value === undefined ? "Thinking" : setName}</span>
           <ChevronDownIcon />
         </Button>
       }
     >
       <Slider
-        label="Effort"
+        label="Thinking"
         unsetLabel="Default"
-        steps={efforts.map((level) => ({ value: level, label: effortNames[level] }))}
+        steps={levels.map((level) => ({ value: level, label: thinkingLevelNames[level] }))}
         value={shown}
         onValueChange={setMoved}
         onValueCommitted={commit}

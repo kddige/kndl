@@ -1,6 +1,6 @@
-// A Session's model and effort in the whole app (#128), against the fake Hub with its script not
-// playing unless a test asks: the picker in the composer, the transcript's notice and Turn
-// footer, a switch asked about while an agent runs, and New Session.
+// A Session's model and thinking level in the whole app (#128), against the fake Hub with its
+// script not playing unless a test asks: the picker in the composer, the transcript's notice and
+// Turn footer, a switch asked about while an agent runs, and New Session.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -80,7 +80,7 @@ test("a switch shows in the transcript, and a Turn run before it names its model
   const { page, conversation, picker } = await open(`/sessions/${demoSessionId}`)
   await eventually(() => expect(conversation()).toContain("Alice Kim switched to Sonnet 5.5, High"))
   expect(picker()?.textContent).toBe("Sonnet 5.5")
-  expect(button("Effort: High", page).textContent).toBe("High")
+  expect(button("Thinking: High", page).textContent).toBe("High")
   // The first Turn ran on Claude Code's default, before Alice's switch.
   const turnModels = [...page.querySelectorAll('[title="The model this Turn ran on"]')]
   expect(turnModels.map((el) => el.textContent)).toEqual(["Opus 5.5"])
@@ -98,9 +98,9 @@ test("its Creator switches the model from the composer; everyone sees who did", 
   await eventually(() => expect(conversation()).toContain("Alice Kim switched to Haiku 4.5"))
   expect(picker()?.textContent).toBe("Haiku 4.5")
   const sent = hub.received.flatMap((m) =>
-    m._tag === "SetSessionModel" ? [{ model: m.model, effort: m.effort }] : [],
+    m._tag === "SetSessionModel" ? [{ model: m.model, thinkingLevel: m.thinkingLevel }] : [],
   )
-  expect(sent).toEqual([{ model: "haiku", effort: undefined }])
+  expect(sent).toEqual([{ model: "haiku", thinkingLevel: undefined }])
 })
 
 test("while a switch is asked about, the picker shows it; Cancel goes back, Switch sends it", async () => {

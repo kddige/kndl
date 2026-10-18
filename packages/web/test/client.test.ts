@@ -239,7 +239,7 @@ describe("a joined Session", () => {
     await eventually(() => {
       const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
       expect(events.some((event) => event._tag === "TurnStopRequested")).toBe(true)
-      expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "Stopped" })
+      expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
     })
   })
 

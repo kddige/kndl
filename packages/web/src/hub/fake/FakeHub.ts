@@ -27,7 +27,6 @@ import {
   type CliLoginApproved,
   CliLoginCodeLength,
   CliLoginCodeLifetimeMs,
-  type EffortLevel,
   QuestionClosed,
   questionClosedText,
   findModel,
@@ -78,6 +77,7 @@ import {
   attachmentsNotSent,
   stopAgentRefusal,
   stopTurnRefusal,
+  type ThinkingLevel,
   UpdateDrainMillis,
   wakeVerdict,
   WebToHub,
@@ -1134,7 +1134,7 @@ export class FakeHub implements HubTransport {
         }
         this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
           ...(message.model !== undefined && { model: message.model }),
-          ...(message.effort !== undefined && { effort: message.effort }),
+          ...(message.thinkingLevel !== undefined && { thinkingLevel: message.thinkingLevel }),
         })
         break
       // As the Hub does (#128): its Creator may (ADR 0026), but not in an Archived Session; the
@@ -1153,8 +1153,11 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, checked, message.sessionId)
           break
         }
-        const { model: _, effort: __, modelPending: ___, ...rest } = session.summary
-        if (session.summary.model === checked.model && session.summary.effort === checked.effort)
+        const { model: _, thinkingLevel: __, modelPending: ___, ...rest } = session.summary
+        if (
+          session.summary.model === checked.model &&
+          session.summary.thinkingLevel === checked.thinkingLevel
+        )
           break
         // The Hub restarts Claude Code with it once no Turn runs, which interrupts its agents.
         const pending = session.summary.currentTurn !== null
@@ -1162,7 +1165,7 @@ export class FakeHub implements HubTransport {
         session.summary = {
           ...rest,
           ...(checked.model !== undefined && { model: checked.model }),
-          ...(checked.effort !== undefined && { effort: checked.effort }),
+          ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
           ...(pending && { modelPending: true }),
         }
         this.#append(session, {
@@ -1170,7 +1173,7 @@ export class FakeHub implements HubTransport {
           by: this.#you,
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.label !== undefined && { modelLabel: checked.label }),
-          ...(checked.effort !== undefined && { effort: checked.effort }),
+          ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
         })
         this.#summaryChanged(session)
         break
@@ -1820,24 +1823,24 @@ export class FakeHub implements HubTransport {
    */
   #checkModel(
     runnerId: string,
-    asked: { readonly model?: string; readonly effort?: EffortLevel },
-  ): { model?: string; effort?: EffortLevel; label?: string } | string {
+    asked: { readonly model?: string; readonly thinkingLevel?: ThinkingLevel },
+  ): { model?: string; thinkingLevel?: ThinkingLevel; label?: string } | string {
     const runner = this.runners.find((candidate) => candidate.id === runnerId)
     const models = runner?.models
     if (models === undefined) {
-      if (asked.model === undefined && asked.effort === undefined) return {}
+      if (asked.model === undefined && asked.thinkingLevel === undefined) return {}
       return `${runner?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
     }
     const option = asked.model === undefined ? models.default : findModel(models, asked.model)
     if (option === undefined) return modelNotFoundText(asked.model ?? "")
-    if (asked.effort !== undefined) {
-      if (!option.effort) return `${option.label} takes no effort level.`
-      if (!models.efforts.includes(asked.effort))
-        return `Claude Code on ${runner?.name ?? "the Runner"} has no effort level '${asked.effort}'.`
+    if (asked.thinkingLevel !== undefined) {
+      if (!option.reasoning) return `${option.label} takes no thinking level.`
+      if (!models.thinkingLevels.includes(asked.thinkingLevel))
+        return `Claude Code on ${runner?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
     }
     return {
       ...(option !== models.default && asked.model !== undefined && { model: asked.model }),
-      ...(asked.effort !== undefined && { effort: asked.effort }),
+      ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
       label: option.label,
     }
   }
@@ -1857,7 +1860,7 @@ export class FakeHub implements HubTransport {
     repo: string,
     branch: BranchChoice,
     runnerId: string | undefined,
-    asked: { readonly model?: string; readonly effort?: EffortLevel },
+    asked: { readonly model?: string; readonly thinkingLevel?: ThinkingLevel },
   ): void {
     const runner =
       runnerId === undefined
@@ -1897,7 +1900,7 @@ export class FakeHub implements HubTransport {
       // Not started on any version until its Runner says so: it is being started on `version`.
       environment: { version: null, latestVersion: version },
       ...(checked.model !== undefined && { model: checked.model }),
-      ...(checked.effort !== undefined && { effort: checked.effort }),
+      ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
     }
     const session: FakeSession = {
       summary,
@@ -2214,7 +2217,7 @@ export class FakeHub implements HubTransport {
     const foreground = new Set<string>()
     let ended = false
 
-    const end = (reason: "Answered" | "Stopped") => {
+    const end = (reason: "stop" | "aborted") => {
       if (ended) return
       ended = true
       for (const timer of timers) {
@@ -2239,13 +2242,13 @@ export class FakeHub implements HubTransport {
         turnId,
         reason,
         durationMs: Date.now() - started,
-        ...(reason === "Answered" && {
+        ...(reason === "stop" && {
           usage: {
             model: turnModel,
-            inputTokens: 1_200 + steps.length * 300,
-            outputTokens: 180 + steps.length * 40,
-            cacheReadInputTokens: 24_000,
-            cacheCreationInputTokens: 900,
+            input: 1_200 + steps.length * 300,
+            output: 180 + steps.length * 40,
+            cacheRead: 24_000,
+            cacheWrite: 900,
           },
         }),
       })
@@ -2258,7 +2261,7 @@ export class FakeHub implements HubTransport {
       this.#after(2, () => this.#next(session))
     }
 
-    session.stopTurn = () => end("Stopped")
+    session.stopTurn = () => end("aborted")
     session.summary = { ...session.summary, currentTurn: turnId }
     this.#summaryChanged(session)
     this.#append(session, { _tag: "TurnStarted", turnId, ...start })
@@ -2343,7 +2346,7 @@ export class FakeHub implements HubTransport {
             break
         }
       }
-      schedule(1, () => end("Answered"))
+      schedule(1, () => end("stop"))
     }
     play(steps)
   }
@@ -2564,7 +2567,7 @@ export class FakeHub implements HubTransport {
           _tag: "TurnEnded",
           turnId,
           agentId,
-          reason: status === "Done" ? "Answered" : "Stopped",
+          reason: status === "Done" ? "stop" : "aborted",
           durationMs: Date.now() - started,
         })
       }

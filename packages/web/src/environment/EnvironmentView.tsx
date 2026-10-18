@@ -5,10 +5,10 @@
 
 import {
   type BranchChoice,
-  type EffortLevel,
   type EnvironmentVersionInfo,
   type ModelName,
   type RunnerId,
+  type ThinkingLevel,
   repoKey,
   type RunnerSummary,
   type SharedVariable,
@@ -73,7 +73,7 @@ export interface PendingSession {
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   readonly model?: ModelName
-  readonly effort?: EffortLevel
+  readonly thinkingLevel?: ThinkingLevel
 }
 
 const styles = stylex.create({
@@ -425,7 +425,7 @@ function EnvironmentEditor({
         branch: pending.branch,
         ...(pending.runnerId !== undefined && { runnerId: pending.runnerId }),
         ...(pending.model !== undefined && { model: pending.model }),
-        ...(pending.effort !== undefined && { effort: pending.effort }),
+        ...(pending.thinkingLevel !== undefined && { thinkingLevel: pending.thinkingLevel }),
       })
       void navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } })
     } catch (error) {

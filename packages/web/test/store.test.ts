@@ -304,7 +304,7 @@ describe("the transcript", () => {
       history([
         turnStart,
         delta("Hi"),
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
         turnTwo,
       ]),
     )

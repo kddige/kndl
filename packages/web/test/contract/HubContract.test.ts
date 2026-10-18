@@ -297,7 +297,7 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
         if (turn === null) return
         const { turnId } = turn
         turn = null
-        await post({ _tag: "TurnEnded", turnId, reason: "Stopped", durationMs: 1 })
+        await post({ _tag: "TurnEnded", turnId, reason: "aborted", durationMs: 1 })
         return
       }
     }
@@ -471,7 +471,7 @@ for (const adapter of [fake, real]) {
       scene.client.stopTurn(scene.sessionId)
       await eventually(() => expect(session.ofTag("TurnStarted")).toHaveLength(2))
       expect(session.ofTag("TurnStopRequested")).toHaveLength(1)
-      expect(session.ofTag("TurnEnded").map((ended) => ended.reason)).toEqual(["Stopped"])
+      expect(session.ofTag("TurnEnded").map((ended) => ended.reason)).toEqual(["aborted"])
       await eventually(() => expect(session.queue()).toEqual([]))
       expect(session.failures).toEqual([])
     })

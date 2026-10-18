@@ -1,25 +1,27 @@
-// How the web UI names a Session's model and effort (#128), from what the Session's Runner said
-// its Claude Code has.
+// How the web UI names a Session's model and thinking level (#128), from what the Session's Runner
+// said its Claude Code has.
 
 import {
-  type EffortLevel,
-  EffortLevels,
   findModel,
   type ModelName,
   type ModelOption,
   type ModelSwitched,
   type RunnerModels,
   sameModel,
+  type ThinkingLevel,
+  ThinkingLevels,
 } from "@kndl/protocol"
 
-/** A Session's model and effort: absent ones are Claude Code's default. */
+/** A Session's model and thinking level: absent ones are the Harness's default. */
 export interface ModelSetting {
   readonly model?: ModelName
-  readonly effort?: EffortLevel
+  readonly thinkingLevel?: ThinkingLevel
 }
 
-/** What the pickers call each effort level, as claude.ai's composer does. */
-export const effortNames: Record<EffortLevel, string> = {
+/** What the pickers call each thinking level, as claude.ai's composer does the ones it has. */
+export const thinkingLevelNames: Record<ThinkingLevel, string> = {
+  off: "Off",
+  minimal: "Minimal",
   low: "Low",
   medium: "Medium",
   high: "High",
@@ -28,15 +30,15 @@ export const effortNames: Record<EffortLevel, string> = {
 }
 
 /** The line some levels get under their name. */
-export const effortNotes: Partial<Record<EffortLevel, string>> = {
+export const thinkingLevelNotes: Partial<Record<ThinkingLevel, string>> = {
   medium: "Recommended",
   max: "4× or more usage",
 }
 
 /** The levels a Runner's Claude Code takes, lowest first: none before it has said. */
-export function effortsOf(models: RunnerModels | undefined): ReadonlyArray<EffortLevel> {
+export function thinkingLevelsOf(models: RunnerModels | undefined): ReadonlyArray<ThinkingLevel> {
   if (models === undefined) return []
-  return EffortLevels.filter((level) => models.efforts.includes(level))
+  return ThinkingLevels.filter((level) => models.thinkingLevels.includes(level))
 }
 
 /** The model a setting runs: undefined when the Runner hasn't said, or doesn't have it. */
@@ -61,8 +63,9 @@ export function modelSwitchedText(event: ModelSwitched): string {
         ? "the default model"
         : `the default model (${event.modelLabel})`
       : (event.modelLabel ?? event.model)
-  const effort = event.effort === undefined ? "" : `, ${effortNames[event.effort]}`
-  return `${event.by.name} switched to ${model}${effort}`
+  const level =
+    event.thinkingLevel === undefined ? "" : `, ${thinkingLevelNames[event.thinkingLevel]}`
+  return `${event.by.name} switched to ${model}${level}`
 }
 
 /**
@@ -100,17 +103,17 @@ export function sharedModels(
           alias: first.default.alias,
           id: first.default.id,
           label: "Claude Code's default",
-          effort: others.every((models) => models.default.effort) && first.default.effort,
+          reasoning: others.every((models) => models.default.reasoning) && first.default.reasoning,
         },
     models: first.models.filter((option) =>
       others.every((models) =>
         models.models.some(
-          (other) => other.alias === option.alias && other.effort === option.effort,
+          (other) => other.alias === option.alias && other.reasoning === option.reasoning,
         ),
       ),
     ),
-    efforts: first.efforts.filter((level) =>
-      others.every((models) => models.efforts.includes(level)),
+    thinkingLevels: first.thinkingLevels.filter((level) =>
+      others.every((models) => models.thinkingLevels.includes(level)),
     ),
   }
 }
@@ -126,14 +129,14 @@ export function fitSetting(models: RunnerModels | undefined, setting: ModelSetti
       ? setting.model
       : undefined
   const option = modelOf(models, model === undefined ? {} : { model })
-  const effort =
-    setting.effort !== undefined &&
-    option?.effort === true &&
-    models.efforts.includes(setting.effort)
-      ? setting.effort
+  const thinkingLevel =
+    setting.thinkingLevel !== undefined &&
+    option?.reasoning === true &&
+    models.thinkingLevels.includes(setting.thinkingLevel)
+      ? setting.thinkingLevel
       : undefined
   return {
     ...(model !== undefined && { model }),
-    ...(effort !== undefined && { effort }),
+    ...(thinkingLevel !== undefined && { thinkingLevel }),
   }
 }

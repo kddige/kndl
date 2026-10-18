@@ -238,7 +238,7 @@ function LoadedSession({
   const title = sessionTitle(summary)
 
   // Stopping its Claude Code interrupts its running agents (ADR 0014): sleep, a restart and a
-  // change of model or effort ask first, with what they'd interrupt.
+  // change of model or thinking level ask first, with what they'd interrupt.
   const runningAgents = summary.agents?.filter((agent) => agent.status === "Running").length ?? 0
   const [confirming, setConfirming] = useState<Interruption | null>(null)
   const interrupting = (interruption: Interruption) => {
@@ -251,16 +251,16 @@ function LoadedSession({
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
   }
 
-  // Its model and effort, from what its Runner said its Claude Code has (#128).
+  // Its model and thinking level, from what its Runner said its Claude Code has (#128).
   const models = useHubState(
     (hubState) => hubState.runners?.find((runner) => runner.id === summary.runnerId)?.models,
   )
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
-      ...(summary.effort !== undefined && { effort: summary.effort }),
+      ...(summary.thinkingLevel !== undefined && { thinkingLevel: summary.thinkingLevel }),
     }),
-    [summary.model, summary.effort],
+    [summary.model, summary.thinkingLevel],
   )
   // A switch shows in the picker from the pick, while it is asked about and then sent, until the
   // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
@@ -660,7 +660,7 @@ interface Interruption {
   readonly cancel?: () => void
 }
 
-/** A model and effort picked, from the setting it was picked on, and whether it was sent. */
+/** A model and thinking level picked, from the setting it was picked on, and whether it was sent. */
 interface PickedSetting {
   readonly from: ModelSetting
   readonly to: ModelSetting

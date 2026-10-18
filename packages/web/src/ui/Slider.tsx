@@ -112,7 +112,7 @@ const styles = stylex.create({
 })
 
 /**
- * Picks one of a few ordered stops by sliding, as an effort level: a dot marks each stop, and the
+ * Picks one of a few ordered stops by sliding, as a thinking level: a dot marks each stop, and the
  * thumb snaps to them. A drag or a click commits where it lets go. Arrow keys, Home and End only
  * move the thumb, and Enter commits, so stepping through the stops doesn't act on each.
  */

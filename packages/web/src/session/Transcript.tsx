@@ -9,7 +9,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
-import { clock, count, duration, statusOf } from "../app/format.ts"
+import { clock, count, dollars, duration, statusOf } from "../app/format.ts"
 import type {
   AgentView,
   Block,
@@ -596,16 +596,18 @@ function TurnFooter({ turn }: { turn: TurnView }) {
       </div>
     )
   }
-  const otherModel = turn.end.usage && nameTurnModel(turn.end.usage.model)
+  const { usage } = turn.end
+  const otherModel = usage && nameTurnModel(usage.model)
   return (
     <div {...stylex.props(styles.footer)}>
       <EndBadge end={turn.end} stoppers={stoppers} />
       {otherModel !== undefined && <span title="The model this Turn ran on">{otherModel}</span>}
       <span>{duration(turn.end.durationMs)}</span>
-      {turn.end.usage && (
-        <span title={turn.end.usage.model}>
-          {count(turn.end.usage.inputTokens + turn.end.usage.cacheReadInputTokens)} in ·{" "}
-          {count(turn.end.usage.outputTokens)} out
+      {usage && (
+        <span title={usage.model}>
+          {count(usage.input + usage.cacheRead)} in · {count(usage.output)} out
+          {/* What the Harness reported it cost, as it is. */}
+          {usage.cost !== undefined && ` · ${dollars(usage.cost)}`}
         </span>
       )}
     </div>
@@ -614,13 +616,13 @@ function TurnFooter({ turn }: { turn: TurnView }) {
 
 function EndBadge({ end, stoppers }: { end: TurnEnded; stoppers: string }) {
   switch (end.reason) {
-    case "Answered":
+    case "stop":
       return null
-    case "Stopped":
+    case "aborted":
       return <Badge intent="warning">{stoppers ? `Stopped by ${stoppers}` : "Stopped"}</Badge>
-    case "Refused":
-      return <Badge intent="warning">Refused</Badge>
-    case "Failed":
+    case "length":
+      return <Badge intent="warning">Hit the output limit</Badge>
+    case "error":
       return <Badge intent="danger">Failed</Badge>
   }
 }

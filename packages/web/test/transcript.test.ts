@@ -19,10 +19,10 @@ import { alice, bob, entries, fromAlice, fromBob } from "./fixtures.ts"
 
 const usage = {
   model: "claude-opus-5-5",
-  inputTokens: 10,
-  outputTokens: 5,
-  cacheReadInputTokens: 0,
-  cacheCreationInputTokens: 0,
+  input: 10,
+  output: 5,
+  cacheRead: 0,
+  cacheWrite: 0,
 }
 
 /**
@@ -57,7 +57,7 @@ describe("buildTranscript", () => {
         },
         { _tag: "TextDelta", turnId: "t-1", text: "Sure, " },
         { _tag: "TextDelta", turnId: "t-1", text: "adding it." },
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 900, usage },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 900, usage },
       ]),
     )
     expect(items).toHaveLength(1)
@@ -66,8 +66,8 @@ describe("buildTranscript", () => {
     expect(turn?.prompt).toBe("add a test")
     expect(turn?.promptId).toBe("p-1" as never)
     expect(turn?.blocks).toEqual([{ kind: "text", key: "text-1", text: "Sure, adding it." }])
-    expect(turn?.end?.reason).toBe("Answered")
-    expect(turn?.end?.usage?.outputTokens).toBe(5)
+    expect(turn?.end?.reason).toBe("stop")
+    expect(turn?.end?.usage?.output).toBe(5)
   })
 
   test("a Turn shows the files its prompt carried, and its prompt without their markers (#276)", () => {
@@ -83,7 +83,7 @@ describe("buildTranscript", () => {
             promptId: "p-1",
             attachments: [shot],
           },
-          { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 900 },
+          { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 900 },
           {
             _tag: "TurnStarted",
             turnId: "t-2",
@@ -226,7 +226,7 @@ describe("buildTranscript", () => {
         },
         // Claude Code's own agents, which no Agent call started, aren't shown.
         { _tag: "TextDelta", turnId: "t-x", agentId: "a-own", text: "Summarizing" },
-        { _tag: "TurnEnded", turnId: "t-a", agentId: "a-1", reason: "Answered", durationMs: 300 },
+        { _tag: "TurnEnded", turnId: "t-a", agentId: "a-1", reason: "stop", durationMs: 300 },
         { _tag: "AgentStatusChanged", agentId: "a-1", status: "Done" },
         {
           _tag: "ToolCallEnded",
@@ -277,7 +277,7 @@ describe("buildTranscript", () => {
           outcome: "Succeeded",
           output: "Async agent launched successfully.",
         },
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 10 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 10 },
         { _tag: "TextDelta", turnId: "t-a", agentId: "a-1", text: "Found it." },
         { _tag: "AgentMessaged", agentId: "a-1", sender: bob, text: "Look in docs/ too" },
         { _tag: "AgentStatusChanged", agentId: "a-1", status: "Done" },
@@ -302,7 +302,7 @@ describe("buildTranscript", () => {
       ]),
     )
     const [first, second] = turns(transcript.items)
-    expect(first?.end?.reason).toBe("Answered")
+    expect(first?.end?.reason).toBe("stop")
     const card = first?.blocks[0]
     if (card?.kind !== "agent") throw new Error("expected a subagent's card")
     expect(card.agent.background).toBe(true)
@@ -359,17 +359,17 @@ describe("buildTranscript", () => {
       build(
         entries([
           { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
-          { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+          { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
           { _tag: "TurnStopRequested", by: alice },
           { _tag: "TurnStarted", turnId: "t-2", text: "two", sender: fromBob },
           { _tag: "TurnStopRequested", by: bob },
-          { _tag: "TurnEnded", turnId: "t-2", reason: "Stopped", durationMs: 2 },
+          { _tag: "TurnEnded", turnId: "t-2", reason: "aborted", durationMs: 2 },
         ]),
       ),
     )
     expect(first?.stopRequests).toEqual([])
     expect(second?.stopRequests.map((person) => person.login)).toEqual(["bob"])
-    expect(second?.end?.reason).toBe("Stopped")
+    expect(second?.end?.reason).toBe("aborted")
   })
 
   test("a steered prompt shows where Claude read it, and until then after the Turn (#195)", () => {
@@ -380,7 +380,7 @@ describe("buildTranscript", () => {
       { _tag: "TextDelta", turnId: "t-1", text: " Still." },
       { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
       { _tag: "TextDelta", turnId: "t-1", text: "Two as well." },
-      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
     ])
     const steered = { key: "steered-2", promptId: "p-2", sender: bob, text: "and two" }
 
@@ -406,19 +406,19 @@ describe("buildTranscript", () => {
           { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
           { _tag: "PromptSteered", turnId: "t-1", promptId: "p-2", text: "two", sender: alice },
           { _tag: "TurnStopRequested", by: alice },
-          { _tag: "TurnEnded", turnId: "t-1", reason: "Stopped", durationMs: 1 },
+          { _tag: "TurnEnded", turnId: "t-1", reason: "aborted", durationMs: 1 },
         ]),
       ),
     )
     expect(turn?.unread.map((prompt) => prompt.text)).toEqual(["two"])
-    expect(turn?.end?.reason).toBe("Stopped")
+    expect(turn?.end?.reason).toBe("aborted")
   })
 
   test("state changes become notices between Turns", () => {
     const items = build(
       entries([
         { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
         { _tag: "SessionStateChanged", state: "Frozen", message: "Runner studio is offline" },
         { _tag: "SessionStateChanged", state: "Active" },
       ]),
@@ -442,7 +442,7 @@ describe("buildTranscript", () => {
     const items = build(
       entries([
         { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
         { _tag: "PromptCancelled", promptId: "p-2", sender: bob, text: "two", message },
         { _tag: "TurnStarted", turnId: "t-3", text: "three", sender: fromAlice },
       ]),
@@ -493,7 +493,7 @@ describe("buildTranscript", () => {
       { _tag: "TextDelta", turnId: "t-1", text: "a" },
       { _tag: "TextDelta", turnId: "t-1", agentId: "a-1", text: "x" },
       { _tag: "TextDelta", turnId: "t-1", agentId: "a-1", text: "y" },
-      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
     ])
     const before = build(log.slice(0, 3))
     const snapshot = JSON.stringify(before)
@@ -588,7 +588,7 @@ describe("foldTranscript", () => {
       entries([
         { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
         { _tag: "TextDelta", turnId: "t-1", text: "Done." },
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
         { _tag: "SessionStateChanged", state: "Active" },
         { _tag: "TurnStarted", turnId: "t-2", text: "two", sender: fromBob },
         { _tag: "TextDelta", turnId: "t-2", text: "Work" },
@@ -616,7 +616,7 @@ describe("foldTranscript", () => {
       { _tag: "TurnStarted", turnId: "t-1", text: "research", sender: fromAlice },
       { _tag: "ToolCallStarted", turnId: "t-1", toolCallId: "c-1", tool: "Agent", input: "{}" },
       agentStarted("a-1", "c-1", true),
-      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
       { _tag: "TurnStarted", turnId: "t-2", text: "meanwhile", sender: fromBob },
     ])
     const before = foldTranscript(emptyTranscript, log)
@@ -741,7 +741,7 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
       _tag: "TurnEnded",
       turnId: turnId(),
       ...inAgent(),
-      reason: pick(["Answered", "Stopped"] as const),
+      reason: pick(["stop", "aborted", "length", "error"] as const),
       durationMs: 1,
     }),
     () => {
@@ -801,7 +801,7 @@ describe("runningTurn", () => {
   test("is the last Turn while it has no end", () => {
     const log = entries([
       { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
-      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
       { _tag: "TurnStarted", turnId: "t-2", text: "two", sender: fromAlice },
       { _tag: "SessionStateChanged", state: "Active" },
     ])
