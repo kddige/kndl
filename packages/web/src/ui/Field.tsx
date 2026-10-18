@@ -24,6 +24,9 @@ export interface FieldProps {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   field: {
     display: "flex",
@@ -57,7 +60,7 @@ const styles = stylex.create({
     borderStyle: "solid",
     borderColor: {
       default: color.borderStrong,
-      ":hover:not([data-disabled]):not(:focus)": color.textSubtle,
+      ":hover:not([data-disabled]):not(:focus)": { default: null, [HOVER]: color.textSubtle },
       "[data-invalid]": color.danger,
     },
     borderRadius: radius.md,

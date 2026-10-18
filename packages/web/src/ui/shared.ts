@@ -65,7 +65,7 @@ export const popup = stylex.create({
       // Keyboard-opened popups and instant hand-offs between tooltips skip the motion.
       "[data-instant]": "0s",
     },
-    transitionTimingFunction: { default: motion.easeOut, "[data-ending-style]": motion.easeIn },
+    transitionTimingFunction: motion.easeOut,
   },
   /** A list of selectable rows: menu items, select options. */
   list: {

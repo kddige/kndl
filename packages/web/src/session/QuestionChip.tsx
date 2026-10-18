@@ -3,7 +3,7 @@ import * as stylex from "@stylexjs/stylex"
 import { memo } from "react"
 import type { QuestionView } from "../hub/transcript.ts"
 import { Badge, CheckIcon, CloseIcon, Disclosure, StopIcon } from "../ui/index.ts"
-import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { splitAnswer } from "./question.ts"
 import { SentAttachments } from "./SentAttachments.tsx"
 
@@ -21,9 +21,9 @@ const styles = stylex.create({
     height: "0.5rem",
     borderRadius: radius.full,
     backgroundColor: color.warning,
-    animationName: pulse,
-    // 1.6s; none under reduced motion, where the duration collapses to zero and the dot holds still.
-    animationDuration: `calc(${motion.durationSlow} * 6.4)`,
+    // The dot holds still under reduced motion.
+    animationName: { default: pulse, "@media (prefers-reduced-motion: reduce)": "none" },
+    animationDuration: "1.6s",
     animationTimingFunction: "ease-in-out",
     animationIterationCount: "infinite",
   },

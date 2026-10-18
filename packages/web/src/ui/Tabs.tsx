@@ -2,7 +2,7 @@ import { Tabs as BaseTabs } from "@base-ui/react/tabs"
 import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { focus } from "./shared.ts"
-import { color, control, motion, radius, space, text, weight } from "./tokens.stylex.ts"
+import { color, control, icon, motion, radius, space, text, weight } from "./tokens.stylex.ts"
 
 export interface TabsProps {
   /** A TabList, then one TabPanel per Tab. */
@@ -14,6 +14,12 @@ export interface TabsProps {
   onValueChange?: (value: string) => void
   sx?: stylex.StyleXStyles
 }
+
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
+// Beside a 500-weight label, an icon's stroke thickens to match it.
+const labelIcon = stylex.createTheme(icon, { stroke: "2px" })
 
 const styles = stylex.create({
   list: {
@@ -34,10 +40,13 @@ const styles = stylex.create({
     marginBottom: "1px",
     borderWidth: 0,
     borderRadius: radius.md,
-    backgroundColor: { default: "transparent", ":hover:not([data-disabled])": color.surfaceHover },
+    backgroundColor: {
+      default: "transparent",
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.surfaceHover },
+    },
     color: {
       default: color.textMuted,
-      ":hover:not([data-disabled])": color.text,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
       "[data-active]": color.text,
       "[data-disabled]": color.textSubtle,
     },
@@ -61,7 +70,7 @@ const styles = stylex.create({
     borderRadius: radius.full,
     backgroundColor: color.text,
     transitionProperty: "transform, width",
-    transitionDuration: motion.durationNormal,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   panel: {
@@ -110,7 +119,11 @@ export interface TabProps {
 
 export function Tab({ value, children, disabled = false }: TabProps) {
   return (
-    <BaseTabs.Tab value={value} disabled={disabled} {...stylex.props(styles.tab, focus.ring)}>
+    <BaseTabs.Tab
+      value={value}
+      disabled={disabled}
+      {...stylex.props(styles.tab, labelIcon, focus.ring)}
+    >
       {children}
     </BaseTabs.Tab>
   )

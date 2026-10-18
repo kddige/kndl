@@ -12,6 +12,9 @@ export interface DrawerProps {
   onOpenChange: (open: boolean) => void
 }
 
+const MOTION_OK = "@media (prefers-reduced-motion: no-preference)"
+const REDUCED = "@media (prefers-reduced-motion: reduce)"
+
 const styles = stylex.create({
   backdrop: {
     position: "fixed",
@@ -21,7 +24,10 @@ const styles = stylex.create({
     backgroundColor: color.overlay,
     opacity: { default: 1, "[data-starting-style]": 0, "[data-ending-style]": 0 },
     transitionProperty: "opacity",
-    transitionDuration: motion.durationSlow,
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationNormal,
+    },
     transitionTimingFunction: motion.easeOut,
   },
   popup: {
@@ -41,14 +47,25 @@ const styles = stylex.create({
     borderInlineEndColor: color.border,
     boxShadow: shadow.lg,
     outline: "none",
+    // It slides in from its edge; under reduced motion it fades instead.
     transform: {
       default: "none",
-      "[data-starting-style]": "translateX(-100%)",
-      "[data-ending-style]": "translateX(-100%)",
+      [MOTION_OK]: {
+        default: "none",
+        "[data-starting-style]": "translateX(-100%)",
+        "[data-ending-style]": "translateX(-100%)",
+      },
     },
-    transitionProperty: "transform",
-    transitionDuration: motion.durationSlow,
-    transitionTimingFunction: { default: motion.easeOut, "[data-ending-style]": motion.easeIn },
+    opacity: {
+      default: 1,
+      [REDUCED]: { default: 1, "[data-starting-style]": 0, "[data-ending-style]": 0 },
+    },
+    transitionProperty: "transform, opacity",
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationNormal,
+    },
+    transitionTimingFunction: motion.easeOut,
   },
 })
 

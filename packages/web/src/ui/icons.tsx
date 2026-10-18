@@ -1,4 +1,6 @@
+import * as stylex from "@stylexjs/stylex"
 import type { SVGProps } from "react"
+import { icon } from "./tokens.stylex.ts"
 
 /**
  * A few 16px stroke icons the components need. Decorative by default (aria-hidden): give the
@@ -6,7 +8,13 @@ import type { SVGProps } from "react"
  */
 export type IconProps = SVGProps<SVGSVGElement>
 
-function Icon({ children, ...props }: IconProps) {
+const styles = stylex.create({
+  // The stroke follows the label beside it: Button and Tab thicken it (icon in tokens.stylex.ts).
+  stroke: { strokeWidth: icon.stroke },
+})
+
+function Icon({ children, className, ...props }: IconProps) {
+  const stroke = stylex.props(styles.stroke)
   return (
     <svg
       width="16"
@@ -20,6 +28,7 @@ function Icon({ children, ...props }: IconProps) {
       aria-hidden="true"
       focusable="false"
       {...props}
+      className={[stroke.className, className].filter(Boolean).join(" ")}
     >
       {children}
     </svg>

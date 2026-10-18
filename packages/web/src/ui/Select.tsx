@@ -30,6 +30,9 @@ export interface SelectProps<Value extends string> {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   trigger: {
     display: "inline-flex",
@@ -47,7 +50,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: {
       default: color.surface,
-      ":hover:not([data-disabled])": color.surfaceHover,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.surfaceHover },
       "[data-popup-open]": color.surfaceHover,
       "[data-disabled]": color.surfaceMuted,
     },

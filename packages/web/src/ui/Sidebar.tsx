@@ -27,6 +27,9 @@ const TOGGLE_AND_ACTION_ROOM = `calc(${control.sm} * 2 + ${space.s1} + ${space.s
 // How far a nested list is indented: its rows' dots line up under the label above them.
 const NESTED_INDENT = `calc(1rem + ${space.s2})`
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   sidebar: {
     display: "flex",
@@ -99,15 +102,18 @@ const styles = stylex.create({
     borderRadius: radius.md,
     fontSize: text.base,
     lineHeight: leading.tight,
-    color: { default: color.textMuted, ":hover": color.text },
-    backgroundColor: { default: "transparent", ":hover": color.surfaceHover },
+    color: { default: color.textMuted, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: color.surfaceHover },
+    },
     textDecoration: "none",
   },
   // Room for the action while it shows, so the label is cut short before it.
   itemWithAction: {
     paddingInlineEnd: {
       default: space.s2,
-      [stylex.when.ancestor(":hover", navRow)]: ACTION_ROOM,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: ACTION_ROOM },
       [stylex.when.ancestor(":focus-within", navRow)]: ACTION_ROOM,
     },
   },
@@ -117,15 +123,18 @@ const styles = stylex.create({
   itemWithToggleAndAction: {
     paddingInlineEnd: {
       default: ACTION_ROOM,
-      [stylex.when.ancestor(":hover", navRow)]: TOGGLE_AND_ACTION_ROOM,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: TOGGLE_AND_ACTION_ROOM },
       [stylex.when.ancestor(":focus-within", navRow)]: TOGGLE_AND_ACTION_ROOM,
     },
   },
   itemWithToggleAndActionShown: { paddingInlineEnd: TOGGLE_AND_ACTION_ROOM },
   // Not by colour alone: a bar at the start and a heavier label as well as the fill.
   current: {
-    color: { default: color.text, ":hover": color.text },
-    backgroundColor: { default: color.surfaceActive, ":hover": color.surfaceActive },
+    color: { default: color.text, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: color.surfaceActive,
+      ":hover": { default: null, [HOVER]: color.surfaceActive },
+    },
     fontWeight: weight.medium,
     "::before": {
       content: "''",
@@ -141,8 +150,11 @@ const styles = stylex.create({
   // In place of the link while editing: the field is what's live, so the row doesn't change on hover.
   editing: {
     paddingInlineEnd: space.s0_5,
-    color: { default: color.text, ":hover": color.text },
-    backgroundColor: { default: "transparent", ":hover": "transparent" },
+    color: { default: color.text, ":hover": { default: null, [HOVER]: color.text } },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: "transparent" },
+    },
   },
   // A 16px slot, so icons, chevrons and status dots line up down the sidebar.
   slot: {
@@ -177,12 +189,12 @@ const styles = stylex.create({
     transform: "translateY(-50%)",
     opacity: {
       default: 0,
-      [stylex.when.ancestor(":hover", navRow)]: 1,
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: 1 },
       [stylex.when.ancestor(":focus-within", navRow)]: 1,
     },
     pointerEvents: {
       default: "none",
-      [stylex.when.ancestor(":hover", navRow)]: "auto",
+      [stylex.when.ancestor(":hover", navRow)]: { default: null, [HOVER]: "auto" },
       [stylex.when.ancestor(":focus-within", navRow)]: "auto",
     },
   },
@@ -199,7 +211,7 @@ const styles = stylex.create({
   chevron: {
     color: color.textSubtle,
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   chevronOpen: { transform: "rotate(90deg)" },

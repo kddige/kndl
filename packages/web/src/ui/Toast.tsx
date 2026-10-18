@@ -115,7 +115,11 @@ const styles = stylex.create({
       "[data-starting-style]": `translateY(calc(${motion.enterDistance} * 3))`,
     },
     transitionProperty: "opacity, transform",
-    transitionDuration: { default: motion.durationSlow, "[data-swiping]": "0s" },
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationNormal,
+      "[data-swiping]": "0s",
+    },
     transitionTimingFunction: motion.easeOut,
   },
   marker: {

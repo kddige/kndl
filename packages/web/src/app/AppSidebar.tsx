@@ -54,6 +54,9 @@ import { Brand } from "./Brand.tsx"
 import { environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   note: {
     paddingBlock: space.s1,
@@ -85,7 +88,7 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: {
       default: "transparent",
-      ":hover": color.surfaceHover,
+      ":hover": { default: null, [HOVER]: color.surfaceHover },
       "[data-popup-open]": color.surfaceHover,
     },
     color: color.text,

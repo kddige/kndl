@@ -123,7 +123,7 @@ const styles = stylex.create({
   },
   chevron: {
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
   chevronOpen: { transform: "rotate(180deg)" },

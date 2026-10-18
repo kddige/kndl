@@ -36,7 +36,10 @@ const styles = stylex.create({
     backgroundColor: color.overlay,
     opacity: { default: 1, "[data-starting-style]": 0, "[data-ending-style]": 0 },
     transitionProperty: "opacity",
-    transitionDuration: motion.durationSlow,
+    transitionDuration: {
+      default: motion.durationSlow,
+      "[data-ending-style]": motion.durationFast,
+    },
     transitionTimingFunction: motion.easeOut,
   },
   viewport: {
@@ -67,7 +70,10 @@ const styles = stylex.create({
       "[data-ending-style]": `translateY(${motion.enterDistance}) scale(${motion.enterScale})`,
     },
     transitionProperty: "opacity, transform",
-    transitionDuration: motion.durationNormal,
+    transitionDuration: {
+      default: motion.durationNormal,
+      "[data-ending-style]": motion.durationFast,
+    },
     transitionTimingFunction: motion.easeOut,
   },
   header: {

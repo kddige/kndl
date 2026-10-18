@@ -92,7 +92,7 @@ const styles = stylex.create({
     backgroundColor: color.onAccent,
     transform: { default: "translateX(0)", "[data-checked]": "translateX(0.75rem)" },
     transitionProperty: "transform",
-    transitionDuration: motion.durationFast,
+    transitionDuration: motion.durationMove,
     transitionTimingFunction: motion.easeStandard,
   },
 })

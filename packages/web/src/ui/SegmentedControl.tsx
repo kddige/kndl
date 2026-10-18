@@ -20,6 +20,9 @@ export interface SegmentedControlProps<Value extends string> {
   sx?: stylex.StyleXStyles
 }
 
+// Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
+const HOVER = "@media (hover: hover)"
+
 const styles = stylex.create({
   group: {
     display: "inline-flex",
@@ -47,7 +50,7 @@ const styles = stylex.create({
     boxShadow: { default: "none", "[data-checked]": shadow.sm },
     color: {
       default: color.textMuted,
-      ":hover:not([data-disabled])": color.text,
+      ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
       "[data-checked]": color.text,
     },
     fontSize: text.base,

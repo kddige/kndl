@@ -407,14 +407,21 @@ export const radius = stylex.defineVars({
   full: "9999px",
 })
 
-/** Durations collapse to zero, and entering popups stop moving, under reduced motion. */
+/**
+ * Under reduced motion nothing moves, but things still fade: popups, Dialogs and Toasts keep their
+ * durations while enterScale and enterDistance go flat, and what only moves takes durationMove.
+ * Exits are shorter than enters, and every one eases out.
+ */
 export const motion = stylex.defineVars({
-  durationFast: { default: "100ms", [REDUCED_MOTION]: "0ms" },
-  durationNormal: { default: "150ms", [REDUCED_MOTION]: "0ms" },
-  durationSlow: { default: "250ms", [REDUCED_MOTION]: "0ms" },
+  durationFast: "100ms",
+  durationNormal: "150ms",
+  durationSlow: "250ms",
+  /** For a transition that moves something: a thumb, an indicator, a chevron, a height. */
+  durationMove: { default: "150ms", [REDUCED_MOTION]: "0ms" },
   easeStandard: "cubic-bezier(0.2, 0, 0, 1)",
   easeOut: "cubic-bezier(0.16, 1, 0.3, 1)",
-  easeIn: "cubic-bezier(0.4, 0, 1, 1)",
+  /** A pressed Button's scale. */
+  pressScale: "0.96",
   /** How much popups scale and travel as they enter and leave. */
   enterScale: { default: "0.97", [REDUCED_MOTION]: "1" },
   enterDistance: { default: "4px", [REDUCED_MOTION]: "0px" },
@@ -430,4 +437,9 @@ export const layer = stylex.defineVars({
   popover: "150",
   toast: "200",
   tooltip: "300",
+})
+
+/** An icon's stroke: 1.5px beside regular text, thicker beside the 500–600 labels of Buttons and Tabs. */
+export const icon = stylex.defineVars({
+  stroke: "1.5px",
 })
