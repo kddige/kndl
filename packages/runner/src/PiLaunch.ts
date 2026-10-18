@@ -6,15 +6,17 @@
 // runs without its Creator's Claude credential. When it has one, pi gets it too, with the pinned
 // Claude Code, which the extension's Claude bridge runs for Claude's Models: on pi's own process
 // alone (`tmux -e`), as Claude Code gets it (ClaudeEnvironment.ts). pi passes its environment on to
-// Claude Code, so what is kept out of Claude Code's is kept out of pi's.
+// Claude Code, so what is kept out of Claude Code's is kept out of pi's, and so is every Provider's
+// key pi-ai would call that Provider with itself, around the Gateway.
 
 import { posix } from "node:path"
-import type {
-  ClaudeCredential,
-  GatewayServer,
-  ModelName,
-  SessionId,
-  ThinkingLevel,
+import {
+  type ClaudeCredential,
+  type GatewayServer,
+  type ModelName,
+  PiProviderKeyVariables,
+  type SessionId,
+  type ThinkingLevel,
 } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvironment.ts"
@@ -114,13 +116,20 @@ export function piLaunch(options: PiLaunchOptions): PiLaunch {
   }
 }
 
+/** What pi is kept from whatever its Creator has: Claude Code's, and every Provider's key. */
+const keptOutOfAnyPi: ReadonlyArray<string> = [
+  ...new Set([...KeptOutOfClaude, ...PiProviderKeyVariables]),
+]
+
 /**
- * The variables kept out of pi's own process's environment: {@link KeptOutOfClaude}, and, without
- * its Creator's Claude credential, a setup token from anywhere else, as from a Variable, which
- * would have the Claude bridge spend someone else's (ADR 0026).
+ * The variables kept out of pi's own process's environment: {@link KeptOutOfClaude}; every
+ * Provider key variable pi-ai reads ({@link PiProviderKeyVariables}), so pi reaches a Provider
+ * through the Gateway alone, never on a key from a Variable (ADR 0029); and, without its Creator's
+ * Claude credential, a setup token from anywhere else, as from a Variable, which would have the
+ * Claude bridge spend someone else's (ADR 0026).
  */
 export const keptOutOfPi = (credential: ClaudeCredential | undefined): ReadonlyArray<string> =>
-  credential === undefined ? [...KeptOutOfClaude, ClaudeTokenVariable] : KeptOutOfClaude
+  credential === undefined ? [...keptOutOfAnyPi, ClaudeTokenVariable] : keptOutOfAnyPi
 
 /**
  * The environment pi and its extension run with in the Sandbox: `base`, what the Sandbox and the

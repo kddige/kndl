@@ -1,14 +1,25 @@
 import { describe, expect, test } from "bun:test"
+import { dirname, join } from "node:path"
+import { findEnvKeys } from "@earendil-works/pi-ai/compat"
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all"
 import {
   type ClaudeCredential,
   credentialFromSecret,
   type GatewayServer,
+  PiProviderKeyVariables,
   type SessionId,
 } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { HarnessVariable, ModEnvironment } from "./ClaudeLaunch.ts"
-import { McpServersVariable, piEnvironment, piLaunch, PiSessionIdPattern } from "./PiLaunch.ts"
+import {
+  keptOutOfPi,
+  McpServersVariable,
+  piEnvironment,
+  piLaunch,
+  PiSessionIdPattern,
+} from "./PiLaunch.ts"
+import { PinnedPiVersion } from "./sandbox/SandboxPi.ts"
 
 const options = {
   nodePath: "/opt/kndl/pi/node-v24.22.0-musl/bin/node",
@@ -139,5 +150,52 @@ describe("piEnvironment", () => {
       })
       for (const name of KeptOutOfClaude) expect(env).not.toHaveProperty(name)
     }
+  })
+})
+
+describe("keptOutOfPi", () => {
+  test("keeps out every Provider key variable pi-ai reads, so pi reaches Providers through the Gateway alone", () => {
+    const fromVariables = {
+      LANG: "C.UTF-8",
+      OPENAI_API_KEY: "sk-from-a-Variable",
+      GEMINI_API_KEY: "from a Variable",
+      COPILOT_GITHUB_TOKEN: "from a Variable",
+      ANTHROPIC_OAUTH_TOKEN: "from a Variable",
+      HF_TOKEN: "from a Variable",
+    }
+    for (const given of [credential, undefined]) {
+      const kept = keptOutOfPi(given)
+      for (const name of PiProviderKeyVariables) expect(kept).toContain(name)
+      const env = piEnvironment({
+        base: fromVariables,
+        relayUrl,
+        sessionToken,
+        ...(given === undefined ? {} : { credential: given }),
+      })
+      expect(env["LANG"]).toBe("C.UTF-8")
+      for (const name of Object.keys(fromVariables).filter((each) => each !== "LANG"))
+        expect(env).not.toHaveProperty(name)
+    }
+  })
+
+  test("names each variable once", () => {
+    for (const given of [credential, undefined]) {
+      const kept = keptOutOfPi(given)
+      expect(new Set(kept).size).toBe(kept.length)
+    }
+  })
+
+  test("the Provider key variables are pi-ai's, as the pi the Runner pins has it", async () => {
+    const piAi = dirname(dirname(Bun.resolveSync("@earendil-works/pi-ai", import.meta.dir)))
+    const { version } = (await Bun.file(join(piAi, "package.json")).json()) as { version: string }
+    expect(version).toBe(PinnedPiVersion)
+    // With every variable set, pi-ai finds each of a Provider's key variables.
+    const everything = new Proxy({}, { get: () => "set" }) as Record<string, string>
+    const read = new Set(
+      [...getBuiltinProviders(), "radius"].flatMap(
+        (provider) => findEnvKeys(provider, everything) ?? [],
+      ),
+    )
+    expect([...read].toSorted()).toEqual([...PiProviderKeyVariables].toSorted())
   })
 })
