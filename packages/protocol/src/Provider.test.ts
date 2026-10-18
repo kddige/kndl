@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { harnessOfModel } from "./Model.ts"
 import {
   defaultProviderModel,
   findProviderModel,
+  harnessOfModel,
   modelGatewayPath,
   parseProviderModelName,
   providerModelName,
@@ -97,4 +97,19 @@ test("a model name says its Harness: a Provider's Model is pi's, anything else C
   expect(harnessOfModel("anthropic/claude-opus-5-5")).toBe("Pi")
   for (const model of ["opus", "opus[1m]", "claude-sonnet-5-5", "default", undefined])
     expect(harnessOfModel(model)).toBe("ClaudeCode")
+})
+
+test("a model name is pi's exactly when it names a Provider's Model", () => {
+  for (const name of [
+    "openai/gpt-6-sol",
+    "openrouter/anthropic/claude-sonnet-4",
+    "foo/bar",
+    "amazon-bedrock/claude-x",
+    "openai/",
+    "/x",
+    "sonnet",
+  ])
+    expect(harnessOfModel(name)).toBe(
+      parseProviderModelName(name) === undefined ? "ClaudeCode" : "Pi",
+    )
 })

@@ -131,6 +131,14 @@ export const thinkingLevelRefusal = (
     : `${model.label} has no thinking level '${level}'.`
 }
 
+/**
+ * The Harness a Session's model name runs on (ADR 0030): one that names a Provider's Model
+ * ({@link parseProviderModelName}), `openai/gpt-6-sol` or `anthropic/claude-opus-5-5`, is pi's;
+ * anything else, a Claude Code alias such as `opus` or Claude Code's default, is Claude Code's.
+ */
+export const harnessOfModel = (model: string | undefined): Harness =>
+  model !== undefined && parseProviderModelName(model) !== undefined ? "Pi" : "ClaudeCode"
+
 /** The Provider and id a pi Session's model name says, or undefined for one that isn't one. */
 export function parseProviderModelName(
   name: string,

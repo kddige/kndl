@@ -1,9 +1,11 @@
 import { Schema } from "effect"
 
-// Which model a Session's Harness runs, and at what thinking level (#128). A Runner finds out what
-// its Claude Code takes when it starts and says so in its hello; the Hub keeps each Session's
-// setting, and starts Claude Code with `--model` and `--effort` from it, restarting it between
-// Turns when the setting changes.
+// Which model a Session's Harness runs, and at what thinking level (#128, ADR 0029). The Hub keeps
+// each Session's setting, and starts its Harness on it: Claude Code with `--model` and `--effort`,
+// pi with `--model` and `--thinking`. A change between Turns restarts Claude Code, and pi switches
+// in place; a model of the other Harness switches the Session to it (ADR 0030). A Runner finds out
+// what its Claude Code takes when it starts and says so in its hello; a pi Session's Models are its
+// Creator's (Provider.ts).
 
 /**
  * What runs a Session's agent in its Sandbox (ADR 0029): Claude Code, on Claude Models alone, or
@@ -11,14 +13,6 @@ import { Schema } from "effect"
  */
 export const Harness = Schema.Literals(["ClaudeCode", "Pi"])
 export type Harness = typeof Harness.Type
-
-/**
- * The Harness a Session's model name runs on (ADR 0030): a Provider's Model, `openai/gpt-6-sol`
- * or `anthropic/claude-opus-5-5`, is pi's; anything else, a Claude Code alias such as `opus` or
- * Claude Code's default, is Claude Code's.
- */
-export const harnessOfModel = (model: string | undefined): Harness =>
-  model !== undefined && /^[a-z][a-z0-9-]*\/./.test(model) ? "Pi" : "ClaudeCode"
 
 /** The longest model name the Hub takes, in characters. */
 export const MaxModelNameLength = 200
