@@ -100,8 +100,6 @@ export function clearSessionStates(): void {
   sharedSessions.clear()
 }
 
-export const sessionStateCount = () => sharedSessions.size
-
 /**
  * The index of the current user turn's first message: the trailing run of user messages not in
  * Claude Code's session yet. Everything before it is history, everything from it the prompt.
