@@ -48,6 +48,11 @@ export interface TurnsOptions {
   readonly now: () => number
   /** A new Turn's id. */
   readonly newId: () => string
+  /**
+   * The subagent whose runs these are (ADR 0014), whose events all carry its id. A subagent's run
+   * has no TurnStarted: the web groups its events by agent.
+   */
+  readonly agentId?: string | undefined
 }
 
 /**
@@ -139,7 +144,12 @@ export class Turns {
   /** The prompts steered into the running Turn that no request has read yet. */
   private readonly unread = new Set<string>()
 
-  constructor(private readonly options: TurnsOptions) {}
+  /** What each event carries of whose loop it is: a subagent's id, or nothing for the main loop. */
+  private readonly loop: { readonly agentId?: string }
+
+  constructor(private readonly options: TurnsOptions) {
+    this.loop = options.agentId === undefined ? {} : { agentId: options.agentId }
+  }
 
   /** The Turn running, if any. */
   get turnId(): string | undefined {
@@ -183,6 +193,7 @@ export class Turns {
     this.next = undefined
     const turnId = this.options.newId()
     this.turn = { turnId, startedAt: this.options.now(), requests: [] }
+    if (this.options.agentId !== undefined) return
     const from = next.from
     this.options.report({
       _tag: "TurnStarted",
@@ -199,7 +210,7 @@ export class Turns {
   /** A piece of the text the model is streaming. */
   textDelta(text: string) {
     if (this.turn === undefined || text === "") return
-    this.options.report({ _tag: "TextDelta", turnId: this.turn.turnId, text })
+    this.options.report({ _tag: "TextDelta", turnId: this.turn.turnId, ...this.loop, text })
   }
 
   /** A model request ended: its usage counts toward the Turn's. */
@@ -213,6 +224,7 @@ export class Turns {
     this.options.report({
       _tag: "ToolCallStarted",
       turnId: this.turn.turnId,
+      ...this.loop,
       toolCallId,
       tool,
       input: clip(JSON.stringify(args ?? {}) ?? ""),
@@ -231,6 +243,7 @@ export class Turns {
     this.options.report({
       _tag: "ToolCallEnded",
       turnId: this.turn.turnId,
+      ...this.loop,
       toolCallId,
       tool,
       outcome: isError ? "Failed" : "Succeeded",
@@ -274,6 +287,7 @@ export class Turns {
     this.options.report({
       _tag: "TurnEnded",
       turnId: turn.turnId,
+      ...this.loop,
       reason: turnEndReason(aborted, turn.requests.at(-1)?.stopReason),
       durationMs: Math.max(0, Math.round(this.options.now() - turn.startedAt)),
       ...(usage === undefined ? {} : { usage }),

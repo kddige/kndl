@@ -36,6 +36,8 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
   let pi: Subprocess<"pipe", "pipe", "pipe">
   let home: string
   let stderr = ""
+  /** The dialogs pi asked its RPC client for. */
+  const dialogs: Array<Record<string, unknown>> = []
 
   beforeAll(async () => {
     // The bundle pi loads, from the sources as they are now.
@@ -95,9 +97,24 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     void (async () => {
       for await (const chunk of pi.stderr) stderr += new TextDecoder().decode(chunk)
     })()
-    // pi's RPC records go to stdout; read them so pi never stalls on a full pipe.
+    // pi's RPC records go to stdout; read them so pi never stalls on a full pipe, and keep the
+    // dialogs it asks its client for, which stand for its terminal's.
     void (async () => {
-      for await (const _ of pi.stdout);
+      let buffered = ""
+      for await (const chunk of pi.stdout) {
+        buffered += new TextDecoder().decode(chunk)
+        const lines = buffered.split("\n")
+        buffered = lines.pop() ?? ""
+        for (const line of lines) {
+          try {
+            const record = JSON.parse(line) as Record<string, unknown>
+            if (record.type === "extension_ui_request" && record.method !== "setWidget")
+              dialogs.push(record)
+          } catch {
+            // Not a record.
+          }
+        }
+      }
     })()
   })
 
@@ -271,11 +288,224 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
   }, 30_000)
 
-  test("commands for subagents and questions fail, saying why, until pi has them", async () => {
+  test("the model's question is the Session's Open question: the Creator's answer closes it, and the model reads it (#193)", async () => {
+    const asked = [
+      {
+        question: "Which date library?",
+        header: "Library",
+        options: [{ label: "date-fns", description: "Small" }, { label: "Luxon" }],
+        multiSelect: false,
+      },
+    ]
+    hub.scripts.push(
+      toolCallReply("ask_user_question", { questions: asked }, { input: 10, output: 2 }),
+      textReply("Going with date-fns.", { input: 20, output: 4 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q8", text: "pick one", sender: ada })
+    const [question] = (
+      await hub.eventsUntil(from, (event) => event._tag === "QuestionAsked")
+    ).slice(-1)
+    const toolCallId = question?.toolCallId
+    expect(question).toEqual({
+      _tag: "QuestionAsked",
+      turnId: expect.any(String),
+      toolCallId: expect.any(String),
+      questions: asked,
+    })
+    hub.send({
+      _tag: "DeliverAnswer",
+      sessionId,
+      toolCallId,
+      answer: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+      sender: ada,
+    })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    const turnId = events[0]?.turnId
+    expect(question?.turnId).toBe(turnId)
+    expect(events).toContainEqual(
+      expect.objectContaining({ _tag: "ToolCallStarted", toolCallId, tool: "ask_user_question" }),
+    )
+    expect(events).toContainEqual({
+      _tag: "QuestionClosed",
+      turnId,
+      toolCallId,
+      outcome: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+      by: ada,
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({ _tag: "ToolCallEnded", toolCallId, outcome: "Succeeded" }),
+    )
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", turnId, reason: "stop" })
+    expect(JSON.stringify(hub.gatewayRequests[requests + 1]?.body)).toContain(
+      'Ada Lovelace answered your questions:\\n- \\"Which date library?\\": date-fns',
+    )
+    // Answered already: another answer comes too late.
+    const late = hub.events.length
+    hub.send({
+      _tag: "DeliverAnswer",
+      sessionId,
+      toolCallId,
+      answer: { _tag: "Dismissed" },
+      sender: ada,
+    })
+    expect(await hub.eventsUntil(late, (event) => event._tag === "AnswerFailed")).toEqual([
+      {
+        _tag: "AnswerFailed",
+        toolCallId,
+        senderId: ada.id,
+        message: "The question was answered or closed already.",
+      },
+    ])
+  }, 30_000)
+
+  test("a question answered at pi's own terminal first closes with no one named", async () => {
+    const asked = [
+      {
+        question: "Ship it?",
+        header: "Ship",
+        options: [{ label: "Yes" }, { label: "No" }],
+        multiSelect: false,
+      },
+    ]
+    hub.scripts.push(
+      toolCallReply("ask_user_question", { questions: asked }, { input: 10, output: 2 }),
+      textReply("Shipping.", { input: 20, output: 2 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    const shown = dialogs.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q10", text: "ship?", sender: ada })
+    const dialog = await hub.until(() =>
+      dialogs.slice(shown).find((each) => each.method === "select"),
+    )
+    expect(dialog).toMatchObject({
+      title: "Ship: Ship it?",
+      options: ["Yes", "No", "Type an answer…"],
+    })
+    pi.stdin.write(
+      `${JSON.stringify({ type: "extension_ui_response", id: dialog.id, value: "Yes" })}\n`,
+    )
+    pi.stdin.flush()
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events).toContainEqual({
+      _tag: "QuestionClosed",
+      turnId: events[0]?.turnId,
+      toolCallId: expect.any(String),
+      outcome: { _tag: "Answered", answers: { "Ship it?": "Yes" } },
+    })
+    expect(JSON.stringify(hub.gatewayRequests[requests + 1]?.body)).toContain(
+      "The person at the terminal answered your questions",
+    )
+  }, 30_000)
+
+  test("the agent tool runs a subagent on the model asked for, reported under its call, and its answer is the call's (ADR 0014)", async () => {
+    hub.scripts.push(
+      toolCallReply(
+        "agent",
+        { description: "Count files", prompt: "Count the files here.", model: "openai/gpt-4.1" },
+        { input: 10, output: 2 },
+      ),
+      textReply("There are 3 files.", { input: 30, output: 5 }),
+      textReply("The agent counted 3.", { input: 40, output: 5 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q9", text: "count", sender: ada })
+    const events = await hub.eventsUntil(
+      from,
+      (event) => event._tag === "TurnEnded" && event.agentId === undefined,
+    )
+    const turnId = events[0]?.turnId
+    const call = events.find((event) => event._tag === "ToolCallStarted")
+    const started = events.find((event) => event._tag === "AgentStarted")
+    const agentId = started?.agentId
+    expect(started).toEqual({
+      _tag: "AgentStarted",
+      turnId,
+      agentId: expect.any(String),
+      toolCallId: call?.toolCallId,
+      agentType: "general-purpose",
+      description: "Count files",
+      model: "openai/gpt-4.1",
+      background: false,
+    })
+    const agents = events.filter((event) => event.agentId !== undefined)
+    const run = agents.find((event) => event._tag === "TurnEnded")?.turnId
+    expect(run).not.toBe(turnId)
+    expect(agents).toEqual([
+      started,
+      { _tag: "AgentStatusChanged", agentId, status: "Running" },
+      { _tag: "TextDelta", turnId: run, agentId, text: "There are 3 files." },
+      expect.objectContaining({
+        _tag: "TurnEnded",
+        turnId: run,
+        agentId,
+        reason: "stop",
+        usage: expect.objectContaining({ model: "openai/gpt-4.1", input: 30, output: 5 }),
+      }),
+      { _tag: "AgentStatusChanged", agentId, status: "Done" },
+    ])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolCallEnded",
+        turnId,
+        tool: "agent",
+        outcome: "Succeeded",
+        output: "There are 3 files.",
+      }),
+    )
+    // The agent's request went through the Gateway, with the Session token, knowing only its task.
+    const child = hub.gatewayRequests[requests + 1]
+    expect(child?.path).toBe("/gateway/models/openai/responses")
+    expect(child?.authorization).toBe(`Bearer ${modToken}`)
+    const asked = JSON.stringify(child?.body)
+    expect(asked).toContain("Count the files here.")
+    expect(asked).toContain("You are an agent that another agent started")
+    expect(asked).not.toContain("[Ada Lovelace] count")
+    // The parent's tools, but the agent and question tools.
+    expect(asked).toContain('"name":"bash"')
+    expect(asked).toContain('"name":"attachment"')
+    expect(asked).not.toContain('"name":"agent"')
+    expect(asked).not.toContain('"name":"ask_user_question"')
+    expect(JSON.stringify(hub.gatewayRequests[requests + 2]?.body)).toContain("There are 3 files.")
+
+    // Done, a message resumes it; stopping it once it is done again fails.
+    hub.scripts.push(textReply("Now 4 files.", { input: 50, output: 5 }))
+    const resumed = hub.events.length
+    hub.send({ _tag: "DeliverAgentMessage", sessionId, agentId, text: "count again", sender: ada })
+    const again = await hub.eventsUntil(
+      resumed,
+      (event) => event._tag === "AgentStatusChanged" && event.status === "Done",
+    )
+    expect(again[0]).toEqual({ _tag: "AgentStatusChanged", agentId, status: "Running" })
+    expect(again).toContainEqual(
+      expect.objectContaining({ _tag: "TextDelta", agentId, text: "Now 4 files." }),
+    )
+    expect(JSON.stringify(hub.gatewayRequests.at(-1)?.body)).toContain("[Ada Lovelace] count again")
+    const stopped = hub.events.length
+    hub.send({ _tag: "StopAgent", sessionId, agentId })
+    expect(await hub.eventsUntil(stopped, (event) => event._tag === "AgentCommandFailed")).toEqual([
+      {
+        _tag: "AgentCommandFailed",
+        agentId,
+        command: "StopAgent",
+        message: "The agent isn't running.",
+      },
+    ])
+  }, 30_000)
+
+  test("a command for an agent the Session doesn't have fails, saying why", async () => {
     const from = hub.events.length
     hub.send({ _tag: "StopAgent", sessionId, agentId: "a1" })
     const events = await hub.eventsUntil(from, (event) => event._tag === "AgentCommandFailed")
-    expect(events.at(-1)).toMatchObject({ agentId: "a1", command: "StopAgent" })
+    expect(events.at(-1)).toEqual({
+      _tag: "AgentCommandFailed",
+      agentId: "a1",
+      command: "StopAgent",
+      message: "This Session has no agent a1.",
+    })
   })
 
   test("a prompt typed at the terminal is a Turn from the terminal, and one from the Hub meanwhile waits for it", async () => {

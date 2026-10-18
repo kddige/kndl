@@ -7,7 +7,8 @@
 //   Gateway (Providers.ts); Claude's go to the Claude bridge (`registerClaude`).
 // - The Hub: says hello once pi's session is known, reports each pi run as a Turn (Turns.ts), and
 //   runs the Hub's commands: prompts, steering, stopping, switching the model, presence.
-// - The model: the system prompt says the Session is shared, and a tool opens attachments.
+// - The model: the system prompt says the Session is shared, and a tool opens attachments; others
+//   ask the people questions (Questions.ts) and start subagents (Subagents.ts).
 // - The person at the terminal: a line above the editor shows the link and who watches.
 //
 // pi loads this bundle with its own copies of its packages (`@earendil-works/*` stay external);
@@ -34,6 +35,8 @@ import {
 import { attachmentTool, openAttachment } from "./Attachments.ts"
 import { presenceLine, watching } from "./Presence.ts"
 import { defaultModel, fetchProviders, gatewayProviders } from "./Providers.ts"
+import { Questions, questionToolDefinition } from "./Questions.ts"
+import { agentToolDefinition, Subagents } from "./Subagents.ts"
 import { Turns } from "./Turns.ts"
 
 /** What the Runner tells the extension (the Runner's pi launch), or undefined outside a Session. */
@@ -71,6 +74,8 @@ const steeredMessage = "kndl-steered"
 const attachmentsMessage = "kndl-attachments"
 /** The system prompt section that says the Session is shared. */
 const sharedSection = "kndl_shared_session"
+/** The custom message that tells the main loop how an agent's resumed run ended (ADR 0014). */
+const agentMessage = "kndl-agent"
 /** The key of the line above the editor. */
 const widgetKey = "kndl"
 
@@ -153,6 +158,18 @@ export default async function kndl(pi: ExtensionAPI) {
 
   const report = (event: Record<string, unknown>) => link?.report(event)
   const turns = new Turns({ report, now: () => performance.now(), newId: randomUUID })
+  // Open questions and subagents (ADR 0014, #193): Questions.ts, Subagents.ts.
+  const questions = new Questions({ report })
+  const subagents = new Subagents({
+    report,
+    now: () => performance.now(),
+    newId: randomUUID,
+    notify: (text) =>
+      pi.sendMessage(
+        { customType: agentMessage, content: text, display: true },
+        { deliverAs: "nextTurn" },
+      ),
+  })
 
   const drawLine = () => {
     try {
@@ -270,32 +287,6 @@ export default async function kndl(pi: ExtensionAPI) {
     pi.setThinkingLevel(command.thinkingLevel ?? pi.getSettings().defaultThinkingLevel ?? "medium")
   }
 
-  // Subagents and questions (ADR 0014, #193) come with the subagent and question tools, which
-  // replace these three; until then the Hub hears why each can't be.
-  const noSubagents = "This Session's pi has no subagents yet."
-  const messageAgent = (command: Command<"DeliverAgentMessage">) =>
-    report({
-      _tag: "AgentCommandFailed",
-      agentId: command.agentId,
-      command: "MessageAgent",
-      senderId: command.sender.id,
-      message: noSubagents,
-    })
-  const stopAgent = (command: Command<"StopAgent">) =>
-    report({
-      _tag: "AgentCommandFailed",
-      agentId: command.agentId,
-      command: "StopAgent",
-      message: noSubagents,
-    })
-  const deliverAnswer = (command: Command<"DeliverAnswer">) =>
-    report({
-      _tag: "AnswerFailed",
-      toolCallId: command.toolCallId,
-      senderId: command.sender.id,
-      message: "This Session's pi asks no questions yet.",
-    })
-
   const runCommand = async (command: ModCommand) => {
     switch (command._tag) {
       case "DeliverPrompt":
@@ -315,13 +306,13 @@ export default async function kndl(pi: ExtensionAPI) {
         drawLine()
         return
       case "DeliverAgentMessage":
-        messageAgent(command)
+        void subagents.message(command)
         return
       case "StopAgent":
-        stopAgent(command)
+        subagents.stop(command)
         return
       case "DeliverAnswer":
-        deliverAnswer(command)
+        questions.answer(command)
         return
     }
   }
@@ -365,6 +356,18 @@ export default async function kndl(pi: ExtensionAPI) {
     }),
   })
 
+  // The question and agent tools (ADR 0029).
+  pi.registerTool(questionToolDefinition({ questions, turnId: () => turns.turnId }))
+  pi.registerTool(
+    agentToolDefinition({
+      subagents,
+      turnId: () => turns.turnId,
+      models: providers.models.map((model) => `${model.provider}/${model.id}`),
+      pi,
+      agentDir: getAgentDir,
+    }),
+  )
+
   pi.on("session_start", async (event, context) => {
     await stopLink()
     ctx = context
@@ -405,6 +408,7 @@ export default async function kndl(pi: ExtensionAPI) {
   })
 
   pi.on("session_shutdown", async () => {
+    subagents.dispose()
     await stopLink()
     ctx = undefined
   })

@@ -327,3 +327,47 @@ test("a tool's result as the web shows it: its text, and a note of each image, n
   expect(toolResultSummary(undefined)).toBe("")
   expect(toolResultSummary("plain")).toBe("plain")
 })
+
+describe("a subagent's runs (ADR 0014)", () => {
+  test("carry its agentId, each a run of its own with no start, and end on their own", () => {
+    const events: Array<Record<string, unknown>> = []
+    let ids = 0
+    const turns = new Turns({
+      report: (event) => events.push(event),
+      now: () => 1_000,
+      newId: () => `r${++ids}`,
+      agentId: "agent-1",
+    })
+    turns.agentStart()
+    turns.textDelta("Looking.")
+    turns.toolStarted("c1", "read", { path: "a.ts" })
+    turns.toolEnded("c1", "read", { content: [{ type: "text", text: "x" }] }, false)
+    turns.assistantEnded(assistant())
+    turns.settled(false)
+    turns.agentStart()
+    turns.settled(true)
+    expect(events).toEqual([
+      { _tag: "TextDelta", turnId: "r1", agentId: "agent-1", text: "Looking." },
+      {
+        _tag: "ToolCallStarted",
+        turnId: "r1",
+        agentId: "agent-1",
+        toolCallId: "c1",
+        tool: "read",
+        input: '{"path":"a.ts"}',
+      },
+      {
+        _tag: "ToolCallEnded",
+        turnId: "r1",
+        agentId: "agent-1",
+        toolCallId: "c1",
+        tool: "read",
+        outcome: "Succeeded",
+        output: "x",
+      },
+      expect.objectContaining({ _tag: "TurnEnded", turnId: "r1", agentId: "agent-1" }),
+      { _tag: "TurnEnded", turnId: "r2", agentId: "agent-1", reason: "aborted", durationMs: 0 },
+    ])
+    expect(valid(events)).toBe(true)
+  })
+})
