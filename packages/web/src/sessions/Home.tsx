@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex"
 import { useHubState } from "../app/hub.tsx"
 import { isListed } from "../hub/store.ts"
-import { EmptyState, InboxIcon, Spinner, useDocumentTitle } from "../ui/index.ts"
+import { EmptyState, InboxIcon, Spinner, useDocumentTitle, usePageBar } from "../ui/index.ts"
 import { srOnly } from "../ui/shared.ts"
 import { space } from "../ui/tokens.stylex.ts"
 import { CreateSessionDialog } from "./CreateSessionDialog.tsx"
@@ -22,6 +22,7 @@ export function Home() {
     state.sessions === null ? null : state.sessions.some(isListed),
   )
   useDocumentTitle("Home · kndl")
+  usePageBar("Sessions")
 
   return (
     <main {...stylex.props(styles.page)}>

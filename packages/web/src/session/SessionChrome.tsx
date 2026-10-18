@@ -2,7 +2,7 @@
 // actions in one menu, its controls at the Composer, its subagents as chips, and the terminal as a
 // sheet under the conversation.
 
-import type { AgentId, SessionSummary } from "@kndl/protocol"
+import { type AgentId, type SessionSummary, sessionTitle } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { statusOf } from "../app/format.ts"
@@ -24,8 +24,10 @@ import {
   textRole,
   TrashIcon,
   useMediaQuery,
+  usePageBar,
   WIDE,
 } from "../ui/index.ts"
+import { srOnly } from "../ui/shared.ts"
 import { color, radius, space, text } from "../ui/tokens.stylex.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
@@ -173,6 +175,9 @@ export function TitleStrip({
   presence: JoinedSession["presence"]
   actions: SessionActions
 }) {
+  // On a phone the top bar holds the title (#402); the h1 stays for screen readers.
+  const wide = useMediaQuery(WIDE)
+  usePageBar(sessionTitle(summary))
   return (
     <header {...stylex.props(styles.column, styles.strip)}>
       <div {...stylex.props(styles.titleRow)}>
@@ -181,7 +186,7 @@ export function TitleStrip({
           <span aria-hidden="true" {...stylex.props(styles.sep)}>
             ›
           </span>
-          <h1 tabIndex={-1} {...stylex.props(textRole.heading, styles.title)}>
+          <h1 tabIndex={-1} {...stylex.props(textRole.heading, styles.title, !wide && srOnly.root)}>
             {title}
           </h1>
           <span {...stylex.props(styles.status)}>

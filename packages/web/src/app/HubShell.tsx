@@ -14,8 +14,11 @@ import {
   MenuIcon,
   PlusIcon,
   Spinner,
+  textRole,
   toast,
   UpdateIcon,
+  usePageBarState,
+  PageBarProvider,
   useDocumentTitle,
   WarningIcon,
 } from "../ui/index.ts"
@@ -24,7 +27,6 @@ import { chrome, color, layer, radius, space } from "../ui/tokens.stylex.ts"
 import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
-import { Brand } from "./Brand.tsx"
 import { CommandsProvider } from "./commands.tsx"
 import { commandText } from "./copy.ts"
 import { useHub, useHubState } from "./hub.tsx"
@@ -47,6 +49,13 @@ const styles = stylex.create({
     flexDirection: "column",
     flex: 1,
     minWidth: 0,
+  },
+  barTitle: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   topBar: {
     display: "flex",
@@ -167,84 +176,100 @@ export function HubShell() {
 
   return (
     <CommandsProvider>
-      <div {...stylex.props(styles.shell)}>
-        <a href="#content" {...stylex.props(styles.skip, focus.ring)}>
-          Skip to content
-        </a>
-        {wide && (
-          <div {...stylex.props(styles.sidebar)}>
-            <AppSidebar />
-          </div>
-        )}
-        <div {...stylex.props(styles.main)}>
-          {!wide && (
-            <header {...stylex.props(styles.topBar)}>
-              <IconButton label="Open navigation" noTooltip onClick={() => setDrawerOn(pathname)}>
-                <MenuIcon />
-              </IconButton>
-              <Brand />
-              <CreateSessionDialog
-                trigger={
-                  <IconButton label="New Session" noTooltip>
-                    <PlusIcon />
-                  </IconButton>
-                }
-              />
-            </header>
-          )}
-          {/* Always mounted, empty while connected, so a screen reader hears the connection change. */}
-          <p role="status" {...stylex.props(srOnly.root)}>
-            {connection.status === "reconnecting"
-              ? updating
-                ? "Updating the Hub"
-                : "Reconnecting to the Hub"
-              : ""}
-          </p>
-          <div {...stylex.props(styles.banners)}>
-            {connection.status === "reconnecting" &&
-              (updating ? (
-                // The Hub restarts under its own update (#362), and is back on the new version.
-                <Banner slim intent="neutral" icon={<UpdateIcon />} title="Updating the Hub…">
-                  This page reconnects on its own once the Hub is back.
-                </Banner>
-              ) : (
-                <Banner
-                  slim
-                  intent="warning"
-                  icon={<WarningIcon />}
-                  title="Reconnecting to the Hub"
-                >
-                  Changes made elsewhere show up once it's back. Until then, what you do here isn't
-                  sent.
-                </Banner>
-              ))}
-            <AppPermissionsBanner />
-            <HubUpdateBanner />
-          </div>
-          <div id="content" tabIndex={-1} {...stylex.props(styles.body)}>
-            <Outlet />
-          </div>
-        </div>
-        {!wide && (
-          <Drawer
-            label="Navigation"
-            open={drawerOn === pathname}
-            onOpenChange={(open) => {
-              if (open) followedLink.current = false
-              setDrawerOn(open ? pathname : null)
-            }}
-            finalFocus={() => (followedLink.current && pageHeading()) || true}
-          >
-            {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
-            <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
-              <AppSidebar onClose={() => setDrawerOn(null)} />
+      <PageBarProvider>
+        <div {...stylex.props(styles.shell)}>
+          <a href="#content" {...stylex.props(styles.skip, focus.ring)}>
+            Skip to content
+          </a>
+          {wide && (
+            <div {...stylex.props(styles.sidebar)}>
+              <AppSidebar />
             </div>
-          </Drawer>
-        )}
-        {/* Opened from ⌘K, on any page: settings pages have no New Session button. */}
-        <CreateSessionDialog listen />
-      </div>
+          )}
+          <div {...stylex.props(styles.main)}>
+            {!wide && <PhoneBar onMenu={() => setDrawerOn(pathname)} />}
+            {/* Always mounted, empty while connected, so a screen reader hears the connection change. */}
+            <p role="status" {...stylex.props(srOnly.root)}>
+              {connection.status === "reconnecting"
+                ? updating
+                  ? "Updating the Hub"
+                  : "Reconnecting to the Hub"
+                : ""}
+            </p>
+            <div {...stylex.props(styles.banners)}>
+              {connection.status === "reconnecting" &&
+                (updating ? (
+                  // The Hub restarts under its own update (#362), and is back on the new version.
+                  <Banner slim intent="neutral" icon={<UpdateIcon />} title="Updating the Hub…">
+                    This page reconnects on its own once the Hub is back.
+                  </Banner>
+                ) : (
+                  <Banner
+                    slim
+                    intent="warning"
+                    icon={<WarningIcon />}
+                    title="Reconnecting to the Hub"
+                  >
+                    Changes made elsewhere show up once it's back. Until then, what you do here
+                    isn't sent.
+                  </Banner>
+                ))}
+              <AppPermissionsBanner />
+              <HubUpdateBanner />
+            </div>
+            <div id="content" tabIndex={-1} {...stylex.props(styles.body)}>
+              <Outlet />
+            </div>
+          </div>
+          {!wide && (
+            <Drawer
+              label="Navigation"
+              open={drawerOn === pathname}
+              onOpenChange={(open) => {
+                if (open) followedLink.current = false
+                setDrawerOn(open ? pathname : null)
+              }}
+              finalFocus={() => (followedLink.current && pageHeading()) || true}
+            >
+              {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
+              <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
+                <AppSidebar onClose={() => setDrawerOn(null)} />
+              </div>
+            </Drawer>
+          )}
+          {/* Opened from ⌘K, on any page: settings pages have no New Session button. */}
+          <CreateSessionDialog listen />
+        </div>
+      </PageBarProvider>
     </CommandsProvider>
+  )
+}
+
+/**
+ * The one top bar on a phone (#402): the menu, the page's title, and its one primary action, or
+ * New Session where the page has none. The brand is in the drawer.
+ */
+function PhoneBar({ onMenu }: { onMenu: () => void }) {
+  const { title, action } = usePageBarState()
+  return (
+    <header {...stylex.props(styles.topBar)}>
+      <IconButton label="Open navigation" noTooltip onClick={onMenu}>
+        <MenuIcon />
+      </IconButton>
+      {/* The page's h1 says it to screen readers; this repeats it for the eye. */}
+      <span aria-hidden="true" {...stylex.props(textRole.heading, styles.barTitle)}>
+        {title ?? "kndl"}
+      </span>
+      {action ?? (
+        <CreateSessionDialog
+          trigger={
+            <IconButton label="New Session" noTooltip>
+              <PlusIcon />
+            </IconButton>
+          }
+        />
+      )}
+    </header>
   )
 }
 

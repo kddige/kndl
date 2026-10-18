@@ -14,10 +14,12 @@ import {
 import { Button, IconButton } from "./Button.tsx"
 import { MoreIcon } from "./icons.tsx"
 import { Menu } from "./Menu.tsx"
+import { usePageBar } from "./pageBar.tsx"
 import { focus, srOnly } from "./shared.ts"
 import { color, control, radius, shadow, space, text, weight } from "./tokens.stylex.ts"
 import { textRole } from "./type.ts"
 import { useDocumentTitle } from "./useDocumentTitle.ts"
+import { useMediaQuery, WIDE } from "./useMediaQuery.ts"
 
 // The settings pages' one template (#401): a centered column holding the page's header and its
 // sections, so the title, the section headings and the rows share one left edge and the page's
@@ -375,20 +377,35 @@ export function SettingsPage({
   children,
 }: SettingsPageProps) {
   useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
+  // On a phone the top bar holds the title and the action (#402); the h1 stays for screen readers.
+  const wide = useMediaQuery(WIDE)
+  usePageBar(
+    typeof title === "string" ? title : (pageTitle ?? null),
+    wide ? null : (action ?? null),
+  )
   return (
     <main {...stylex.props(styles.view)}>
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.column)}>
           <header {...stylex.props(styles.header)}>
-            <div {...stylex.props(styles.titleLine)}>
-              <div {...stylex.props(styles.titleGroup)}>
-                <h1 tabIndex={-1} {...stylex.props(textRole.title, styles.title)}>
+            {wide ? (
+              <div {...stylex.props(styles.titleLine)}>
+                <div {...stylex.props(styles.titleGroup)}>
+                  <h1 tabIndex={-1} {...stylex.props(textRole.title, styles.title)}>
+                    {title}
+                  </h1>
+                  {badge && <span {...stylex.props(styles.badge)}>{badge}</span>}
+                </div>
+                {action && <div {...stylex.props(styles.headerAction)}>{action}</div>}
+              </div>
+            ) : (
+              <>
+                <h1 tabIndex={-1} {...stylex.props(srOnly.root)}>
                   {title}
                 </h1>
                 {badge && <span {...stylex.props(styles.badge)}>{badge}</span>}
-              </div>
-              {action && <div {...stylex.props(styles.headerAction)}>{action}</div>}
-            </div>
+              </>
+            )}
             {description && (
               <p {...stylex.props(textRole.meta, styles.description)}>{description}</p>
             )}
