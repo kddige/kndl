@@ -114,7 +114,8 @@ export class Secrets extends Context.Service<
           (SELECT COUNT(*) FROM installation_values) +
           (SELECT COUNT(*) FROM session_installation_values) +
           (SELECT COUNT(*) FROM installation_oauth
-            WHERE client IS NOT NULL OR tokens IS NOT NULL) AS count
+            WHERE client IS NOT NULL OR tokens IS NOT NULL) +
+          (SELECT COUNT(*) FROM connected_providers) AS count
       `.pipe(Effect.orDie)
       const stored = counted[0]?.count ?? 0
       const checks = yield* sql<{ readonly ciphertext: string }>`

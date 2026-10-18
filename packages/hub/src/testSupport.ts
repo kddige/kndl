@@ -19,11 +19,12 @@ import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { ClaudeCheck, ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
+import { ProviderApis } from "./ConnectedProviders.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
+import { HubRoutes, HubServices, hubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
 import {
   DefaultArchiveRetention,
   DefaultRepoAccessTtl,
@@ -183,6 +184,10 @@ export async function startHub(
     readonly hubUpdateRuns?: Layer.Layer<HubUpdateRuns, unknown, HubUpdates>
     /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
+    /**
+     * The Providers' APIs and sign-ins (ADR 0029); by default ProviderApis.layerTest, asking no one.
+     */
+    readonly providerApis?: Layer.Layer<ProviderApis>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
     readonly cliBuilds?: Layer.Layer<CliBuilds>
     /** Where MCP server packages are read from; by default git over https:// and uploads. */
@@ -209,13 +214,15 @@ export async function startHub(
       }),
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
-    Layer.provideMerge(HubServices),
-    Layer.provideMerge(options.modelCatalog ?? ModelCatalog.fixed([])),
+    Layer.provideMerge(
+      options.modelCatalog === undefined ? HubServices : hubServices(options.modelCatalog),
+    ),
     Layer.provideMerge(options.hubUpdateRuns ?? HubUpdateRuns.off),
     Layer.provideMerge(options.hubUpdates ?? HubUpdates.off),
     Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),
     Layer.provideMerge(options.mcpServerIcons ?? McpServerIcons.none),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
+    Layer.provideMerge(options.providerApis ?? ProviderApis.layerTest()),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),

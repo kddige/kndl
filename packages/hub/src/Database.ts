@@ -790,6 +790,29 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`UPDATE runners SET models = NULL`
   }),
+  // Each Member's Connected providers (ADR 0029): one row per person and Provider, its pi-ai
+  // credential JSON encrypted as a Claude credential is, and the Models last found under it, as
+  // JSON, when, and why the last ask failed. `problem` says why the connection no longer works.
+  // `hub_device` holds the one UUID the Hub gives a sign-in as its device id, once one needs it.
+  "0041_connected_providers": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE connected_providers (
+        participant_id TEXT NOT NULL REFERENCES participants (id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        credential TEXT NOT NULL,
+        label TEXT NOT NULL,
+        connected_at INTEGER NOT NULL,
+        models TEXT NOT NULL DEFAULT '[]',
+        models_checked_at INTEGER,
+        models_problem TEXT,
+        problem TEXT,
+        PRIMARY KEY (participant_id, provider)
+      ) WITHOUT ROWID
+    `
+    yield* sql`CREATE TABLE hub_device (id TEXT NOT NULL)`
+  }),
   // What runs a Session's agent (ADR 0029): null for a Session from before, which runs Claude Code.
   "0042_session_harness": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient

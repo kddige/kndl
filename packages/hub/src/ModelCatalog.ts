@@ -2,7 +2,7 @@
 // their Connected providers, and Claude's when they have a Claude credential. ConnectedProviders
 // keeps it; SessionRelay checks a pi Session's model against it.
 
-import type { ParticipantId, ProviderModel } from "@kndl/protocol"
+import type { ParticipantId, ProviderId, ProviderModel } from "@kndl/protocol"
 import { Context, Effect, Layer } from "effect"
 
 export class ModelCatalog extends Context.Service<
@@ -15,9 +15,17 @@ export class ModelCatalog extends Context.Service<
     readonly modelsFor: (
       participantId: ParticipantId,
     ) => Effect.Effect<ReadonlyArray<ProviderModel>>
+    /**
+     * The Member's Connected providers connected by a sign-in, whose APIs refuse some request
+     * fields an API key's take: a pi Session's extension leaves those out (`ModProviders`).
+     */
+    readonly signedIn: (participantId: ParticipantId) => Effect.Effect<ReadonlyArray<ProviderId>>
   }
 >()("@kndl/hub/ModelCatalog") {
   /** The same Models for every Member, for tests. */
   static readonly fixed = (models: ReadonlyArray<ProviderModel>) =>
-    Layer.succeed(ModelCatalog, { modelsFor: () => Effect.succeed(models) })
+    Layer.succeed(ModelCatalog, {
+      modelsFor: () => Effect.succeed(models),
+      signedIn: () => Effect.succeed([]),
+    })
 }

@@ -14,10 +14,14 @@
 //   noted, so a refusal of it later is tried once more too.
 // - A redirect isn't followed. Bodies stream both ways; answers come back compressed or not, as
 //   sent.
+// - A Session's model call (ADR 0029) goes to its Provider's own API, as pi-ai's built-in provider
+//   has it, with its Creator's key or sign-in in place of the Session's token. Its body is held,
+//   to be sent again once a sign-in refused is refreshed; the answer streams back.
 
-import type { InstallationId, SessionId } from "@kndl/protocol"
+import type { InstallationId, ModelProvider, SessionId } from "@kndl/protocol"
 import { Context, type Duration, Effect, Layer, Option, Redacted } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { type CallCredential, ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
 import { readAtMost } from "./ReadAtMost.ts"
@@ -130,6 +134,36 @@ const forward = (
 const discard = (response: Response) =>
   Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
+/**
+ * The most of a model call's body the Hub holds, to send it again once a sign-in is refreshed: a
+ * conversation with its images, as pi sends it whole each Turn.
+ */
+export const MaxModelRequestBytes = 64 * 1024 * 1024
+
+/** A Session's call to a Provider's own API (ADR 0029), without credentials: those are added. */
+export interface ModelCall {
+  readonly method: string
+  /** Below the Provider's API, with the query: `/responses?stream=true`. */
+  readonly path: string
+  /** Without the Session's own credential, which the Gateway holds back. */
+  readonly headers: Headers
+  readonly body: Uint8Array | undefined
+  readonly signal?: AbortSignal
+}
+
+/** What sending a Session's model call came to. */
+export type ModelCallSent =
+  /** The Provider's answer, its body unread. */
+  | { readonly _tag: "Answered"; readonly response: Response }
+  /** The Session isn't Active, or there is no such Session. */
+  | { readonly _tag: "NotActive" }
+  /** Its Creator hasn't connected the Provider, or must connect it again: `message` says which. */
+  | { readonly _tag: "NotConnected"; readonly message: string }
+  /** The Creator's sign-in couldn't be refreshed just now. */
+  | { readonly _tag: "Unavailable"; readonly message: string }
+  /** The Provider could not be reached. */
+  | { readonly _tag: "Unreachable" }
+
 /** The MCP version the check speaks: one every Streamable HTTP server answers. */
 const checkProtocolVersion = "2025-06-18"
 
@@ -156,6 +190,16 @@ export class Gateway extends Context.Service<
       authorised: Authorised,
       timeout: Duration.Duration,
     ) => Effect.Effect<Checked, SqlError>
+    /**
+     * Sends the Session's model call to the Provider with its Creator's credential, while the
+     * Session is Active: a sign-in that expires within 5 minutes refreshed first, and once more
+     * after the Provider refuses it, with the call sent again.
+     */
+    readonly model: (
+      sessionId: SessionId,
+      provider: ModelProvider,
+      call: ModelCall,
+    ) => Effect.Effect<ModelCallSent, SqlError>
   }
 >()("@kndl/hub/Gateway") {
   static readonly layer = Layer.effect(
@@ -164,6 +208,8 @@ export class Gateway extends Context.Service<
       const sessions = yield* Sessions
       const mcpServers = yield* McpServers
       const oauth = yield* McpServerOAuth
+      const providers = yield* ConnectedProviders
+      const apis = yield* ProviderApis
 
       /**
        * Where the Session may reach the Installation's MCP server. A token is live only while
@@ -313,7 +359,63 @@ export class Gateway extends Context.Service<
         return sent
       })
 
-      return Gateway.of({ authorise, send, check })
+      const model = Effect.fn("Gateway.model")(function* (
+        sessionId: SessionId,
+        provider: ModelProvider,
+        call: ModelCall,
+      ): Effect.fn.Return<ModelCallSent, SqlError> {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session) || session.value.state !== "Active") return { _tag: "NotActive" }
+        const creator = session.value.creator.id
+        const credential = yield* Effect.result(providers.credentialFor(creator, provider))
+        if (credential._tag === "Failure") {
+          const { reason, message } = credential.failure
+          return reason === "Unavailable"
+            ? { _tag: "Unavailable", message }
+            : { _tag: "NotConnected", message }
+        }
+        const to = `${apis.baseUrl(provider)}${call.path}`
+        const sendCall = (callWith: CallCredential) =>
+          Effect.tryPromise({
+            try: (signal) => {
+              const headers = new Headers(call.headers)
+              headers.set("authorization", `Bearer ${Redacted.value(callWith.token)}`)
+              const hasBody = !["GET", "HEAD"].includes(call.method) && call.body !== undefined
+              return apis.fetch(
+                new Request(to, {
+                  method: call.method,
+                  headers,
+                  ...(hasBody && { body: call.body }),
+                  redirect: "manual",
+                  signal:
+                    call.signal === undefined ? signal : AbortSignal.any([signal, call.signal]),
+                } as RequestInit),
+                // Answers stream back as they come, compressed or not.
+                { decompress: false },
+              )
+            },
+            catch: (error) => error,
+          }).pipe(Effect.option)
+
+        const first = yield* sendCall(credential.success)
+        if (Option.isNone(first)) return { _tag: "Unreachable" }
+        if (first.value.status !== 401 || credential.success.kind !== "SignIn") {
+          return { _tag: "Answered", response: first.value }
+        }
+        const next = yield* providers.rejected(
+          creator,
+          provider,
+          Redacted.value(credential.success.token),
+        )
+        if (Option.isNone(next)) return { _tag: "Answered", response: first.value }
+        yield* discard(first.value)
+        const again = yield* sendCall(next.value)
+        return Option.isNone(again)
+          ? { _tag: "Unreachable" }
+          : { _tag: "Answered", response: again.value }
+      })
+
+      return Gateway.of({ authorise, send, check, model })
     }),
   )
 }

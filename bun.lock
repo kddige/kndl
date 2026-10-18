@@ -43,6 +43,7 @@
     "packages/hub": {
       "name": "@kndl/hub",
       "dependencies": {
+        "@earendil-works/pi-ai": "1.3.0",
         "@effect/platform-bun": "4.0.0",
         "@effect/sql-sqlite-bun": "4.0.0",
         "@kndl/protocol": "workspace:*",

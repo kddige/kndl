@@ -33,12 +33,38 @@
 //   `/.well-known/oauth-protected-resource`, reaches a server: it is answered `404`.
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
+//
+// A pi Session's model calls (ADR 0029) come through it too, to its Creator's Connected providers:
+//
+// - `/gateway/models/<provider>/<the Provider's API path>`, any method, by the mod token as above.
+//   An Installation's id is 24 random hex characters (Tokens.ts's randomId), so it is never
+//   `models`: the two never meet.
+// - A Provider its Creator hasn't connected, or must connect again, is answered `403`, and one
+//   kndl doesn't know `404`, each in the Providers' own error shape, `{"error":{"message":…}}`,
+//   which pi shows. Claude's Models don't come through it: they run through Claude Code in the
+//   Sandbox.
+// - The call goes to pi-ai's URL for the Provider (`https://api.openai.com/v1`) with the path and
+//   query, its `authorization`, `x-api-key` and `x-goog-api-key` dropped and `Authorization:
+//   Bearer` the Creator's key or access token added. Its body is held, up to
+//   MaxModelRequestBytes, to send it once more after a sign-in refused is refreshed (Gateway.ts);
+//   the answer streams back as it comes.
 
-import { InstallationId as InstallationIdSchema } from "@kndl/protocol"
-import { Clock, Effect } from "effect"
+import {
+  InstallationId as InstallationIdSchema,
+  ModelProvider,
+  modelGatewayPath,
+} from "@kndl/protocol"
+import { Clock, Effect, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
-import { Gateway, MaxOAuthRequestBytes, type Refusal } from "./Gateway.ts"
+import {
+  Gateway,
+  MaxModelRequestBytes,
+  MaxOAuthRequestBytes,
+  type ModelCallSent,
+  type Refusal,
+} from "./Gateway.ts"
+import { readAtMost } from "./ReadAtMost.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 
 const errorResponse = (status: number, error: string) =>
@@ -73,6 +99,15 @@ const heldRequestHeaders = new Set([
   "upgrade",
   "content-length",
 ])
+
+/** What a model call is answered with when the Gateway refuses it: a Provider's error shape. */
+const providerError = (status: number, message: string) =>
+  HttpServerResponse.jsonUnsafe({ error: { message } }, { status })
+
+/** A model call's headers that stay at the Gateway: those above, and Gemini's key header. */
+const heldModelHeaders = new Set([...heldRequestHeaders, "x-goog-api-key"])
+
+const isModelProvider = Schema.is(ModelProvider)
 
 /** Answer headers that stay at the Gateway: the server's cookies, and the connection's. */
 const heldResponseHeaders = new Set([
@@ -233,6 +268,86 @@ export const GatewayRoutes = HttpRouter.use(
         )
       }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.request")),
     )
+
+    // A pi Session's model calls (ADR 0029), at the static `models`, which the router prefers to
+    // an Installation's id.
+    const modelCall = Effect.gen(function* () {
+      const grant = yield* authenticateMod
+      const request = yield* HttpServerRequest.HttpServerRequest
+      const provider = (yield* HttpRouter.params).provider ?? ""
+      const started = yield* Clock.currentTimeMillis
+      const done = (status: number) =>
+        Effect.gen(function* () {
+          const took = (yield* Clock.currentTimeMillis) - started
+          yield* Effect.logInfo(`Gateway ${request.method} ${status} in ${took}ms`).pipe(
+            Effect.annotateLogs({ sessionId: grant.sessionId, provider }),
+          )
+        })
+      if (!isModelProvider(provider)) {
+        yield* done(404)
+        return providerError(404, `kndl has no Provider called ${provider}.`)
+      }
+      const url = new URL(request.url, "http://gateway")
+      const path = url.pathname.slice(modelGatewayPath(provider).length) + url.search
+      const incoming = yield* HttpServerRequest.toWeb(request)
+      let body: Uint8Array | undefined
+      if (incoming.body !== null) {
+        if (Number(incoming.headers.get("content-length")) > MaxModelRequestBytes) {
+          yield* done(413)
+          return providerError(413, "The request is larger than the Gateway takes.")
+        }
+        const stream = incoming.body
+        const read = yield* Effect.tryPromise(() => readAtMost(stream, MaxModelRequestBytes)).pipe(
+          Effect.option,
+        )
+        if (Option.isNone(read)) {
+          yield* done(400)
+          return providerError(400, "The request's body could not be read.")
+        }
+        if (read.value === undefined) {
+          yield* done(413)
+          return providerError(413, "The request is larger than the Gateway takes.")
+        }
+        body = read.value
+      }
+      const sent: ModelCallSent = yield* gateway.model(grant.sessionId, provider, {
+        method: request.method,
+        path,
+        headers: kept(incoming.headers, heldModelHeaders),
+        body,
+        signal: incoming.signal,
+      })
+      switch (sent._tag) {
+        case "NotActive": {
+          yield* done(401)
+          return providerError(401, "Expected the mod token of an Active Session")
+        }
+        case "NotConnected": {
+          yield* done(403)
+          return providerError(403, sent.message)
+        }
+        case "Unavailable": {
+          yield* done(503)
+          return providerError(503, sent.message)
+        }
+        case "Unreachable": {
+          yield* done(502)
+          return providerError(502, "The Provider could not be reached.")
+        }
+        case "Answered": {
+          const response = sent.response
+          yield* done(response.status)
+          return HttpServerResponse.raw(
+            new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: kept(response.headers, heldResponseHeaders),
+            }),
+          )
+        }
+      }
+    }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.modelCall"))
+    yield* router.add("*", "/gateway/models/:provider/*", modelCall)
 
     // Nothing lies under an Installation's path: not least OAuth's `/.well-known` documents, which
     // Claude Code would look for to begin OAuth itself (#217). Not the web UI either.

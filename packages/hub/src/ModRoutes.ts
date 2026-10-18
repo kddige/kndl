@@ -2,6 +2,10 @@
 // no WebSockets and no streaming. Every route authenticates with the Session's mod token as
 // `Authorization: Bearer` and acts only for that Session. See the protocol's Mod.ts for the
 // contract. What the mod reports goes to the SessionRelay, which also fills the outbox.
+//
+// `GET /mod/providers` (ADR 0029) answers a pi Session's kndl extension, as it loads, before its
+// hello, with its Creator's Models (ModelCatalog.ts): which Providers to reach through the
+// Gateway, and Claude's.
 
 import {
   checkHandshake,
@@ -13,10 +17,11 @@ import {
   ModEvents,
   ModHello,
   ModHelloReply,
+  ModProviders,
   ProtocolVersion,
   type SessionId,
 } from "@kndl/protocol"
-import { Duration, Effect, Schema } from "effect"
+import { Duration, Effect, Option, Schema } from "effect"
 import {
   HttpRouter,
   HttpServerRequest,
@@ -25,8 +30,10 @@ import {
 } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { ModelCatalog } from "./ModelCatalog.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { SessionRelay } from "./SessionRelay.ts"
+import { Sessions } from "./Sessions.ts"
 
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
@@ -54,6 +61,8 @@ export const ModRoutes = HttpRouter.use(
     const outbox = yield* ModOutbox
     const relay = yield* SessionRelay
     const shutdown = yield* HubShutdown
+    const sessions = yield* Sessions
+    const catalog = yield* ModelCatalog
     /** The Sessions whose mod has said hello since the Hub started. */
     const greeted = new Set<SessionId>()
 
@@ -104,6 +113,23 @@ export const ModRoutes = HttpRouter.use(
         yield* relay.modEvents(grant.sessionId, events.messages).pipe(Effect.orDie)
         return HttpServerResponse.empty({ status: 204 })
       }).pipe(badRequest),
+    )
+
+    yield* router.add(
+      "GET",
+      "/mod/providers",
+      Effect.gen(function* () {
+        const grant = yield* authenticateMod
+        const session = yield* sessions.get(grant.sessionId).pipe(Effect.orDie)
+        if (Option.isNone(session)) return errorResponse(404, "There is no such Session")
+        const creator = session.value.creator.id
+        const models = yield* catalog.modelsFor(creator)
+        const signedIn = yield* catalog.signedIn(creator)
+        return yield* HttpServerResponse.schemaJson(ModProviders)({
+          models,
+          ...(signedIn.length > 0 && { signedIn }),
+        })
+      }),
     )
 
     yield* router.add(

@@ -21,16 +21,11 @@ import {
 } from "./Admin.ts"
 import { ClaudeCheck } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
+import { ProviderApis } from "./ConnectedProviders.ts"
 import { DatabaseFile, DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import {
-  HubRoutes,
-  HubServices,
-  idleTimeoutSeconds,
-  ModelCatalogPlaceholder,
-  websocketOptions,
-} from "./Hub.ts"
+import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
@@ -108,8 +103,6 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
-  // Replaced by ConnectedProviders' ModelCatalog layer
-  Layer.provide(ModelCatalogPlaceholder),
   // Whether a newer kndl is out (ADR 0028), on a Hub the kndl service runs from its install, and
   // the updates its Owner starts from the web (#362), outside the Hub's service.
   Layer.provide(HubUpdateRuns.layer),
@@ -119,6 +112,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(McpServerSources.layer),
   Layer.provide(McpServerIcons.layer),
   Layer.provide(ClaudeCheck.layer),
+  Layer.provide(ProviderApis.layer),
   Layer.provide(GitHubApp.layer),
   Layer.provide(CliBuilds.layer),
   Layer.provide(HubVersion.layer),

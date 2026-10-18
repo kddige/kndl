@@ -131,8 +131,8 @@
 //   409 for a value needed: each is noted in the Session once, until the Installation works again,
 //   and the Session runs on.
 // - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, the Sandbox tokens
-//   of its Sessions (#73), and the Claude credentials, its Creator's among them (ADR 0026), are
-//   masked in every event before it is logged, in terminal frames before they are relayed, and in
+//   of its Sessions (#73), the Claude credentials, its Creator's among them (ADR 0026), and the
+//   Connected providers' keys and tokens (ADR 0029), are masked in every event before it is logged, in terminal frames before they are relayed, and in
 //   the last lines a Claude Code that exited printed. Claude's text (TextDelta) and terminal
 //   Output are streams: text that could start a value is held back until the next event or
 //   frame, or `holdMillis` at most.
@@ -168,6 +168,10 @@
 //     before only the Creator could prompt, are taken out of the queue, each logged as a
 //     PromptCancelled. Every Session is Frozen then, so one whose Creator has no credential is
 //     put to sleep when its Runner is back, as above.
+// - Connected providers (ADR 0029, ConnectedProviders.ts): each Member's own accounts at
+//   Providers, handled by ProviderRelay.ts. Each Member is sent theirs (ProvidersState) after the
+//   welcome and whenever they change, their Claude credential included, since Claude's Models are
+//   among them. A removed Member's are forgotten, and their sign-in cancelled.
 // - Tunnels (#177, ADR 0016): a connection to one of an Active Session's Open ports. Once
 //   TunnelRoutes.ts has checked the caller's access, `openTunnel` checks the Session can take
 //   one, picks the loopback address in the port's address family, and sends its Runner an
@@ -326,6 +330,7 @@ import { Attachments } from "./Attachments.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { type CliIdentity, CliTokens } from "./CliTokens.ts"
 import { closeReason } from "./CloseReason.ts"
+import { ConnectedProviders } from "./ConnectedProviders.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -362,7 +367,7 @@ import {
 } from "./Peers.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
-import { isProviderCommand } from "./ProviderRelay.ts"
+import { isProviderCommand, makeProviderRelay } from "./ProviderRelay.ts"
 import {
   everything,
   holdMillis,
@@ -716,6 +721,7 @@ export class SessionRelay extends Context.Service<
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
       const modelCatalog = yield* ModelCatalog
+      const connectedProviders = yield* ConnectedProviders
       const members = yield* Members
       const tunnels = yield* Tunnels
       const cliTokens = yield* CliTokens
@@ -780,6 +786,9 @@ export class SessionRelay extends Context.Service<
       // The disk Archived Sessions take, asked of their Runners when the archive list wants it (#352).
       const diskUsage = makeSessionDiskUsage()
 
+      // Each Member's Connected providers (ADR 0029).
+      const providerRelay = yield* makeProviderRelay({ webClients: () => peers.webClients })
+
       const memberRelay = yield* makeMemberRelay({
         toWeb: (message, to) => toWeb(message, to),
         removed: (participantId, by) =>
@@ -791,6 +800,8 @@ export class SessionRelay extends Context.Service<
                 "You were removed from this Hub.",
               )
               for (const [id, present] of before) yield* presenceChanged(id, present)
+              // What they connected goes with them, and any sign-in they had running.
+              yield* providerRelay.forget(participantId)
               // Their Sessions run on their Claude credential, which no Session gets now.
               yield* sleepSessionsOf(participantId, (creator) => ({
                 by,
@@ -1075,6 +1086,7 @@ export class SessionRelay extends Context.Service<
           ...values.value.map(Redacted.value),
           ...live.sandboxTokensOf(repo),
           ...claudeCredentials.values(),
+          ...connectedProviders.values(),
         ])
         needlesByRepo.set(repo, needles)
         return needles
@@ -2992,6 +3004,8 @@ export class SessionRelay extends Context.Service<
                       : {}),
                   }),
                 )
+                // Claude's Models are among their Models, with a Claude credential.
+                yield* providerRelay.changed(you.id)
                 if ("removed" in changed) {
                   if (!changed.removed) return
                   return yield* sleepSessionsOf(you.id, () => ({
@@ -3264,7 +3278,7 @@ export class SessionRelay extends Context.Service<
               : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
                 ? claudeCredentialCommand(message)
                 : isProviderCommand(message)
-                  ? Effect.sync(() => refuse(message, "This Hub can't connect Providers yet."))
+                  ? providerRelay.receiveWeb(client, message)
                   : message._tag === "RevokeCliToken"
                     ? revokeCliToken(message)
                     : message._tag === "CheckAppPermissions"
@@ -3359,6 +3373,8 @@ export class SessionRelay extends Context.Service<
             terminals: new Set(),
             repos: new RepoMap(),
           }
+          // A sign-in it started ends with it.
+          yield* providerRelay.attach(client)
           yield* Effect.gen(function* () {
             // Off the lock, since it may wait on GitHub. A Repo GitHub can't say about now is
             // asked about again at the next recheck.
@@ -3399,6 +3415,7 @@ export class SessionRelay extends Context.Service<
                     credential: claudeCredentials.info(you.id) ?? null,
                   }),
                 )
+                peer.send(yield* providerRelay.stateOf(you.id))
                 peer.send(CliTokenList.make({ tokens: yield* cliTokens.list(you.id) }))
                 const checked = yield* drift.latest
                 if (Option.isSome(checked)) {
@@ -4154,6 +4171,22 @@ export class SessionRelay extends Context.Service<
         }),
         Effect.catchCause((cause) =>
           Effect.logError("Could not send an OAuth Installation's lost connection", cause),
+        ),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // A Member's Connected providers changed (ADR 0029): what Sessions print is redacted of
+      // their keys and tokens as they are now, and their web clients are told, unless a command's
+      // answer told them.
+      const providerChanges = yield* connectedProviders.changes
+      yield* PubSub.take(providerChanges).pipe(
+        Effect.flatMap((change) => {
+          needlesByRepo.clear()
+          return change.answered ? Effect.void : providerRelay.changed(change.participantId)
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logError("Could not send a Member their Connected providers", cause),
         ),
         Effect.forever,
         Effect.forkIn(layerScope),

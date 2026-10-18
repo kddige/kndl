@@ -2257,6 +2257,7 @@ async function piHub(models: ReadonlyArray<TestModel>) {
     config: { devLogin: true },
     modelCatalog: Layer.succeed(ModelCatalog, {
       modelsFor: () => Effect.sync(() => catalogue.models),
+      signedIn: () => Effect.succeed([]),
     }),
   })
   return { hub, catalogue }
