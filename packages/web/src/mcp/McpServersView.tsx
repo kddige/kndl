@@ -49,22 +49,27 @@ import { andList, counted, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { repoPattern } from "../app/repoAccess.tsx"
 import {
-  Avatar,
   Badge,
   Banner,
   Button,
   Checkbox,
   Dialog,
   DialogClose,
-  EmptyState,
   Field,
   IconButton,
   Input,
-  PageHeader,
-  McpIcon,
+  Menu,
+  MenuItem,
+  MenuSeparator,
+  MoreIcon,
   PlusIcon,
   Select,
-  Spinner,
+  SettingsEmpty,
+  SettingsItem,
+  SettingsList,
+  SettingsLoading,
+  SettingsPage,
+  SettingsRow,
   Textarea,
   toast,
   TrashIcon,
@@ -72,7 +77,7 @@ import {
   textRole,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
 import {
   ClientLine,
   ConnectionLine,
@@ -87,44 +92,8 @@ import { messageOf, useLastOpened } from "./shared.ts"
 import { UnencryptedCredentialsBanner, UnencryptedUrlBanner } from "./unencrypted.tsx"
 
 const styles = stylex.create({
-  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  scroll: { flex: 1, overflowY: "auto" },
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s4,
-    maxWidth: "56rem",
-    marginInline: "auto",
-    paddingBlock: space.s6,
-    paddingInline: space.s4,
-  },
-  mcpServers: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s4,
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-  },
-  card: {
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.surface,
-    overflow: "hidden",
-  },
-  head: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s3,
-    paddingInline: space.s4,
-  },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "12rem" },
-  nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
-  name: { fontSize: text.sm, fontWeight: weight.semibold },
+  // The MCP server's tile, at a row's icon size.
+  avatar: { width: "1.25rem", height: "1.25rem", fontSize: text.xs, borderRadius: radius.sm },
   muted: { color: color.textSecondary, fontSize: text.sm },
   meta: {
     display: "flex",
@@ -134,43 +103,17 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   url: {
+    minWidth: 0,
     fontFamily: font.mono,
-    fontSize: text.sm,
-    color: color.textSecondary,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    maxWidth: "100%",
   },
-  installations: {
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  installation: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: space.s3,
-    paddingBlock: space.s2_5,
-    paddingInline: space.s4,
-    paddingInlineStart: space.s8,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-  },
-  firstInstallation: { borderTopWidth: 0 },
-  none: { paddingBlock: space.s2_5, paddingInline: space.s4, paddingInlineStart: space.s8 },
   repos: {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "center",
-    gap: space.s1_5,
-    color: color.textSecondary,
-    fontSize: text.sm,
+    columnGap: space.s1_5,
   },
   link: {
     color: color.accentText,
@@ -207,7 +150,6 @@ const styles = stylex.create({
   clearedList: { margin: 0, paddingInlineStart: space.s4 },
   valueLine: { display: "inline-flex", alignItems: "center", gap: space.s2 },
   error: { color: color.dangerText, fontSize: text.sm, lineHeight: leading.snug },
-  loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 
 /** What a delete dialog asks about, and does once confirmed. */
@@ -290,66 +232,69 @@ export function McpServersView({
   }
 
   const add = (
-    <div {...stylex.props(styles.actions)}>
-      <Button size="sm" icon={<PlusIcon />} onClick={() => setPackaging({})}>
-        Add package
-      </Button>
+    <>
       <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
         Add MCP server
       </Button>
-    </div>
+      <Menu
+        align="end"
+        trigger={
+          <IconButton label="More ways to add an MCP server" size="sm">
+            <MoreIcon />
+          </IconButton>
+        }
+      >
+        <MenuItem onClick={() => setPackaging({})}>Add package</MenuItem>
+      </Menu>
+    </>
   )
   return (
-    <main {...stylex.props(styles.view)}>
-      <PageHeader
-        title="MCP"
-        description="MCP servers whose tools Sessions can use."
-        actions={add}
-      />
-      <div {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.page)}>
-          {state === null ? (
-            loadError ? (
-              <EmptyState
-                size="page"
-                icon={<WarningIcon />}
-                title="Can't load the MCP servers"
-                description={loadError}
-                action={<Button onClick={retry}>Try again</Button>}
-              />
-            ) : (
-              <div {...stylex.props(styles.loading)}>
-                <Spinner size="lg" label="Loading MCP servers" />
-              </div>
-            )
-          ) : state.mcpServers.length === 0 ? (
-            <EmptyState
-              size="page"
-              icon={<McpIcon />}
-              title="No MCP servers yet"
-              description="Add a remote MCP server by its URL, or an MCP server package from git or an upload. An Installation puts it on in the Repos it lists, and their Sessions get its tools from their next wake or restart."
-              action={add}
+    <SettingsPage title="MCP" description="MCP servers whose tools Sessions can use." action={add}>
+      {state === null ? (
+        loadError ? (
+          <Banner
+            intent="danger"
+            icon={<WarningIcon />}
+            title="Couldn't load the MCP servers"
+            action={
+              <Button size="sm" onClick={retry}>
+                Try again
+              </Button>
+            }
+          >
+            {loadError}
+          </Banner>
+        ) : (
+          <SettingsLoading label="Loading MCP servers" />
+        )
+      ) : state.mcpServers.length === 0 ? (
+        <SettingsEmpty
+          title="No MCP servers yet"
+          description="Add a remote MCP server by its URL, or a package from git or an upload, from the menu beside it. An Installation puts it on in Repos."
+          action={
+            <Button size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+              Add MCP server
+            </Button>
+          }
+        />
+      ) : (
+        <SettingsList label="MCP servers">
+          {state.mcpServers.map((mcpServer) => (
+            <McpServerRow
+              key={mcpServer.id}
+              mcpServer={mcpServer}
+              installations={state.installations.filter(
+                (installation) => installation.mcpServerId === mcpServer.id,
+              )}
+              owner={owner}
+              onEdit={() => setEditing(mcpServer)}
+              onUpgrade={() => setPackaging({ upgrading: mcpServer })}
+              onInstall={(installation) => setInstalling({ mcpServer, installation })}
+              onDelete={setDeleting}
             />
-          ) : (
-            <ul aria-label="MCP servers" {...stylex.props(styles.mcpServers)}>
-              {state.mcpServers.map((mcpServer) => (
-                <McpServerCard
-                  key={mcpServer.id}
-                  mcpServer={mcpServer}
-                  installations={state.installations.filter(
-                    (installation) => installation.mcpServerId === mcpServer.id,
-                  )}
-                  owner={owner}
-                  onEdit={() => setEditing(mcpServer)}
-                  onUpgrade={() => setPackaging({ upgrading: mcpServer })}
-                  onInstall={(installation) => setInstalling({ mcpServer, installation })}
-                  onDelete={setDeleting}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+          ))}
+        </SettingsList>
+      )}
       <McpServerDialog
         editing={editing}
         installations={state?.installations ?? []}
@@ -358,11 +303,15 @@ export function McpServersView({
       <InstallationDialog target={installing} owner={owner} onClose={() => setInstalling(null)} />
       <DeleteDialog deleting={deleting} onClose={() => setDeleting(null)} />
       <PackageDialog opening={packaging} onClose={() => setPackaging(null)} />
-    </main>
+    </SettingsPage>
   )
 }
 
-function McpServerCard({
+/**
+ * An MCP server, as a row: what it is and where, Install inline and the rest in its menu, and its
+ * Installations under it, indented.
+ */
+function McpServerRow({
   mcpServer,
   installations,
   owner,
@@ -387,129 +336,133 @@ function McpServerCard({
   // With a global Installation, that is every Repo's: only the Owner may (#219).
   const ownerOnly = !owner && installations.some((installation) => installation.global === true)
   const pinned = mcpServer.package
+  const { name } = mcpServer
   return (
-    <li aria-label={`MCP server ${mcpServer.name}`} {...stylex.props(styles.card)}>
-      <div {...stylex.props(styles.head)}>
-        <div {...stylex.props(styles.main)}>
-          <div {...stylex.props(styles.nameLine)}>
-            <McpServerAvatar mcpServer={mcpServer} />
-            <span {...stylex.props(styles.name)}>{mcpServer.name}</span>
-            <Badge sx={styles.mono}>{mcpServer.id}</Badge>
-            {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
-            {mcpServerUrlUnencrypted(mcpServer.url) && (
-              <Badge intent="warning">Unencrypted http</Badge>
-            )}
-          </div>
-          {mcpServer.description && (
-            <span {...stylex.props(styles.muted)}>{mcpServer.description}</span>
-          )}
-          <span title={mcpServer.url} {...stylex.props(styles.url)}>
+    <>
+      <SettingsRow
+        label={`MCP server ${name}`}
+        icon={<McpServerAvatar mcpServer={mcpServer} sx={styles.avatar} />}
+        name={name}
+        meta={[
+          <span key="id" {...stylex.props(styles.mono)}>
+            {mcpServer.id}
+          </span>,
+          <span key="url" title={mcpServer.url} {...stylex.props(styles.url)}>
             {mcpServer.url}
-          </span>
-          {pinned && <span {...stylex.props(styles.muted)}>{sourceText(pinned.source)}</span>}
-          <span {...stylex.props(styles.meta)}>
-            <Avatar name={mcpServer.createdBy.name} src={mcpServer.createdBy.avatarUrl} size="sm" />
-            Added by {mcpServer.createdBy.name} {timeAgo(mcpServer.createdAt)}
-          </span>
-          {ownerOnly && (
-            <span {...stylex.props(styles.muted)}>
-              It has a global Installation, on in every Repo: only the Hub's Owner can{" "}
-              {pinned ? "upgrade" : "edit"} or delete it.
-            </span>
-          )}
-        </div>
-        <div {...stylex.props(styles.actions)}>
+          </span>,
+          `Added by ${mcpServer.createdBy.name} ${timeAgo(mcpServer.createdAt)}`,
+        ]}
+        notes={
+          <>
+            {mcpServer.description && (
+              <span {...stylex.props(styles.muted)}>{mcpServer.description}</span>
+            )}
+            {pinned && <span {...stylex.props(styles.muted)}>{sourceText(pinned.source)}</span>}
+            {ownerOnly && (
+              <span {...stylex.props(styles.muted)}>
+                It has a global Installation, on in every Repo: only the Hub's Owner can{" "}
+                {pinned ? "upgrade" : "edit"} or delete it.
+              </span>
+            )}
+          </>
+        }
+        badges={
+          (pinned || mcpServerUrlUnencrypted(mcpServer.url)) && (
+            <>
+              {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
+              {mcpServerUrlUnencrypted(mcpServer.url) && (
+                <Badge intent="warning">Unencrypted http</Badge>
+              )}
+            </>
+          )
+        }
+        action={
           <Button
             size="sm"
             icon={<PlusIcon />}
-            aria-label={`Add Installation of ${mcpServer.name}`}
+            aria-label={`Add Installation of ${name}`}
             onClick={() => onInstall(null)}
           >
             Install
           </Button>
-          {pinned ? (
-            <Button
-              size="sm"
-              aria-label={`Upgrade MCP server ${mcpServer.name}`}
-              disabled={hidden || ownerOnly}
-              onClick={onUpgrade}
+        }
+        menu={
+          <>
+            {pinned ? (
+              <MenuItem disabled={hidden || ownerOnly} onClick={onUpgrade}>
+                Upgrade {name}
+              </MenuItem>
+            ) : (
+              <MenuItem disabled={hidden || ownerOnly} onClick={onEdit}>
+                Edit {name}
+              </MenuItem>
+            )}
+            <MenuSeparator />
+            <MenuItem
+              intent="danger"
+              disabled={ownerOnly}
+              onClick={() =>
+                onDelete({
+                  name,
+                  description:
+                    installations.length > 0
+                      ? "The Hub refuses to delete an MCP server while it has Installations."
+                      : "It has no Installations. It can't be brought back.",
+                  run: () => hub.deleteMcpServer(mcpServer.id),
+                })
+              }
             >
-              Upgrade
-            </Button>
+              Delete {name}
+            </MenuItem>
+          </>
+        }
+        rowsLabel={`Installations of ${name}`}
+        rows={
+          installations.length === 0 ? (
+            <SettingsItem>
+              <span {...stylex.props(styles.muted)}>
+                No Installations: install it to put it on in Repos.
+              </span>
+            </SettingsItem>
           ) : (
-            <Button
-              size="sm"
-              aria-label={`Edit MCP server ${mcpServer.name}`}
-              disabled={hidden || ownerOnly}
-              onClick={onEdit}
-            >
-              Edit
-            </Button>
-          )}
-          <Button
-            size="sm"
-            intent="ghost"
-            aria-label={`Delete MCP server ${mcpServer.name}`}
-            disabled={ownerOnly}
-            onClick={() =>
-              onDelete({
-                name: mcpServer.name,
-                description:
-                  installations.length > 0
-                    ? "The Hub refuses to delete an MCP server while it has Installations."
-                    : "It has no Installations. It can't be brought back.",
-                run: () => hub.deleteMcpServer(mcpServer.id),
-              })
-            }
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
-      <ul aria-label={`Installations of ${mcpServer.name}`} {...stylex.props(styles.installations)}>
-        {installations.length === 0 ? (
-          <li {...stylex.props(styles.none, styles.muted)}>
-            No Installations: install it to put it on in Repos.
-          </li>
-        ) : (
-          installations.map((installation, index) => (
-            <InstallationRow
-              key={installation.id}
-              mcpServer={mcpServer}
-              installation={installation}
-              owner={owner}
-              first={index === 0}
-              onEdit={() => onInstall(installation)}
-              onDelete={() =>
-                onDelete({
-                  name: installation.name,
-                  description: `Takes it off ${reposText(installation)}. Their Sessions lose its tools at once, and show that a Restart applies the change.`,
-                  run: () => hub.deleteInstallation(installation.id),
-                })
-              }
-              onConnect={(changeClient) =>
-                connect(installation, { changeClient }).catch((error: unknown) =>
-                  toast.show({
-                    title: `Couldn't connect ${installation.name}`,
-                    description: messageOf(error),
-                    intent: "danger",
-                  }),
-                )
-              }
-              onDisconnect={() =>
-                onDelete({
-                  name: installation.name,
-                  description: `The Hub forgets its tokens. Sessions in ${reposText(installation)} lose its tools at once, and new ones don't start until it is connected again.`,
-                  run: () => hub.disconnectInstallation(installation.id),
-                  verb: { action: "Disconnect", done: "Disconnected" },
-                })
-              }
-            />
-          ))
-        )}
-      </ul>
+            installations.map((installation) => (
+              <InstallationRow
+                key={installation.id}
+                mcpServer={mcpServer}
+                installation={installation}
+                owner={owner}
+                onEdit={() => onInstall(installation)}
+                onDelete={() =>
+                  onDelete({
+                    name: installation.name,
+                    description: `Takes it off ${reposText(installation)}. Their Sessions lose its tools at once, and show that a Restart applies the change.`,
+                    run: () => hub.deleteInstallation(installation.id),
+                  })
+                }
+                onConnect={(changeClient) =>
+                  connect(installation, { changeClient }).catch((error: unknown) =>
+                    toast.show({
+                      title: `Couldn't connect ${installation.name}`,
+                      description: messageOf(error),
+                      intent: "danger",
+                    }),
+                  )
+                }
+                onDisconnect={() =>
+                  onDelete({
+                    name: installation.name,
+                    description: `The Hub forgets its tokens. Sessions in ${reposText(installation)} lose its tools at once, and new ones don't start until it is connected again.`,
+                    run: () => hub.disconnectInstallation(installation.id),
+                    verb: { action: "Disconnect", done: "Disconnected" },
+                  })
+                }
+              />
+            ))
+          )
+        }
+      />
       {clientDialog}
-    </li>
+    </>
   )
 }
 
@@ -533,7 +486,6 @@ function InstallationRow({
   mcpServer,
   installation,
   owner,
-  first,
   onEdit,
   onDelete,
   onConnect,
@@ -542,7 +494,6 @@ function InstallationRow({
   mcpServer: McpServer
   installation: Installation
   owner: boolean
-  first: boolean
   onEdit: () => void
   onDelete: () => void
   /** Connects it; with `changeClient`, asking for another client entered by hand (#218). */
@@ -557,26 +508,24 @@ function InstallationRow({
   const ownerOnly = global && !owner
   const off = installation.off ?? []
   const oauth = mcpServer.auth._tag === "OAuth"
+  const connected = installation.connection !== undefined
+  const locked = hidden || ownerOnly
+  const { name } = installation
   return (
-    <li
-      aria-label={`Installation ${installation.name}`}
-      {...stylex.props(styles.installation, first && styles.firstInstallation)}
-    >
-      <div {...stylex.props(styles.main)}>
-        <div {...stylex.props(styles.nameLine)}>
-          <span {...stylex.props(styles.name)}>{installation.name}</span>
-          {global && <Badge intent="accent">Global</Badge>}
-        </div>
-        {global ? (
-          <div {...stylex.props(styles.repos)}>
+    <SettingsRow
+      label={`Installation ${name}`}
+      name={name}
+      meta={
+        global ? (
+          <span {...stylex.props(styles.repos)}>
             <span>
               On in every Repo, but where another Installation of {mcpServer.name} is on
               {off.length > 0 ? "; turned off for" : "."}
             </span>
             {off.length > 0 && <RepoLinks repos={off} />}
-          </div>
+          </span>
         ) : (
-          <div {...stylex.props(styles.repos)}>
+          <span {...stylex.props(styles.repos)}>
             <span>On in</span>
             <RepoLinks repos={installation.repos} />
             {hidden && (
@@ -586,72 +535,65 @@ function InstallationRow({
                 access to
               </span>
             )}
-          </div>
-        )}
-        <SecretValues mcpServer={mcpServer} installation={installation} />
-        {ownerOnly && (
-          <span {...stylex.props(styles.muted)}>
-            Only the Hub's Owner can{" "}
-            {oauth ? "edit, delete, connect or disconnect" : "edit or delete"} it. Turn it off for a
-            Repo on the Repo's page.
           </span>
-        )}
-        <ConnectionLine mcpServer={mcpServer} installation={installation} />
-        {oauth && <ClientLine installation={installation} />}
-      </div>
-      <div {...stylex.props(styles.actions)}>
-        {oauth && (
+        )
+      }
+      notes={
+        <>
+          <SecretValues mcpServer={mcpServer} installation={installation} />
+          {ownerOnly && (
+            <span {...stylex.props(styles.muted)}>
+              Only the Hub's Owner can{" "}
+              {oauth ? "edit, delete, connect or disconnect" : "edit or delete"} it. Turn it off for
+              a Repo on the Repo's page.
+            </span>
+          )}
+          <ConnectionLine mcpServer={mcpServer} installation={installation} />
+          {oauth && <ClientLine installation={installation} />}
+        </>
+      }
+      badges={global && <Badge>Global</Badge>}
+      action={
+        oauth &&
+        !connected && (
           <Button
             size="sm"
-            intent={installation.connection === undefined ? "primary" : "secondary"}
-            aria-label={`${installation.connection === undefined ? "Connect" : "Reconnect"} ${installation.name}`}
-            disabled={hidden || ownerOnly}
+            intent="primary"
+            aria-label={`Connect ${name}`}
+            disabled={locked}
             onClick={() => onConnect(false)}
           >
-            {installation.connection === undefined ? "Connect" : "Reconnect"}
+            Connect
           </Button>
-        )}
-        {oauth && installation.client !== undefined && (
-          <Button
-            size="sm"
-            intent="ghost"
-            aria-label={`Change client of ${installation.name}`}
-            disabled={hidden || ownerOnly}
-            onClick={() => onConnect(true)}
-          >
-            Change client
-          </Button>
-        )}
-        {oauth && installation.connection !== undefined && (
-          <Button
-            size="sm"
-            intent="ghost"
-            aria-label={`Disconnect ${installation.name}`}
-            disabled={hidden || ownerOnly}
-            onClick={onDisconnect}
-          >
-            Disconnect
-          </Button>
-        )}
-        <Button
-          size="sm"
-          aria-label={`Edit Installation ${installation.name}`}
-          disabled={hidden || ownerOnly}
-          onClick={onEdit}
-        >
-          Edit
-        </Button>
-        <Button
-          size="sm"
-          intent="ghost"
-          aria-label={`Delete Installation ${installation.name}`}
-          disabled={hidden || ownerOnly}
-          onClick={onDelete}
-        >
-          Delete
-        </Button>
-      </div>
-    </li>
+        )
+      }
+      menu={
+        <>
+          {oauth && connected && (
+            <MenuItem disabled={locked} onClick={() => onConnect(false)}>
+              Reconnect {name}
+            </MenuItem>
+          )}
+          {oauth && installation.client !== undefined && (
+            <MenuItem disabled={locked} onClick={() => onConnect(true)}>
+              Change {name}'s client
+            </MenuItem>
+          )}
+          <MenuItem disabled={locked} onClick={onEdit}>
+            Edit {name}
+          </MenuItem>
+          <MenuSeparator />
+          {oauth && connected && (
+            <MenuItem intent="danger" disabled={locked} onClick={onDisconnect}>
+              Disconnect {name}
+            </MenuItem>
+          )}
+          <MenuItem intent="danger" disabled={locked} onClick={onDelete}>
+            Delete {name}
+          </MenuItem>
+        </>
+      }
+    />
   )
 }
 

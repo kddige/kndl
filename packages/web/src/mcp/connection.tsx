@@ -330,7 +330,7 @@ export function ConnectionLine({
         </>
       ) : (
         <>
-          <Badge intent="success">connected</Badge>
+          <Badge>connected</Badge>
           <span title={new Date(connection.connectedAt).toLocaleString()}>
             as {connection.account ?? "an account the server didn't name"}, by{" "}
             {connection.connectedBy.name} {timeAgo(connection.connectedAt)}. Every Session in its

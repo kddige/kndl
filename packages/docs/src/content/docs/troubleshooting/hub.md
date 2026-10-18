@@ -171,7 +171,7 @@ Claude Code could not start: Docs isn't connected to its account. …
 **Fix.** Press **Fix** beside the Installation, enter the value its server takes, save, and press **Retry**. For the others:
 
 - **Can't read the values:** set `HUB_SECRETS_KEY` to the key they were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost).
-- **Not connected:** press **Reconnect** and sign in.
+- **Not connected:** on **MCP**, press **Connect** on the Installation, or choose **Reconnect …** in its **⋯** menu, and sign in.
 - **To start without it:** press **Take owner/name off Docs**, or, for a global Installation, **Turn it off for owner/name**.
 
 Prompts sent meanwhile wait, and run once the Session starts. See [When an Installation fails a Session](/guides/add-a-remote-mcp-server/#when-an-installation-fails-a-session).
@@ -213,7 +213,7 @@ Or the Installation shows **connection lost**.
 - **Not https, or no authorization server:** check the MCP server's URL.
 - **Expired:** press **Connect** again and finish in the same browser.
 - **Needs HUB_SECRETS_KEY:** make one with `kndl secrets key`, put it in `hub.env`, and run `kndl hub install`.
-- **connection lost:** press **Reconnect**.
+- **connection lost:** choose **Reconnect …** in the Installation's **⋯** menu.
 
 Only someone with access to every Repo the Installation lists can connect it, and only the Hub's Owner a global one. See [Connect it to an account with OAuth](/guides/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
 
@@ -229,11 +229,11 @@ The authorization server refused the connection: invalid_client.
 
 **Why.** The authorization server has no Dynamic Client Registration, as GitHub's doesn't, so the Hub needs a client you register there yourself. `invalid_client` means the server doesn't know the client, its secret or its callback URL.
 
-**Fix.** Register a client at the authorization server with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, and enter its client ID and secret. For a rotated secret, press **Change client** and enter the new one. See [Connect a server without Dynamic Client Registration](/guides/connect-an-mcp-server-with-oauth/#connect-a-server-without-dynamic-client-registration).
+**Fix.** Register a client at the authorization server with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, and enter its client ID and secret. For a rotated secret, choose **Change …'s client** in the Installation's **⋯** menu and enter the new one. See [Connect a server without Dynamic Client Registration](/guides/connect-an-mcp-server-with-oauth/#connect-a-server-without-dynamic-client-registration).
 
 ## A global Installation can't be changed
 
-**What you see.** On **MCP servers**, **Edit** and **Delete** are off for an Installation marked **Global**, or for its MCP server, or saving says:
+**What you see.** On **MCP servers**, **Edit …** and **Delete …** are off in the **⋯** menu of an Installation marked **Global**, or of its MCP server, or saving says:
 
 ```
 Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it.

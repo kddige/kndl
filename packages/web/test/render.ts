@@ -77,6 +77,28 @@ export async function menuItem(
   await settle(10)
 }
 
+/**
+ * What the menu behind the button named `trigger` offers: each item by its text, and whether it's
+ * enabled. The menu is closed again with Escape.
+ */
+export async function menuOf(
+  trigger: string,
+  within: ParentNode = document,
+): Promise<Record<string, boolean>> {
+  await step(() => button(trigger, within).click())
+  await settle(10)
+  const items = Object.fromEntries(
+    menuItems().map((el) => [el.textContent?.trim() ?? "", !el.hasAttribute("data-disabled")]),
+  )
+  await step(() =>
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    ),
+  )
+  await settle(10)
+  return items
+}
+
 /** The items of the menu that's open, by their text. */
 export function menuItems(): Array<HTMLElement> {
   return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]

@@ -101,7 +101,7 @@ const valuesText = (secrets: ReadonlyArray<string> | undefined) =>
 /** How the badge of an Installation from that source reads, if it has one. */
 const sourceBadges: Record<InstallationSource, { label: string; intent: BadgeIntent } | null> = {
   Repo: null,
-  Global: { label: "Global", intent: "accent" },
+  Global: { label: "Global", intent: "neutral" },
   Overridden: { label: "Overridden", intent: "neutral" },
   Off: { label: "Off", intent: "neutral" },
 }

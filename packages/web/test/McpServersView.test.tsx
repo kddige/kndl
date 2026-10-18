@@ -4,7 +4,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { hubMcpServerId, RequestId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, dialog, menuItem, menuOf, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -79,8 +79,10 @@ test("lists the MCP servers and their Installations, not naming Repos out of rea
   expect(sentry).toContain("and 1 Repo you have no access to")
   expect(sentry).not.toContain("kddige/secret")
   // Changing it needs access to every Repo it is on in.
-  expect(button("Edit Installation Sentry").disabled).toBe(true)
-  expect(button("Delete Installation Sentry").disabled).toBe(true)
+  expect(await menuOf("Actions for Installation Sentry")).toEqual({
+    "Edit Sentry": false,
+    "Delete Sentry": false,
+  })
   expect(mcpServersLink()?.getAttribute("aria-current")).toBe("page")
 })
 
@@ -180,16 +182,23 @@ test("only the Owner changes a global Installation, or its MCP server (#219)", a
   expect(mcpServer("Linear")?.textContent).toContain(
     "It has a global Installation, on in every Repo: only the Hub's Owner can edit or delete it.",
   )
-  expect(button("Edit MCP server Linear").disabled).toBe(true)
-  expect(button("Delete MCP server Linear").disabled).toBe(true)
-  expect(button("Edit Installation Linear").disabled).toBe(true)
-  expect(button("Delete Installation Linear").disabled).toBe(true)
-  expect(button("Edit Installation Linear here").disabled).toBe(false)
+  expect(await menuOf("Actions for MCP server Linear")).toEqual({
+    "Edit Linear": false,
+    "Delete Linear": false,
+  })
+  expect(await menuOf("Actions for Installation Linear")).toEqual({
+    "Edit Linear": false,
+    "Delete Linear": false,
+  })
+  expect(await menuOf("Actions for Installation Linear here")).toEqual({
+    "Edit Linear here": true,
+    "Delete Linear here": true,
+  })
 })
 
 test("deleting an MCP server with Installations is refused, saying why", async () => {
   await openMcpServers()
-  await step(() => button("Delete MCP server Docs search").click())
+  await menuItem("Actions for MCP server Docs search", "Delete Docs search")
   await eventually(() => expect(dialog()?.textContent).toContain("Delete Docs search?"))
   await step(() => button("Delete").click())
   await eventually(() =>
@@ -262,7 +271,7 @@ test("an Installation's header secret values are write-only: entered, never show
   expect(document.body.textContent).not.toContain("made-up-linear-key")
 
   // Saved again with the value left empty: it keeps the one it has, sending none.
-  await step(() => button("Edit Installation Linear").click())
+  await menuItem("Actions for Installation Linear", "Edit Linear")
   await eventually(() => expect(dialog()?.textContent).toContain("Edit"))
   const again = dialog()?.querySelector('input[type="password"]') as HTMLInputElement
   expect(again.value).toBe("")
@@ -281,7 +290,7 @@ test("says whose values an edit to an MCP server clears, before saving it", asyn
   await step(() => button("Add").click())
   await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("set by"))
 
-  await step(() => button("Edit MCP server Linear").click())
+  await menuItem("Actions for MCP server Linear", "Edit Linear")
   await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
   const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
   // Another path on the same server keeps them.
@@ -323,7 +332,7 @@ async function chooseFiles(input: HTMLInputElement, files: Record<string, string
 
 test("adds an MCP server package from git, once what the Hub read is confirmed", async () => {
   const { hub } = await openMcpServers()
-  await step(() => button("Add package").click())
+  await menuItem("More ways to add an MCP server", "Add package")
   await eventually(() => expect(dialog()?.textContent).toContain("Add an MCP server package"))
   await type(dialogInput("Git repo URL"), "git@github.com:acme/notion-mcp.git")
   await step(() => button("Read package").click())
@@ -358,7 +367,10 @@ test("upgrades a packaged MCP server from git only once its changes are confirme
   const { hub } = await openMcpServers()
   // Pinned: only an Upgrade changes it.
   expect(mcpServer("Asana")?.textContent).toContain("1.0.0 (3f2c9a1)")
-  expect(() => button("Edit MCP server Asana")).toThrow()
+  expect(Object.keys(await menuOf("Actions for MCP server Asana"))).toEqual([
+    "Upgrade Asana",
+    "Delete Asana",
+  ])
   await step(() => button("Add Installation of Asana").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Asana"))
   await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
@@ -366,7 +378,7 @@ test("upgrades a packaged MCP server from git only once its changes are confirme
   await step(() => button("Add").click())
   await eventually(() => expect(mcpServer("Asana")?.textContent).toContain("set by"))
 
-  await step(() => button("Upgrade MCP server Asana").click())
+  await menuItem("Actions for MCP server Asana", "Upgrade Asana")
   await eventually(() => expect(upgradeTable()).not.toBeNull())
   const changes = upgradeTable()?.textContent
   expect(changes).toContain("1.0.0")
@@ -387,14 +399,14 @@ test("upgrades a packaged MCP server from git only once its changes are confirme
     mcpServerId: "@acme/asana-mcp",
   })
 
-  await step(() => button("Upgrade MCP server Asana").click())
+  await menuItem("Actions for MCP server Asana", "Upgrade Asana")
   await eventually(() => expect(dialog()?.textContent).toContain("Asana is up to date: 1.1.0"))
   expect(() => button("Upgrade", dialog() ?? document)).toThrow()
 })
 
 test("adds an uploaded folder, and refuses a name an MCP server from another source has", async () => {
   await openMcpServers()
-  await step(() => button("Add package").click())
+  await menuItem("More ways to add an MCP server", "Add package")
   await eventually(() => expect(dialog()?.textContent).toContain("Add an MCP server package"))
   await step(() => button("Upload").click())
   await chooseFiles(folder(), {
@@ -480,21 +492,21 @@ test("warns most clearly where a header secret would be sent unencrypted (#255)"
 
 test("warns where an OAuth token would be sent unencrypted, and not over https (#255)", async () => {
   await openMcpServers()
-  await step(() => button("Edit Installation GitHub").click())
+  await menuItem("Actions for Installation GitHub", "Edit GitHub")
   await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
   expect(dialog()?.textContent).toContain("Reconnect")
   expect(unencrypted()).toBeUndefined()
   await step(() => button("Cancel").click())
   await eventually(() => expect(dialog()).toBeNull())
 
-  await step(() => button("Edit MCP server GitHub").click())
+  await menuItem("Actions for MCP server GitHub", "Edit GitHub")
   await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
   const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
   await type(url, "http://10.0.0.9/mcp/")
   await step(() => button("Save and disconnect").click())
   await eventually(() => expect(mcpServer("GitHub")?.textContent).toContain("Unencrypted http"))
 
-  await step(() => button("Edit Installation GitHub").click())
+  await menuItem("Actions for Installation GitHub", "Edit GitHub")
   await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
   expect(unencrypted()?.textContent).toContain("The account's token is sent unencrypted")
 })
@@ -509,7 +521,7 @@ test("asks for a client entered by hand where the server registers none, showing
   await eventually(() => expect(clientLine("GitHub")).toContain("Ov23liKndlBot0a1b2c3"))
   expect(clientLine("GitHub")).toContain("with a secret")
 
-  await step(() => button("Change client of GitHub").click())
+  await menuItem("Actions for Installation GitHub", "Change GitHub's client")
   await eventually(() => expect(dialog()?.textContent).toContain("Enter a client for GitHub"))
   expect(dialog()?.querySelector('[aria-label="Callback URL"]')?.textContent).toEndWith(
     "/auth/mcp/callback",
