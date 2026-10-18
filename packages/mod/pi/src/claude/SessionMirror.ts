@@ -1,20 +1,32 @@
 // Claude Code's session as a mirror of pi's history. Each Claude turn resumes a Claude Code
 // session (`resume`) holding pi's conversation up to the turn's prompt, which keeps Claude's
-// prompt cache warm. When pi's history moved on without it (another Provider took a turn, an
-// abort, a compaction), the session is rewritten from pi's history (cc-session-io), in Claude
-// Code's state directory, on the Session's volume.
+// prompt cache warm. After a stopped query, the session is cut back to where the query began and
+// pi's messages since are written after it (Rewind.ts). When pi's history moved on without it
+// (another Provider took a turn, a compaction), the session is rewritten from pi's history
+// (cc-session-io), in Claude Code's state directory, on the Session's volume.
 //
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.
 
-import { readFileSync, statSync } from "node:fs"
+import { readFileSync, statSync, truncateSync } from "node:fs"
 import type { Message } from "@earendil-works/pi-ai"
-import { createSession, deleteSession, openSession, repairToolPairing } from "cc-session-io"
-import type { Session } from "cc-session-io"
+import {
+  createSession,
+  deleteSession,
+  getSessionPath,
+  normalizeProjectPath,
+  openSession,
+  parseJsonlFile,
+  repairToolPairing,
+  Session,
+} from "cc-session-io"
+import type { BaseRecordFields, JsonlRecord } from "cc-session-io"
 import { collectCarriedAttachments, placeCarriedAttachments } from "./CarriedAttachments.ts"
 import type { CarriedAttachment } from "./CarriedAttachments.ts"
-import { convertPiMessages } from "./Convert.ts"
+import { convertPiMessages, userTurnText } from "./Convert.ts"
 import { debug, diag } from "./Log.ts"
+import { checkpointAt, planRewind, readTail } from "./Rewind.ts"
+import type { Checkpoint } from "./Rewind.ts"
 import { nonSystemMessages } from "./Transcript.ts"
 
 /** pi's history, as the bridge reads it. */
@@ -37,6 +49,13 @@ export interface SessionState {
    * a late record into the session file, so the rebuild takes a new id rather than racing it.
    */
   readonly forceRotate?: boolean | undefined
+  /**
+   * A query stopped before it ended (an abort, or a steer that never reached it): the next sync
+   * cuts the session back to where that query began, and writes pi's messages since after it.
+   * Only once its Claude Code has exited (forceRotate cleared); else, or when pi's history
+   * doesn't follow on from there, it rebuilds.
+   */
+  readonly rewindTo?: Checkpoint | undefined
 }
 
 export interface SyncResult {
@@ -44,6 +63,8 @@ export interface SyncResult {
   readonly sessionId: string | null
   /** The query mustn't take over the session it's given: it's a shorter context's own. */
   readonly preserveSharedSession?: boolean
+  /** Where the query begins in the session it resumes, to cut back to should it stop. */
+  readonly checkpoint?: Checkpoint
 }
 
 /** Where Claude Code's sessions are: its state directory, as the bridge's settings say. */
@@ -193,12 +214,113 @@ export function verifyWrittenSession(
   return warnings
 }
 
+/** The session file Claude Code keeps `sessionId` in, for the Workspace `cwd`. */
+const sessionPath = (sessionId: string, cwd: string) =>
+  getSessionPath(sessionId, normalizeProjectPath(cwd), claudeDir())
+
+/** How many of `messages` lead with user messages: a turn's prompt. */
+const promptLength = (messages: ReadonlyArray<{ readonly role: string }>) => {
+  const end = messages.findIndex((message) => message.role !== "user")
+  return end === -1 ? messages.length : end
+}
+
+/** Opens a session file to write after its records, writing pi's assistant messages as `modelId`. */
+function reopenSession(jsonlPath: string, sessionId: string, cwd: string, modelId?: string) {
+  const records: Array<JsonlRecord> = parseJsonlFile(jsonlPath)
+  const first = records.find((record) => record.type === "user" || record.type === "assistant") as
+    | Partial<BaseRecordFields>
+    | undefined
+  return new Session({
+    sessionId,
+    projectPath: normalizeProjectPath(cwd),
+    jsonlPath,
+    records,
+    fileExists: true,
+    ...(first?.slug === undefined ? {} : { slug: first.slug }),
+    ...(first?.cwd === undefined ? {} : { cwd: first.cwd }),
+    ...(first?.version === undefined ? {} : { version: first.version }),
+    ...(first?.gitBranch === undefined ? {} : { gitBranch: first.gitBranch }),
+    ...(modelId ? { model: modelId } : {}),
+  })
+}
+
+/** Says why a stopped query's session can't be cut back, for the caller to rebuild instead. */
+const refuse = (why: string): undefined => {
+  debug(`rewind: ${why}; rebuilding instead`)
+  return undefined
+}
+
+/**
+ * Cuts the session back to where the stopped query began (Rewind.ts) and writes pi's messages
+ * since after it, keeping the session's id and every record Claude Code wrote before. Undefined
+ * when it can't: pi's history doesn't follow on from the checkpoint, or the file isn't the one the
+ * checkpoint was taken of. The caller then rebuilds.
+ */
+function rewindSharedSession(
+  state: SessionState,
+  checkpoint: Checkpoint,
+  priorMessages: PiMessages,
+  cwd: string,
+  customToolNameToSdk: Map<string, string>,
+  modelId: string | undefined,
+  piSessionId: string | null | undefined,
+): SyncResult | undefined {
+  if (checkpoint.sessionId !== state.sessionId) return refuse("the session changed since")
+  if (priorMessages.length < checkpoint.cursor) return refuse("pi's history is shorter")
+  if (
+    checkpoint.cursor > 0 &&
+    priorMessages[checkpoint.cursor - 1]?.timestamp !== checkpoint.lastTimestamp
+  )
+    return refuse("pi's history changed before the checkpoint")
+  const since = priorMessages.slice(checkpoint.cursor)
+  if (since.length > 0 && since[0]?.role !== "user")
+    return refuse("pi's messages since don't start at a prompt")
+
+  const jsonlPath = sessionPath(state.sessionId, cwd)
+  try {
+    const tail = readTail(jsonlPath, checkpoint)
+    if (tail === undefined) return refuse("the session file isn't the one checkpointed")
+    const prompt = promptLength(since)
+    const plan = planRewind(tail, userTurnText(since.slice(0, prompt)))
+    truncateSync(jsonlPath, checkpoint.bytes + plan.keep)
+    const session = reopenSession(jsonlPath, state.sessionId, cwd, modelId)
+    const rest = plan.keptPrompt ? since.slice(prompt) : since
+    // The prompt's `@file` expansions, when it's written again from pi's.
+    const carried = plan.keptPrompt ? [] : collectCarriedAttachments(plan.cut)
+    convertAndImportMessages(session, rest, customToolNameToSdk, carried)
+    session.save()
+    for (const warning of verifyWrittenSession(
+      session.jsonlPath,
+      session.sessionId,
+      session.records.length,
+    ))
+      diag("session_verify_fail", { warning, cwd, claudeDir: claudeDir() ?? null })
+    setSessionStateFor(piSessionId, {
+      sessionId: state.sessionId,
+      cursor: priorMessages.length,
+      cwd,
+      piSessionId: piSessionId ?? undefined,
+    })
+    debug(
+      `syncResult: path=truncate sessionId=${state.sessionId} kept=${checkpoint.bytes + plan.keep}B ` +
+        `prompt=${plan.keptPrompt ? "kept" : "rewritten"} cut=${plan.cut.length} records, ` +
+        `wrote ${rest.length} pi msgs`,
+    )
+    const next = checkpointAt(state.sessionId, jsonlPath, priorMessages)
+    return { sessionId: state.sessionId, ...(next === undefined ? {} : { checkpoint: next }) }
+  } catch (error) {
+    return refuse(`it failed: ${String(error)}`)
+  }
+}
+
 /**
  * Makes Claude Code's session for `piSessionId` hold pi's history up to the current user turn, and
  * says which to resume.
  *
  * - Reuse: in step with the mirror, or ahead of it only by the final assistant message pi appends
  *   after a turn (which Claude Code's session has already). Resumes it, keeping the cache warm.
+ * - Truncate: a query stopped (rewindTo). Cuts the session back to where it began, and writes pi's
+ *   messages since after it: Claude Code's own records before stay, and the cache with them.
  * - Rebuild: no mirror yet, or pi's history moved on without it. Rewrites the session from pi's
  *   history whole, under the same id unless a killed Claude Code might still write to it.
  *
@@ -216,10 +338,12 @@ export function syncSharedSession(
   const sharedSession = sessionStateFor(piSessionId)
   const history = nonSystemMessages(messages)
   const priorMessages = history.slice(0, turnStart(history))
+  const rewindTo = sharedSession?.rewindTo
 
   if (
     sharedSession &&
     !sharedSession.needsRebuild &&
+    rewindTo === undefined &&
     priorMessages.length >= sharedSession.cursor
   ) {
     const missed = priorMessages.slice(sharedSession.cursor)
@@ -234,14 +358,42 @@ export function syncSharedSession(
         debug(`Case 3: resuming session ${sharedSession.sessionId.slice(0, 8)}`)
       }
       debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId}`)
-      return { sessionId: sharedSession.sessionId }
+      const checkpoint = checkpointAt(
+        sharedSession.sessionId,
+        sessionPath(sharedSession.sessionId, cwd),
+        priorMessages,
+      )
+      return {
+        sessionId: sharedSession.sessionId,
+        ...(checkpoint === undefined ? {} : { checkpoint }),
+      }
     }
   }
-  if (sharedSession && !sharedSession.needsRebuild && priorMessages.length < sharedSession.cursor) {
+  if (
+    sharedSession &&
+    !sharedSession.needsRebuild &&
+    priorMessages.length < (rewindTo?.cursor ?? sharedSession.cursor)
+  ) {
     debug(
       `Case 1 synthetic: clean start for shorter context, preserving shared session ${sharedSession.sessionId.slice(0, 8)}`,
     )
     return { sessionId: null, preserveSharedSession: true }
+  }
+  if (sharedSession && rewindTo !== undefined && !sharedSession.needsRebuild) {
+    // A Claude Code that may still be running could write past the cut.
+    const rewound = sharedSession.forceRotate
+      ? (debug("rewind: the stopped Claude Code may still be running; rebuilding instead"),
+        undefined)
+      : rewindSharedSession(
+          sharedSession,
+          rewindTo,
+          priorMessages,
+          cwd,
+          customToolNameToSdk,
+          modelId,
+          piSessionId,
+        )
+    if (rewound !== undefined) return rewound
   }
 
   if (priorMessages.length === 0) {
@@ -279,7 +431,8 @@ export function syncSharedSession(
   debug(
     `syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`,
   )
-  return { sessionId: session.sessionId }
+  const checkpoint = checkpointAt(session.sessionId, session.jsonlPath, priorMessages)
+  return { sessionId: session.sessionId, ...(checkpoint === undefined ? {} : { checkpoint }) }
 }
 
 /** Deletes a Claude Code session the bridge made and won't resume. */

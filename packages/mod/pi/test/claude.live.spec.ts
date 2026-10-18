@@ -8,7 +8,15 @@
 //   KNDL_CLAUDE_IT=1 CLAUDE_CODE_OAUTH_TOKEN=… [KNDL_CLAUDE_CODE=…/claude] bun test pi/test/claude.live.spec.ts
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Subprocess } from "bun"
@@ -53,6 +61,10 @@ const said = (events: ReadonlyArray<Record<string, unknown>>) =>
     .join("")
 
 /** That a Turn called `tool`, and it succeeded. */
+/** A Turn's usage, as its end reports it. */
+const usageOf = (events: ReadonlyArray<Record<string, unknown>>) =>
+  (events.at(-1)?.usage ?? {}) as { cacheRead?: number; cacheWrite?: number; input?: number }
+
 const expectToolRan = (events: ReadonlyArray<Record<string, unknown>>, tool: string) => {
   expect(events).toContainEqual(expect.objectContaining({ _tag: "ToolCallStarted", tool }))
   expect(events).toContainEqual(
@@ -237,6 +249,79 @@ describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
     const events = await turn("q3", "What was the secret word? Answer with the word alone.")
     expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "stop" })
     expect(said(events).toLowerCase()).toContain(word)
+  }, 180_000)
+
+  // A stopped reply costs the prompt cache only what the stopped turn added: the next turn resumes
+  // the same Claude Code session, cut back to the stopped turn's prompt.
+  const sessionFiles = () => {
+    const projects = join(home, "claude", "projects")
+    return readdirSync(projects)
+      .flatMap((dir) => readdirSync(join(projects, dir)).map((file) => `${dir}/${file}`))
+      .filter((file) => file.endsWith(".jsonl"))
+      .toSorted()
+  }
+  const stop = { files: [] as Array<string>, read: 0, write: 0 }
+
+  test("a Claude turn stops mid-reply", async () => {
+    await turn("q-before-stop", "Say hello in three words.")
+    stop.files = sessionFiles()
+    const from = hub.events.length
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: "q-stopped",
+      text: "Write a 600-word story about a lighthouse keeper. Use no tools.",
+      sender: ada,
+    })
+    // Some of the reply first.
+    await hub
+      .until(
+        () =>
+          hub.events.slice(from).filter((event) => event._tag === "TextDelta").length >= 5 ||
+          undefined,
+        120_000,
+      )
+      .catch((error: unknown) => {
+        throw new Error(`${error}\n${debug()}`)
+      })
+    hub.send({ _tag: "StopTurn", sessionId })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded", 60_000)
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
+    const usage = usageOf(events)
+    stop.read = usage.cacheRead ?? 0
+    stop.write = usage.cacheWrite ?? 0
+  }, 180_000)
+
+  test("the turn after it reads everything before it from the cache, in the same session", async () => {
+    const events = await turn("q-after-stop", "Never mind the story. What was the secret word?")
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "stop" })
+    expect(said(events).toLowerCase()).toContain(word)
+    const after = usageOf(events)
+    console.log(
+      `stopped turn: cacheRead=${stop.read} cacheWrite=${stop.write}; ` +
+        `next turn: cacheRead=${after.cacheRead} cacheWrite=${after.cacheWrite} input=${after.input}`,
+    )
+    // Everything the stopped turn's request held, its prompt too.
+    expect(after.cacheRead ?? 0).toBeGreaterThanOrEqual(stop.read + stop.write)
+    expect(sessionFiles()).toEqual(stop.files)
+    // Claude Code went on from the stopped reply as pi holds it, written after the stopped prompt.
+    const records = stop.files
+      .flatMap((file) =>
+        readFileSync(join(home, "claude", "projects", file), "utf8")
+          .split("\n")
+          .filter(Boolean),
+      )
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const prompt = records.find(
+      (record) =>
+        record.type === "user" && JSON.stringify(record.message).includes("Never mind the story"),
+    )
+    const before = records.find((record) => record.uuid === prompt?.parentUuid)
+    expect(before?.type).toBe("assistant")
+    expect(JSON.stringify(before?.message)).not.toContain("[Request interrupted by user]")
+    const log = readFileSync(join(home, "agent", "claude-bridge.log"), "utf8")
+    expect(log).toContain("path=truncate")
+    expect(log).not.toContain("rotated-post-abort")
   }, 180_000)
 
   test("switching to GPT replays the aborted turn's tool call with its result", async () => {

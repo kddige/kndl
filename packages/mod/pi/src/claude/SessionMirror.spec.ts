@@ -5,11 +5,18 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createSession, deleteSession, openSession } from "cc-session-io"
+import {
+  createSession,
+  deleteSession,
+  getSessionPath,
+  normalizeProjectPath,
+  openSession,
+} from "cc-session-io"
 import { configureLog } from "./Log.ts"
+import type { Checkpoint } from "./Rewind.ts"
 import {
   clearSessionStates,
   sessionStateFor,
@@ -167,6 +174,224 @@ describe("syncSharedSession", () => {
     expect(rotated).not.toBe(sessionId)
     expect(sessionStateFor(null)).toMatchObject({ sessionId: rotated, cursor: 2 })
     expect(sessionStateFor(null)?.needsRebuild).toBeUndefined()
+  })
+})
+
+// After a stopped query, the session is cut back to where the query began, rather than rebuilt
+// from pi's history, which holds none of Claude Code's own records (attachments, fillers): their
+// loss costs the prompt cache from the first of them on.
+describe("syncSharedSession after a stopped query", () => {
+  let cwd: string
+  let sessionId: string
+  let path: string
+  beforeEach(() => {
+    setClaudeDir(claudeDir)
+    clearSessionStates()
+    cwd = mkdtempSync(join(tmpdir(), "kndl-claude-rewind-cwd-"))
+    sessionId = randomUUID()
+    path = getSessionPath(sessionId, normalizeProjectPath(cwd), claudeDir)
+  })
+  afterEach(() => {
+    clearSessionStates()
+    rmSync(cwd, { recursive: true, force: true })
+    deleteSession(sessionId, cwd, claudeDir)
+  })
+
+  const u1 = { role: "user", content: "one", timestamp: 1 }
+  const a1 = { role: "assistant", content: [{ type: "text", text: "Hello." }], timestamp: 2 }
+  const u2 = { role: "user", content: "tell me a story", timestamp: 3 }
+  const aborted = {
+    role: "assistant",
+    content: [{ type: "text", text: "Once upon" }],
+    stopReason: "aborted",
+    timestamp: 4,
+  }
+  const u3 = { role: "user", content: "three", timestamp: 5 }
+
+  /** A session as Claude Code leaves the first turn: with an attachment pi never sees. */
+  function firstTurn(): Checkpoint {
+    const session = createSession({ sessionId, projectPath: cwd, claudeDir })
+    session.importMessages(
+      [
+        { role: "user", content: "one" },
+        { role: "assistant", content: [{ type: "text", text: "Hello." }] },
+      ],
+      { attachments: [{ afterIndex: 0, attachment: { type: "environment", cwd } }] },
+    )
+    session.save()
+    return {
+      sessionId,
+      cursor: 2,
+      bytes: Buffer.byteLength(readFileSync(path, "utf8")),
+      lastTimestamp: a1.timestamp,
+    }
+  }
+
+  /** Records as Claude Code writes them, chained on from the session's last. */
+  function claudeCodeWrites(records: ReadonlyArray<Record<string, unknown>>): void {
+    let parent = openSession({ sessionId, projectPath: cwd, claudeDir }).records.at(-1)?.uuid
+    for (const record of records) {
+      if (record.type === "queue-operation") {
+        appendFileSync(path, `${JSON.stringify({ ...record, sessionId })}\n`)
+        continue
+      }
+      const uuid = randomUUID()
+      appendFileSync(
+        path,
+        `${JSON.stringify({ ...record, uuid, parentUuid: parent, sessionId })}\n`,
+      )
+      parent = uuid
+    }
+  }
+
+  const stoppedTurn = [
+    { type: "queue-operation", operation: "enqueue" },
+    { type: "user", message: { role: "user", content: "tell me a story" } },
+    { type: "attachment", attachment: { type: "total_tokens_reminder" } },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "Once" }] },
+    },
+    {
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] },
+    },
+  ]
+
+  /** What the session holds, one line a record: its type, and its text or attachment. */
+  const records = () =>
+    openSession({ sessionId, projectPath: cwd, claudeDir }).records.map((record) => {
+      const r = record as Record<string, unknown>
+      if (r.type === "attachment") return `attachment:${(r.attachment as { type: string }).type}`
+      const message = r.message as { content: unknown } | undefined
+      if (message === undefined) return String(r.type)
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : (message.content as Array<{ text?: string; type: string }>)
+              .map((b) => b.text ?? b.type)
+              .join("")
+      return `${String(r.type)}:${content}`
+    })
+
+  test("keeps the session and everything before the stopped reply, and writes pi's reply after", () => {
+    const checkpoint = firstTurn()
+    const before = readFileSync(path)
+    claudeCodeWrites(stoppedTurn)
+    setSessionStateFor(null, { sessionId, cursor: 3, cwd, rewindTo: checkpoint })
+
+    const result = sync([u1, a1, u2, aborted, u3], cwd)
+
+    expect(result.sessionId).toBe(sessionId)
+    expect(readFileSync(path).subarray(0, before.length).equals(before)).toBe(true)
+    expect(records()).toEqual([
+      "user:one",
+      "attachment:environment",
+      "assistant:Hello.",
+      "queue-operation",
+      "user:tell me a story",
+      "attachment:total_tokens_reminder",
+      "assistant:Once upon",
+    ])
+    expect(sessionStateFor(null)).toMatchObject({ sessionId, cursor: 4 })
+    expect(sessionStateFor(null)?.rewindTo).toBeUndefined()
+    // The next stop cuts back to here.
+    expect(result.checkpoint).toMatchObject({ sessionId, cursor: 4, bytes: statSync(path).size })
+  })
+
+  test("writes the prompt from pi's when Claude Code hadn't, or it's cut off", () => {
+    const checkpoint = firstTurn()
+    appendFileSync(path, '{"type":"user","message":{"role":"us')
+    setSessionStateFor(null, { sessionId, cursor: 3, cwd, rewindTo: checkpoint })
+
+    expect(sync([u1, a1, u2, aborted, u3], cwd).sessionId).toBe(sessionId)
+    expect(records()).toEqual([
+      "user:one",
+      "attachment:environment",
+      "assistant:Hello.",
+      "user:tell me a story",
+      "assistant:Once upon",
+    ])
+  })
+
+  test("writes nothing for a reply stopped before any output", () => {
+    const checkpoint = firstTurn()
+    claudeCodeWrites(stoppedTurn.slice(0, 3))
+    setSessionStateFor(null, { sessionId, cursor: 3, cwd, rewindTo: checkpoint })
+    const empty = { ...aborted, content: [] }
+
+    expect(sync([u1, a1, u2, empty, u3], cwd).sessionId).toBe(sessionId)
+    expect(records()).toEqual([
+      "user:one",
+      "attachment:environment",
+      "assistant:Hello.",
+      "queue-operation",
+      "user:tell me a story",
+      "attachment:total_tokens_reminder",
+    ])
+  })
+
+  test("rebuilds when pi's history changed before where the query began", () => {
+    const checkpoint = firstTurn()
+    claudeCodeWrites(stoppedTurn)
+    setSessionStateFor(null, { sessionId, cursor: 3, cwd, rewindTo: checkpoint })
+    const rewritten = { ...a1, content: [{ type: "text", text: "Hi." }], timestamp: 9 }
+
+    expect(sync([u1, rewritten, u2, aborted, u3], cwd).sessionId).toBe(sessionId)
+    expect(records()).toEqual([
+      "user:one",
+      "assistant:Hi.",
+      "user:tell me a story",
+      "assistant:Once upon",
+    ])
+  })
+
+  test("rebuilds under a new id while the stopped Claude Code may still be running", () => {
+    const checkpoint = firstTurn()
+    claudeCodeWrites(stoppedTurn)
+    setSessionStateFor(null, { sessionId, cursor: 3, cwd, rewindTo: checkpoint, forceRotate: true })
+
+    const rotated = sync([u1, a1, u2, aborted, u3], cwd).sessionId
+    expect(rotated).not.toBe(sessionId)
+    if (rotated !== null) deleteSession(rotated, cwd, claudeDir)
+  })
+
+  test("rebuilds when a compaction rewrote the history since", () => {
+    const checkpoint = firstTurn()
+    claudeCodeWrites(stoppedTurn)
+    setSessionStateFor(null, {
+      sessionId,
+      cursor: 3,
+      cwd,
+      rewindTo: checkpoint,
+      needsRebuild: true,
+    })
+    const summary = { role: "user", content: "Summary: we said hello.", timestamp: 10 }
+
+    expect(sync([summary, u2, aborted, u3], cwd).sessionId).toBe(sessionId)
+    expect(records()).toEqual([
+      "user:Summary: we said hello.",
+      "user:tell me a story",
+      "assistant:Once upon",
+    ])
+  })
+
+  test("rebuilds when the session file isn't the one the checkpoint was taken of", () => {
+    const checkpoint = firstTurn()
+    setSessionStateFor(null, {
+      sessionId,
+      cursor: 3,
+      cwd,
+      rewindTo: { ...checkpoint, bytes: checkpoint.bytes - 3 },
+    })
+
+    expect(sync([u1, a1, u2, aborted, u3], cwd).sessionId).toBe(sessionId)
+    expect(records()).toEqual([
+      "user:one",
+      "assistant:Hello.",
+      "user:tell me a story",
+      "assistant:Once upon",
+    ])
   })
 })
 

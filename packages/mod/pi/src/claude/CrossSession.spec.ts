@@ -10,7 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Api, Context, Model } from "@earendil-works/pi-ai"
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent"
-import { getSessionPath } from "cc-session-io"
+import { createSession, deleteSession, getSessionPath, openSession } from "cc-session-io"
 import { bridgeState, deliverToolResults, resetBridge, setQuery, streamClaude } from "./Bridge.ts"
 import type { ClaudeQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
@@ -264,6 +264,64 @@ describe("cross-session conversation isolation", () => {
     expect(existsSync(rebuiltFile)).toBe(true)
     expect(readFileSync(rebuiltFile, "utf8")).toMatch(/missed steer/)
     expect(sessionStateFor(P)?.needsRebuild).toBeFalsy()
+  })
+
+  // With the session file there, the next turn keeps it: cut back to where the run began, with
+  // pi's messages since written after, Claude Code's own records before staying.
+  test("a missed steer is written after the run's start, in the same session", async () => {
+    const P = "pi-steer-rewind"
+    const u1 = user("first")
+    const a1 = say("first answer")
+    const u2 = user("second")
+    const missed = user("missed steer")
+    const a2 = say("second answer")
+    const u3 = user("third")
+    const g = gate()
+
+    scripts.push({ label: "first", steps: [init("cc-steer"), result("first answer")] })
+    await call(P, [u1]).result()
+    // What Claude Code wrote for the first turn, an attachment pi never sees with it.
+    const written = createSession({ sessionId: "cc-steer", projectPath: process.cwd(), claudeDir })
+    written.importMessages(
+      [
+        { role: "user", content: "first" },
+        { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      ],
+      { attachments: [{ afterIndex: 0, attachment: { type: "environment" } }] },
+    )
+    written.save()
+
+    scripts.push({ label: "second", steps: [init("cc-steer"), g.wait, result("second answer")] })
+    const second = call(P, [u1, a1, u2])
+    await settle()
+    const context = [...bridgeState.activeQueryContexts].find((c) => c.piSessionId === P)
+    if (context === undefined || context.promptStream === null)
+      throw new Error("the second turn isn't running")
+    context.promptStream.fail(new Error("prompt stream closed"))
+    await deliverToolResults(context, [], [{ type: "text", text: "missed steer" }], 4)
+    g.open()
+    await second.result()
+    expect(sessionStateFor(P)?.rewindTo).toMatchObject({ sessionId: "cc-steer", cursor: 2 })
+    expect(sessionStateFor(P)?.needsRebuild).toBeFalsy()
+
+    scripts.push({ label: "third", steps: [init("cc-steer"), result("third answer")] })
+    await call(P, [u1, a1, u2, missed, a2, u3]).result()
+    expect(lastResume()).toBe("cc-steer")
+    const records = openSession({
+      sessionId: "cc-steer",
+      projectPath: process.cwd(),
+      claudeDir,
+    }).records
+    expect(records.map((record) => record.type)).toEqual([
+      "user",
+      "attachment",
+      "assistant",
+      "user",
+      "user",
+      "assistant",
+    ])
+    expect(JSON.stringify(records)).toMatch(/missed steer/)
+    deleteSession("cc-steer", process.cwd(), claudeDir)
   })
 
   test("a missed steer in the first turn rebuilds even without an existing mirror", async () => {

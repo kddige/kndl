@@ -70,6 +70,25 @@ export function messageContentToText(
 }
 
 /**
+ * A user turn's messages as the one prompt the bridge sends Claude Code: their texts, joined. "" when
+ * there's none.
+ */
+export function userTurnText(
+  turn: ReadonlyArray<{ readonly role: string; readonly content?: unknown }>,
+): string {
+  return turn
+    .map((message) =>
+      message.role === "user"
+        ? typeof message.content === "string"
+          ? message.content
+          : messageContentToText(message.content)
+        : "",
+    )
+    .filter((text) => text)
+    .join("\n")
+}
+
+/**
  * A tool result's content: flattened to text, which is how Claude Code stores most of them, but
  * kept as blocks when it carries an image, which has no text form.
  */

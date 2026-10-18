@@ -2,8 +2,17 @@
 // the next script, a list of SDK messages to yield and steps to run between them, such as calling
 // one of pi's tools over the query's MCP server, as Claude Code would. close() ends a script,
 // as killing Claude Code ends a query.
+//
+// Given Claude Code's state directory, it also keeps a session file as Claude Code does
+// (FakeTranscript), and records each query's request as Claude Code would build it from that
+// file; and given `process`, it runs a process for each query through the bridge's spawn, which
+// goes on writing to the session file for a moment after close(), as a stopped Claude Code does.
 
+import { randomUUID } from "node:crypto"
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { dirname } from "node:path"
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
+import { getSessionPath, normalizeProjectPath } from "cc-session-io"
 import type { ClaudeQuery, QueryFn } from "../src/claude/Bridge.ts"
 import type { McpResult } from "../src/claude/ToolResults.ts"
 
@@ -31,6 +40,23 @@ export interface Call {
   /** The text of each message written to the query's input after its prompt. */
   readonly steers: Array<string>
   closed: boolean
+  /** With a transcript: the session the query ran in. */
+  sessionId?: string | undefined
+  /**
+   * With a transcript: the query's first request, as Claude Code builds it from its session, one
+   * message each (`role:text`, an attachment as `attachment:<type>`).
+   */
+  request?: ReadonlyArray<string> | undefined
+}
+
+export interface FakeClaudeCodeOptions {
+  /** Claude Code's state directory: each query keeps its session file in it. */
+  readonly claudeDir?: string
+  /**
+   * Runs a process for each query through `spawnClaudeCodeProcess`, which, after close(), goes on
+   * for `lateMs`, writes the end of the stopped turn, and exits.
+   */
+  readonly process?: { readonly lateMs: number }
 }
 
 /** A prompt message's text. */
@@ -96,6 +122,8 @@ export class FakeClaudeCode {
   readonly calls: Array<Call> = []
   readonly scripts: Array<Script> = []
 
+  constructor(private readonly fakeOptions: FakeClaudeCodeOptions = {}) {}
+
   readonly query: QueryFn = ({ prompt, options }) => {
     const script = this.scripts.shift()
     if (script === undefined) throw new Error("no fake Claude Code script queued")
@@ -105,12 +133,29 @@ export class FakeClaudeCode {
     const killed = new Promise<void>((resolve) => {
       onClose = resolve
     })
+    const { claudeDir, process } = this.fakeOptions
+    const transcript =
+      claudeDir === undefined
+        ? undefined
+        : new FakeTranscript(claudeDir, options.cwd ?? ".", options.resume)
+    call.sessionId = transcript?.sessionId
+    const child =
+      process === undefined
+        ? undefined
+        : options.spawnClaudeCodeProcess?.({
+            command: "sleep",
+            args: ["30"],
+            env: {},
+            signal: new AbortController().signal,
+          })
+    let finished = false
     const generator = (async function* () {
       if (typeof prompt === "string") call.prompt = prompt
       else {
         const input = prompt[Symbol.asyncIterator]()
         const first = await input.next()
         call.prompt = promptText(first.value as SDKUserMessage | undefined)
+        if (transcript) call.request = transcript.prompt(call.prompt ?? "")
         // The rest of the input, read as Claude Code reads its stdin: a steer.
         void (async () => {
           for (let next = await input.next(); !next.done; next = await input.next())
@@ -121,20 +166,171 @@ export class FakeClaudeCode {
       for (const step of script.steps) {
         if (call.closed) return
         if (typeof step === "function") {
-          callTool ??= await connect(options)
-          await step({ callTool, killed })
+          const connected = (callTool ??= await connect(options))
+          await step({
+            callTool: async (name, toolUseId) => {
+              const reply = await connected(name, toolUseId)
+              if (!call.closed) transcript?.toolResult(toolUseId)
+              return reply
+            },
+            killed,
+          })
           continue
         }
-        yield step
+        transcript?.observe(step)
+        yield transcript?.withSession(step) ?? step
       }
+      if (!call.closed) finished = true
     })()
     return Object.assign(generator, {
       interrupt: async () => {},
       close: () => {
+        if (call.closed) return
         call.closed = true
         onClose?.()
+        // What Claude Code writes as it stops mid-script: at once, or a moment later by a process.
+        const stop = () => {
+          if (!finished) transcript?.interrupted()
+          child?.kill("SIGTERM")
+        }
+        if (child === undefined) stop()
+        else setTimeout(stop, process?.lateMs ?? 0)
       },
     }) as unknown as ClaudeQuery
+  }
+}
+
+type Rec = Record<string, unknown>
+
+const Chained = new Set(["user", "assistant", "attachment"])
+
+const readRecords = (path: string): Array<Rec> =>
+  existsSync(path)
+    ? readFileSync(path, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as Rec)
+    : []
+
+/** A record as the message it makes in Claude Code's request. */
+function render(record: Rec): string {
+  if (record.type === "attachment") return `attachment:${String((record.attachment as Rec).type)}`
+  const message = record.message as { role: string; content: string | Array<Rec> }
+  const content =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .map((block) =>
+            block.type === "text"
+              ? String(block.text)
+              : block.type === "tool_use"
+                ? `tool_use:${String(block.id)}`
+                : block.type === "tool_result"
+                  ? `tool_result:${String(block.tool_use_id)}`
+                  : `[${String(block.type)}]`,
+          )
+          .join("\n")
+  return `${message.role}:${content}`
+}
+
+/** A Claude Code session file, written as Claude Code writes one, as far as the bridge's tests need. */
+export class FakeTranscript {
+  readonly sessionId: string
+  readonly path: string
+  private leaf: string | null
+  /** The text block streaming now: written when it ends, or as far as it got when stopped. */
+  private open: { text: string } | undefined
+  private toolUse: { readonly id: string; readonly name: string } | undefined
+
+  constructor(claudeDir: string, cwd: string, resume: string | undefined) {
+    this.sessionId = resume ?? randomUUID()
+    this.path = getSessionPath(this.sessionId, normalizeProjectPath(cwd), claudeDir)
+    const last = this.chain().at(-1)?.uuid
+    this.leaf = typeof last === "string" ? last : null
+  }
+
+  /** The records Claude Code resumes, oldest first: the chain back from the file's last message. */
+  chain(): Array<Rec> {
+    const records = readRecords(this.path)
+    const byUuid = new Map(records.map((record) => [record.uuid, record]))
+    const chain: Array<Rec> = []
+    let record = records.findLast(
+      (candidate) => typeof candidate.uuid === "string" && Chained.has(String(candidate.type)),
+    )
+    for (; record !== undefined; record = byUuid.get(record.parentUuid)) chain.unshift(record)
+    return chain
+  }
+
+  /** Writes a prompt as Claude Code does, and returns the request it then makes. */
+  prompt(text: string): Array<string> {
+    this.write({ type: "queue-operation", operation: "enqueue" })
+    this.append({ type: "user", message: { role: "user", content: text } })
+    this.append({ type: "attachment", attachment: { type: "total_tokens_reminder" } })
+    return this.chain().map(render)
+  }
+
+  /** Follows the stream, writing each block once it's whole. */
+  observe(step: Rec): void {
+    if (step.type !== "stream_event") return
+    const event = step.event as Rec
+    const block = event.content_block as Rec | undefined
+    const delta = event.delta as Rec | undefined
+    if (event.type === "content_block_start" && block?.type === "text") this.open = { text: "" }
+    else if (event.type === "content_block_start" && block?.type === "tool_use")
+      this.toolUse = { id: String(block.id), name: String(block.name) }
+    else if (event.type === "content_block_delta" && delta?.type === "text_delta" && this.open)
+      this.open.text += String(delta.text)
+    else if (event.type === "content_block_stop") {
+      if (this.open) this.assistant([{ type: "text", text: this.open.text }])
+      if (this.toolUse)
+        this.assistant([
+          { type: "tool_use", id: this.toolUse.id, name: this.toolUse.name, input: {} },
+        ])
+      this.open = undefined
+      this.toolUse = undefined
+    }
+  }
+
+  /** The init message, naming this session. */
+  withSession(step: Rec): Rec {
+    return step.type === "system" && step.subtype === "init"
+      ? { ...step, session_id: this.sessionId }
+      : step
+  }
+
+  toolResult(id: string): void {
+    this.append({
+      type: "user",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+    })
+  }
+
+  /** What a stopped Claude Code writes: the reply as far as it got, and that it was stopped. */
+  interrupted(): void {
+    if (this.open) this.assistant([{ type: "text", text: this.open.text }])
+    this.open = undefined
+    this.append({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] },
+    })
+  }
+
+  private assistant(content: Array<Rec>): void {
+    this.append({ type: "assistant", message: { role: "assistant", content } })
+  }
+
+  private append(record: Rec): void {
+    const uuid = randomUUID()
+    this.write({ ...record, uuid, parentUuid: this.leaf, isSidechain: false })
+    this.leaf = uuid
+  }
+
+  private write(record: Rec): void {
+    mkdirSync(dirname(this.path), { recursive: true })
+    appendFileSync(
+      this.path,
+      `${JSON.stringify({ ...record, sessionId: this.sessionId, timestamp: new Date().toISOString() })}\n`,
+    )
   }
 }
 
