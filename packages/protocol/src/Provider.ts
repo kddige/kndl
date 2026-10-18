@@ -6,7 +6,7 @@ import {
 } from "./ClaudeCredential.ts"
 import { SecretValue } from "./Environment.ts"
 import { RequestId } from "./Ids.ts"
-import { ModelName, ThinkingLevel } from "./Model.ts"
+import { type ModelName, ThinkingLevel } from "./Model.ts"
 import { EpochMillis } from "./Session.ts"
 
 // Connected providers (ADR 0029): a Member's own accounts at Providers, held on the Hub, which
@@ -15,10 +15,50 @@ import { EpochMillis } from "./Session.ts"
 // Claude credential is the Connected provider for Anthropic, and stays as it is (ADR 0026).
 
 /**
- * A Provider a Member can connect, as pi-ai names it: OpenAI (a ChatGPT subscription, or an API
- * key) and xAI (a SuperGrok or X Premium subscription, or an API key).
+ * The Providers a Member can connect, as pi-ai names them, in the order the Account page lists
+ * them: the most used first, then the rest, and regional ones last. Each is one pi-ai serves through
+ * its own API, which the Gateway sends on with the Member's key or sign-in in place of the Session's
+ * token (docs/design/pi-harness.md). Some sign in with a subscription: OpenAI (ChatGPT), xAI
+ * (SuperGrok or X Premium), GitHub Copilot, OpenRouter, Kimi For Coding (Kimi Code) and Meta.
  */
-export const ProviderId = Schema.Literals(["openai", "xai"])
+const providerIds = [
+  "openai",
+  "xai",
+  "github-copilot",
+  "openrouter",
+  "google",
+  "mistral",
+  "deepseek",
+  "groq",
+  "cerebras",
+  "kimi-coding",
+  "moonshotai",
+  "zai",
+  "minimax",
+  "meta",
+  "together",
+  "fireworks",
+  "huggingface",
+  "nvidia",
+  "vercel-ai-gateway",
+  "opencode",
+  "opencode-go",
+  "baseten",
+  "qwen-token-plan",
+  "qwen-token-plan-individual",
+  "xiaomi",
+  "xiaomi-token-plan-ams",
+  "xiaomi-token-plan-sgp",
+  "ant-ling",
+  "moonshotai-cn",
+  "zai-coding-cn",
+  "minimax-cn",
+  "qwen-token-plan-cn",
+  "xiaomi-token-plan-cn",
+] as const
+
+/** A Provider a Member can connect, as pi-ai names it. */
+export const ProviderId = Schema.Literals(providerIds)
 export type ProviderId = typeof ProviderId.Type
 
 /** Every Provider a Member can connect, in the order the Account page lists them. */
@@ -28,7 +68,7 @@ export const ProviderIds: ReadonlyArray<ProviderId> = ProviderId.literals
  * A Provider whose Models a pi Session can run on: a Connected provider's, or `anthropic`, whose
  * Models run through Claude Code on the Creator's Claude credential, in the Sandbox (ADR 0029).
  */
-export const ModelProvider = Schema.Literals(["openai", "xai", "anthropic"])
+export const ModelProvider = Schema.Literals([...providerIds, "anthropic"])
 export type ModelProvider = typeof ModelProvider.Type
 
 /** How a Connected provider was connected: a subscription sign-in, or a pasted API key. */
@@ -51,7 +91,10 @@ export const ProviderModel = Schema.Struct({
 })
 export type ProviderModel = typeof ProviderModel.Type
 
-/** The Session model name a {@link ProviderModel} goes by: `openai/gpt-6-sol`. */
+/**
+ * The Session model name a {@link ProviderModel} goes by: `openai/gpt-6-sol`. An id can have a
+ * slash of its own, as OpenRouter's do: `openrouter/anthropic/claude-sonnet-4`.
+ */
 export const providerModelName = (model: Pick<ProviderModel, "provider" | "id">): ModelName =>
   `${model.provider}/${model.id}`
 
@@ -79,7 +122,10 @@ export const ConnectedProvider = Schema.Struct({
   models: Schema.Array(ProviderModel),
   /** When the Hub last asked the Provider for its Models; absent before it first has. */
   modelsCheckedAt: Schema.optionalKey(EpochMillis),
-  /** Why the last ask failed, kept until one succeeds: the Models above are from before it. */
+  /**
+   * Why the last ask failed, kept until one succeeds, and whose the Models above are: those found
+   * before it, or, with none, every one pi-ai's catalogue has for the Provider. A sentence or two.
+   */
   modelsProblem: Schema.optionalKey(Schema.String),
   /**
    * Why the connection no longer works, as when the Provider refused to refresh its sign-in:
@@ -98,6 +144,8 @@ export const ConnectableProvider = Schema.Struct({
   signIn: Schema.optionalKey(Schema.NonEmptyString),
   /** Whether it takes a pasted API key. */
   apiKey: Schema.Boolean,
+  /** What the Provider calls its key, `Gemini API key`; absent when it takes none. */
+  keyName: Schema.optionalKey(Schema.NonEmptyString),
 })
 export type ConnectableProvider = typeof ConnectableProvider.Type
 

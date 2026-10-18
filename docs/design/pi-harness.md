@@ -7,7 +7,7 @@ Pinned versions: pi and pi-ai **1.3.0** (`@earendil-works/pi-coding-agent`, `@ea
 ## The pieces
 
 ```
-web ──ProviderCommand──▶ Hub ──OAuth / API keys──▶ Providers (OpenAI, xAI)
+web ──ProviderCommand──▶ Hub ──OAuth / API keys──▶ Providers (OpenAI, xAI, GitHub Copilot, …)
                           │  keeps Connected providers, refreshes tokens, lists Models
                           │
 Sandbox: pi (TUI in tmux) + kndl extension (/opt/kndl/mod/pi/kndl.js)
@@ -25,31 +25,57 @@ Runner relay ──(Session token → mod token)──▶ Hub Gateway ──(Cre
 ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which would call pi-ai. The forwarding design below keeps the same properties: it's lossless, there's no per-Provider translation, and the credentials stay on the Hub. It's also less code, and pi's own message conversion, caching and usage accounting stay native. ADR 0029 has an amendment saying so.
 
 - **In the Sandbox,** the kndl extension re-points each of the Creator's Connected providers at the Gateway:
-  - It calls `pi.registerProvider("<provider>", { baseUrl, apiKey, headers, models })` for the built-in provider, keeping pi's own provider name, so pi-ai's per-Provider behaviour still applies.
-  - `baseUrl` is `${KNDL_URL}${modelGatewayPath(provider)}`.
-  - The key is the Session token (`KNDL_MOD_TOKEN`), and the headers carry `Authorization: Bearer <Session token>`, because the relay accepts only that.
-  - `models` is the built-in catalogue filtered to the ids `/mod/providers` lists.
+  - It calls `pi.registerProvider("<provider>", { baseUrl, apiKey, headers, models })` for the built-in provider, keeping pi's own provider name, so pi-ai's per-Provider behaviour still applies. pi-ai keys that behaviour on the provider's name, or on the name or the address, never the address alone, except `isChatGPTSignIn`, below.
+  - Each Model's `baseUrl` is `${KNDL_URL}${modelGatewayPath(provider)}` plus the path of its own catalogue address: OpenAI's `https://api.openai.com/v1` becomes `…/gateway/models/openai/v1`. A Provider's Models can be at different paths of one origin: OpenRouter's Claude is at `/api`, for Anthropic's Messages API, and the rest at `/api/v1`. The provider's own `baseUrl` is its first Model's.
+  - The key is the Session token (`KNDL_MOD_TOKEN`), which pi puts where its client for the Model's API does: `Authorization: Bearer` for OpenAI's APIs and Mistral's, `x-api-key` for Anthropic's Messages API (GitHub Copilot's aside, which takes a bearer), `x-goog-api-key` for Google's. The headers also carry `Authorization: Bearer <Session token>`, always, because the relay accepts only that.
+  - `models` is the built-in catalogue filtered to the ids `/mod/providers` lists, with their own headers, such as Copilot's integration headers.
+  - ChatGPT's sign-in refuses some request fields an API key's take, which pi-ai leaves out only for a request it sees going to `https://api.openai.com/v1` directly. `/mod/providers` says which Providers are signed in (`signedIn`), and the extension turns those fields off in OpenAI's models' `compat` when OpenAI is. pi-ai sends other sign-ins' requests as it sends their keys'.
 - **The relay** already relays `/gateway/*`, swapping the Session token for the mod token.
 - **The Hub Gateway** routes `/gateway/models/<provider>/<rest>`:
   - **Authentication:** the mod token, as the MCP Gateway does. That gives the Session, and from it the Creator.
   - **Refusal:** a Provider the Creator hasn't connected gets a 403 with a clear message in the Provider's error shape (`{"error":{"message":…}}`).
-  - **Upstream:** the URL is the built-in pi-ai provider's `baseUrl` (OpenAI `https://api.openai.com/v1`, xAI `https://api.x.ai/v1`) plus `/<rest>` plus the query.
-  - **Headers:** `authorization`, `x-api-key` and `x-goog-api-key` are dropped, and `Authorization: Bearer <access token or API key>` is added. Both OpenAI and xAI take a bearer.
+  - **What the credential sends:** an API key is itself the key. A sign-in's is what pi-ai's `toAuth(credential)` says: a key (most), headers of its own (Kimi's `Authorization: Bearer`), and maybe another address for the Provider's API (GitHub Copilot's, for each account: `https://api.business.githubcopilot.com` for a Business seat).
+  - **Upstream:** the origin of the Provider's API, the sign-in's address when `toAuth` names one, else pi-ai's for the Provider, plus `/<rest>` plus the query.
+  - **Headers:** `authorization`, `x-api-key` and `x-goog-api-key` are dropped. The Creator's key goes in the one pi sent the Session token in as its key: `x-goog-api-key`, else `x-api-key`, else `Authorization: Bearer`. A sign-in's own headers are set over them.
   - **Body:** the request body is buffered, since requests are small JSON, so the request can be retried once after a refresh when the Provider answers 401. The response streams back as it comes.
 - **Refresh:** a sign-in's token is refreshed before a call when it expires within 5 minutes, and once after a 401. Refreshes are serialized per credential, and the rotated credential is stored.
 
 ## Connected providers
 
-- **Providers in this version:** OpenAI ("Sign in with ChatGPT", or an API key) and xAI ("Sign in with SuperGrok or X Premium", or an API key). Both sign-ins are pi-ai's: `provider.auth.oauth.login(interaction, { getDeviceId })`.
-  - The ChatGPT flow listens on `127.0.0.1:1455` on the Hub's machine and also takes the final redirect URL pasted. The Member's browser can't reach the Hub's loopback, so in practice they paste it, and the web says so.
-  - xAI is a device-code flow.
+- **The Providers:** every pi-ai provider whose requests pi sends with a key the Gateway can swap, to an API at a fixed address, listed in `ProviderIds` in the Account page's order. `PiProviders.ts` on the Hub has what kndl adds to each.
+
+  | Provider (pi-ai's id) | Signs in with | API key | Its API | Models listed at |
+  | --- | --- | --- | --- | --- |
+  | OpenAI (`openai`) | ChatGPT | yes | OpenAI Responses | `/v1/models` |
+  | xAI (`xai`) | SuperGrok or X Premium | yes | OpenAI Responses | `/v1/models` |
+  | GitHub Copilot (`github-copilot`) | GitHub Copilot | no | OpenAI Responses and Chat Completions, Anthropic Messages, all with a bearer | `/models` at the account's address |
+  | OpenRouter (`openrouter`) | OpenRouter (gets a key) | yes | OpenAI Chat Completions, Anthropic Messages | `/api/v1/models` |
+  | Google (`google`) | | Gemini API key | Google Generative AI | `/v1beta/models` |
+  | Mistral (`mistral`) | | yes | Mistral Conversations | `/v1/models` |
+  | DeepSeek, Groq, Cerebras | | yes | OpenAI Chat Completions | `{base}/models` |
+  | Kimi For Coding (`kimi-coding`) | Kimi Code | yes | OpenAI Chat Completions | `/coding/v1/models` |
+  | Moonshot AI, Z.AI (coding plan), Together, Fireworks, Hugging Face, NVIDIA, Baseten, Qwen Token Plan (and Individual), Xiaomi (and its Token Plans AMS and SGP), Ant Ling | | yes | OpenAI Chat Completions (Fireworks' also Anthropic Messages) | `{base}/models` |
+  | MiniMax (`minimax`), Vercel AI Gateway (`vercel-ai-gateway`) | | yes | Anthropic Messages | `/v1/models` |
+  | Meta (`meta`) | Meta (Muse) | yes | OpenAI Responses | `/v1/models` |
+  | OpenCode Zen (`opencode`), OpenCode Go (`opencode-go`) | | yes | OpenAI's, Anthropic's and Google's, by Model | `/inference(/go)/v1/models` |
+  | Moonshot AI CN, Z.AI Coding CN, MiniMax CN, Qwen Token Plan CN, Xiaomi Token Plan CN | | yes | as their global ones | as their global ones |
+
+- **Not connected:** `anthropic`, whose Models run through Claude Code on the Claude credential (ADR 0026, 0029), and whose API keys stay deferred (#334); Amazon Bedrock and Google Vertex AI, which need cloud credentials and request signing; Azure and Cloudflare's AI Gateway and Workers AI, whose address is per account or resource, which the Gateway doesn't hold; Radius, pi's own gateway, whose catalogue comes per account from the service; TypeSafe, which has no chat Models; and `openai-codex`, pi-ai's legacy ChatGPT sign-in, which OpenAI's sign-in is.
+- **Sign-ins:** pi-ai's, `provider.auth.oauth.login(interaction, { getDeviceId })`, run on the Hub.
+  - ChatGPT's and OpenRouter's listen on `127.0.0.1` on the Hub's machine and also take the final redirect URL pasted. The Member's browser can't reach the Hub's loopback, so in practice they paste it, and the web says so.
+  - xAI's, GitHub Copilot's, Kimi's and Meta's are device-code flows. Copilot's asks first which GitHub, as a domain, blank for github.com: the Hub asks it as a choice, GitHub.com or GitHub Enterprise, then the domain for Enterprise.
   - `getDeviceId` is one UUID per Hub, kept in the database.
-- **Storage:** one row per Member and Provider. The credential is pi-ai's `Credential` JSON, sealed like a Claude credential. The row also holds the label (the account from the sign-in, or an API key's last 4 characters) and the Models last found, when, and any problem.
-- **Models:** the Hub asks the Provider under the account, keeps the ones pi-ai's built-in catalogue knows, and orders them as the catalogue does.
-  - OpenAI with a sign-in answers `GET /v1/models` with `{models:[{slug, display_name, visibility, context_window, supported_reasoning_levels:[{effort}]}]}`. Only `visibility: "list"` ones are kept.
-  - With an API key it answers `{data:[{id}]}`, and xAI the same.
+  - A refresh is refused, rather than unavailable, when pi-ai's error says the token endpoint answered 400, 401 or 403, or to sign in again.
+- **Storage:** one row per Member and Provider. The credential is pi-ai's `Credential` JSON, sealed like a Claude credential, with whatever else the sign-in keeps (Copilot's Enterprise domain). The row also holds the label (the account from the sign-in, or an API key's last 4 characters) and the Models last found, when, and any problem.
+- **Models:** the Hub asks the Provider under the account, with the credential as the Gateway sends it, and keeps the ones pi-ai's built-in catalogue knows: newest first when the Provider says when each was made, else the most capable first, as near as the catalogue's output cost says, then the highest id.
+  - OpenAI with a sign-in answers `GET /v1/models` with `{models:[{slug, display_name, visibility, context_window, supported_reasoning_levels:[{effort}]}]}`. Only `visibility: "list"` ones are kept, in its order.
+  - Most answer OpenAI's way, `{data:[{id, created}]}`, or the list alone (Together).
+  - Google answers `{models:[{name: "models/<id>", displayName, inputTokenLimit, supportedGenerationMethods}]}`, with the key in `x-goog-api-key`. Those that generate content are kept. A 400 that says the API key is wrong is a rejection, as 401 and 403 are.
+  - GitHub Copilot answers at the account's address, with its integration headers (from pi-ai's catalogue) and `X-GitHub-Api-Version`, `{data:[{id, model_picker_enabled, policy:{state}, capabilities}]}`. As pi-ai's sign-in reads it, those the picker offers whose policy isn't disabled, and that call tools, are kept; with none, those whose policy is enabled.
+  - A Provider that doesn't list them, or can't now, keeps those it listed before, or, with none, offers every one of pi-ai's catalogue for it, and its `modelsProblem` says which. An API key is refused only when the Provider rejects it.
   - Thinking levels are the Provider's `supported_reasoning_levels` that are kndl `ThinkingLevel`s, else pi-ai's `getSupportedThinkingLevels(model)`. A Model that doesn't reason has none.
   - The Hub asks on connect, when a Member asks (`RefreshProviderModels`), and when its copy is a day old.
+- **The Account page:** each Connected provider first, a card each with the account, its Models and when they were checked. Then the rest, a line each, under "Subscriptions" (those with a sign-in) and "API keys", the first six and "Show more". A line opens in place for its sign-in's steps or the key's field, which is named as pi-ai names the key (`Gemini API key`).
 - **Claude's Models**, in `ProvidersState.models` and `/mod/providers`, appear when the Member has a Claude credential. They come from `GET https://api.anthropic.com/v1/models` under the setup token (with the OAuth beta header, as `ClaudeCredentials` checks it), kept to the pi-ai `anthropic` catalogue. If that call fails, the catalogue's current models are used.
 
 ## Sessions and the Harness

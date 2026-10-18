@@ -116,14 +116,15 @@ async function startSession(web: Connection<Web>, runner: Connection<ToRunner>) 
   return start
 }
 
-/** alice signs in to ChatGPT, and the Hub keeps `credential`. */
+/** alice signs in to the Provider, ChatGPT by default, and the Hub keeps `credential`. */
 async function signIn(
   web: Connection<Web>,
   fakes: { signIn: () => Promise<OAuthCredential> },
   credential: OAuthCredential,
+  provider = "openai",
 ) {
   fakes.signIn = async () => credential
-  web.send({ _tag: "StartSignIn", requestId: `m-${++requests}`, provider: "openai" })
+  web.send({ _tag: "StartSignIn", requestId: `m-${++requests}`, provider })
   expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
 }
 
@@ -163,9 +164,7 @@ describe("the Gateway's model calls", () => {
       )
     }
 
-    const response = await call(hub, "/openai/responses?api-version=2", start.modToken, {
-      headers: { "x-api-key": start.modToken, "x-goog-api-key": start.modToken },
-    })
+    const response = await call(hub, "/openai/v1/responses?api-version=2", start.modToken)
     expect(response.status).toBe(200)
     expect(response.headers.get("content-type")).toBe("text/event-stream")
     expect(response.headers.get("x-request-id")).toBe("req-1")
@@ -196,21 +195,86 @@ describe("the Gateway's model calls", () => {
     expect(JSON.stringify(sent?.headers)).not.toContain(start.modToken)
   })
 
+  test("put the Creator's key where pi put the Session's: Google's header, Anthropic's, or a bearer", async () => {
+    const { hub, web, start, fakes } = await scene()
+    for (const provider of ["google", "minimax", "groq"]) {
+      await ask(web, { _tag: "ConnectProviderKey", provider, apiKey: `${provider}-key` })
+    }
+    fakes.seen.length = 0
+
+    // Google's API: pi's SDK sends the key as `x-goog-api-key`, and the relay's bearer besides.
+    const google = await call(
+      hub,
+      "/google/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+      start.modToken,
+      { headers: { "x-goog-api-key": start.modToken } },
+    )
+    expect(google.status).toBe(200)
+    // Anthropic's Messages API, as MiniMax serves it: `x-api-key`.
+    const minimax = await call(hub, "/minimax/anthropic/v1/messages", start.modToken, {
+      headers: { "x-api-key": start.modToken, "anthropic-version": "2023-06-01" },
+    })
+    expect(minimax.status).toBe(200)
+    // An OpenAI-style API: a bearer.
+    const groq = await call(hub, "/groq/openai/v1/chat/completions", start.modToken)
+    expect(groq.status).toBe(200)
+
+    const [toGoogle, toMinimax, toGroq] = fakes.seen
+    expect(toGoogle?.url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    )
+    expect(toGoogle?.headers["x-goog-api-key"]).toBe("google-key")
+    expect(toGoogle?.headers.authorization).toBeUndefined()
+    expect(toMinimax?.url).toBe("https://api.minimax.io/anthropic/v1/messages")
+    expect(toMinimax?.headers["x-api-key"]).toBe("minimax-key")
+    expect(toMinimax?.headers["anthropic-version"]).toBe("2023-06-01")
+    expect(toMinimax?.headers.authorization).toBeUndefined()
+    expect(toGroq?.url).toBe("https://api.groq.com/openai/v1/chat/completions")
+    expect(toGroq?.headers.authorization).toBe("Bearer groq-key")
+    expect(toGroq?.headers["x-api-key"]).toBeUndefined()
+    expect(JSON.stringify(fakes.seen)).not.toContain(start.modToken)
+  })
+
+  test("send a sign-in's call as pi-ai's toAuth says: to its account's address, with its own headers", async () => {
+    const { hub, web, start, fakes } = await scene()
+    // A Copilot token names the account's endpoint: a Business seat's here.
+    const copilot = oauth(
+      "tid=1;exp=9999999999;sku=business;proxy-ep=proxy.business.githubcopilot.com",
+    )
+    await signIn(web, fakes, copilot, "github-copilot")
+    await signIn(web, fakes, oauth("kimi-access"), "kimi-coding")
+    fakes.seen.length = 0
+
+    const toCopilot = await call(hub, "/github-copilot/chat/completions", start.modToken, {
+      headers: { "copilot-integration-id": "vscode-chat" },
+    })
+    expect(toCopilot.status).toBe(200)
+    const toKimi = await call(hub, "/kimi-coding/coding/v1/chat/completions", start.modToken)
+    expect(toKimi.status).toBe(200)
+
+    expect(fakes.seen.map((seen) => [seen.url, seen.headers.authorization])).toEqual([
+      ["https://api.business.githubcopilot.com/chat/completions", `Bearer ${copilot.access}`],
+      // Kimi's sign-in says a bearer header of its own, not a key.
+      ["https://api.kimi.com/coding/v1/chat/completions", "Bearer kimi-access"],
+    ])
+    expect(fakes.seen[0]?.headers["copilot-integration-id"]).toBe("vscode-chat")
+  })
+
   test("refuse a request without a live Session token", async () => {
     const { hub, web } = await scene()
     await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
-    const response = await call(hub, "/openai/responses", "not-a-token")
+    const response = await call(hub, "/openai/v1/responses", "not-a-token")
     expect(response.status).toBe(401)
   })
 
   test("refuse a Provider the Creator hasn't connected, in the Provider's error shape", async () => {
     const { hub, start, fakes } = await scene()
     for (const provider of ["openai", "xai", "anthropic"]) {
-      const response = await call(hub, `/${provider}/responses`, start.modToken)
+      const response = await call(hub, `/${provider}/v1/responses`, start.modToken)
       expect(response.status).toBe(403)
       expect(await response.json()).toEqual({ error: { message: expect.any(String) } })
     }
-    const unknown = await call(hub, "/google/models", start.modToken)
+    const unknown = await call(hub, "/amazon-bedrock/v1/models", start.modToken)
     expect(unknown.status).toBe(404)
     expect(fakes.seen.filter((seen) => !seen.url.includes("anthropic"))).toEqual([])
   })
@@ -223,7 +287,7 @@ describe("the Gateway's model calls", () => {
     fakes.seen.length = 0
 
     // Near expiry: refreshed first.
-    const first = await call(hub, "/openai/responses", start.modToken)
+    const first = await call(hub, "/openai/v1/responses", start.modToken)
     expect(first.status).toBe(200)
     expect(fakes.seen.map((seen) => seen.headers.authorization)).toEqual(["Bearer access-2"])
 
@@ -233,7 +297,7 @@ describe("the Gateway's model calls", () => {
       request.headers.get("authorization") === "Bearer access-2"
         ? Response.json({ error: { message: "expired" } }, { status: 401 })
         : Response.json({ ok: true })
-    const second = await call(hub, "/openai/responses", start.modToken)
+    const second = await call(hub, "/openai/v1/responses", start.modToken)
     expect(second.status).toBe(200)
     expect(fakes.seen.map((seen) => [seen.headers.authorization, seen.body])).toEqual([
       ["Bearer access-2", body],
@@ -243,7 +307,7 @@ describe("the Gateway's model calls", () => {
     // Refused again: the Provider's 401 is the answer, and it isn't sent a third time.
     fakes.seen.length = 0
     fakes.answer = () => Response.json({ error: { message: "nope" } }, { status: 401 })
-    const third = await call(hub, "/openai/responses", start.modToken)
+    const third = await call(hub, "/openai/v1/responses", start.modToken)
     expect(third.status).toBe(401)
     expect(fakes.seen).toHaveLength(2)
   })
@@ -254,7 +318,7 @@ describe("the Gateway's model calls", () => {
     fakes.refresh = async () => {
       throw new Error("OpenAI OAuth token request failed (401): invalid_grant")
     }
-    const response = await call(hub, "/openai/responses", start.modToken)
+    const response = await call(hub, "/openai/v1/responses", start.modToken)
     expect(response.status).toBe(403)
     expect(await response.json()).toEqual({
       error: { message: expect.stringMatching(/connect/i) },

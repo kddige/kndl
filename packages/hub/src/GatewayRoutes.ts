@@ -43,11 +43,15 @@
 //   kndl doesn't know `404`, each in the Providers' own error shape, `{"error":{"message":…}}`,
 //   which pi shows. Claude's Models don't come through it: they run through Claude Code in the
 //   Sandbox.
-// - The call goes to pi-ai's URL for the Provider (`https://api.openai.com/v1`) with the path and
-//   query, its `authorization`, `x-api-key` and `x-goog-api-key` dropped and `Authorization:
-//   Bearer` the Creator's key or access token added. Its body is held, up to
-//   MaxModelRequestBytes, to send it once more after a sign-in refused is refreshed (Gateway.ts);
-//   the answer streams back as it comes.
+// - The call goes to the origin of the Provider's API (`https://api.openai.com`, or the one a
+//   sign-in names, as GitHub Copilot's does) with the path and query below the Provider's, so
+//   `/gateway/models/openai/v1/responses` goes to `https://api.openai.com/v1/responses`. Its
+//   `authorization`, `x-api-key` and `x-goog-api-key` are dropped, and the Creator's key or sign-in
+//   takes the place of the Session token in the one pi sent its key in: `x-goog-api-key` for
+//   Google's API, `x-api-key` for Anthropic's Messages API, else `Authorization: Bearer`. A
+//   sign-in's own headers are added (PiProviders.ts). Its body is held, up to MaxModelRequestBytes,
+//   to send it once more after a sign-in refused is refreshed (Gateway.ts); the answer streams
+//   back as it comes.
 
 import {
   InstallationId as InstallationIdSchema,
@@ -64,6 +68,7 @@ import {
   type ModelCallSent,
   type Refusal,
 } from "./Gateway.ts"
+import { keyHeaderOf } from "./PiProviders.ts"
 import { readAtMost } from "./ReadAtMost.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 
@@ -314,6 +319,7 @@ export const GatewayRoutes = HttpRouter.use(
         method: request.method,
         path,
         headers: kept(incoming.headers, heldModelHeaders),
+        keyHeader: keyHeaderOf(incoming.headers),
         body,
         signal: incoming.signal,
       })

@@ -3353,13 +3353,13 @@ export class FakeHub implements HubTransport {
 
   /**
    * Plays a Provider's sign-in, in place of any before, which ends cancelled (ADR 0029): its steps,
-   * then, for ChatGPT's, a wait for the address pasted, and for xAI's, for the code to be entered.
+   * then, for ChatGPT's and OpenRouter's, a wait for the address pasted, and for the rest, for the code.
    */
   #startSignIn(socket: FakeSocket, requestId: string, provider: ProviderId): void {
     if (this.#signIn !== null) this.#endSignIn("Cancelled")
     const signIn = { requestId, provider, socket, waitsForPaste: false }
     this.#signIn = signIn
-    const steps = signInSteps[provider]
+    const steps = signInSteps(provider)
     steps.forEach((step, index) =>
       this.#after(index + 1, () => {
         if (this.#signIn !== signIn) return

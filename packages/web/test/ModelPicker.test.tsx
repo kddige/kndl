@@ -260,7 +260,7 @@ test("Use the default unsets the level", async () => {
 // A pi Session's picker (ADR 0029): its Creator's Models, from their ProvidersState.
 
 /** Claude's Models and OpenAI's, as the Hub lists them for someone with both. */
-const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels.openai]
+const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels("openai")]
 
 /** Renders a pi Session's picker, as `picker` does a Claude Code one's. */
 async function piPicker(initial: ModelSetting) {

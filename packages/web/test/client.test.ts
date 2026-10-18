@@ -1142,9 +1142,13 @@ describe("Connected providers (ADR 0029)", () => {
   test("the welcome brings the Connected providers and the Models, Claude's first", async () => {
     const { client } = await online()
     await eventually(() => expect(connected(client)).toEqual(["openai SignIn alice@example.com"]))
-    expect(client.getState().providers?.connectable.map((each) => each.signIn)).toEqual([
+    expect(client.getState().providers?.connectable.flatMap((each) => each.signIn ?? [])).toEqual([
       "Sign in with ChatGPT",
       "Sign in with SuperGrok or X Premium",
+      "Sign in with GitHub Copilot",
+      "Sign in with OpenRouter",
+      "Sign in with Kimi Code",
+      "Sign in with Meta",
     ])
     expect(modelNames(client)[0]).toBe("anthropic/claude-opus-5-5")
     expect(modelNames(client)).toContain("openai/gpt-6-sol")

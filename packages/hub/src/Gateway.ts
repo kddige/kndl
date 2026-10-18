@@ -14,9 +14,11 @@
 //   noted, so a refusal of it later is tried once more too.
 // - A redirect isn't followed. Bodies stream both ways; answers come back compressed or not, as
 //   sent.
-// - A Session's model call (ADR 0029) goes to its Provider's own API, as pi-ai's built-in provider
-//   has it, with its Creator's key or sign-in in place of the Session's token. Its body is held,
-//   to be sent again once a sign-in refused is refreshed; the answer streams back.
+// - A Session's model call (ADR 0029) goes to its Provider's own API, at the origin pi-ai's
+//   built-in provider has, or its Creator's sign-in names, with the path pi sent. Its Creator's key
+//   takes the Session token's place, in the header pi sent that in, and a sign-in's own headers
+//   are added, as pi-ai's `toAuth` says (PiProviders.ts). Its body is held, to be sent again once
+//   a sign-in refused is refreshed; the answer streams back.
 
 import type { InstallationId, ModelProvider, SessionId } from "@kndl/protocol"
 import { Context, type Duration, Effect, Layer, Option, Redacted } from "effect"
@@ -24,6 +26,7 @@ import type { SqlError } from "effect/sql/SqlError"
 import { type CallCredential, ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
+import { apiOrigin, authorize, type KeyHeader } from "./PiProviders.ts"
 import { readAtMost } from "./ReadAtMost.ts"
 import type { SecretsUnavailable } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
@@ -143,10 +146,12 @@ export const MaxModelRequestBytes = 64 * 1024 * 1024
 /** A Session's call to a Provider's own API (ADR 0029), without credentials: those are added. */
 export interface ModelCall {
   readonly method: string
-  /** Below the Provider's API, with the query: `/responses?stream=true`. */
+  /** Below the origin of the Provider's API, with the query: `/v1/responses?stream=true`. */
   readonly path: string
   /** Without the Session's own credential, which the Gateway holds back. */
   readonly headers: Headers
+  /** The header pi sent the Session's token in as its key, where the Creator's key goes. */
+  readonly keyHeader: KeyHeader
   readonly body: Uint8Array | undefined
   readonly signal?: AbortSignal
 }
@@ -374,12 +379,13 @@ export class Gateway extends Context.Service<
             ? { _tag: "Unavailable", message }
             : { _tag: "NotConnected", message }
         }
-        const to = `${apis.baseUrl(provider)}${call.path}`
         const sendCall = (callWith: CallCredential) =>
           Effect.tryPromise({
             try: (signal) => {
+              const auth = Redacted.value(callWith.auth)
+              const to = `${apiOrigin(provider, auth)}${call.path}`
               const headers = new Headers(call.headers)
-              headers.set("authorization", `Bearer ${Redacted.value(callWith.token)}`)
+              authorize(headers, auth, call.keyHeader)
               const hasBody = !["GET", "HEAD"].includes(call.method) && call.body !== undefined
               return apis.fetch(
                 new Request(to, {

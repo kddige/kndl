@@ -149,11 +149,42 @@ export function fitSetting(models: RunnerModels | undefined, setting: ModelSetti
 
 // ── pi Sessions (ADR 0029) ─────────────────────────────────────────────────
 
-/** What the pickers call each Provider whose Models they group. */
+/** What the pickers call each Provider whose Models they group: pi-ai's names, as the Hub's. */
 export const providerNames: Record<ModelProvider, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   xai: "xAI",
+  "github-copilot": "GitHub Copilot",
+  openrouter: "OpenRouter",
+  google: "Google",
+  mistral: "Mistral",
+  deepseek: "DeepSeek",
+  groq: "Groq",
+  cerebras: "Cerebras",
+  "kimi-coding": "Kimi For Coding",
+  moonshotai: "Moonshot AI",
+  zai: "Z.AI",
+  minimax: "MiniMax",
+  meta: "Meta",
+  together: "Together",
+  fireworks: "Fireworks",
+  huggingface: "Hugging Face",
+  nvidia: "NVIDIA",
+  "vercel-ai-gateway": "Vercel AI Gateway",
+  opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
+  baseten: "Baseten",
+  "qwen-token-plan": "Qwen Token Plan",
+  "qwen-token-plan-individual": "Qwen Token Plan Individual",
+  xiaomi: "Xiaomi",
+  "xiaomi-token-plan-ams": "Xiaomi Token Plan AMS",
+  "xiaomi-token-plan-sgp": "Xiaomi Token Plan SGP",
+  "ant-ling": "Ant Ling",
+  "moonshotai-cn": "Moonshot AI CN",
+  "zai-coding-cn": "Z.AI Coding CN",
+  "minimax-cn": "MiniMax CN",
+  "qwen-token-plan-cn": "Qwen Token Plan CN",
+  "xiaomi-token-plan-cn": "Xiaomi Token Plan CN",
 }
 
 /**

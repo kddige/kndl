@@ -1,11 +1,13 @@
-// Each Member's Connected providers (ADR 0029): their own accounts at OpenAI and xAI, held on the
-// Hub, which the pi Sessions they create run on through the Gateway (GatewayRoutes.ts).
+// Each Member's Connected providers (ADR 0029): their own accounts at the Providers pi-ai serves
+// (PiProviders.ts), held on the Hub, which the pi Sessions they create run on through the Gateway
+// (GatewayRoutes.ts).
 //
 // - Connecting: with an API key, which the Hub lists the Provider's Models with first, refusing a
 //   key the Provider rejects; or by signing in with a subscription, through pi-ai's own flow, run
-//   on the Hub (ProviderRelay.ts passes its steps on). Sign in with ChatGPT ends on
-//   `127.0.0.1:1455` on the Hub's machine, which the Member's browser can't reach: they paste the
-//   address it landed on instead. One per Member and Provider: connecting again replaces it.
+//   on the Hub (ProviderRelay.ts passes its steps on). Sign in with ChatGPT, and OpenRouter's,
+//   end on `127.0.0.1` on the Hub's machine, which the Member's browser can't reach: they paste
+//   the address it landed on instead. GitHub Copilot's asks which GitHub first, as a choice. One
+//   per Member and Provider: connecting again replaces it.
 // - Storing: pi-ai's credential JSON, encrypted as a Claude credential is (Secrets.ts), bound to
 //   its owner and Provider. Write-only: its owner sees its kind and a label (the account the
 //   sign-in named, or an API key's last 4 characters), never a token. A row the Hub can't decrypt
@@ -16,7 +18,9 @@
 //   again on the Account page, and until then its Models aren't theirs.
 // - The Models: the Hub asks the Provider under the account on connecting, when its Member asks,
 //   and when its copy is a day old (off the call that found it so). It keeps those pi-ai's built-in
-//   catalogue knows, which the Runner's pi was built with. Claude's come from Anthropic under the
+//   catalogue knows, which the Runner's pi was built with. A Provider that doesn't list them, or
+//   can't now, keeps those it listed before, or else offers all of the catalogue's, and its
+//   `modelsProblem` says which. Claude's come from Anthropic under the
 //   Member's Claude credential (ClaudeCredentials.ts), kept the same way, and are the catalogue's
 //   current ones when Anthropic can't say.
 // - Every key and token, and every one replaced or forgotten since the Hub started, is masked in
@@ -25,19 +29,14 @@
 
 import { randomUUID } from "node:crypto"
 import type {
-  Api,
   AuthEvent,
   AuthPrompt,
   Credential,
   LoginOptions,
-  Model,
+  ModelAuth,
   OAuthCredential,
   ProviderAuthInteraction,
 } from "@earendil-works/pi-ai"
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models"
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic"
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai"
-import { xaiProvider } from "@earendil-works/pi-ai/providers/xai"
 import {
   type ConnectableProvider,
   type ConnectedProvider,
@@ -48,8 +47,6 @@ import {
   ProviderIds,
   ProviderModel,
   type SignInStep,
-  ThinkingLevel,
-  ThinkingLevels,
 } from "@kndl/protocol"
 import {
   Clock,
@@ -68,33 +65,35 @@ import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import { ClaudeCredentials, oauthBeta } from "./ClaudeCredentials.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
+import {
+  accountNameOf,
+  accountOf,
+  apiOrigin,
+  catalogueModels,
+  connectable,
+  currentClaude,
+  keyAuth,
+  modelsListed,
+  modelsRequest,
+  nameOf,
+  oauthOf,
+  parseJson,
+  reasonIn,
+  reasonOf,
+  record,
+  rejectsKey,
+} from "./PiProviders.ts"
 import { Secrets } from "./Secrets.ts"
 
 // ── pi-ai and the Providers ────────────────────────────────────────────────
 
-/** pi-ai's built-in providers, whose URLs, sign-ins and catalogues the Hub uses. */
-const builtIn = {
-  openai: openaiProvider(),
-  xai: xaiProvider(),
-  anthropic: anthropicProvider(),
-}
-
-/** The Provider's sign-in, as pi-ai has it. */
-const oauthOf = (provider: ProviderId) => {
-  const oauth = builtIn[provider].auth.oauth
-  if (oauth === undefined) throw new Error(`pi-ai has no sign-in for ${provider}`)
-  return oauth
-}
-
 /**
- * What the Hub needs of the Providers: where their APIs are, how to reach them, and pi-ai's sign-in
- * flows. The live layer is pi-ai's built-in providers and `fetch`; the test layer asks no one.
+ * What the Hub needs of the Providers: how to reach them, and pi-ai's sign-in flows. The live
+ * layer is pi-ai's built-in providers and `fetch`; the test layer asks no one.
  */
 export class ProviderApis extends Context.Service<
   ProviderApis,
   {
-    /** Where the Provider's API is, as pi-ai's built-in provider has it: `https://api.openai.com/v1`. */
-    readonly baseUrl: (provider: ModelProvider) => string
     /** Sends a request to a Provider, as `fetch`. */
     readonly fetch: (
       request: Request,
@@ -112,54 +111,39 @@ export class ProviderApis extends Context.Service<
       credential: OAuthCredential,
       signal: AbortSignal,
     ) => Promise<OAuthCredential>
+    /**
+     * What a call with a sign-in's tokens goes with: pi-ai's `auth.oauth.toAuth`, a key, headers,
+     * or another address for the Provider's API, as GitHub Copilot's names for each account.
+     */
+    readonly toAuth: (provider: ProviderId, credential: OAuthCredential) => Promise<ModelAuth>
   }
 >()("@kndl/hub/ProviderApis") {
   static readonly layer = Layer.succeed(ProviderApis, {
-    baseUrl: (provider) => builtIn[provider].baseUrl ?? "",
     fetch: (request, init) => fetch(request, init as RequestInit),
     signIn: (provider, interaction, options) => oauthOf(provider).login(interaction, options),
     refresh: (provider, credential, signal) => oauthOf(provider).refresh(credential, signal),
+    toAuth: (provider, credential) => oauthOf(provider).toAuth(credential),
   })
 
   /**
-   * pi-ai's URLs, with fakes for the rest, for tests: by default every Provider answers 503, and
-   * every sign-in and refresh fails.
+   * Fakes for tests, but pi-ai's own `toAuth`, which asks no one: by default every Provider
+   * answers 503, and every sign-in and refresh fails.
    */
   static readonly layerTest = (
     fakes: {
       readonly fetch?: (request: Request) => Promise<Response>
       readonly signIn?: ProviderApis["Service"]["signIn"]
       readonly refresh?: ProviderApis["Service"]["refresh"]
+      readonly toAuth?: ProviderApis["Service"]["toAuth"]
     } = {},
   ) =>
     Layer.succeed(ProviderApis, {
-      baseUrl: (provider) => builtIn[provider].baseUrl ?? "",
       fetch: fakes.fetch ?? (async () => new Response("No Provider in tests", { status: 503 })),
       signIn: fakes.signIn ?? (async () => Promise.reject(new Error("No sign-in in tests"))),
       refresh: fakes.refresh ?? (async () => Promise.reject(new Error("No refresh in tests"))),
+      toAuth: fakes.toAuth ?? ((provider, credential) => oauthOf(provider).toAuth(credential)),
     })
 }
-
-/** What the Account page calls each Provider. */
-const nameOf = (provider: ModelProvider) => builtIn[provider].name
-
-/** What a sign-in is labelled when its tokens don't name the account. */
-const subscriptionOf: Record<ProviderId, string> = {
-  openai: "ChatGPT subscription",
-  xai: "SuperGrok or X Premium",
-}
-
-/** Every Provider a Member can connect, and how, in the order the Account page lists them. */
-const connectable: ReadonlyArray<ConnectableProvider> = ProviderIds.map((provider) => {
-  const { auth } = builtIn[provider]
-  const signIn = auth.oauth?.loginLabel
-  return {
-    provider,
-    name: nameOf(provider),
-    ...(signIn !== undefined && { signIn }),
-    apiKey: auth.apiKey !== undefined,
-  }
-})
 
 // ── The Models ─────────────────────────────────────────────────────────────
 
@@ -167,119 +151,6 @@ const connectable: ReadonlyArray<ConnectableProvider> = ProviderIds.map((provide
 const modelsLifetime = Duration.toMillis(Duration.days(1))
 /** How long the Hub waits for a Provider to list its Models. */
 const listTimeout = Duration.seconds(15)
-/** How long a reason from a Provider is kept, so a strange answer can't flood the page. */
-const reasonLimit = 200
-
-const isThinkingLevel = Schema.is(ThinkingLevel)
-
-/** The thinking levels the Model takes, lowest first: the Provider's, else pi-ai's. */
-function thinkingLevelsOf(model: Model<Api>, said: ReadonlyArray<string> = []) {
-  if (!model.reasoning) return []
-  const fromProvider = said.filter(isThinkingLevel)
-  const levels =
-    fromProvider.length > 0
-      ? fromProvider
-      : getSupportedThinkingLevels(model).filter(isThinkingLevel)
-  return ThinkingLevels.filter((level) => levels.includes(level))
-}
-
-/** The Model as the Hub lists it, if pi-ai's catalogue for the Provider has it. */
-function modelOf(
-  provider: ModelProvider,
-  id: string,
-  said: {
-    readonly label?: unknown
-    readonly contextWindow?: unknown
-    readonly thinkingLevels?: ReadonlyArray<string>
-  } = {},
-): ProviderModel | undefined {
-  const known = builtIn[provider].getModels().find((model) => model.id === id)
-  if (known === undefined) return undefined
-  const contextWindow =
-    typeof said.contextWindow === "number" &&
-    Number.isInteger(said.contextWindow) &&
-    said.contextWindow > 0
-      ? said.contextWindow
-      : known.contextWindow
-  return {
-    provider,
-    id,
-    label: typeof said.label === "string" && said.label !== "" ? said.label : known.name,
-    thinkingLevels: thinkingLevelsOf(known, said.thinkingLevels),
-    ...(Number.isInteger(contextWindow) && contextWindow >= 0 && { contextWindow }),
-  }
-}
-
-/**
- * Claude's current Models in pi-ai's catalogue, for when Anthropic can't say: the newest of each
- * kind, not a dated snapshot, the most costly first.
- */
-const currentClaude: ReadonlyArray<ProviderModel> = (() => {
-  const newest = new Map<string, Model<Api>>()
-  for (const model of builtIn.anthropic.getModels()) {
-    const kind = /^claude-([a-z]+)-/.exec(model.id)?.[1]
-    if (kind === undefined || /-\d{8}$/.test(model.id)) continue
-    newest.set(kind, model)
-  }
-  return [...newest.values()]
-    .toSorted((a, b) => b.cost.output - a.cost.output)
-    .flatMap((model) => modelOf("anthropic", model.id) ?? [])
-})()
-
-const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-
-const records = (value: unknown): ReadonlyArray<Record<string, unknown>> =>
-  Array.isArray(value)
-    ? value.flatMap<Record<string, unknown>>((each: unknown) => record(each) ?? [])
-    : []
-
-const parseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * The Models a Provider's answer lists, those pi-ai knows. A ChatGPT sign-in's answer ranks them,
- * and says which to show; an API key's, and xAI's, are listed newest first.
- */
-function modelsListed(provider: ModelProvider, body: unknown): ReadonlyArray<ProviderModel> {
-  const answer = record(body)
-  if (answer !== undefined && Array.isArray(answer.models)) {
-    return records(answer.models).flatMap((model) => {
-      if (model.visibility !== "list" || typeof model.slug !== "string") return []
-      return (
-        modelOf(provider, model.slug, {
-          label: model.display_name,
-          contextWindow: model.context_window,
-          thinkingLevels: records(model.supported_reasoning_levels).flatMap((level) =>
-            typeof level.effort === "string" ? [level.effort] : [],
-          ),
-        }) ?? []
-      )
-    })
-  }
-  const data = records(answer?.data)
-  // Anthropic lists the newest first already, and says no `created`.
-  const ranked =
-    provider === "anthropic"
-      ? data
-      : data.toSorted(
-          (a, b) =>
-            (typeof b.created === "number" ? b.created : 0) -
-            (typeof a.created === "number" ? a.created : 0),
-        )
-  return ranked.flatMap((model) =>
-    typeof model.id === "string"
-      ? (modelOf(provider, model.id, { label: model.display_name }) ?? [])
-      : [],
-  )
-}
 
 /** What asking a Provider for its Models came to. */
 type Listed =
@@ -289,38 +160,35 @@ type Listed =
   /** The Provider couldn't be asked, or gave no clear answer: `message` says so. */
   | { readonly _tag: "Unavailable"; readonly message: string }
 
-/** The Provider's own reason, from its error shape, kept short. */
-const reasonIn = (body: string) => {
-  const said = record(record(parseJson(body))?.error)?.message
-  return typeof said === "string" ? `: ${said.slice(0, reasonLimit)}` : ""
+/**
+ * The Models a connection keeps when its Provider didn't list them, and why: those found before,
+ * or, with none, every one pi-ai's catalogue has for it, which Sessions can try.
+ */
+function unlisted(
+  provider: ProviderId,
+  listed: Exclude<Listed, { readonly _tag: "Listed" }>,
+  before: ReadonlyArray<ProviderModel>,
+): { readonly models: ReadonlyArray<ProviderModel>; readonly modelsProblem: string } {
+  const catalogue = catalogueModels(provider)
+  return before.length > 0 && JSON.stringify(before) !== JSON.stringify(catalogue)
+    ? {
+        models: before,
+        modelsProblem: `${listed.message}. These are the Models from the last check that worked.`,
+      }
+    : {
+        models: catalogue,
+        modelsProblem: `${listed.message}, so these are all the Models pi-ai knows for ${nameOf(provider)}.`,
+      }
 }
-
-/** A reason from pi-ai, kept short. */
-const reasonOf = (error: unknown) =>
-  (error instanceof Error ? error.message : String(error)).slice(0, reasonLimit)
 
 /**
  * Whether pi-ai's refresh failed because the Provider refused it, rather than couldn't be asked:
  * pi-ai says the token endpoint's status, or that the credential can't be refreshed.
  */
 const refusedRefresh = (error: unknown) =>
-  /\((?:HTTP )?(?:400|401|403)\)|reconnect/i.test(reasonOf(error))
-
-/**
- * Who the sign-in is for, if its access token says: a JWT's `email`, or OpenAI's profile's.
- * Read without checking its signature, for a label alone.
- */
-function accountOf(access: string): string | undefined {
-  const payload = access.split(".")[1]
-  if (payload === undefined) return undefined
-  try {
-    const claims = record(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")))
-    const email = claims?.email ?? record(claims?.["https://api.openai.com/profile"])?.email
-    return typeof email === "string" && email !== "" ? email : undefined
-  } catch {
-    return undefined
-  }
-}
+  /\((?:HTTP |status )?(?:400|401|403)\b|^(?:400|401|403)\b|reconnect|sign in again/i.test(
+    reasonOf(error),
+  )
 
 // ── Sign-in steps ──────────────────────────────────────────────────────────
 
@@ -336,29 +204,37 @@ export interface SignInSteps {
 }
 
 /**
- * ChatGPT's sign-in lands the browser on the Hub's own `127.0.0.1:1455`, which is the Member's
- * machine, not the Hub's, unless they are the same: they paste that address instead.
+ * The sign-ins that land the browser on the Hub's own loopback, `127.0.0.1`, which is the Member's
+ * machine, not the Hub's, unless they are the same: they paste the address it landed on instead.
  */
-const chatGptOpen =
-  "Sign in to ChatGPT in the page this opens. It then lands on a page at 127.0.0.1 that may not load: that's expected. Copy that page's address from the address bar and paste it below."
-const chatGptPaste =
-  "Paste the address of the page your browser landed on after you signed in: it starts with http://127.0.0.1:1455/."
+const loopback: Partial<Record<ProviderId, { readonly name: string; readonly address: string }>> = {
+  openai: { name: "ChatGPT", address: "http://127.0.0.1:1455/" },
+  openrouter: { name: "OpenRouter", address: "http://127.0.0.1" },
+}
+
+const loopbackOpen = (name: string) =>
+  `Sign in to ${name} in the page this opens. It then lands on a page at 127.0.0.1 that may not load: that's expected. Copy that page's address from the address bar and paste it below.`
+const loopbackPaste = (address: string) =>
+  `Paste the address of the page your browser landed on after you signed in: it starts with ${address}.`
 
 /** The step a pi-ai sign-in event shows the Member. */
 function stepOf(provider: ProviderId, event: AuthEvent): SignInStep | undefined {
+  const landing = loopback[provider]
   switch (event.type) {
     case "auth_url":
       return {
         _tag: "OpenUrl",
         url: event.url,
-        ...(provider === "openai"
-          ? { instructions: chatGptOpen }
+        ...(landing !== undefined
+          ? { instructions: loopbackOpen(landing.name) }
           : event.instructions !== undefined && { instructions: event.instructions }),
       }
     case "device_code":
       return { _tag: "EnterCode", url: event.verificationUri, code: event.userCode }
     case "progress":
     case "info":
+      // Where the Hub listens for the browser is no use to the Member, whose browser can't reach it.
+      if (landing !== undefined && /listening/i.test(event.message)) return undefined
       return { _tag: "Progress", message: event.message }
   }
 }
@@ -368,6 +244,7 @@ function askOf(
   provider: ProviderId,
   prompt: AuthPrompt,
 ): Extract<SignInStep, { readonly _tag: "Paste" | "Choose" }> {
+  const landing = loopback[provider]
   switch (prompt.type) {
     case "select":
       return {
@@ -381,10 +258,54 @@ function askOf(
       return {
         _tag: "Paste",
         message:
-          provider === "openai" && prompt.type === "manual_code" ? chatGptPaste : prompt.message,
+          landing !== undefined && prompt.type === "manual_code"
+            ? loopbackPaste(landing.address)
+            : prompt.message,
         ...(prompt.placeholder !== undefined && { placeholder: prompt.placeholder }),
       }
   }
+}
+
+const github = "github.com"
+const enterprise = "enterprise"
+
+/**
+ * Asks the Member what a pi-ai sign-in prompt asks: as a choice first, for GitHub Copilot's
+ * question of which GitHub, which takes a blank answer for github.com.
+ */
+async function answerTo(
+  provider: ProviderId,
+  prompt: AuthPrompt,
+  steps: SignInSteps,
+  signal: AbortSignal,
+): Promise<string> {
+  if (
+    provider === "github-copilot" &&
+    prompt.type === "text" &&
+    /enterprise/i.test(prompt.message)
+  ) {
+    const which = await steps.ask(
+      {
+        _tag: "Choose",
+        message: "Which GitHub is your Copilot subscription on?",
+        options: [
+          { id: github, label: "GitHub.com" },
+          { id: enterprise, label: "GitHub Enterprise" },
+        ],
+      },
+      signal,
+    )
+    if (which !== enterprise) return ""
+    return steps.ask(
+      {
+        _tag: "Paste",
+        message: "Your GitHub Enterprise address",
+        placeholder: prompt.placeholder ?? "company.ghe.com",
+      },
+      signal,
+    )
+  }
+  return steps.ask(askOf(provider, prompt), signal)
 }
 
 // ── Storing ────────────────────────────────────────────────────────────────
@@ -421,10 +342,14 @@ const notConnected = (provider: ModelProvider) =>
 const noKey = (provider: ProviderId) =>
   `This Hub can't store a ${nameOf(provider)} connection: it needs HUB_SECRETS_KEY in its configuration. Ask whoever runs it to set one.`
 
-/** What a call to a Provider goes with: its access token or API key. */
+/**
+ * What a call to a Provider goes with: what pi-ai says its key or sign-in sends (`auth`), and the
+ * access token or key itself (`token`), to tell the Hub which one the Provider refused.
+ */
 export interface CallCredential {
   readonly kind: ConnectionKind
   readonly token: Redacted.Redacted<string>
+  readonly auth: Redacted.Redacted<ModelAuth>
 }
 
 /** A Member's Connected providers changed. */
@@ -687,28 +612,25 @@ export class ConnectedProviders extends Context.Service<
 
       // ── Asking for Models ──────────────────────────────────────────────
 
-      /** Asks the Provider for its Models with the token: those pi-ai knows, or why not. */
-      const listModels = (provider: ModelProvider, token: string, kind: ConnectionKind) =>
+      /** Asks the Provider for its Models with what `auth` says: those pi-ai knows, or why not. */
+      const listModels = (provider: ModelProvider, auth: ModelAuth, kind: ConnectionKind) =>
         Effect.tryPromise({
           try: async (signal): Promise<Listed> => {
             const name = nameOf(provider)
             const request =
               provider === "anthropic"
-                ? new Request(`${apis.baseUrl(provider)}/v1/models?limit=1000`, {
+                ? new Request(`${apiOrigin(provider)}/v1/models?limit=1000`, {
                     headers: {
-                      authorization: `Bearer ${token}`,
+                      authorization: `Bearer ${auth.apiKey ?? ""}`,
                       "anthropic-beta": oauthBeta,
                       "anthropic-version": "2023-06-01",
                     },
                     signal,
                   })
-                : new Request(`${apis.baseUrl(provider)}/models`, {
-                    headers: { authorization: `Bearer ${token}` },
-                    signal,
-                  })
+                : modelsRequest(provider, auth, signal)
             const response = await apis.fetch(request)
             const body = await response.text()
-            if (response.status === 401 || response.status === 403) {
+            if (rejectsKey(response.status, body)) {
               return {
                 _tag: "Rejected",
                 message:
@@ -720,7 +642,10 @@ export class ConnectedProviders extends Context.Service<
             if (!response.ok) {
               return { _tag: "Unavailable", message: `${name} answered ${response.status}` }
             }
-            return { _tag: "Listed", models: modelsListed(provider, parseJson(body)) }
+            const models = modelsListed(provider, parseJson(body))
+            return models === undefined
+              ? { _tag: "Unavailable", message: `${name} didn't list its Models` }
+              : { _tag: "Listed", models }
           },
           catch: () => undefined,
         }).pipe(
@@ -743,7 +668,7 @@ export class ConnectedProviders extends Context.Service<
         const credential = claude.credentialOf(participantId)
         if (credential === undefined) return
         const token = Redacted.value(credential.token)
-        const listed = yield* listModels("anthropic", token, "SignIn")
+        const listed = yield* listModels("anthropic", { apiKey: token }, "SignIn")
         const models =
           listed._tag === "Listed" && listed.models.length > 0 ? listed.models : currentClaude
         const before = claudeModels.get(participantId)
@@ -767,7 +692,7 @@ export class ConnectedProviders extends Context.Service<
         if (Option.isNone(credential)) return
         const listed = yield* listModels(
           provider,
-          Redacted.value(credential.value.token),
+          Redacted.value(credential.value.auth),
           credential.value.kind,
         )
         const now = yield* Clock.currentTimeMillis
@@ -778,7 +703,7 @@ export class ConnectedProviders extends Context.Service<
         const next: Connection =
           listed._tag === "Listed"
             ? { ...rest, models: listed.models, modelsCheckedAt: now }
-            : { ...current, modelsCheckedAt: now, modelsProblem: listed.message }
+            : { ...rest, modelsCheckedAt: now, ...unlisted(provider, listed, current.models) }
         yield* sql`
           UPDATE connected_providers SET models = ${encodeModels(next.models)},
             models_checked_at = ${now}, models_problem = ${next.modelsProblem ?? null}
@@ -878,8 +803,9 @@ export class ConnectedProviders extends Context.Service<
       ) {
         const ciphertext = yield* seal(participantId, provider, credential)
         const now = yield* Clock.currentTimeMillis
-        const models = listed._tag === "Listed" ? listed.models : []
-        const modelsProblem = listed._tag === "Listed" ? null : listed.message
+        const kept = listed._tag === "Listed" ? undefined : unlisted(provider, listed, [])
+        const models = kept?.models ?? (listed._tag === "Listed" ? listed.models : [])
+        const modelsProblem = kept?.modelsProblem ?? null
         yield* sql`
           INSERT INTO connected_providers (participant_id, provider, kind, credential, label,
             connected_at, models, models_checked_at, models_problem, problem)
@@ -916,7 +842,7 @@ export class ConnectedProviders extends Context.Service<
           return yield* new ProviderRefusal({ message: `Paste the ${nameOf(provider)} API key.` })
         }
         if (!secrets.available) return yield* new ProviderRefusal({ message: noKey(provider) })
-        const listed = yield* listModels(provider, key, "ApiKey")
+        const listed = yield* listModels(provider, { apiKey: key }, "ApiKey")
         if (listed._tag === "Rejected") {
           return yield* new ProviderRefusal({ message: listed.message })
         }
@@ -947,8 +873,10 @@ export class ConnectedProviders extends Context.Service<
                   if (step !== undefined) steps.show(step)
                 },
                 prompt: (prompt) =>
-                  steps.ask(
-                    askOf(provider, prompt),
+                  answerTo(
+                    provider,
+                    prompt,
+                    steps,
                     prompt.signal === undefined ? signal : AbortSignal.any([signal, prompt.signal]),
                   ),
               },
@@ -956,11 +884,15 @@ export class ConnectedProviders extends Context.Service<
             ),
           catch: (error) => new ProviderRefusal({ message: reasonOf(error) }),
         })
-        const listed = yield* listModels(provider, credential.access, "SignIn")
+        const auth = yield* Effect.tryPromise({
+          try: () => apis.toAuth(provider, credential),
+          catch: (error) => new ProviderRefusal({ message: reasonOf(error) }),
+        })
+        const listed = yield* listModels(provider, auth, "SignIn")
         yield* store(
           participantId,
           provider,
-          { kind: "SignIn", label: accountOf(credential.access) ?? subscriptionOf[provider] },
+          { kind: "SignIn", label: accountOf(credential.access) ?? accountNameOf(provider) },
           credential,
           listed,
         )
@@ -1085,24 +1017,41 @@ export class ConnectedProviders extends Context.Service<
         })
       }
 
-      const callCredential = (connection: Connection): CallCredential => ({
-        kind: connection.kind,
-        token: Redacted.make(tokenOf(connection.credential)),
-      })
+      /** What a call with the connection goes with: a key itself, or what its sign-in derives. */
+      const callCredential = (connection: Connection) => {
+        const { credential } = connection
+        return Effect.map(
+          credential.type === "oauth"
+            ? Effect.tryPromise({
+                try: () => apis.toAuth(connection.provider, credential),
+                catch: (error) =>
+                  unusable(
+                    "Unavailable",
+                    `${nameOf(connection.provider)}'s sign-in can't be used: ${reasonOf(error)}`,
+                  ),
+              })
+            : Effect.succeed(keyAuth(credential) ?? {}),
+          (auth): CallCredential => ({
+            kind: connection.kind,
+            token: Redacted.make(tokenOf(credential)),
+            auth: Redacted.make(auth),
+          }),
+        )
+      }
 
       const credentialFor = (participantId: ParticipantId, provider: ModelProvider) =>
         refreshed(
           participantId,
           provider,
           (credential, now) => credential.expires - now < refreshAhead,
-        ).pipe(Effect.map(callCredential), Effect.withSpan("ConnectedProviders.credentialFor"))
+        ).pipe(Effect.flatMap(callCredential), Effect.withSpan("ConnectedProviders.credentialFor"))
 
       const rejected = (participantId: ParticipantId, provider: ModelProvider, token: string) =>
         refreshed(participantId, provider, (credential) => credential.access === token).pipe(
-          Effect.map((connection) =>
+          Effect.flatMap((connection) =>
             tokenOf(connection.credential) === token
-              ? Option.none<CallCredential>()
-              : Option.some(callCredential(connection)),
+              ? Effect.succeed(Option.none<CallCredential>())
+              : Effect.map(callCredential(connection), Option.some),
           ),
           Effect.catchTag("ProviderUnusable", () => Effect.succeed(Option.none<CallCredential>())),
           Effect.withSpan("ConnectedProviders.rejected"),

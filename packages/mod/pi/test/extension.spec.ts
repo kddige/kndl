@@ -200,7 +200,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       },
     ])
     const [first, second] = hub.gatewayRequests
-    expect(first?.path).toBe("/gateway/models/openai/responses")
+    expect(first?.path).toBe("/gateway/models/openai/v1/responses")
     expect(first?.authorization).toBe(`Bearer ${modToken}`)
     expect(first?.body.model).toBe("gpt-4.1")
     const asked = JSON.stringify(first?.body)
@@ -236,7 +236,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       usage: { model: "xai/grok-4.3", input: 50, output: 4 },
     })
     const request = hub.gatewayRequests[requests]
-    expect(request?.path).toBe("/gateway/models/xai/responses")
+    expect(request?.path).toBe("/gateway/models/xai/v1/responses")
     expect(request?.body.model).toBe("grok-4.3")
     expect(request?.body.reasoning).toMatchObject({ effort: "low" })
   }, 30_000)

@@ -446,15 +446,15 @@ describe("web channel", () => {
       {
         _tag: "ProvidersState",
         connected: [],
-        connectable: [
-          { provider: "openai", name: "OpenAI", signIn: "Sign in with ChatGPT", apiKey: true },
+        connectable: expect.arrayContaining([
           {
-            provider: "xai",
-            name: "xAI",
-            signIn: "Sign in with SuperGrok or X Premium",
+            provider: "openai",
+            name: "OpenAI",
+            signIn: "Sign in with ChatGPT",
             apiKey: true,
+            keyName: "OpenAI API key",
           },
-        ],
+        ]),
         models: [],
       },
       { _tag: "CliTokenList", tokens: [] },

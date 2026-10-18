@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { getModels } from "@earendil-works/pi-ai/compat"
-import type { ModProviders } from "@kndl/protocol"
+import { type ModProviders, ProviderIds } from "@kndl/protocol"
 import {
   defaultModel,
   fetchProviders,
@@ -33,7 +33,8 @@ describe("the Gateway providers (ADR 0029)", () => {
     })
     expect(registered.map((provider) => provider.name)).toEqual(["openai", "xai"])
     const [openai, xai] = registered
-    expect(openai?.config.baseUrl).toBe("http://hub.test:4000/gateway/models/openai")
+    // The Provider's own path below the Gateway's: pi-ai's is https://api.openai.com/v1.
+    expect(openai?.config.baseUrl).toBe("http://hub.test:4000/gateway/models/openai/v1")
     expect(openai?.config.apiKey).toBe("tok-123")
     expect(openai?.config.headers).toEqual({ Authorization: "Bearer tok-123" })
     // In the order the Hub lists them, as pi-ai's catalogue has them, each at the Gateway.
@@ -42,18 +43,18 @@ describe("the Gateway providers (ADR 0029)", () => {
     const builtin = catalog("openai").find((model) => model.id === "gpt-4.1")
     expect(openai?.config.models?.[0]).toEqual({
       ...builtin,
-      baseUrl: "http://hub.test:4000/gateway/models/openai",
+      baseUrl: "http://hub.test:4000/gateway/models/openai/v1",
     } as never)
-    expect(xai?.config.baseUrl).toBe("http://hub.test:4000/gateway/models/xai")
+    expect(xai?.config.baseUrl).toBe("http://hub.test:4000/gateway/models/xai/v1")
     expect(xai?.config.models?.map((model) => [model.id, model.api])).toEqual([
       ["grok-4.3", "openai-responses"],
     ])
   })
 
-  test("a Provider connected by a sign-in gets requests without the fields a sign-in refuses", () => {
+  test("ChatGPT's sign-in gets requests without the fields it refuses; other sign-ins, pi-ai's own", () => {
     // pi-ai leaves them out itself only for a request it sees going to OpenAI directly.
     const [openai, xai] = gatewayProviders(
-      { ...listed, signedIn: ["openai"] },
+      { ...listed, signedIn: ["openai", "xai"] },
       { hubUrl: "http://hub.test", modToken: "t", catalog },
     )
     for (const model of openai?.config.models ?? []) {
@@ -66,6 +67,97 @@ describe("the Gateway providers (ADR 0029)", () => {
     }
     const builtin = catalog("xai").find((model) => model.id === "grok-4.3")
     expect(compatOf(xai?.config.models?.[0])).toEqual(builtin?.compat)
+  })
+
+  test("Google's: pi's own Google API at the Gateway, which sends the token in Google's header", () => {
+    const [google] = gatewayProviders(
+      {
+        models: [
+          { provider: "google", id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", thinkingLevels: [] },
+        ],
+      },
+      { hubUrl: "http://hub.test", modToken: "tok", catalog },
+    )
+    expect(google?.name).toBe("google")
+    expect(google?.config.baseUrl).toBe("http://hub.test/gateway/models/google/v1beta")
+    // pi's Google client puts the key in `x-goog-api-key`; the relay still reads the bearer.
+    expect(google?.config.apiKey).toBe("tok")
+    expect(google?.config.headers).toEqual({ Authorization: "Bearer tok" })
+    const [model] = google?.config.models ?? []
+    expect([model?.id, model?.api, model?.baseUrl]).toEqual([
+      "gemini-2.5-pro",
+      "google-generative-ai",
+      "http://hub.test/gateway/models/google/v1beta",
+    ])
+  })
+
+  test("GitHub Copilot's: its Models' integration headers kept, each API's Models at their own path", () => {
+    const [copilot] = gatewayProviders(
+      {
+        models: [
+          {
+            provider: "github-copilot",
+            id: "claude-opus-5",
+            label: "Claude Opus 5",
+            thinkingLevels: [],
+          },
+          { provider: "github-copilot", id: "gpt-6-sol", label: "GPT-6 Sol", thinkingLevels: [] },
+        ],
+        signedIn: ["github-copilot"],
+      },
+      { hubUrl: "http://hub.test", modToken: "tok", catalog },
+    )
+    expect(copilot?.name).toBe("github-copilot")
+    // The Hub sends it on to the account's own endpoint, which its sign-in names.
+    expect(copilot?.config.baseUrl).toBe("http://hub.test/gateway/models/github-copilot")
+    const models = copilot?.config.models ?? []
+    expect(models.map((model) => [model.id, model.api, model.baseUrl])).toEqual([
+      ["claude-opus-5", "anthropic-messages", "http://hub.test/gateway/models/github-copilot"],
+      ["gpt-6-sol", "openai-responses", "http://hub.test/gateway/models/github-copilot"],
+    ])
+    for (const model of models) {
+      expect(model.headers).toMatchObject({ "Copilot-Integration-Id": "vscode-chat" })
+    }
+    // A sign-in other than ChatGPT's takes what its API keys take: pi-ai's own compat stays.
+    const builtin = catalog("github-copilot").find((model) => model.id === "gpt-6-sol")
+    expect(compatOf(models[1])).toEqual(builtin?.compat)
+  })
+
+  test("OpenRouter's: its Claude at /api, for Anthropic's API, and the rest at /api/v1", () => {
+    const [openrouter] = gatewayProviders(
+      {
+        models: [
+          {
+            provider: "openrouter",
+            id: "anthropic/claude-haiku-4.5",
+            label: "?",
+            thinkingLevels: [],
+          },
+          { provider: "openrouter", id: "openai/gpt-4o", label: "?", thinkingLevels: [] },
+        ],
+      },
+      { hubUrl: "http://hub.test", modToken: "tok", catalog },
+    )
+    expect(openrouter?.config.models?.map((model) => model.baseUrl)).toEqual([
+      "http://hub.test/gateway/models/openrouter/api",
+      "http://hub.test/gateway/models/openrouter/api/v1",
+    ])
+  })
+
+  test("every Provider a Member can connect is one pi has, each Model at the Gateway at its own path", () => {
+    for (const provider of ProviderIds) {
+      const [first] = catalog(provider)
+      expect([provider, first !== undefined]).toEqual([provider, true])
+      if (first === undefined) continue
+      const [registered] = gatewayProviders(
+        { models: [{ provider, id: first.id, label: first.name, thinkingLevels: [] }] },
+        { hubUrl: "http://hub.test", modToken: "tok", catalog },
+      )
+      expect(registered?.name).toBe(provider)
+      expect(registered?.config.models?.[0]?.baseUrl).toBe(
+        `http://hub.test/gateway/models/${provider}${new URL(first.baseUrl).pathname.replace(/\/+$/, "")}`,
+      )
+    }
   })
 
   test("a Provider none of whose Models pi knows isn't registered", () => {

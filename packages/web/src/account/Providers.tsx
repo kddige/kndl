@@ -1,10 +1,12 @@
 // The signed-in person's Connected providers (ADR 0029), on the Account page beside their Claude
-// credential: for each Provider the Hub can connect, its subscription sign-in and an API key field,
-// or, once connected, the account, its Models and when they were checked. The Hub runs each
-// sign-in itself and sends its steps: a page to open, which for ChatGPT's lands on an address on
-// the Hub's own machine that won't load here, so its address is pasted back; a code to enter on
-// the Provider's page; a choice; or what it is doing. Keys and pasted addresses go to the Hub
-// write-only, and are never shown again.
+// credential. Those connected come first, each with the account, its Models and when they were
+// checked. Then every other Provider the Hub can connect, a line each: those with a subscription
+// sign-in first, then those that take an API key, the most used first and the rest behind "Show
+// more". A line opens in place for its sign-in's steps, or for the key's field. The Hub runs each
+// sign-in itself and sends its steps: a page to open, which for ChatGPT's and OpenRouter's lands on
+// an address on the Hub's own machine that won't load here, so its address is pasted back; a code
+// to enter on the Provider's page; a choice; or what it is doing. Keys and pasted addresses go to
+// the Hub write-only, and are never shown again.
 
 import type { ConnectableProvider, ConnectedProvider, ProviderId, SignInStep } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -113,11 +115,53 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
   },
+  // The Providers not connected: a titled list of lines each.
+  kind: { display: "flex", flexDirection: "column", gap: space.s1 },
+  kindTitle: {
+    margin: 0,
+    color: color.textMuted,
+    fontSize: text.xs,
+    fontWeight: weight.semibold,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  lines: {
+    display: "flex",
+    flexDirection: "column",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+  },
+  line: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s3,
+    paddingBlock: space.s2,
+    paddingInline: space.s3,
+    borderTopWidth: { default: "1px", ":first-child": 0 },
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
+  lineHead: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: space.s3,
+    rowGap: space.s2,
+    minHeight: "2rem",
+  },
+  lineName: { fontSize: text.base, fontWeight: weight.medium },
+  more: { alignSelf: "flex-start" },
 })
+
+/** How many of the Providers that take only a key are listed before "Show more". */
+const keyLinesShown = 6
 
 /**
  * The Providers heading, with the Claude credential's section (`claude`), the Connected provider
- * for Anthropic, and then a section for each Provider the Hub can connect.
+ * for Anthropic, then a section for each Connected provider, and a list of the rest to connect.
  */
 export function ProvidersSection({ claude }: { claude: ReactNode }) {
   const hub = useHub()
@@ -154,43 +198,119 @@ export function ProvidersSection({ claude }: { claude: ReactNode }) {
           </p>
         )
       ) : (
-        providers.connectable.map((connectable) => (
-          <ProviderCard
-            key={connectable.provider}
-            connectable={connectable}
-            connected={providers.connected.find((each) => each.provider === connectable.provider)}
-          />
-        ))
+        <ProviderList connected={providers.connected} connectable={providers.connectable} />
       )}
     </section>
   )
 }
 
-/** One Provider: how to connect it, or what is connected, and its sign-in while one runs. */
-function ProviderCard({
-  connectable,
+/** Each Connected provider, then every other Provider the Hub can connect. */
+function ProviderList({
   connected,
+  connectable,
 }: {
-  connectable: ConnectableProvider
-  connected: ConnectedProvider | undefined
+  connected: ReadonlyArray<ConnectedProvider>
+  connectable: ReadonlyArray<ConnectableProvider>
 }) {
+  const connectionOf = (provider: ProviderId) =>
+    connected.find((each) => each.provider === provider)
+  const others = connectable.filter((each) => connectionOf(each.provider) === undefined)
+  return (
+    <>
+      {connectable.flatMap((each) => {
+        const connection = connectionOf(each.provider)
+        return connection === undefined
+          ? []
+          : [<ProviderCard key={each.provider} connectable={each} connected={connection} />]
+      })}
+      {others.length > 0 && <MoreProviders others={others} anyConnected={connected.length > 0} />}
+    </>
+  )
+}
+
+/**
+ * The Providers not connected, a line each: those with a subscription sign-in, then those that
+ * take only an API key, the first few of them until "Show more".
+ */
+function MoreProviders({
+  others,
+  anyConnected,
+}: {
+  others: ReadonlyArray<ConnectableProvider>
+  anyConnected: boolean
+}) {
+  const [all, setAll] = useState(false)
+  const subscriptions = others.filter((each) => each.signIn !== undefined)
+  const keys = others.filter((each) => each.signIn === undefined && each.apiKey)
+  const shownKeys = all ? keys : keys.slice(0, keyLinesShown)
+  return (
+    <section aria-labelledby="connect-provider" {...stylex.props(styles.section)}>
+      <div {...stylex.props(styles.sectionHead)}>
+        <h3 id="connect-provider" {...stylex.props(styles.sectionTitle)}>
+          {anyConnected ? "Connect another Provider" : "Connect a Provider"}
+        </h3>
+        <p {...stylex.props(styles.note)}>
+          Sign in with a subscription you have, or paste an API key. The Hub keeps it encrypted, and
+          only your Sessions use it.
+        </p>
+      </div>
+      {subscriptions.length > 0 && (
+        <ProviderLines title="Subscriptions" id="connect-subscriptions">
+          {subscriptions.map((each) => (
+            <ProviderLine key={each.provider} connectable={each} />
+          ))}
+        </ProviderLines>
+      )}
+      {keys.length > 0 && (
+        <ProviderLines title="API keys" id="connect-keys">
+          {shownKeys.map((each) => (
+            <ProviderLine key={each.provider} connectable={each} />
+          ))}
+        </ProviderLines>
+      )}
+      {shownKeys.length < keys.length && (
+        <Button size="sm" intent="ghost" sx={styles.more} onClick={() => setAll(true)}>
+          Show {keys.length - shownKeys.length} more
+        </Button>
+      )}
+    </section>
+  )
+}
+
+function ProviderLines({
+  title,
+  id,
+  children,
+}: {
+  title: string
+  id: string
+  children: ReactNode
+}) {
+  return (
+    <div role="group" aria-labelledby={id} {...stylex.props(styles.kind)}>
+      <h4 id={id} {...stylex.props(styles.kindTitle)}>
+        {title}
+      </h4>
+      <div {...stylex.props(styles.lines)}>{children}</div>
+    </div>
+  )
+}
+
+/** The Member's sign-in to the Provider, if one is running or just ended, and how to start one. */
+function useSignIn(connectable: ConnectableProvider, onConnected: () => void) {
   const hub = useHub()
   const { provider, name } = connectable
   const signIn = useHubState((state) => (state.signIn?.provider === provider ? state.signIn : null))
-  const [replacing, setReplacing] = useState(false)
-  const [disconnecting, setDisconnecting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
-  const titleId = `provider-${provider}`
-  const signingIn = signIn !== null && signIn.ended === null
 
-  const startSignIn = () => {
+  const start = () => {
     setStartError(null)
     // The last one's outcome goes: the store then follows this one.
     hub.clearSignIn()
     hub.startSignIn(provider).then(
       (ended) => {
         if (ended.outcome !== "Connected") return
-        setReplacing(false)
+        onConnected()
         hub.clearSignIn(ended.requestId)
         toast.show({ title: `Connected ${name}` })
       },
@@ -201,6 +321,85 @@ function ProviderCard({
     )
   }
 
+  return {
+    signIn,
+    running: signIn !== null && signIn.ended === null,
+    failed: signIn?.ended?.outcome === "Failed" ? signIn.ended : null,
+    start,
+    startError,
+  }
+}
+
+/** A Provider not connected: its name, its sign-in or key, and either, open, in place. */
+function ProviderLine({ connectable }: { connectable: ConnectableProvider }) {
+  const { provider, name } = connectable
+  const [keyOpen, setKeyOpen] = useState(false)
+  const flow = useSignIn(connectable, () => setKeyOpen(false))
+  const titleId = `provider-${provider}`
+
+  return (
+    <section aria-labelledby={titleId} {...stylex.props(styles.line)}>
+      <div {...stylex.props(styles.lineHead)}>
+        <span id={titleId} {...stylex.props(styles.lineName)}>
+          {name}
+        </span>
+        {!flow.running && (
+          <div {...stylex.props(styles.actions)}>
+            {connectable.signIn !== undefined && (
+              <Button size="sm" onClick={flow.start}>
+                {connectable.signIn}
+              </Button>
+            )}
+            {connectable.apiKey && !keyOpen && (
+              <Button
+                size="sm"
+                intent={connectable.signIn === undefined ? "secondary" : "ghost"}
+                icon={<KeyIcon />}
+                onClick={() => setKeyOpen(true)}
+              >
+                {connectable.signIn === undefined ? "Add API key" : "API key"}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {flow.running && flow.signIn !== null && <SignInSteps name={name} signIn={flow.signIn} />}
+      {!flow.running && flow.failed !== null && (
+        <Banner intent="danger" icon={<WarningIcon />} title="The sign-in failed">
+          {flow.failed.message}
+        </Banner>
+      )}
+      {flow.startError !== null && (
+        <p role="alert" {...stylex.props(styles.error)}>
+          {flow.startError}
+        </p>
+      )}
+      {keyOpen && !flow.running && (
+        <KeyForm
+          connectable={connectable}
+          autoFocus
+          onDone={() => setKeyOpen(false)}
+          onCancel={() => setKeyOpen(false)}
+        />
+      )}
+    </section>
+  )
+}
+
+/** A Connected provider: what is connected, and its sign-in while one replaces it. */
+function ProviderCard({
+  connectable,
+  connected,
+}: {
+  connectable: ConnectableProvider
+  connected: ConnectedProvider
+}) {
+  const { provider, name } = connectable
+  const [replacing, setReplacing] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
+  const flow = useSignIn(connectable, () => setReplacing(false))
+  const titleId = `provider-${provider}`
+
   return (
     <section aria-labelledby={titleId} {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
@@ -209,9 +408,9 @@ function ProviderCard({
         </h3>
         <p {...stylex.props(styles.note)}>{noteFor(connectable)}</p>
       </div>
-      {signingIn ? (
-        <SignInSteps name={name} signIn={signIn} />
-      ) : connected !== undefined && !replacing ? (
+      {flow.running && flow.signIn !== null ? (
+        <SignInSteps name={name} signIn={flow.signIn} />
+      ) : !replacing ? (
         <Connection
           name={name}
           connected={connected}
@@ -220,16 +419,15 @@ function ProviderCard({
         />
       ) : (
         <>
-          {signIn?.ended?.outcome === "Failed" && (
+          {flow.failed !== null && (
             <Banner intent="danger" icon={<WarningIcon />} title="The sign-in failed">
-              {signIn.ended.message}
+              {flow.failed.message}
             </Banner>
           )}
           <Connect
             connectable={connectable}
-            replacing={connected !== undefined}
-            onSignIn={startSignIn}
-            signInError={startError}
+            onSignIn={flow.start}
+            signInError={flow.startError}
             onDone={() => setReplacing(false)}
           />
         </>
@@ -295,7 +493,7 @@ function Connection({
       )}
       {connected.modelsProblem !== undefined && (
         <Banner intent="warning" icon={<WarningIcon />} title="Couldn't check its Models">
-          {connected.modelsProblem} These are from the last check that worked.
+          {connected.modelsProblem}
         </Banner>
       )}
       <dl aria-label={`Your ${name} connection`} {...stylex.props(styles.facts)}>
@@ -360,19 +558,55 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   )
 }
 
-/** The Provider's sign-in, and a form to paste an API key: either connects it. */
+/** The Provider's sign-in, and a form to paste an API key, to replace a connection: either does. */
 function Connect({
   connectable,
-  replacing,
   onSignIn,
   signInError,
   onDone,
 }: {
   connectable: ConnectableProvider
-  replacing: boolean
   onSignIn: () => void
   signInError: string | null
   onDone: () => void
+}) {
+  return (
+    <>
+      {connectable.signIn !== undefined && (
+        <div {...stylex.props(styles.actions)}>
+          <Button intent="primary" onClick={onSignIn}>
+            {connectable.signIn}
+          </Button>
+          {!connectable.apiKey && (
+            <Button intent="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      )}
+      {signInError !== null && (
+        <p role="alert" {...stylex.props(styles.error)}>
+          {signInError}
+        </p>
+      )}
+      {connectable.apiKey && (
+        <KeyForm connectable={connectable} onDone={onDone} onCancel={onDone} />
+      )}
+    </>
+  )
+}
+
+/** A field to paste the Provider's API key in, which the Hub checks with it as it saves it. */
+function KeyForm({
+  connectable,
+  autoFocus = false,
+  onDone,
+  onCancel,
+}: {
+  connectable: ConnectableProvider
+  autoFocus?: boolean
+  onDone: () => void
+  onCancel?: () => void
 }) {
   const hub = useHub()
   const { provider, name } = connectable
@@ -402,60 +636,40 @@ function Connect({
   }
 
   return (
-    <>
-      {connectable.signIn !== undefined && (
-        <div {...stylex.props(styles.actions)}>
-          <Button intent="primary" onClick={onSignIn}>
-            {connectable.signIn}
-          </Button>
-          {replacing && !connectable.apiKey && (
-            <Button intent="ghost" onClick={onDone}>
-              Cancel
-            </Button>
-          )}
-        </div>
-      )}
-      {signInError !== null && (
+    <form onSubmit={submit} noValidate {...stylex.props(styles.form)}>
+      <Field
+        label={connectable.keyName ?? "API key"}
+        description={`Checked with ${name} as it is saved. It is stored encrypted and never shown again.`}
+        invalid={touched && empty}
+        error={touched && empty ? "Paste a key." : undefined}
+      >
+        <Input
+          type="password"
+          value={apiKey}
+          autoComplete="off"
+          onValueChange={(next: string) => setApiKey(next)}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoFocus={autoFocus}
+          sx={styles.mono}
+        />
+      </Field>
+      {error !== null && (
         <p role="alert" {...stylex.props(styles.error)}>
-          {signInError}
+          {error}
         </p>
       )}
-      {connectable.apiKey && (
-        <form onSubmit={submit} noValidate {...stylex.props(styles.form)}>
-          <Field
-            label="API key"
-            description={`Checked with ${name} as it is saved. It is stored encrypted and never shown again.`}
-            invalid={touched && empty}
-            error={touched && empty ? "Paste a key." : undefined}
-          >
-            <Input
-              type="password"
-              value={apiKey}
-              autoComplete="off"
-              onValueChange={(next: string) => setApiKey(next)}
-              spellCheck={false}
-              autoCapitalize="off"
-              sx={styles.mono}
-            />
-          </Field>
-          {error !== null && (
-            <p role="alert" {...stylex.props(styles.error)}>
-              {error}
-            </p>
-          )}
-          <div {...stylex.props(styles.actions)}>
-            <Button type="submit" icon={<KeyIcon />} loading={busy}>
-              Connect
-            </Button>
-            {replacing && (
-              <Button intent="ghost" onClick={onDone} disabled={busy}>
-                Cancel
-              </Button>
-            )}
-          </div>
-        </form>
-      )}
-    </>
+      <div {...stylex.props(styles.actions)}>
+        <Button type="submit" icon={<KeyIcon />} loading={busy}>
+          Connect
+        </Button>
+        {onCancel !== undefined && (
+          <Button intent="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+        )}
+      </div>
+    </form>
   )
 }
 

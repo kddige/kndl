@@ -12,6 +12,16 @@ describe("a pi Session's model name", () => {
       provider: "anthropic",
       id: "claude-opus-5-5",
     })
+    expect(parseProviderModelName("google/gemini-3-pro")).toEqual({
+      provider: "google",
+      id: "gemini-3-pro",
+    })
+  })
+
+  test("keeps an id's own slashes, as OpenRouter's have", () => {
+    const model = { provider: "openrouter", id: "anthropic/claude-sonnet-4" } as const
+    expect(providerModelName(model)).toBe("openrouter/anthropic/claude-sonnet-4")
+    expect(parseProviderModelName("openrouter/anthropic/claude-sonnet-4")).toEqual(model)
   })
 
   test("reads no Provider from a Claude Code model name, or an unknown Provider", () => {
@@ -19,7 +29,7 @@ describe("a pi Session's model name", () => {
       "sonnet",
       "opus[1m]",
       "claude-sonnet-5-5",
-      "google/gemini-3",
+      "amazon-bedrock/claude-x",
       "/x",
       "openai/",
     ])

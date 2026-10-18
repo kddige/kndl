@@ -160,25 +160,37 @@ test("lists the machines the CLI is signed in on, newest first, and revokes a to
   await eventually(() => expect(listedMachines()).toEqual(["laptop"]))
 })
 
-// Connected providers (ADR 0029): beside Claude, each Provider the Hub can connect, by a sign-in
-// with a subscription or an API key.
+// Connected providers (ADR 0029): beside Claude, each Provider connected, then the rest to connect,
+// a line each, by a sign-in with a subscription or an API key.
 
 const providerSection = (provider: string) =>
   document.querySelector<HTMLElement>(`section[aria-labelledby="provider-${provider}"]`)
 const connection = (provider: string) =>
-  providerSection(provider)?.querySelector(
-    `[aria-label="Your ${provider === "xai" ? "xAI" : "OpenAI"} connection"]`,
-  )
+  providerSection(provider)?.querySelector('dl[aria-label^="Your "]')
 const keyField = (provider: string) =>
   providerSection(provider)?.querySelector('input[type="password"]') as HTMLInputElement | null
 const link = (within: ParentNode, text: string) =>
   [...within.querySelectorAll("a")].find((each) => each.textContent?.trim() === text)
+/** The Providers offered to connect, in the group titled `title`, by name. */
+const offered = (title: string) => {
+  const heading = [...document.querySelectorAll("h4")].find((each) => each.textContent === title)
+  const group = heading?.closest('[role="group"]')
+  return [...(group?.querySelectorAll("section[aria-labelledby^='provider-']") ?? [])].map(
+    (each) => each.querySelector("span")?.textContent,
+  )
+}
+/** Opens a Provider's API key field on its line. */
+const openKey = async (provider: string, label = "Add API key") => {
+  await step(() => button(label, providerSection(provider) as HTMLElement).click())
+  await eventually(() => expect(keyField(provider)).not.toBeNull())
+}
 
-test("lists the Providers beside Claude: one connected with its Models, one to connect", async () => {
+test("lists the Providers beside Claude: one connected with its Models, the rest to connect", async () => {
   await openAccount()
   await eventually(() => expect(connection("openai")).not.toBeNull())
   expect(document.querySelector("#providers")?.textContent).toBe("Providers")
   const openai = providerSection("openai") as HTMLElement
+  expect(connection("openai")?.getAttribute("aria-label")).toBe("Your OpenAI connection")
   expect(connection("openai")?.textContent).toContain("alice@example.com")
   expect(connection("openai")?.textContent).toContain("Subscription")
   expect(openai.textContent).toContain("3 Models")
@@ -197,18 +209,47 @@ test("lists the Providers beside Claude: one connected with its Models, one to c
     }),
   )
 
-  // xAI isn't connected: its sign-in and its API key are offered.
+  // The rest, a line each: those with a sign-in, then the first few that take a key.
+  expect(document.querySelector("#connect-provider")?.textContent).toBe("Connect another Provider")
+  expect(offered("Subscriptions")).toEqual([
+    "xAI",
+    "GitHub Copilot",
+    "OpenRouter",
+    "Kimi For Coding",
+    "Meta",
+  ])
+  expect(offered("API keys")).toEqual([
+    "Google",
+    "Mistral",
+    "DeepSeek",
+    "Groq",
+    "Cerebras",
+    "Moonshot AI",
+  ])
   const xai = providerSection("xai") as HTMLElement
-  expect(xai.querySelector("h3")?.textContent).toBe("xAI")
   expect(button("Sign in with SuperGrok or X Premium", xai)).toBeDefined()
-  expect(keyField("xai")).not.toBeNull()
+  // Its key's field opens on asking.
+  expect(keyField("xai")).toBeNull()
+  expect(button("API key", xai)).toBeDefined()
+  // GitHub Copilot signs in only.
+  const copilot = providerSection("github-copilot") as HTMLElement
+  expect(button("Sign in with GitHub Copilot", copilot)).toBeDefined()
+  expect(copilot.textContent).not.toContain("API key")
   expect(connection("xai")).toBeNull()
+
+  // The rest that take a key are behind Show more.
+  expect(providerSection("xiaomi-token-plan-cn")).toBeNull()
+  await step(() => button("Show 21 more", document.body).click())
+  expect(offered("API keys")).toContain("Xiaomi Token Plan CN")
+  expect(offered("API keys")).toHaveLength(27)
 })
 
 test("connects a Provider with an API key, shown by its last 4 characters, and says why one is refused", async () => {
   await openAccount()
-  await eventually(() => expect(keyField("xai")).not.toBeNull())
+  await eventually(() => expect(providerSection("xai")).not.toBeNull())
   const xai = providerSection("xai") as HTMLElement
+  await openKey("xai", "API key")
+  expect(xai.textContent).toContain("xAI API key")
   await step(() => typeInto(keyField("xai") as HTMLInputElement, "xai-REJECTED-made-up-key"))
   await step(() => button("Connect", xai).click())
   await eventually(() =>
@@ -219,6 +260,47 @@ test("connects a Provider with an API key, shown by its last 4 characters, and s
   await eventually(() => expect(connection("xai")?.textContent).toContain("…9z8y"))
   expect(connection("xai")?.textContent).toContain("API key")
   expect(document.body.innerHTML).not.toContain("made-up-key-for-tests")
+})
+
+test("connects one of many Providers by its key: Google's, named as Google names it", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("google")).not.toBeNull())
+  expect(document.querySelector("#connect-provider")?.textContent).toBe("Connect a Provider")
+  const google = providerSection("google") as HTMLElement
+  await openKey("google")
+  expect(google.textContent).toContain("Gemini API key")
+  // Cancel closes the field, and nothing is sent.
+  await step(() => button("Cancel", google).click())
+  expect(keyField("google")).toBeNull()
+  await openKey("google")
+  await step(() => typeInto(keyField("google") as HTMLInputElement, "gemini-made-up-key-5x7w"))
+  await step(() => button("Connect", google).click())
+  // Connected, it moves up among the connected, with its own card.
+  await eventually(() => expect(connection("google")?.textContent).toContain("…5x7w"))
+  expect(providerSection("google")?.querySelector("h3")?.textContent).toBe("Google")
+  expect(offered("API keys")).not.toContain("Google")
+  expect(fakeHub().received.find((m) => m._tag === "ConnectProviderKey")).toMatchObject({
+    provider: "google",
+  })
+})
+
+test("signs in to GitHub Copilot with a code, from its line, and it moves up once connected", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("github-copilot")).not.toBeNull())
+  const copilot = providerSection("github-copilot") as HTMLElement
+  await step(() => button("Sign in with GitHub Copilot", copilot).click())
+  await eventually(() =>
+    expect(copilot.querySelector('[aria-label="Sign-in code"]')?.textContent).toBe("WDJB-MJHT"),
+  )
+  expect(link(copilot, "Open the sign-in page")?.getAttribute("href")).toBe(
+    "https://github.com/login/device",
+  )
+  // While it runs, the line's buttons give way to its steps.
+  expect(copilot.textContent).not.toContain("Sign in with GitHub Copilot")
+  await eventually(() =>
+    expect(connection("github-copilot")?.textContent).toContain("GitHub Copilot subscription"),
+  )
+  expect(offered("Subscriptions")).not.toContain("GitHub Copilot")
 })
 
 test("signs in with ChatGPT: a page to open, then the address it lands on pasted back", async () => {
@@ -243,7 +325,7 @@ test("signs in with ChatGPT: a page to open, then the address it lands on pasted
   await step(() => button("Continue", openai).click())
   await eventually(() => expect(connection("openai")?.textContent).toContain("alice@example.com"))
   expect(fakeHub().received.find((m) => m._tag === "AnswerSignIn")).toBeDefined()
-  expect(link(openai, "Open the sign-in page")).toBeUndefined()
+  expect(link(providerSection("openai") as HTMLElement, "Open the sign-in page")).toBeUndefined()
 })
 
 test("signs in to xAI with a code to enter, and Cancel stops it", async () => {
@@ -294,7 +376,9 @@ test("disconnects a Provider after asking", async () => {
   expect(confirm.textContent).toContain("Disconnect OpenAI?")
   await step(() => button("Disconnect", confirm).click())
   await eventually(() => expect(connection("openai")).toBeNull())
+  // Back among those to connect.
   expect(button("Sign in with ChatGPT", providerSection("openai") as HTMLElement)).toBeDefined()
+  expect(offered("Subscriptions")[0]).toBe("OpenAI")
 })
 
 test("without CLI tokens, shows the command that signs the CLI in", async () => {

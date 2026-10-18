@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
 import type { AuthPrompt, OAuthCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai"
-import { ParticipantId } from "@kndl/protocol"
+import { ParticipantId, ProviderIds } from "@kndl/protocol"
 import { Duration, Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
@@ -73,6 +73,8 @@ function fakeProviders() {
     anthropic: (): Response => new Response("down", { status: 503 }),
     /** What OpenAI's and xAI's model lists answer instead, when set. */
     modelsStatus: undefined as number | undefined,
+    /** What every other Provider answers; by default, nothing there. */
+    other: (_request: Request): Response => new Response("not here", { status: 404 }),
     signIn: async (
       _provider: string,
       _interaction: ProviderAuthInteraction,
@@ -94,6 +96,7 @@ function fakeProviders() {
       })
       const auth = input.headers.get("authorization") ?? ""
       if (url.host === "api.anthropic.com") return fakes.anthropic()
+      if (url.host !== "api.openai.com" && url.host !== "api.x.ai") return fakes.other(input)
       if (url.pathname !== "/v1/models") return new Response("not here", { status: 404 })
       if (fakes.modelsStatus !== undefined)
         return new Response("{}", { status: fakes.modelsStatus })
@@ -234,17 +237,42 @@ describe("connecting a Provider with an API key", () => {
     expect(welcomed).toEqual({
       _tag: "ProvidersState",
       connected: [],
-      connectable: [
-        { provider: "openai", name: "OpenAI", signIn: "Sign in with ChatGPT", apiKey: true },
-        {
-          provider: "xai",
-          name: "xAI",
-          signIn: "Sign in with SuperGrok or X Premium",
-          apiKey: true,
-        },
-      ],
+      connectable: expect.any(Array),
       models: [],
     })
+    // The most used first, each as pi-ai names it and signs in to it.
+    expect(welcomed.connectable.slice(0, 5)).toEqual([
+      {
+        provider: "openai",
+        name: "OpenAI",
+        signIn: "Sign in with ChatGPT",
+        apiKey: true,
+        keyName: "OpenAI API key",
+      },
+      {
+        provider: "xai",
+        name: "xAI",
+        signIn: "Sign in with SuperGrok or X Premium",
+        apiKey: true,
+        keyName: "xAI API key",
+      },
+      // Copilot's sign-in alone: pi-ai's token for it is the one the sign-in gets.
+      {
+        provider: "github-copilot",
+        name: "GitHub Copilot",
+        signIn: "Sign in with GitHub Copilot",
+        apiKey: false,
+      },
+      {
+        provider: "openrouter",
+        name: "OpenRouter",
+        signIn: "Sign in with OpenRouter",
+        apiKey: true,
+        keyName: "OpenRouter API key",
+      },
+      { provider: "google", name: "Google", apiKey: true, keyName: "Gemini API key" },
+    ])
+    expect(welcomed.connectable.map((each) => each.provider)).toEqual([...ProviderIds])
     const elsewhere = await openWeb(hub, "alice", web.cookie)
     await elsewhere.take("ProvidersState")
     const bob = await openWeb(hub, "bob", undefined, { setupToken: false })
@@ -340,6 +368,67 @@ describe("connecting a Provider with an API key", () => {
     })
     if (answer._tag !== "ProvidersState") throw new Error(JSON.stringify(answer))
     expect(answer.models.map((model) => `${model.provider}/${model.id}`)).toEqual(["xai/grok-4.7"])
+  })
+
+  test("a Gemini key goes in Google's header, and lists Google's Models", async () => {
+    const { web, fakes } = await scene()
+    fakes.other = (sent) =>
+      sent.headers.get("x-goog-api-key") === "gemini-key"
+        ? Response.json({
+            models: [
+              {
+                name: "models/gemini-2.5-flash",
+                displayName: "Gemini 2.5 Flash",
+                inputTokenLimit: 1048576,
+                supportedGenerationMethods: ["generateContent", "countTokens"],
+              },
+              { name: "models/gemini-2.5-pro", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+            ],
+          })
+        : Response.json(
+            { error: { code: 400, message: "API key not valid. Please pass a valid API key." } },
+            { status: 400 },
+          )
+    const refused = await request(web, {
+      _tag: "ConnectProviderKey",
+      provider: "google",
+      apiKey: "wrong-key",
+    })
+    expect(refused).toMatchObject({
+      _tag: "CommandFailed",
+      message: expect.stringContaining("Google rejected this key"),
+    })
+    const answer = await request(web, {
+      _tag: "ConnectProviderKey",
+      provider: "google",
+      apiKey: "gemini-key",
+    })
+    if (answer._tag !== "ProvidersState") throw new Error(JSON.stringify(answer))
+    expect(answer.models.map((model) => [model.id, model.label])).toEqual([
+      ["gemini-2.5-pro", "Gemini 2.5 Pro"],
+      ["gemini-2.5-flash", "Gemini 2.5 Flash"],
+    ])
+    expect(fakes.seen.at(-1)).toMatchObject({
+      url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+      headers: expect.not.objectContaining({ authorization: expect.anything() }),
+    })
+  })
+
+  test("a Provider that doesn't list its Models offers pi-ai's, and says so", async () => {
+    const { web } = await scene()
+    const answer = await request(web, {
+      _tag: "ConnectProviderKey",
+      provider: "minimax",
+      apiKey: "minimax-key",
+    })
+    if (answer._tag !== "ProvidersState") throw new Error(JSON.stringify(answer))
+    const [minimax] = answer.connected
+    expect(minimax?.models.length).toBeGreaterThan(0)
+    expect(minimax?.models.every((model) => model.provider === "minimax")).toBe(true)
+    expect(minimax?.modelsProblem).toBe(
+      "MiniMax answered 404, so these are all the Models pi-ai knows for MiniMax.",
+    )
   })
 
   test("disconnecting forgets the key", async () => {
@@ -479,6 +568,85 @@ describe("signing in to a Provider", () => {
 
     await elsewhere.close()
     expect(await eventually(() => second?.aborted === true)).toBe(true)
+  })
+
+  test("GitHub Copilot's: which GitHub, a device code, then its Models from the account's own endpoint", async () => {
+    const { web, fakes } = await scene()
+    // A Copilot token names the account's endpoint, which pi-ai's toAuth reads.
+    const token = "tid=1;exp=9999999999;sku=business;proxy-ep=proxy.business.githubcopilot.com"
+    const answers: Array<string> = []
+    fakes.signIn = async (_provider, interaction) => {
+      answers.push(
+        await interaction.prompt({
+          type: "text",
+          message: "GitHub Enterprise URL/domain (blank for github.com)",
+          placeholder: "company.ghe.com",
+        }),
+      )
+      interaction.notify({
+        type: "device_code",
+        userCode: "WXYZ-9876",
+        verificationUri: "https://github.com/login/device",
+      })
+      return oauth(token)
+    }
+    fakes.other = (sent) => {
+      const url = new URL(sent.url)
+      if (url.host !== "api.business.githubcopilot.com" || url.pathname !== "/models") {
+        return new Response("not here", { status: 404 })
+      }
+      return Response.json({
+        data: [
+          { id: "gpt-6-sol", model_picker_enabled: true, policy: { state: "enabled" } },
+          { id: "claude-opus-5", model_picker_enabled: true, policy: { state: "unconfigured" } },
+          { id: "gpt-5-mini", model_picker_enabled: false },
+          { id: "grok-4.7", model_picker_enabled: true, policy: { state: "disabled" } },
+          { id: "not-in-pi-ai", model_picker_enabled: true },
+          {
+            id: "gpt-6-luna",
+            model_picker_enabled: true,
+            capabilities: { supports: { tool_calls: false } },
+          },
+        ],
+      })
+    }
+
+    web.send({ _tag: "StartSignIn", requestId: "c-1", provider: "github-copilot" })
+    // Which GitHub, as a choice: pi-ai asks for a domain, blank for github.com.
+    expect((await web.take("SignInStepped")).step).toEqual({
+      _tag: "Choose",
+      message: expect.any(String),
+      options: [
+        { id: "github.com", label: "GitHub.com" },
+        { id: "enterprise", label: "GitHub Enterprise" },
+      ],
+    })
+    web.send({ _tag: "AnswerSignIn", requestId: "c-1", value: "github.com" })
+    expect((await web.take("SignInStepped")).step).toEqual({
+      _tag: "EnterCode",
+      url: "https://github.com/login/device",
+      code: "WXYZ-9876",
+    })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    expect(answers).toEqual([""])
+
+    const state = await web.take("ProvidersState", (m) => m.connected.length > 0)
+    expect(state.connected).toMatchObject([
+      { provider: "github-copilot", kind: "SignIn", label: "GitHub Copilot subscription" },
+    ])
+    // Those its picker offers, that call tools and pi-ai knows, the most capable first.
+    expect(state.connected[0]?.models.map((model) => model.id)).toEqual([
+      "claude-opus-5",
+      "gpt-6-sol",
+    ])
+    expect(state.connected[0]?.modelsProblem).toBeUndefined()
+    const listed = fakes.seen.find((seen) => seen.url.includes("githubcopilot"))
+    expect(listed?.url).toBe("https://api.business.githubcopilot.com/models")
+    expect(listed?.headers).toMatchObject({
+      authorization: `Bearer ${token}`,
+      "copilot-integration-id": "vscode-chat",
+      "editor-version": expect.any(String),
+    })
   })
 
   test("an answer with no step waiting is refused", async () => {
