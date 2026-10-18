@@ -263,7 +263,7 @@ test("lists the Providers beside Claude: one connected with its Models, the rest
   await step(() => (openai.firstElementChild as HTMLElement).click())
   expect(openai.textContent).not.toContain("GPT-6-Sol mini")
 
-  await menuItem("Actions for OpenAI", "Refresh models")
+  await menuItem("Actions for OpenAI", "Refresh OpenAI's Models")
   await eventually(() =>
     expect(fakeHub().received.at(-1)).toMatchObject({
       _tag: "RefreshProviderModels",

@@ -433,7 +433,7 @@ function ProviderRow({
             <MenuItem onClick={() => setOpen((was) => !was)}>
               {open ? `Hide ${name}'s Models` : `Show ${name}'s Models`}
             </MenuItem>
-            <MenuItem onClick={() => void refresh()}>Refresh models</MenuItem>
+            <MenuItem onClick={() => void refresh()}>Refresh {name}'s Models</MenuItem>
             <MenuItem
               onClick={() => {
                 setReplacing(true)
