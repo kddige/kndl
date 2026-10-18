@@ -361,6 +361,19 @@ describe("connecting a Provider with an API key", () => {
     expect(await storedText(hub)).toBe("[]")
   })
 
+  test("refuses a key for a Provider that takes none, as GitHub Copilot's sign-in alone connects it", async () => {
+    const { hub, web, fakes } = await scene()
+    fakes.other = () => Response.json({ data: [{ id: "gpt-6-sol" }] })
+    const answer = await request(web, {
+      _tag: "ConnectProviderKey",
+      provider: "github-copilot",
+      apiKey: "ghu_FAKE_TOKEN_FOR_TESTS_ONLY",
+    })
+    expect(answer).toMatchObject({ _tag: "CommandFailed", command: "ConnectProviderKey" })
+    expect(await storedText(hub)).toBe("[]")
+    expect(fakes.seen).toEqual([])
+  })
+
   test("an xAI key keeps xAI's Models alone", async () => {
     const { web } = await scene()
     const answer = await request(web, {

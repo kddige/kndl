@@ -200,6 +200,10 @@ export const connectable: ReadonlyArray<ConnectableProvider> = ProviderIds.map((
   }
 })
 
+/** Whether a Member may connect the Provider with a key they paste. */
+export const takesApiKey = (provider: ProviderId) =>
+  connectable.some((each) => each.provider === provider && each.apiKey)
+
 // ── Where its API is, and how a call is authorised ─────────────────────────
 
 /** The Provider's catalogue, as the Runner's pi has it. */

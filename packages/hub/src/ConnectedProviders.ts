@@ -93,6 +93,7 @@ import {
   rejectsKey,
   signInDomainTrusted,
   signInOrigin,
+  takesApiKey,
   upstreamUrl,
 } from "./PiProviders.ts"
 import { Secrets } from "./Secrets.ts"
@@ -943,6 +944,11 @@ export class ConnectedProviders extends Context.Service<
         provider: ProviderId,
         apiKey: Redacted.Redacted<string>,
       ) {
+        if (!takesApiKey(provider)) {
+          return yield* new ProviderRefusal({
+            message: `${nameOf(provider)} isn't connected with an API key: sign in to it instead.`,
+          })
+        }
         const key = Redacted.value(apiKey).trim()
         if (key === "" || /\s/.test(key)) {
           return yield* new ProviderRefusal({ message: `Paste the ${nameOf(provider)} API key.` })
