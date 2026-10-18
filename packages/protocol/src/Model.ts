@@ -5,6 +5,13 @@ import { Schema } from "effect"
 // setting, and starts Claude Code with `--model` and `--effort` from it, restarting it between
 // Turns when the setting changes.
 
+/**
+ * What runs a Session's agent in its Sandbox (ADR 0029): Claude Code, on Claude Models alone, or
+ * pi, on any Model of its Creator's Connected providers and Claude's.
+ */
+export const Harness = Schema.Literals(["ClaudeCode", "Pi"])
+export type Harness = typeof Harness.Type
+
 /** The longest model name the Hub takes, in characters. */
 export const MaxModelNameLength = 200
 

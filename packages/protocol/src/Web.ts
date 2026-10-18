@@ -1,11 +1,6 @@
 import { Schema } from "effect"
 import { AttachmentIds, PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion } from "./Build.ts"
-import {
-  ClaudeCredentialState,
-  RemoveClaudeCredential,
-  SetClaudeCredential,
-} from "./ClaudeCredential.ts"
 import { CliTokenId, CliTokenInfo } from "./Cli.ts"
 import {
   ApplyEnvironment,
@@ -44,8 +39,9 @@ import {
   McpServersState,
 } from "./McpServer.ts"
 import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
-import { ThinkingLevel, ModelName } from "./Model.ts"
+import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
+import { ProviderCommand, ProviderMessage } from "./Provider.ts"
 import {
   BranchChoice,
   BranchName,
@@ -200,6 +196,11 @@ export const CreateSession = Schema.TaggedStruct("CreateSession", {
   repo: RepoName,
   branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
+  /**
+   * What runs its agent (ADR 0029); absent, pi when the Runner runs it, else Claude Code. A pi
+   * Session's `model` is one of its Creator's ProvidersState Models, `openai/gpt-6-sol`.
+   */
+  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
@@ -617,8 +618,7 @@ export const WebToHub = Schema.Union([
   SetSharedVariable,
   DeleteSharedVariable,
   McpServerCommand,
-  SetClaudeCredential,
-  RemoveClaudeCredential,
+  ProviderCommand,
   CheckAppPermissions,
   HubUpdateCommand,
   RepoLookup,
@@ -978,7 +978,7 @@ export const HubToWeb = Schema.Union([
   McpServerPackageRead,
   InstallationAuthorizing,
   InstallationNeedsClient,
-  ClaudeCredentialState,
+  ProviderMessage,
   AppPermissionsChecked,
   HubUpdateMessage,
   RepoChecked,

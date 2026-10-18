@@ -13,7 +13,7 @@ import {
   ToolCallId,
   TurnId,
 } from "./Ids.ts"
-import { ThinkingLevel, ModelName, RunnerModels } from "./Model.ts"
+import { Harness, ModelName, RunnerModels, ThinkingLevel } from "./Model.ts"
 import { SysinfoSample } from "./Sysinfo.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
@@ -524,6 +524,8 @@ export const SessionSummary = Schema.Struct({
    * default. Shared: anyone with access may change it, from the next Turn on.
    */
   model: Schema.optionalKey(ModelName),
+  /** What runs its agent (ADR 0029); absent for a Session from before, which runs Claude Code. */
+  harness: Schema.optionalKey(Harness),
   /** Its thinking level (#128): absent for Claude Code's default. */
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**

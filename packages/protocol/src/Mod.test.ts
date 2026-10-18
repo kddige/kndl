@@ -93,6 +93,8 @@ const hubToMod = [
     answer: { _tag: "Dismissed" },
     sender: bob,
   },
+  { _tag: "SwitchModel", sessionId: "s-1", model: "openai/gpt-6-sol", thinkingLevel: "high" },
+  { _tag: "SwitchModel", sessionId: "s-1" },
 ]
 
 describe("ModToHub", () => {

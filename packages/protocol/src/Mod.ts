@@ -10,6 +10,7 @@ import {
   SessionId,
   ToolCallId,
 } from "./Ids.ts"
+import { ModelName, ThinkingLevel } from "./Model.ts"
 import { Participant, PresenceChanged, QuestionAnswer, StopAgent, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -59,6 +60,11 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    * send it files those ways.
    */
   attaches: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It takes a {@link SwitchModel} (ADR 0029): a pi Session's. The Hub then switches its model
+   * between Turns that way, instead of restarting its Harness with a RelaunchSession.
+   */
+  switchesModels: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
@@ -231,6 +237,18 @@ export const ModAttachment = Schema.Struct({
 export type ModAttachment = typeof ModAttachment.Type
 export type ModAttachmentEncoded = typeof ModAttachment.Encoded
 
+/**
+ * Run the Session's next Turns on this model and thinking level (ADR 0029), sent only while no
+ * Turn runs, and only to a mod whose hello says it `switchesModels`. Absent, each is the
+ * Harness's default.
+ */
+export const SwitchModel = Schema.TaggedStruct("SwitchModel", {
+  sessionId: SessionId,
+  model: Schema.optionalKey(ModelName),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
+})
+export type SwitchModel = typeof SwitchModel.Type
+
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([
   ModWelcome,
@@ -242,6 +260,7 @@ export const HubToMod = Schema.Union([
   StopAgent,
   PresenceChanged,
   DeliverAnswer,
+  SwitchModel,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
 export type HubToModEncoded = typeof HubToMod.Encoded
@@ -262,6 +281,7 @@ export const ModCommand = Schema.Union([
   StopAgent,
   PresenceChanged,
   DeliverAnswer,
+  SwitchModel,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
 

@@ -18,7 +18,7 @@ import {
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
 import { ConversationId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import { GatewayServer } from "./McpServer.ts"
-import { ThinkingLevel, ModelName, RunnerModels } from "./Model.ts"
+import { Harness, ModelName, RunnerModels, ThinkingLevel } from "./Model.ts"
 import { BranchName, OpenPort, RepoName } from "./Session.ts"
 import { MaxDiskUsageSessions, SessionDiskSize, Sysinfo } from "./Sysinfo.ts"
 import {
@@ -80,6 +80,11 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * or one that couldn't find out: its Sessions then run Claude Code's defaults only.
    */
   models: Schema.optionalKey(RunnerModels),
+  /**
+   * The Harnesses it runs Sessions on (ADR 0029). A Runner from before doesn't say: it runs Claude
+   * Code alone.
+   */
+  harnesses: Schema.optionalKey(Schema.Array(Harness)),
   /**
    * It takes a {@link RelaunchSession} (#128). A Runner from before doesn't say so: a Session's
    * new model then takes effect when it next wakes.
@@ -282,6 +287,12 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    */
   gitIdentity: Schema.optionalKey(GitIdentity),
   /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
+  /**
+   * What runs its agent (ADR 0029); absent, Claude Code. A pi Session's `model` is a Provider's
+   * Model, `openai/gpt-6-sol`, and its Claude credential is fetched only for Claude's Models: a
+   * refusal doesn't fail its start.
+   */
+  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
   /** The thinking level to start Claude Code at, its `--effort` (#128); absent for its default. */
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
