@@ -74,7 +74,8 @@ function fakeProviders() {
     /** What OpenAI's and xAI's model lists answer instead, when set. */
     modelsStatus: undefined as number | undefined,
     /** What every other Provider answers; by default, nothing there. */
-    other: (_request: Request): Response => new Response("not here", { status: 404 }),
+    other: (_request: Request): Response | Promise<Response> =>
+      new Response("not here", { status: 404 }),
     signIn: async (
       _provider: string,
       _interaction: ProviderAuthInteraction,
@@ -372,6 +373,39 @@ describe("connecting a Provider with an API key", () => {
     expect(answer).toMatchObject({ _tag: "CommandFailed", command: "ConnectProviderKey" })
     expect(await storedText(hub)).toBe("[]")
     expect(fakes.seen).toEqual([])
+  })
+
+  test("waiting on the Provider holds up none of the connection's other commands", async () => {
+    const { web, fakes } = await scene()
+    const listed = Promise.withResolvers<void>()
+    fakes.other = async () => {
+      await listed.promise
+      return Response.json({ data: [{ id: "MiniMax-M2" }] })
+    }
+    web.send({
+      _tag: "ConnectProviderKey",
+      requestId: "slow-key",
+      provider: "minimax",
+      apiKey: "minimax-key",
+    })
+    // Answered while MiniMax is still asked.
+    expect(await request(web, { _tag: "GetProviders" })).toMatchObject({ connected: [] })
+    listed.resolve()
+    expect(await web.take("ProvidersState", (m) => m.requestId === "slow-key")).toMatchObject({
+      connected: [{ provider: "minimax" }],
+    })
+
+    const relisted = Promise.withResolvers<void>()
+    fakes.other = async () => {
+      await relisted.promise
+      return Response.json({ data: [{ id: "MiniMax-M2" }] })
+    }
+    web.send({ _tag: "RefreshProviderModels", requestId: "slow-refresh", provider: "minimax" })
+    expect(await request(web, { _tag: "GetProviders" })).toMatchObject({
+      connected: [{ provider: "minimax" }],
+    })
+    relisted.resolve()
+    await web.take("ProvidersState", (m) => m.requestId === "slow-refresh")
   })
 
   test("an xAI key keeps xAI's Models alone", async () => {

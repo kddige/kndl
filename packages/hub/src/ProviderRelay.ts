@@ -7,7 +7,9 @@
 //   Claude credential changed, since Claude's Models are among them. No one else is sent them.
 // - Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030) is theirs to set
 //   (SetClaudeHarness), sent with the rest.
-// - Connecting with an API key waits for the Provider to list its Models with it, off the lock.
+// - Connecting with an API key waits for the Provider to list its Models with it, and asking for
+//   the Models again waits for each Provider: both off the lock, and off the connection's other
+//   commands, which are answered meanwhile.
 // - A sign-in runs the Provider's flow on the Hub, off the connection's own messages, so the
 //   Member can answer its steps: each is sent to the connection that started it (SignInStepped),
 //   and then how it ended (SignInEnded). One sign-in per Member at a time: a new one, from any of
@@ -28,7 +30,8 @@ import {
   type WebToHub,
 } from "@kndl/protocol"
 import { Cause, Effect, Exit, Fiber, Option, Redacted, Schema, type Scope } from "effect"
-import { ConnectedProviders } from "./ConnectedProviders.ts"
+import type { SqlError } from "effect/sql/SqlError"
+import { ConnectedProviders, type ProviderRefusal } from "./ConnectedProviders.ts"
 import type { Peer } from "./Peers.ts"
 
 const isProviderMessage = Schema.is(ProviderCommand)
@@ -176,6 +179,32 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
       )
   })
 
+  /** Answers the command's refusal, or the Hub's failure, to the web client. */
+  const answeringFailures =
+    (client: ProviderWebClient, message: Command) =>
+    <R>(effect: Effect.Effect<void, ProviderRefusal | SqlError, R>) =>
+      effect.pipe(
+        Effect.catchTags({
+          ProviderRefusal: (refused) => Effect.sync(() => refuse(client, message, refused.message)),
+          SqlError: (error) =>
+            Effect.logError("A Connected provider command failed", error).pipe(
+              Effect.andThen(
+                Effect.sync(() => refuse(client, message, "The Hub could not do that; try again.")),
+              ),
+            ),
+        }),
+      )
+
+  /**
+   * Runs a command that waits on a Provider, up to a minute, off the web client's other
+   * commands, as a sign-in runs: its answer comes when it is done.
+   */
+  const inBackground = <R>(
+    client: ProviderWebClient,
+    message: Command,
+    effect: Effect.Effect<void, ProviderRefusal | SqlError, R>,
+  ) => effect.pipe(answeringFailures(client, message), Effect.forkIn(scope), Effect.asVoid)
+
   const handle = Effect.fn("ProviderRelay.handle")(function* (
     client: ProviderWebClient,
     message: Command,
@@ -185,11 +214,16 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     switch (message._tag) {
       case "GetProviders":
         return peer.send(yield* stateOf(you.id, message.requestId))
-      case "ConnectProviderKey": {
-        yield* providers.connectKey(you.id, message.provider, message.apiKey)
-        yield* Effect.logInfo(`${you.login} connected ${message.provider} with an API key`)
-        return yield* changed(you.id, asker)
-      }
+      case "ConnectProviderKey":
+        return yield* inBackground(
+          client,
+          message,
+          Effect.gen(function* () {
+            yield* providers.connectKey(you.id, message.provider, message.apiKey)
+            yield* Effect.logInfo(`${you.login} connected ${message.provider} with an API key`)
+            yield* changed(you.id, asker)
+          }),
+        )
       case "StartSignIn":
         return yield* startSignIn(client, message.requestId, message.provider)
       case "AnswerSignIn": {
@@ -212,10 +246,14 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         }
         return yield* changed(you.id, asker)
       }
-      case "RefreshProviderModels": {
-        yield* providers.refreshModels(you.id, message.provider)
-        return yield* changed(you.id, asker)
-      }
+      case "RefreshProviderModels":
+        return yield* inBackground(
+          client,
+          message,
+          providers
+            .refreshModels(you.id, message.provider)
+            .pipe(Effect.andThen(changed(you.id, asker))),
+        )
       case "SetClaudeHarness": {
         yield* providers.setClaudeHarness(you.id, message.harness)
         return yield* changed(you.id, asker)
@@ -225,17 +263,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
 
   /** Handles a command from the web client. */
   const receiveWeb = (client: ProviderWebClient, message: Command) =>
-    handle(client, message).pipe(
-      Effect.catchTags({
-        ProviderRefusal: (refused) => Effect.sync(() => refuse(client, message, refused.message)),
-        SqlError: (error) =>
-          Effect.logError("A Connected provider command failed", error).pipe(
-            Effect.andThen(
-              Effect.sync(() => refuse(client, message, "The Hub could not do that; try again.")),
-            ),
-          ),
-      }),
-    )
+    handle(client, message).pipe(answeringFailures(client, message))
 
   /** Cancels the sign-in the web client started, if one runs, when the scope closes. */
   const attach = (client: ProviderWebClient): Effect.Effect<void, never, Scope.Scope> =>
