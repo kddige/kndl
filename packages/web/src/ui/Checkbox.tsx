@@ -17,6 +17,8 @@ export interface CheckboxProps {
   sx?: stylex.StyleXStyles
 }
 
+const FORCED = "@media (forced-colors: active)"
+
 const styles = stylex.create({
   row: {
     display: "inline-flex",
@@ -77,7 +79,9 @@ const styles = stylex.create({
     height: "1rem",
     marginTop: "0.0625rem",
     padding: "0.125rem",
-    borderWidth: 0,
+    // Forced colors drop the track's fill: an outline keeps the Switch there.
+    borderWidth: { default: 0, [FORCED]: "1px" },
+    borderStyle: "solid",
     borderRadius: radius.full,
     backgroundColor: { default: color.borderControl, "[data-checked]": color.accent },
     opacity: { default: 1, "[data-disabled]": 0.6 },
@@ -89,7 +93,13 @@ const styles = stylex.create({
     width: "0.75rem",
     height: "0.75rem",
     borderRadius: radius.full,
-    backgroundColor: { default: color.controlThumb, "[data-checked]": color.onAccent },
+    // In forced colors the thumb keeps a fill in the text colour, so its side says on or off.
+    forcedColorAdjust: "none",
+    backgroundColor: {
+      default: color.controlThumb,
+      "[data-checked]": { default: color.onAccent, [FORCED]: "CanvasText" },
+      [FORCED]: "CanvasText",
+    },
     transform: {
       default: "translateX(0)",
       "[data-checked]": { default: "translateX(0.75rem)", ":dir(rtl)": "translateX(-0.75rem)" },

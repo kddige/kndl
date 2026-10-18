@@ -23,6 +23,8 @@ export interface SegmentedControlProps<Value extends string> {
 // Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
 const HOVER = "@media (hover: hover)"
 
+const FORCED = "@media (forced-colors: active)"
+
 const styles = stylex.create({
   group: {
     display: "inline-flex",
@@ -47,12 +49,17 @@ const styles = stylex.create({
     borderStyle: "solid",
     borderColor: { default: "transparent", "[data-checked]": color.borderControl },
     borderRadius: radius.sm,
-    backgroundColor: { default: "transparent", "[data-checked]": color.surface },
+    // In forced colors the chosen one takes the system's selection colours.
+    forcedColorAdjust: { default: "auto", "[data-checked]": "none" },
+    backgroundColor: {
+      default: "transparent",
+      "[data-checked]": { default: color.surface, [FORCED]: "Highlight" },
+    },
     boxShadow: { default: "none", "[data-checked]": shadow.sm },
     color: {
       default: color.textSecondary,
       ":hover:not([data-disabled])": { default: null, [HOVER]: color.text },
-      "[data-checked]": color.text,
+      "[data-checked]": { default: color.text, [FORCED]: "HighlightText" },
     },
     fontSize: text.base,
     fontWeight: weight.medium,

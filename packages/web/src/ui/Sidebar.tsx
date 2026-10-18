@@ -152,9 +152,12 @@ const styles = stylex.create({
       insetInlineStart: 0,
       top: space.s1_5,
       bottom: space.s1_5,
-      width: "2px",
+      // A border, not a fill, so forced colors keep the bar.
+      width: 0,
+      borderInlineStartWidth: "2px",
+      borderInlineStartStyle: "solid",
+      borderInlineStartColor: color.accent,
       borderRadius: radius.full,
-      backgroundColor: color.accent,
     },
   },
   // In place of the link while editing: the field is what's live, so the row doesn't change on hover.
