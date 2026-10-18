@@ -47,7 +47,7 @@ test("the banner tells of the newest Release, or main's head, until it is dismis
 test("the banner says how far behind the Hub is", () => {
   expect(bannerText(stable, { commit, release: "2026.10.2", channel: "stable" })).toEqual({
     title: "kndl 2026.10.4 is out",
-    description: "This Hub runs 2026.10.2, 2 Releases behind. See what changed on the Hub page.",
+    description: "This Hub runs 2026.10.2, 2 Releases behind.",
   })
   expect(bannerText(dev, { commit, branch: "main", channel: "dev" })?.title).toBe(
     "main is 1 commit ahead of this Hub",

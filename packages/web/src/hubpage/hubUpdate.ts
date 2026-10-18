@@ -154,7 +154,7 @@ export const onStableNote = "On stable. You'll move at the next Release newer th
 export function bannerText(
   update: HubUpdateState,
   version: BuildVersion | null,
-): { readonly title: string; readonly description: string } | null {
+): { readonly title: string; readonly description?: string } | null {
   const found = update.checked?.found
   switch (found?._tag) {
     case "NewerRelease": {
@@ -162,16 +162,14 @@ export function bannerText(
       const behind = found.releases.length
       return {
         title: `kndl ${newest.version} is out`,
-        description:
-          version?.release === undefined
-            ? "See what changed on the Hub page."
-            : `This Hub runs ${version.release}, ${behind === 1 ? "one Release" : `${behind} Releases`} behind. See what changed on the Hub page.`,
+        ...(version?.release !== undefined && {
+          description: `This Hub runs ${version.release}, ${behind === 1 ? "one Release" : `${behind} Releases`} behind.`,
+        }),
       }
     }
     case "NewerCommits":
       return {
         title: `main is ${found.behindBy === 1 ? "1 commit" : `${found.behindBy} commits`} ahead of this Hub`,
-        description: "See what changed on the Hub page.",
       }
     case "UpToDate":
     case undefined:

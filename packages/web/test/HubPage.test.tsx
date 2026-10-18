@@ -41,7 +41,7 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 const hubLink = () =>
   [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "Hub")
 const banner = () =>
-  [...document.querySelectorAll('[role="status"]')].find((el) => el.textContent?.includes("is out"))
+  [...document.querySelectorAll('[data-banner]')].find((el) => el.textContent?.includes("is out"))
 const heading = () => document.querySelector("h1")?.textContent
 
 async function open(at: string, options: Options = {}) {
@@ -102,7 +102,7 @@ test("the Owner of a Hub behind a Release sees the banner, and the notes on the 
 test("a dismissed banner stays away until the check finds a newer update", async () => {
   await open("/")
   await eventually(() => expect(banner()).toBeDefined())
-  await step(() => button("Dismiss").click())
+  await step(() => button("Dismiss update notice").click())
   await eventually(() => expect(banner()).toBeUndefined())
 
   // Reloaded, it stays dismissed: the dismissal is kept in the browser.
@@ -194,8 +194,8 @@ test("a Hub that doesn't check, as one run from a checkout, has no Hub page", as
 const main = () => document.querySelector("main")?.textContent ?? ""
 const latest = () => document.querySelector('[aria-labelledby="latest-update"]')?.textContent ?? ""
 const restartingBanner = () =>
-  [...document.querySelectorAll('[role="status"]')].find((el) =>
-    el.textContent?.includes("Hub restarting"),
+  [...document.querySelectorAll('[data-banner]')].find((el) =>
+    el.textContent?.includes("Updating the Hub"),
   )
 
 test("the Owner updates the Hub: its steps, Hub restarting while it's down, then Updated to", async () => {
@@ -225,7 +225,7 @@ test("the Owner updates the Hub: its steps, Hub restarting while it's down, then
   // The Hub goes down under it, and the page says why.
   await hub.step()
   await eventually(() => expect(latest()).toContain("Updating… Hub restarting"))
-  expect(restartingBanner()?.textContent).toContain("Updating… Hub restarting")
+  expect(restartingBanner()?.textContent).toContain("Updating the Hub…")
 
   // Back on the new version, it says how it ended.
   hub.resume()

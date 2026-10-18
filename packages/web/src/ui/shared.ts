@@ -130,3 +130,18 @@ export const textLink = stylex.create({
     textDecorationColor: { default: color.borderStrong, ":hover": "currentColor" },
   },
 })
+
+/** Read out, not shown: the 1px clip, for a live region or a label only screen readers need. */
+export const srOnly = stylex.create({
+  root: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    margin: "-1px",
+    padding: 0,
+    overflow: "hidden",
+    clip: "rect(0 0 0 0)",
+    whiteSpace: "nowrap",
+    borderWidth: 0,
+  },
+})

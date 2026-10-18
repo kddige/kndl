@@ -17,6 +17,7 @@ import {
   UpdateIcon,
   WarningIcon,
 } from "../ui/index.ts"
+import { srOnly } from "../ui/shared.ts"
 import { chrome, color, space } from "../ui/tokens.stylex.ts"
 import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
@@ -56,7 +57,18 @@ const styles = stylex.create({
     backgroundColor: color.surface,
   },
   drawer: { display: "flex", flexDirection: "column", height: "100%" },
-  banner: { margin: space.s3, marginBottom: 0 },
+  // The notices across the app, in one region that can never take the page: it scrolls past 40%.
+  banners: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s2,
+    flexShrink: 0,
+    maxHeight: "40dvh",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    paddingBlock: { default: space.s2, ":empty": 0 },
+    paddingInline: space.s4,
+  },
   body: {
     display: "flex",
     flexDirection: "column",
@@ -152,29 +164,29 @@ export function HubShell() {
             />
           </header>
         )}
-        {connection.status === "reconnecting" &&
-          (updating ? (
-            // The Hub restarts under its own update (#362), and is back on the new version.
-            <Banner
-              intent="accent"
-              icon={<UpdateIcon />}
-              title="Updating… Hub restarting"
-              sx={styles.banner}
-            >
-              This page reconnects on its own once the Hub is back.
-            </Banner>
-          ) : (
-            <Banner
-              intent="warning"
-              icon={<WarningIcon />}
-              title="Reconnecting to the Hub"
-              sx={styles.banner}
-            >
-              What happens meanwhile shows up once it's back.
-            </Banner>
-          ))}
-        <AppPermissionsBanner sx={styles.banner} />
-        <HubUpdateBanner sx={styles.banner} />
+        {/* Always mounted, empty while connected, so a screen reader hears the connection change. */}
+        <p role="status" {...stylex.props(srOnly.root)}>
+          {connection.status === "reconnecting"
+            ? updating
+              ? "Updating the Hub"
+              : "Reconnecting to the Hub"
+            : ""}
+        </p>
+        <div {...stylex.props(styles.banners)}>
+          {connection.status === "reconnecting" &&
+            (updating ? (
+              // The Hub restarts under its own update (#362), and is back on the new version.
+              <Banner slim intent="accent" icon={<UpdateIcon />} title="Updating the Hub…">
+                This page reconnects on its own once the Hub is back.
+              </Banner>
+            ) : (
+              <Banner slim intent="warning" icon={<WarningIcon />} title="Reconnecting to the Hub">
+                What happens meanwhile shows up once it's back.
+              </Banner>
+            ))}
+          <AppPermissionsBanner />
+          <HubUpdateBanner />
+        </div>
         <div {...stylex.props(styles.body)}>
           <Outlet />
         </div>

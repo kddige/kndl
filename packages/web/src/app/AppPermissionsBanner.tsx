@@ -7,7 +7,7 @@ import type { AppPermissionsCheck } from "@kndl/protocol"
 import { describeMissing, hasPermissionDrift } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
-import { Banner, Button, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
+import { Banner, Button, Disclosure, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
 import { focus, textLink } from "../ui/shared.ts"
 import { space, weight } from "../ui/tokens.stylex.ts"
 import { useHub, useHubState } from "./hub.tsx"
@@ -33,7 +33,7 @@ const styles = stylex.create({
 })
 
 /** The Hub's last permission check, as a warning across the app while it found anything. */
-export function AppPermissionsBanner({ sx }: { sx?: stylex.StyleXStyles }) {
+export function AppPermissionsBanner() {
   const hub = useHub()
   const check = useHubState((state) => state.appPermissions)
   const [checking, setChecking] = useState(false)
@@ -67,13 +67,23 @@ export function AppPermissionsBanner({ sx }: { sx?: stylex.StyleXStyles }) {
           Check again
         </Button>
       }
-      detail={<Steps check={check} />}
-      {...(sx && { sx })}
+      detail={
+        <Disclosure variant="plain" summary={`Show ${stepCount(check)} to fix it`}>
+          <Steps check={check} />
+        </Disclosure>
+      }
     >
       Until it has them, Sessions can fail on GitHub. Only someone who manages the App on GitHub can
       fix this.
     </Banner>
   )
+}
+
+function stepCount(check: AppPermissionsCheck): string {
+  const count =
+    (check.missing.length > 0 || check.missingEvents.length > 0 ? 1 : 0) +
+    check.installations.length
+  return count === 1 ? "the step" : `${count} steps`
 }
 
 function Steps({ check }: { check: AppPermissionsCheck }) {

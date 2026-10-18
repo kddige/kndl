@@ -55,7 +55,7 @@ async function open(appPermissions: Check | null) {
   // Once the app is in, with its sidebar.
   await eventually(() => expect(page.textContent).toContain("New Session"))
   const banner = () =>
-    [...page.querySelectorAll('[role="status"]')].find((el) =>
+    [...page.querySelectorAll('[data-banner]')].find((el) =>
       el.textContent?.includes("missing permissions"),
     )
   return { hub, page, banner }
@@ -66,6 +66,9 @@ const fixed = (): Check => ({ ...driftedAppPermissions(), missing: [], installat
 test("says what the App and each installation lack, linking to where to fix it", async () => {
   const { banner } = await open(driftedAppPermissions())
   await eventually(() => expect(banner()).toBeDefined())
+  // The steps fold under the banner, so it stays one or two lines until they're asked for.
+  expect(banner()?.textContent).not.toContain("The App kndl-alice lacks")
+  await step(() => button("Show 2 steps to fix it").click())
   const text = banner()?.textContent ?? ""
   expect(text).toContain("The GitHub App is missing permissions")
   expect(text).toContain("The App kndl-alice lacks Issues: read and write.")
@@ -90,6 +93,7 @@ test("says what the App and each installation lack, linking to where to fix it",
   // An installation behind an App that has it all is the only step.
   const behind = await open({ ...driftedAppPermissions(), missing: [] })
   await eventually(() => expect(behind.banner()).toBeDefined())
+  await step(() => button("Show the step to fix it").click())
   const only = behind.banner()?.textContent ?? ""
   expect(only).not.toContain("The App kndl-alice lacks")
   expect(only).toContain("On acme, accept")

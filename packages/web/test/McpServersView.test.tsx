@@ -425,7 +425,7 @@ test("adds an uploaded folder, and refuses a name an MCP server from another sou
 
 /** The warning that what goes to the MCP server is unencrypted (#255), if one is shown. */
 const unencrypted = () =>
-  [...(dialog()?.querySelectorAll('[role="status"]') ?? [])].find((banner) =>
+  [...(dialog()?.querySelectorAll('[data-banner]') ?? [])].find((banner) =>
     banner.textContent?.includes("unencrypted"),
   )
 
