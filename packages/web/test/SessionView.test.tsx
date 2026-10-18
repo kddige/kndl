@@ -49,7 +49,7 @@ async function eventuallyAsync(check: () => Promise<void>, timeoutMs = 5_000): P
 }
 
 /** The Session's ⋯ menu's item named `name`, opening the menu; undefined if it has none. */
-async function menuItem(page: ParentNode, name: string): Promise<HTMLElement | undefined> {
+async function sessionItem(page: ParentNode, name: string): Promise<HTMLElement | undefined> {
   if (!document.querySelector('[role="menu"]')) {
     await step(() => button("Session actions", page).click())
     await settle(20)
@@ -67,7 +67,7 @@ async function closeMenu(page: ParentNode): Promise<void> {
 
 /** Whether the Session's ⋯ menu offers `name`, enabled. */
 async function offers(page: ParentNode, name: string): Promise<boolean> {
-  const item = await menuItem(page, name)
+  const item = await sessionItem(page, name)
   const enabled = item !== undefined && !item.hasAttribute("data-disabled")
   await closeMenu(page)
   return enabled
@@ -75,7 +75,7 @@ async function offers(page: ParentNode, name: string): Promise<boolean> {
 
 /** Chooses `name` from the Session's ⋯ menu. */
 async function choose(page: ParentNode, name: string): Promise<void> {
-  const item = await menuItem(page, name)
+  const item = await sessionItem(page, name)
   if (!item) throw new Error(`no "${name}" in the Session's menu`)
   await step(() => item.click())
   await settle(50)
@@ -343,7 +343,7 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   // Woken, it is started first: it can't be put to sleep until that is done (#70).
   expect(page.textContent).toContain("Starting…")
   // Read together, as opening the menu takes a moment in which it may finish starting.
-  const sleepNow = await menuItem(page, "Sleep now")
+  const sleepNow = await sessionItem(page, "Sleep now")
   if (page.textContent?.includes("Starting…")) {
     expect(sleepNow?.hasAttribute("data-disabled")).toBe(true)
   }
@@ -355,7 +355,7 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   expect(sent()).toContain("SleepSession")
   await eventually(() => expect(banner()).toContain("Put to sleep."))
   // Asleep, it has nothing to put to sleep.
-  expect(await menuItem(page, "Sleep now")).toBeUndefined()
+  expect(await sessionItem(page, "Sleep now")).toBeUndefined()
   await closeMenu(page)
 })
 
@@ -547,7 +547,7 @@ test("Fix opens the Installation that keeps a Session from starting (#216)", asy
   await eventually(() => expect(banner()).toContain("This Session can't start"))
 
   await step(() => page.querySelector<HTMLAnchorElement>('a[aria-label="Fix Linear"]')?.click())
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("MCP"))
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("MCP servers"))
   await eventually(() => expect(dialog()?.textContent).toContain("Edit Linear"))
 })
 

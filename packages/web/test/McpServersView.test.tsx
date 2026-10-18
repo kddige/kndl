@@ -61,7 +61,7 @@ async function openMcpServers(owner = true) {
     client.stop()
     hub.dispose()
   }
-  await eventually(() => expect(document.querySelector("h1")?.textContent).toBe("MCP"))
+  await eventually(() => expect(document.querySelector("h1")?.textContent).toBe("MCP servers"))
   await eventually(() => expect(mcpServer("Docs search")).not.toBeNull())
   return { hub, client }
 }

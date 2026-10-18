@@ -251,7 +251,11 @@ export function McpServersView({
     </>
   )
   return (
-    <SettingsPage title="MCP" description="MCP servers whose tools Sessions can use." action={add}>
+    <SettingsPage
+      title="MCP servers"
+      description="MCP servers whose tools Sessions can use."
+      action={add}
+    >
       {state === null ? (
         loadError ? (
           <Banner

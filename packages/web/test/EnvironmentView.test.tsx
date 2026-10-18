@@ -3,7 +3,16 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, menuItem, render, sessionMenuItem, sessionOffers, settle, step } from "./render.ts"
+import {
+  button,
+  dialog,
+  menuItem,
+  render,
+  sessionMenuItem,
+  sessionOffers,
+  settle,
+  step,
+} from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
