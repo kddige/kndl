@@ -698,10 +698,9 @@ describe("signing in to a Provider", () => {
     })
   })
 
-  test("GitHub Copilot Enterprise only on GHE.com, and only to GitHub's or its own addresses", async () => {
-    const { web, fakes } = await scene()
+  test("GitHub Copilot Enterprise on any domain, as pi-ai's sign-in takes it, its calls to its address", async () => {
+    const { hub, web, fakes } = await scene()
     fakes.other = () => Response.json({ data: [] })
-    let token = "tid=1;proxy-ep=proxy.enterprise.githubcopilot.com"
     const asked: Array<string> = []
     fakes.signIn = async (_provider, interaction) => {
       const domain = await interaction.prompt({
@@ -709,36 +708,34 @@ describe("signing in to a Provider", () => {
         message: "GitHub Enterprise URL/domain (blank for github.com)",
       })
       asked.push(domain)
-      return { ...oauth(token), enterpriseUrl: domain }
+      // A token that names no address: pi-ai's toAuth takes the Enterprise's own.
+      return { ...oauth("tid=1;exp=9999999999;sku=enterprise"), enterpriseUrl: domain }
     }
-    /** Signs in on GitHub Enterprise at `domain`: how it ended. */
-    const enterprise = async (requestId: string, domain: string) => {
-      web.send({ _tag: "StartSignIn", requestId, provider: "github-copilot" })
-      await web.take("SignInStepped", (m) => m.step._tag === "Choose")
-      web.send({ _tag: "AnswerSignIn", requestId, value: "enterprise" })
-      await web.take("SignInStepped", (m) => m.step._tag === "Paste")
-      web.send({ _tag: "AnswerSignIn", requestId, value: domain })
-      return web.take("SignInEnded", (m) => m.requestId === requestId)
-    }
-
-    // The Hub would send the sign-in's requests to any other domain.
-    const elsewhere = await enterprise("e-1", "github.internal.example")
-    expect(elsewhere).toMatchObject({
-      outcome: "Failed",
-      message: expect.stringMatching(/ghe\.com/),
-    })
-    expect(asked).toEqual([])
-
-    // A token naming an address that's neither GitHub's nor its domain's.
-    token = "tid=1;proxy-ep=proxy.evil.example"
-    const offsite = await enterprise("e-2", "company.ghe.com")
-    expect(offsite).toMatchObject({ outcome: "Failed", message: expect.stringMatching(/address/) })
-
-    token = "tid=1;proxy-ep=proxy.enterprise.githubcopilot.com"
-    expect(await enterprise("e-3", "https://Company.ghe.com/")).toMatchObject({
+    web.send({ _tag: "StartSignIn", requestId: "e-1", provider: "github-copilot" })
+    await web.take("SignInStepped", (m) => m.step._tag === "Choose")
+    web.send({ _tag: "AnswerSignIn", requestId: "e-1", value: "enterprise" })
+    await web.take("SignInStepped", (m) => m.step._tag === "Paste")
+    web.send({ _tag: "AnswerSignIn", requestId: "e-1", value: "github.example.com" })
+    expect(await web.take("SignInEnded", (m) => m.requestId === "e-1")).toMatchObject({
       outcome: "Connected",
     })
-    expect(asked).toEqual(["company.ghe.com", "company.ghe.com"])
+    expect(asked).toEqual(["github.example.com"])
+
+    fakes.seen.length = 0
+    await hub.run(
+      Effect.flatMap(ConnectedProviders, (providers) =>
+        providers.call(alice, "github-copilot", {
+          method: "POST",
+          path: "/chat/completions",
+          headers: new Headers({ "content-type": "application/json" }),
+          keyHeader: "authorization",
+          body: new TextEncoder().encode("{}"),
+        }),
+      ),
+    )
+    expect(fakes.seen.map((seen) => seen.url)).toEqual([
+      "https://copilot-api.github.example.com/chat/completions",
+    ])
   })
 
   test("a sign-in that takes longer than 10 minutes fails, and its flow is stopped", async () => {

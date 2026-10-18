@@ -80,7 +80,6 @@ import {
   catalogueModels,
   connectable,
   currentClaude,
-  enterpriseDomainOf,
   keyAuth,
   modelsCall,
   modelsListed,
@@ -91,7 +90,6 @@ import {
   reasonOf,
   record,
   rejectsKey,
-  signInDomainTrusted,
   signInOrigin,
   takesApiKey,
   upstreamUrl,
@@ -338,8 +336,6 @@ function askOf(
 
 const github = "github.com"
 const enterprise = "enterprise"
-const enterpriseOnly =
-  "kndl signs in to GitHub Copilot Enterprise on GHE.com only: give your company's domain ending in .ghe.com, such as company.ghe.com."
 
 /**
  * Asks the Member what a pi-ai sign-in prompt asks: as a choice first, for GitHub Copilot's
@@ -368,7 +364,8 @@ async function answerTo(
       signal,
     )
     if (which !== enterprise) return ""
-    const answer = await steps.ask(
+    // As typed: pi-ai takes a domain or an address, and refuses one it can't read.
+    return steps.ask(
       {
         _tag: "Paste",
         message: "Your GitHub Enterprise address",
@@ -376,10 +373,6 @@ async function answerTo(
       },
       signal,
     )
-    // The Hub sends the sign-in's requests there: GitHub's own, not an address of anyone's choosing.
-    const domain = enterpriseDomainOf(answer)
-    if (domain === undefined) throw new Error(enterpriseOnly)
-    return domain
   }
   return steps.ask(askOf(provider, prompt), signal)
 }
@@ -1043,14 +1036,11 @@ export class ConnectedProviders extends Context.Service<
           }),
         )
         const credential: OAuthCredential = { ...signedIn, type: "oauth" }
-        if (!signInDomainTrusted(credential)) {
-          return yield* new ProviderRefusal({ message: enterpriseOnly })
-        }
         const auth = yield* Effect.tryPromise({
           try: () => apis.toAuth(provider, credential),
           catch: (error) => new ProviderRefusal({ message: reasonOf(error) }),
         })
-        const origin = signInOrigin(provider, credential, auth)
+        const origin = signInOrigin(provider, auth)
         if (origin === undefined) {
           return yield* new ProviderRefusal({ message: untrustedAddress(provider) })
         }
@@ -1172,9 +1162,6 @@ export class ConnectedProviders extends Context.Service<
               const { connection, now, refresh } = yield* needed()
               if (refresh === undefined) return connection
               const name = nameOf(provider)
-              if (!signInDomainTrusted(refresh)) {
-                return yield* unusable("Broken", untrustedAddress(connection.provider))
-              }
               const rotated = yield* Effect.tryPromise({
                 try: (signal) => apis.refresh(connection.provider, refresh, signal),
                 catch: (error) => error,
@@ -1267,8 +1254,8 @@ export class ConnectedProviders extends Context.Service<
               `${nameOf(provider)}'s sign-in can't be used: ${reasonOf(error)}`,
             ),
         })
-        const origin = signInOrigin(provider, credential, auth)
-        if (origin === undefined || !signInDomainTrusted(credential)) {
+        const origin = signInOrigin(provider, auth)
+        if (origin === undefined) {
           return yield* unusable("Broken", untrustedAddress(provider))
         }
         return yield* send(origin, auth, call, listing)

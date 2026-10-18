@@ -217,53 +217,13 @@ export function apiOrigin(provider: ModelProvider): string {
   return new URL(base).origin
 }
 
-/** GitHub's hosts for Copilot's API: `api.individual.githubcopilot.com` and the like. */
-const copilotDomain = "githubcopilot.com"
-/** GitHub Enterprise Cloud with data residency, the one GitHub Enterprise Copilot signs in on. */
-const enterpriseSuffix = ".ghe.com"
-
-/** Whether `host` is `domain` or below it. */
-const within = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`)
-
-/**
- * The GitHub Enterprise domain a Member answered GitHub Copilot's sign-in with, as pi-ai reads it,
- * if it is one on GHE.com, `company.ghe.com`: the Hub sends a sign-in's requests there, so not an
- * address of the Member's choosing.
- */
-export function enterpriseDomainOf(answer: string): string | undefined {
-  const trimmed = answer.trim()
-  let url: URL
-  try {
-    url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
-  } catch {
-    return undefined
-  }
-  const host = url.hostname
-  const plain =
-    url.protocol === "https:" &&
-    url.port === "" &&
-    url.username === "" &&
-    url.password === "" &&
-    url.pathname === "/" &&
-    url.search === "" &&
-    url.hash === ""
-  return plain &&
-    host.endsWith(enterpriseSuffix) &&
-    /^[a-z0-9-]+$/.test(host.slice(0, -enterpriseSuffix.length))
-    ? host
-    : undefined
-}
-
 /**
  * The origin a call with a sign-in goes to: the one its `toAuth` names, else pi-ai's for the
- * Provider. Only GitHub Copilot's names one, which must be at githubcopilot.com or the sign-in's
- * own GHE.com domain, over HTTPS: none otherwise, and the call isn't sent.
+ * Provider. Only GitHub Copilot's names one, for the account, wherever pi-ai's sign-in found it
+ * (a GitHub Enterprise's on its own domain): over HTTPS, with no credentials of its own, or none,
+ * and the call isn't sent.
  */
-export function signInOrigin(
-  provider: ModelProvider,
-  credential: Credential,
-  auth: ModelAuth,
-): string | undefined {
+export function signInOrigin(provider: ModelProvider, auth: ModelAuth): string | undefined {
   if (auth.baseUrl === undefined) return apiOrigin(provider)
   if (provider !== "github-copilot") return undefined
   let url: URL
@@ -272,28 +232,10 @@ export function signInOrigin(
   } catch {
     return undefined
   }
-  const enterprise =
-    credential.type === "oauth" && typeof credential.enterpriseUrl === "string"
-      ? enterpriseDomainOf(credential.enterpriseUrl)
-      : undefined
-  const trusted =
-    within(url.hostname, copilotDomain) ||
-    (enterprise !== undefined && within(url.hostname, enterprise))
-  return url.protocol === "https:" && url.port === "" && url.username === "" && trusted
+  return url.protocol === "https:" && url.username === "" && url.password === ""
     ? url.origin
     : undefined
 }
-
-/**
- * Whether a sign-in's own domain, if it keeps one, is one the Hub may send its refreshes to:
- * GitHub Copilot's Enterprise domain on GHE.com.
- */
-export const signInDomainTrusted = (credential: Credential) =>
-  credential.type !== "oauth" ||
-  credential.enterpriseUrl === undefined ||
-  credential.enterpriseUrl === "" ||
-  (typeof credential.enterpriseUrl === "string" &&
-    enterpriseDomainOf(credential.enterpriseUrl) !== undefined)
 
 /**
  * The address a call goes to: `path`, with its query, below `origin`. None when the path could

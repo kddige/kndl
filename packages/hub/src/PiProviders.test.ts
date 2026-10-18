@@ -9,7 +9,6 @@ import {
   catalogueModels,
   catalogueOf,
   connectable,
-  enterpriseDomainOf,
   keyHeaderOf,
   modelCallAllowed,
   modelsCall,
@@ -77,70 +76,34 @@ describe("a call's credential", () => {
       "authorization",
     )
     expect(Object.fromEntries(headers)).toEqual({ authorization: "Bearer kimi" })
-    const signIn = { type: "oauth", access: "a", refresh: "r", expires: 0 } as const
     expect(
-      signInOrigin("github-copilot", signIn, {
-        baseUrl: "https://api.business.githubcopilot.com",
-      }),
+      signInOrigin("github-copilot", { baseUrl: "https://api.business.githubcopilot.com" }),
     ).toBe("https://api.business.githubcopilot.com")
-    expect(signInOrigin("github-copilot", signIn, {})).toBe(
-      "https://api.individual.githubcopilot.com",
-    )
-    expect(signInOrigin("kimi-coding", signIn, {})).toBe("https://api.kimi.com")
+    expect(signInOrigin("github-copilot", {})).toBe("https://api.individual.githubcopilot.com")
+    expect(signInOrigin("kimi-coding", {})).toBe("https://api.kimi.com")
   })
 })
 
-/** A GitHub Copilot sign-in, on GitHub Enterprise at `enterpriseUrl` if given. */
-const copilot = (enterpriseUrl?: string) => ({
-  type: "oauth" as const,
-  access: "a",
-  refresh: "r",
-  expires: 0,
-  ...(enterpriseUrl !== undefined && { enterpriseUrl }),
-})
+/** Where a GitHub Copilot sign-in whose toAuth names `baseUrl` sends its calls, if anywhere. */
+const copilotAt = (baseUrl: string) => signInOrigin("github-copilot", { baseUrl })
 
 describe("GitHub Copilot's addresses", () => {
-  test("an Enterprise domain is taken only on GHE.com", () => {
-    expect(enterpriseDomainOf("company.ghe.com")).toBe("company.ghe.com")
-    expect(enterpriseDomainOf(" https://Company.GHE.com/ ")).toBe("company.ghe.com")
-    for (const refused of [
-      "github.example.com",
-      "ghe.com",
-      ".ghe.com",
-      "evil.example/x.ghe.com",
-      "company.ghe.com.evil.example",
-      "127.0.0.1",
-      "localhost",
-      "user@company.ghe.com",
-      "company.ghe.com:8443",
-      "http://company.ghe.com",
-      "https://company.ghe.com/path",
-    ]) {
-      expect([refused, enterpriseDomainOf(refused)]).toEqual([refused, undefined])
-    }
-  })
-
-  test("a sign-in's address is taken only at githubcopilot.com or its Enterprise domain", () => {
-    const at = (baseUrl: string, enterpriseUrl?: string) =>
-      signInOrigin("github-copilot", copilot(enterpriseUrl), { baseUrl })
-    expect(at("https://api.individual.githubcopilot.com")).toBe(
+  test("a sign-in's address is taken wherever pi-ai found it, over HTTPS", () => {
+    expect(copilotAt("https://api.individual.githubcopilot.com")).toBe(
       "https://api.individual.githubcopilot.com",
     )
-    expect(at("https://copilot-api.company.ghe.com", "company.ghe.com")).toBe(
-      "https://copilot-api.company.ghe.com",
+    // A GitHub Enterprise's, on its own domain.
+    expect(copilotAt("https://copilot-api.github.example.com")).toBe(
+      "https://copilot-api.github.example.com",
     )
-    expect(at("https://api.evil.example")).toBeUndefined()
-    expect(at("https://api.evilgithubcopilot.com")).toBeUndefined()
-    expect(at("http://api.individual.githubcopilot.com")).toBeUndefined()
-    expect(at("https://api.githubcopilot.com.evil.example")).toBeUndefined()
-    expect(at("https://api.githubcopilot.com:8443")).toBeUndefined()
-    expect(at("https://copilot-api.other.ghe.com", "company.ghe.com")).toBeUndefined()
-    // A domain kept from before kndl checked it isn't trusted.
-    expect(at("https://copilot-api.evil.example", "evil.example")).toBeUndefined()
+    expect(copilotAt("https://copilot-api.github.example.com:8443/")).toBe(
+      "https://copilot-api.github.example.com:8443",
+    )
+    expect(copilotAt("http://api.individual.githubcopilot.com")).toBeUndefined()
+    expect(copilotAt("https://user:pass@api.individual.githubcopilot.com")).toBeUndefined()
+    expect(copilotAt("not an address")).toBeUndefined()
     // No other sign-in may name an address.
-    expect(
-      signInOrigin("kimi-coding", copilot(), { baseUrl: "https://evil.example" }),
-    ).toBeUndefined()
+    expect(signInOrigin("kimi-coding", { baseUrl: "https://kimi.example" })).toBeUndefined()
   })
 })
 
