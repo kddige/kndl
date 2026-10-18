@@ -119,16 +119,17 @@ const isModelProvider = Schema.is(ModelProvider)
  * Turns off the Hub server's idle timeout for the request, which is sized for the mod's long poll
  * (Hub.ts): a Model may think for longer before it says anything. Bun's server has
  * `timeout(request, seconds)` for that; Effect's Bun server keeps the server, and Bun's request,
- * on its request, which is the only way to them from a route. Elsewhere, nothing is done.
+ * on its request, which is the only way to them from a route. Whether it could: elsewhere, or
+ * once Effect keeps them otherwise, it can't.
  */
 const keepOpen = (request: HttpServerRequest.HttpServerRequest) => {
   const { source, bunServer } = request as unknown as {
     readonly source?: unknown
     readonly bunServer?: { readonly timeout?: (request: Request, seconds: number) => void }
   }
-  if (source instanceof Request && typeof bunServer?.timeout === "function") {
-    bunServer.timeout(source, 0)
-  }
+  if (!(source instanceof Request) || typeof bunServer?.timeout !== "function") return false
+  bunServer.timeout(source, 0)
+  return true
 }
 
 /** Answer headers that stay at the Gateway: the server's cookies, and the connection's. */
@@ -291,13 +292,21 @@ export const GatewayRoutes = HttpRouter.use(
       }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.request")),
     )
 
+    /** Whether the Hub said it can't keep a model call open past its idle timeout. */
+    let saidNotKeptOpen = false
+
     // A pi Session's model calls (ADR 0029), at the static `models`, which the router prefers to
     // an Installation's id.
     const modelCall = Effect.gen(function* () {
       const grant = yield* authenticateMod
       const request = yield* HttpServerRequest.HttpServerRequest
       // A Model may think for longer than the Hub's idle timeout before it says anything.
-      keepOpen(request)
+      if (!keepOpen(request) && !saidNotKeptOpen) {
+        saidNotKeptOpen = true
+        yield* Effect.logWarning(
+          "The Gateway can't turn off the Hub server's idle timeout for model calls: one whose Model thinks for longer before it answers is cut off",
+        )
+      }
       const provider = (yield* HttpRouter.params).provider ?? ""
       const started = yield* Clock.currentTimeMillis
       const done = (status: number, bytes?: number, outcome?: ModelCallEnded["outcome"]) =>
