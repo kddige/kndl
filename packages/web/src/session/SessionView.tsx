@@ -279,6 +279,9 @@ function LoadedSession({
   const runnerHarnesses = runner?.harnesses ?? ["ClaudeCode"]
   const yours = useHubState((hubState) => hubState.you?.id === summary.creator.id)
   const providerModels = useHubState((hubState) => (yours ? hubState.providers?.models : undefined))
+  const connectable = useHubState((hubState) =>
+    yours ? hubState.providers?.connectable : undefined,
+  )
   // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
   const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
   const knownLabel = useHubState((hubState) =>
@@ -291,7 +294,7 @@ function LoadedSession({
     ...(((runnerHarnesses.includes("ClaudeCode") && hasClaudeCredential) || !pi) && {
       claudeCode: { models },
     }),
-    ...((runnerHarnesses.includes("Pi") || pi) && { pi: { models: providerModels } }),
+    ...((runnerHarnesses.includes("Pi") || pi) && { pi: { models: providerModels, connectable } }),
   }
   const setting = useMemo(
     () => ({

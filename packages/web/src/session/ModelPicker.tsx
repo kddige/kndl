@@ -1,4 +1,5 @@
 import {
+  type ConnectableProvider,
   findModel,
   harnessOfModel,
   type ProviderModel,
@@ -114,9 +115,13 @@ export interface ModelPickerProps {
   readonly claudeCode?: { readonly models: RunnerModels | undefined }
   /**
    * The Creator's Models through pi, when its Runner runs pi (ADR 0029), from their
-   * ProvidersState: undefined until the Hub has sent it.
+   * ProvidersState: undefined until the Hub has sent it. Each Provider's group is headed by the
+   * name the Hub gives it in `connectable`.
    */
-  readonly pi?: { readonly models: ReadonlyArray<ProviderModel> | undefined }
+  readonly pi?: {
+    readonly models: ReadonlyArray<ProviderModel> | undefined
+    readonly connectable?: ReadonlyArray<ConnectableProvider> | undefined
+  }
   /** The setting: a `provider/id` model is pi's, anything else Claude Code's (ADR 0030). */
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
@@ -182,7 +187,7 @@ export function ModelPicker({
           },
         ]),
     ...groupByProvider(providerModels ?? []).map((group) => ({
-      label: providerGroupLabel(group.provider, "Pi"),
+      label: providerGroupLabel(group.provider, "Pi", pi?.connectable),
       options: group.models.map((model) => ({
         value: providerModelName(model),
         label: model.label,

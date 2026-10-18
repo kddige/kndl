@@ -14,7 +14,6 @@ import {
   ProviderIds,
   type ThinkingLevel,
 } from "@kndl/protocol"
-import { providerNames } from "../../session/models.ts"
 import type {
   ConnectedProviderWire,
   HubMessage,
@@ -25,6 +24,43 @@ import type {
 type ProvidersStateWire = Extract<HubMessage, { _tag: "ProvidersState" }>
 
 const day = 24 * 3_600_000
+
+/** What the Hub calls each Provider, as pi-ai names them, which it sends as ConnectableProvider. */
+const providerNames: Record<ProviderId, string> = {
+  openai: "OpenAI",
+  xai: "xAI",
+  "github-copilot": "GitHub Copilot",
+  openrouter: "OpenRouter",
+  google: "Google",
+  mistral: "Mistral",
+  deepseek: "DeepSeek",
+  groq: "Groq",
+  cerebras: "Cerebras",
+  "kimi-coding": "Kimi For Coding",
+  moonshotai: "Moonshot AI",
+  zai: "Z.AI",
+  minimax: "MiniMax",
+  meta: "Meta",
+  together: "Together",
+  fireworks: "Fireworks",
+  huggingface: "Hugging Face",
+  nvidia: "NVIDIA",
+  "vercel-ai-gateway": "Vercel AI Gateway",
+  opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
+  baseten: "Baseten",
+  "qwen-token-plan": "Qwen Token Plan",
+  "qwen-token-plan-individual": "Qwen Token Plan Individual",
+  xiaomi: "Xiaomi",
+  "xiaomi-token-plan-ams": "Xiaomi Token Plan AMS",
+  "xiaomi-token-plan-sgp": "Xiaomi Token Plan SGP",
+  "ant-ling": "Ant Ling",
+  "moonshotai-cn": "Moonshot AI CN",
+  "zai-coding-cn": "Z.AI Coding CN",
+  "minimax-cn": "MiniMax CN",
+  "qwen-token-plan-cn": "Qwen Token Plan CN",
+  "xiaomi-token-plan-cn": "Xiaomi Token Plan CN",
+}
 
 const model = (
   provider: ProviderModelWire["provider"],

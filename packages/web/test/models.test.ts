@@ -97,10 +97,16 @@ test("modelSwitchedText says which Harness a switch moved the Session to (ADR 00
   ).toBe("Alice Kim switched to the default model (Opus 5.5) on Claude Code")
 })
 
-test("providerGroupLabel names Claude's groups by what runs them, and others by their Provider", () => {
+test("providerGroupLabel names Claude's groups by what runs them, and others as the Hub names them", () => {
+  const connectable = [{ provider: "openai", name: "OpenAI", apiKey: true }] as const
   expect(providerGroupLabel("anthropic", "ClaudeCode")).toBe("Anthropic · Claude Code")
-  expect(providerGroupLabel("anthropic", "Pi")).toBe("Anthropic · pi")
-  expect(providerGroupLabel("openai", "Pi")).toBe("OpenAI")
+  expect(providerGroupLabel("anthropic", "Pi", connectable)).toBe("Anthropic · pi")
+  expect(providerGroupLabel("openai", "Pi", connectable)).toBe("OpenAI")
+  // The Hub's name, whatever it is; by its id before the Hub has named it.
+  expect(providerGroupLabel("openai", "Pi", [{ ...connectable[0], name: "Open AI" }])).toBe(
+    "Open AI",
+  )
+  expect(providerGroupLabel("xai", "Pi", connectable)).toBe("xai")
 })
 
 test("otherTurnModel names a Turn's model only when it isn't the Session's", () => {

@@ -20,7 +20,7 @@ afterEach(async () => {
 const { useState } = await import("react")
 const { ModelPicker, ModelSettingLabel } = await import("../src/session/ModelPicker.tsx")
 const { fakeModels } = await import("../src/hub/fake/script.ts")
-const { claudeModels, providerModels } = await import("../src/hub/fake/providers.ts")
+const { claudeModels, connectable, providerModels } = await import("../src/hub/fake/providers.ts")
 
 /** Claude's Models and OpenAI's, as the Hub lists them for someone with both. */
 const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels("openai")]
@@ -300,7 +300,7 @@ test("Use the default unsets the level", async () => {
 
 /** Renders a pi Session's picker, as on a Runner that runs only pi. */
 const piPicker = (initial: ModelSetting) =>
-  picker(initial, fakeModels, { pi: { models: piModels } })
+  picker(initial, fakeModels, { pi: { models: piModels, connectable } })
 
 test("a pi Session's picker lists its Creator's Models by Provider, and sends the one chosen as provider/id", async () => {
   const { container, changes } = await piPicker({
@@ -414,7 +414,7 @@ test("someone watching a pi Session sees its Model's label as it is known", asyn
 const bothPicker = (initial: ModelSetting) =>
   picker(initial, fakeModels, {
     claudeCode: { models: fakeModels },
-    pi: { models: piModels },
+    pi: { models: piModels, connectable },
   })
 
 test("on a Runner that runs both, the list groups Claude by what runs it, then each other Provider", async () => {
@@ -465,7 +465,7 @@ test("picking the other Harness's Model sends it, with the level only if that Mo
 test("Claude Code's group waits for its Runner's list, while pi's Models are already there", async () => {
   const { container } = await picker({ model: "openai/gpt-6-sol" }, fakeModels, {
     claudeCode: { models: undefined },
-    pi: { models: piModels },
+    pi: { models: piModels, connectable },
   })
   await click(trigger(container, "Model"))
   expect(groups()[0]).toEqual(["Anthropic · Claude Code", ["Default"]])

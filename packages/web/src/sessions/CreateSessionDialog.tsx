@@ -124,6 +124,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const claudeCredential = useHubState((state) => state.claudeCredential)
   // Their Models, for a pi Session; undefined until the Hub says.
   const providerModels = useHubState((state) => state.providers?.models)
+  const connectable = useHubState((state) => state.providers?.connectable)
   // Which Harness runs Claude's Models in their new Sessions, as their Account page says (ADR 0030).
   const claudeHarness = useHubState((state) => state.providers?.claudeHarness) ?? "ClaudeCode"
   const claudeCodeAsked = useClaudeCodeAsked()
@@ -590,7 +591,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         >
           <ModelPicker
             {...(claudeCodeOffered && { claudeCode: { models } })}
-            {...(piOffered && { pi: { models: providerModels } })}
+            {...(piOffered && { pi: { models: providerModels, connectable } })}
             value={modelSetting}
             onChange={setModelChoice}
             appearance="field"

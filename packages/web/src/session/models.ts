@@ -3,6 +3,7 @@
 // their ProvidersState lists (ADR 0029), which only they are sent.
 
 import {
+  type ConnectableProvider,
   defaultProviderModel,
   findModel,
   findProviderModel,
@@ -88,13 +89,29 @@ export const harnessNames: Record<Harness, string> = {
 }
 
 /**
+ * What the web UI calls a Provider whose Models it groups: as the Hub names it in the Creator's
+ * ProvidersState (`ConnectableProvider.name`); Anthropic, whose Models aren't connected as the
+ * others' are (ADR 0029), by its own name; and one the Hub hasn't named, by its id.
+ */
+export function providerName(
+  provider: ModelProvider,
+  connectable: ReadonlyArray<ConnectableProvider> | undefined,
+): string {
+  if (provider === "anthropic") return "Anthropic"
+  return connectable?.find((each) => each.provider === provider)?.name ?? provider
+}
+
+/**
  * The picker's heading for a Provider's models (ADR 0030): Claude's say what runs them, as either
  * Harness can (`Anthropic · Claude Code`, `Anthropic · pi`); every other Provider's run on pi alone.
  */
-export function providerGroupLabel(provider: ModelProvider, harness: Harness): string {
-  return provider === "anthropic"
-    ? `${providerNames.anthropic} · ${harnessNames[harness]}`
-    : providerNames[provider]
+export function providerGroupLabel(
+  provider: ModelProvider,
+  harness: Harness,
+  connectable?: ReadonlyArray<ConnectableProvider>,
+): string {
+  const name = providerName(provider, connectable)
+  return provider === "anthropic" ? `${name} · ${harnessNames[harness]}` : name
 }
 
 /**
@@ -182,44 +199,6 @@ export function fitSetting(models: RunnerModels | undefined, setting: ModelSetti
 }
 
 // ── pi Sessions (ADR 0029) ─────────────────────────────────────────────────
-
-/** What the pickers call each Provider whose Models they group: pi-ai's names, as the Hub's. */
-export const providerNames: Record<ModelProvider, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  xai: "xAI",
-  "github-copilot": "GitHub Copilot",
-  openrouter: "OpenRouter",
-  google: "Google",
-  mistral: "Mistral",
-  deepseek: "DeepSeek",
-  groq: "Groq",
-  cerebras: "Cerebras",
-  "kimi-coding": "Kimi For Coding",
-  moonshotai: "Moonshot AI",
-  zai: "Z.AI",
-  minimax: "MiniMax",
-  meta: "Meta",
-  together: "Together",
-  fireworks: "Fireworks",
-  huggingface: "Hugging Face",
-  nvidia: "NVIDIA",
-  "vercel-ai-gateway": "Vercel AI Gateway",
-  opencode: "OpenCode Zen",
-  "opencode-go": "OpenCode Go",
-  baseten: "Baseten",
-  "qwen-token-plan": "Qwen Token Plan",
-  "qwen-token-plan-individual": "Qwen Token Plan Individual",
-  xiaomi: "Xiaomi",
-  "xiaomi-token-plan-ams": "Xiaomi Token Plan AMS",
-  "xiaomi-token-plan-sgp": "Xiaomi Token Plan SGP",
-  "ant-ling": "Ant Ling",
-  "moonshotai-cn": "Moonshot AI CN",
-  "zai-coding-cn": "Z.AI Coding CN",
-  "minimax-cn": "MiniMax CN",
-  "qwen-token-plan-cn": "Qwen Token Plan CN",
-  "xiaomi-token-plan-cn": "Xiaomi Token Plan CN",
-}
 
 /**
  * The Model a pi Session's setting runs, among its Creator's: the Hub's pick without one, and
