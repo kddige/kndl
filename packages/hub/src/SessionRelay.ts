@@ -204,6 +204,7 @@
 // no one else.
 
 import {
+  type AgentId,
   AgentMessaged,
   AgentStatusChanged,
   ArchivedSessionPurged,
@@ -1677,6 +1678,21 @@ export class SessionRelay extends Context.Service<
        * changed while it ran, for a mod that switches models: between Turns, as `relaunch`, but
        * in place. The mod takes its commands in order, so the next prompt runs on the new model.
        */
+      /**
+       * Why a subagent can't be messaged or stopped now (ADR 0030): it ran on the other Harness,
+       * which alone has it. Undefined when it ran on the Session's, or the Session has no such agent.
+       */
+      const agentElsewhere = Effect.fn("SessionRelay.agentElsewhere")(function* (
+        session: SessionSummary,
+        agentId: AgentId,
+        verb: "message" | "stop",
+      ) {
+        const agent = yield* sessions.agentOf(session.id, agentId)
+        if (Option.isNone(agent) || agent.value.harness === harnessNow(session)) return undefined
+        const name = harnesses.of({ harness: agent.value.harness }).name
+        return `${agent.value.description} ran on ${name}: switch the Session back to a ${name} model to ${verb} it.`
+      })
+
       const switchModel = Effect.fn("SessionRelay.switchModel")(function* (
         session: SessionSummary,
       ) {
@@ -2816,6 +2832,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
+              const elsewhere = yield* agentElsewhere(session.value, agentId, "message")
+              if (elsewhere !== undefined) return refuse(message, elsewhere, { sessionId })
               const verdict = messageAgentVerdict({
                 state: session.value.state,
                 goingToSleep: live.goingToSleep(sessionId),
@@ -2895,6 +2913,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
+              const elsewhere = yield* agentElsewhere(session.value, agentId, "stop")
+              if (elsewhere !== undefined) return refuse(message, elsewhere, { sessionId })
               const cantStop = stopAgentRefusal({
                 state: session.value.state,
                 agent: Option.getOrUndefined(yield* sessions.agentStatus(sessionId, agentId)),
@@ -4063,10 +4083,12 @@ export class SessionRelay extends Context.Service<
         if (logged !== undefined) yield* logEvent(sessionId, logged)
         if (event._tag === "AgentStarted") {
           // Its summary shows the description too, redacted as the log has it.
+          const now = yield* sessions.get(sessionId)
           yield* sessions.agentStarted(sessionId, {
             id: event.agentId,
             description: redactText(yield* needlesForSession(sessionId), event.description),
             startedAt: yield* Clock.currentTimeMillis,
+            harness: Option.isSome(now) ? harnessNow(now.value) : "ClaudeCode",
           })
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnStarted") {

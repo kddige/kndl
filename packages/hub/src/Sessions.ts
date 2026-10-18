@@ -55,6 +55,8 @@ export interface NewAgent {
   readonly id: AgentId
   readonly description: string
   readonly startedAt: number
+  /** The Harness it runs on, the Session's when it started (ADR 0030). */
+  readonly harness: Harness
 }
 
 interface SessionRow {
@@ -273,6 +275,14 @@ export class Sessions extends Context.Service<
       id: SessionId,
       agentId: AgentId,
     ) => Effect.Effect<Option.Option<AgentStatus>, SqlError>
+    /** The subagent's description and the Harness it ran on (ADR 0030), if the Session has it. */
+    readonly agentOf: (
+      id: SessionId,
+      agentId: AgentId,
+    ) => Effect.Effect<
+      Option.Option<{ readonly description: string; readonly harness: Harness }>,
+      SqlError
+    >
     /** Records the subagent's new status; false if the Session never started it. */
     readonly setAgentStatus: (
       id: SessionId,
@@ -522,10 +532,21 @@ export class Sessions extends Context.Service<
         agent: NewAgent,
       ) {
         yield* sql`
-          INSERT INTO agents (session_id, agent_id, description, status, started_at)
-          VALUES (${id}, ${agent.id}, ${agent.description}, 'Running', ${agent.startedAt})
+          INSERT INTO agents (session_id, agent_id, description, status, started_at, harness)
+          VALUES (${id}, ${agent.id}, ${agent.description}, 'Running', ${agent.startedAt},
+            ${agent.harness === "Pi" ? "Pi" : null})
           ON CONFLICT (session_id, agent_id) DO UPDATE SET status = 'Running'
         `
+      })
+
+      const agentOf = Effect.fn("Sessions.agentOf")(function* (id: SessionId, agentId: AgentId) {
+        const rows = yield* sql<{ readonly description: string; readonly harness: string | null }>`
+          SELECT description, harness FROM agents WHERE session_id = ${id} AND agent_id = ${agentId}
+        `
+        return Option.map(Option.fromNullishOr(rows[0]), (row) => ({
+          description: row.description,
+          harness: (row.harness === "Pi" ? "Pi" : "ClaudeCode") as Harness,
+        }))
       })
 
       const agentStatus = Effect.fn("Sessions.agentStatus")(function* (
@@ -802,6 +823,7 @@ export class Sessions extends Context.Service<
         startedWith,
         agentStarted,
         agentStatus,
+        agentOf,
         setAgentStatus,
         interruptAgents,
         setState,

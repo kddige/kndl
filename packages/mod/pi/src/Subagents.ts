@@ -5,8 +5,8 @@
 //
 // An agent runs in the background, as Claude Code's do: the call returns at once, the parent's
 // Turn can end, and the agent's result comes to the main loop as a message of its own, which
-// starts a Turn from the agent (or follows the running one, as pi's follow-up), in the shape of
-// Claude Code's task notification. A call can wait for it instead (`wait`), as a foreground agent.
+// starts a Turn from the agent once pi is idle (never mid-run), in the shape of Claude Code's
+// task notification. A call can wait for it instead (`wait`), as a foreground agent.
 //
 // Each is reported as hub-link reports Claude Code's: AgentStarted under the call that started
 // it, its runs' events tagged with its id (Turns.ts), and its status: Running, then Done, or

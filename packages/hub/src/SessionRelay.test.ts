@@ -2728,6 +2728,28 @@ describe("switching Harness (ADR 0030)", () => {
     })
   })
 
+  test("an agent started on one Harness can't be messaged or stopped from the other", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
+    const { web, sessionId, mod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(turnStarted("t-1"), agentStarted("a-1", "Find the flaky test"))
+    await mod.post(agentStatus("a-1", "Done"), turnEnded("t-1"))
+    await asleep(scene)
+    web.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
+    await web.take("SessionUpdated", (m) => m.session.harness === "Pi")
+
+    web.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "go on" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "Find the flaky test ran on Claude Code: switch the Session back to a Claude Code model to message it.",
+    )
+    web.send({ _tag: "StopAgent", sessionId, agentId: "a-1" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "Find the flaky test ran on Claude Code: switch the Session back to a Claude Code model to stop it.",
+    )
+  })
+
   test("an Asleep Session switches as it wakes, and a mod that takes no handoff starts without one", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })

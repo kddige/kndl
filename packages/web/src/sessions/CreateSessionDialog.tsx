@@ -100,8 +100,8 @@ const runsClaudeCode = (runner: RunnerSummary) =>
 const capitalized = (words: string) => words.charAt(0).toUpperCase() + words.slice(1)
 
 /**
- * Whether the page's URL asks for Claude Code: `?harness=claude-code`, the only way to start a
- * Session on it where a Runner runs pi (ADR 0029).
+ * Whether the page's URL asks for Claude Code: `?harness=claude-code`, which preselects Claude
+ * Code's default whatever the Account page's choice for Claude (ADR 0030).
  */
 export const useClaudeCodeAsked = () =>
   useRouterState({

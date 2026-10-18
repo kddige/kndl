@@ -848,6 +848,12 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE participants ADD COLUMN claude_harness TEXT`
   }),
+  // The Harness each subagent ran on (ADR 0030): only that Harness can message or stop it. Null for
+  // Claude Code, as for every agent from before.
+  "0045_agent_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE agents ADD COLUMN harness TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

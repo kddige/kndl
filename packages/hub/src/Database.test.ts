@@ -45,12 +45,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0044, a Member's Harness for Claude (ADR 0030): the
+ * Takes the database back to before migration 0045, each subagent's Harness (ADR 0030): the
  * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
  * first.
  */
+const beforeAgentHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE agents DROP COLUMN harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'agent_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0044, a Member's Harness for Claude (ADR 0030), and
+ * 0045.
+ */
 const beforeClaudeHarness = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeAgentHarness
   yield* sql`ALTER TABLE participants DROP COLUMN claude_harness`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'claude_harness'`
 })
@@ -1003,6 +1014,7 @@ const agent = (n: number) => ({
   id: AgentId.make(`a-${n}`),
   description: `Task ${n}`,
   startedAt: n,
+  harness: "ClaudeCode" as const,
 })
 
 describe("migration 0017, subagents", () => {
