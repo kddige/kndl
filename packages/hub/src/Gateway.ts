@@ -28,7 +28,7 @@ import { ConnectedProviders } from "./ConnectedProviders.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
 import { type KeyHeader, modelCallAllowed, upstreamUrl } from "./PiProviders.ts"
-import { readAtMost } from "./ReadAtMost.ts"
+import { discard, readAtMost } from "./ReadAtMost.ts"
 import type { SecretsUnavailable } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
 
@@ -133,10 +133,6 @@ const forward = (
     },
     catch: (error) => error,
   }).pipe(Effect.option)
-
-/** Lets an answer's body go unread. */
-const discard = (response: Response) =>
-  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 /**
  * How much of the Hub the Gateway's model calls (ADR 0029) may take at once, so a Sandbox can't

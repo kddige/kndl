@@ -1,5 +1,8 @@
 // Reading what a sender may make too large to hold: an MCP server's icon, an authorization server's
-// answer, or a request through the Gateway that may have to be sent again (#217).
+// answer, or a request through the Gateway that may have to be sent again (#217). And letting an
+// answer go unread.
+
+import { Effect } from "effect"
 
 /**
  * A body read to its end, unless it is longer than `max` bytes: then the rest is left unread, and
@@ -23,3 +26,7 @@ export const readAtMost = async (
   }
   return Buffer.concat(chunks, size)
 }
+
+/** Lets an answer's body go unread. */
+export const discard = (response: Response) =>
+  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)

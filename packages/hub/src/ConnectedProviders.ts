@@ -96,6 +96,7 @@ import {
   takesApiKey,
   upstreamUrl,
 } from "./PiProviders.ts"
+import { discard } from "./ReadAtMost.ts"
 import { Secrets } from "./Secrets.ts"
 
 // ── pi-ai and the Providers ────────────────────────────────────────────────
@@ -258,10 +259,6 @@ const readListing = (provider: ModelProvider, kind: ConnectionKind, called: Call
     Effect.catch(() => Effect.succeed(unreachable)),
   )
 }
-
-/** Lets an answer's body go unread. */
-const discard = (response: Response) =>
-  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 // ── Sign-in steps ──────────────────────────────────────────────────────────
 
@@ -629,8 +626,8 @@ export class ConnectedProviders extends Context.Service<
        * expired, after which it is let go, as it can't be used; a key's for as long as the Hub runs.
        */
       const retired = new Map<string, number | undefined>()
-      /** One refresh at a time for each credential. */
-      const refreshing = new Map<string, Semaphore.Semaphore>()
+      /** One refresh at a time for each connection, let go with it. */
+      const refreshLocks = new Map<string, Semaphore.Semaphore>()
       /** The Model lists being asked for off a call, so each is asked once at a time. */
       const asking = new Set<string>()
 
@@ -702,12 +699,15 @@ export class ConnectedProviders extends Context.Service<
       const changed = (participantId: ParticipantId, answered: boolean) =>
         PubSub.publish(published, { participantId, answered })
 
+      const lockKey = (participantId: ParticipantId, provider: ProviderId) =>
+        `${participantId}\n${provider}`
+
       const lockOf = (participantId: ParticipantId, provider: ProviderId) => {
-        const key = `${participantId}\n${provider}`
-        let lock = refreshing.get(key)
+        const key = lockKey(participantId, provider)
+        let lock = refreshLocks.get(key)
         if (lock === undefined) {
           lock = Semaphore.makeUnsafe(1)
-          refreshing.set(key, lock)
+          refreshLocks.set(key, lock)
         }
         return lock
       }
@@ -1074,6 +1074,8 @@ export class ConnectedProviders extends Context.Service<
         if (before === undefined) return false
         retire(yield* Clock.currentTimeMillis, before.credential)
         connections.get(participantId)?.delete(provider)
+        // A refresh of it under way finds it gone, and keeps nothing.
+        refreshLocks.delete(lockKey(participantId, provider))
         yield* changed(participantId, true)
         return true
       })
@@ -1085,6 +1087,7 @@ export class ConnectedProviders extends Context.Service<
         const now = yield* Clock.currentTimeMillis
         for (const connection of connections.get(participantId)?.values() ?? []) {
           retire(now, connection.credential)
+          refreshLocks.delete(lockKey(participantId, connection.provider))
         }
         connections.delete(participantId)
         claudeModels.delete(participantId)
@@ -1161,7 +1164,7 @@ export class ConnectedProviders extends Context.Service<
           if (first.refresh === undefined) return first.connection
           // On the layer's scope, not the call's: a Provider may spend the old refresh token as it
           // rotates it, so a call given up meanwhile mustn't lose the new one.
-          const refreshing = lockOf(participantId, first.connection.provider).withPermits(1)(
+          const rotating = lockOf(participantId, first.connection.provider).withPermits(1)(
             Effect.gen(function* () {
               // Another call may have refreshed it meanwhile.
               const { connection, now, refresh } = yield* needed()
@@ -1240,7 +1243,7 @@ export class ConnectedProviders extends Context.Service<
               return next
             }),
           )
-          return yield* Fiber.join(yield* Effect.forkIn(refreshing, scope))
+          return yield* Fiber.join(yield* Effect.forkIn(rotating, scope))
         })
       }
 
