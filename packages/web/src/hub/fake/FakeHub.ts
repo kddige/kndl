@@ -207,6 +207,17 @@ export interface FakeHubOptions {
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
 
+/** A sign-in the fake plays (ADR 0029). */
+interface FakeSignIn {
+  readonly requestId: string
+  readonly provider: ProviderId
+  readonly socket: FakeSocket
+  /** What it waits for the Member to answer, if anything. */
+  waitsFor: "Paste" | "Choose" | null
+  /** Its steps after the choice it waits for. */
+  afterChoice: ReadonlyArray<SignInStepWire>
+}
+
 interface FakeSession {
   summary: SessionSummaryWire
   log: Array<LogEntryWire>
@@ -414,14 +425,10 @@ export class FakeHub implements HubTransport {
   #scriptStarted = false
   /**
    * The signed-in person's sign-in in progress, as the Hub runs one per Member (ADR 0029): with
-   * the connection that started it, and whether it waits for a paste.
+   * the connection that started it, what it waits for, a paste or a choice, and its steps after
+   * the choice.
    */
-  #signIn: {
-    readonly requestId: string
-    readonly provider: ProviderId
-    readonly socket: FakeSocket
-    waitsForPaste: boolean
-  } | null = null
+  #signIn: FakeSignIn | null = null
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   /** While held, the timed steps that came due, in order, waiting for `step` (#315). */
@@ -1074,11 +1081,17 @@ export class FakeHub implements HubTransport {
         break
       case "AnswerSignIn": {
         const signIn = this.#signIn
-        if (signIn?.requestId !== message.requestId || !signIn.waitsForPaste) {
+        if (signIn?.requestId !== message.requestId || signIn.waitsFor === null) {
           this.#refuse(socket, message._tag, message.requestId, "No sign-in is waiting for that.")
           break
         }
-        signIn.waitsForPaste = false
+        // GitHub Copilot's choice of GitHub: its code follows, whichever.
+        if (signIn.waitsFor === "Choose") {
+          signIn.waitsFor = null
+          this.#playSignIn(signIn, signIn.afterChoice)
+          break
+        }
+        signIn.waitsFor = null
         const problem = pasteProblem(Redacted.value(message.value))
         if (problem !== undefined) {
           this.#endSignIn("Failed", problem)
@@ -3357,18 +3370,28 @@ export class FakeHub implements HubTransport {
    */
   #startSignIn(socket: FakeSocket, requestId: string, provider: ProviderId): void {
     if (this.#signIn !== null) this.#endSignIn("Cancelled")
-    const signIn = { requestId, provider, socket, waitsForPaste: false }
+    const signIn: FakeSignIn = { requestId, provider, socket, waitsFor: null, afterChoice: [] }
     this.#signIn = signIn
-    const steps = signInSteps(provider)
-    steps.forEach((step, index) =>
+    this.#playSignIn(signIn, signInSteps(provider))
+  }
+
+  /**
+   * Shows a sign-in's steps, one a step apart, up to a choice, which waits for the answer; then a
+   * wait for the address pasted, or for the code to be entered.
+   */
+  #playSignIn(signIn: FakeSignIn, steps: ReadonlyArray<SignInStepWire>): void {
+    const choice = steps.findIndex((step) => step._tag === "Choose")
+    const shown = choice === -1 ? steps : steps.slice(0, choice + 1)
+    signIn.afterChoice = choice === -1 ? [] : steps.slice(choice + 1)
+    shown.forEach((step, index) =>
       this.#after(index + 1, () => {
         if (this.#signIn !== signIn) return
-        if (step._tag === "Paste") signIn.waitsForPaste = true
+        if (step._tag === "Paste" || step._tag === "Choose") signIn.waitsFor = step._tag
         this.#signInStep(step)
       }),
     )
-    if (!steps.some((step) => step._tag === "Paste"))
-      this.#after(steps.length + codeEnteredSteps, () => this.#signInConnected(requestId))
+    if (!shown.some((step) => step._tag === "Paste" || step._tag === "Choose"))
+      this.#after(shown.length + codeEnteredSteps, () => this.#signInConnected(signIn.requestId))
   }
 
   #signInStep(step: SignInStepWire): void {

@@ -11,6 +11,7 @@ import {
   BoxIcon,
   BranchIcon,
   CopyIcon,
+  ChevronDownIcon,
   Button,
   Checkbox,
   Combobox,
@@ -51,6 +52,9 @@ import {
   ServerIcon,
   UpdateIcon,
   SunIcon,
+  SearchIcon,
+  SearchSelect,
+  type SearchSelectGroup,
   Select,
   SessionStatus,
   setTheme,
@@ -466,6 +470,58 @@ function Comboboxes() {
   )
 }
 
+/** A long list in groups, as a gateway's Models are. */
+const SEARCH_GROUPS: ReadonlyArray<SearchSelectGroup> = [
+  "Anthropic",
+  "OpenAI",
+  "Google",
+  "Mistral",
+].map((vendor) => ({
+  label: vendor,
+  options: ["Large", "Medium", "Small", "Mini", "Nano"].map((size) => ({
+    value: `${vendor.toLowerCase()}/${size.toLowerCase()}`,
+    label: `${vendor} ${size}`,
+  })),
+}))
+
+function SearchSelects() {
+  const [value, setValue] = useState("openai/mini")
+  const label = SEARCH_GROUPS.flatMap((group) => group.options).find(
+    (option) => option.value === value,
+  )?.label
+  return (
+    <Section
+      title="SearchSelect"
+      note="One choice among a long list, in groups, behind a button: it opens with a search that narrows the list by every word typed; arrow keys, Enter and Escape as in a menu."
+    >
+      <Row label="models">
+        <SearchSelect
+          trigger={
+            <Button aria-label={`Model: ${label}`}>
+              {label}
+              <ChevronDownIcon />
+            </Button>
+          }
+          groups={SEARCH_GROUPS}
+          value={value}
+          onValueChange={setValue}
+          searchLabel="Search Models"
+          noMatch={(query) => `No Models match "${query}".`}
+        />
+        <SearchSelect
+          trigger={<Button>Empty</Button>}
+          groups={[]}
+          value={undefined}
+          onValueChange={() => {}}
+          searchLabel="Search Models"
+          noMatch={(query) => `No Models match "${query}".`}
+          empty="No Models yet. Connect a Provider on your Account page."
+        />
+      </Row>
+    </Section>
+  )
+}
+
 /** The radio menu's demo choices: a name and a line on each, as the model picker shows them. */
 const sizes: Record<string, { label: string; description: string }> = {
   small: { label: "Small", description: "Quick, for light work" },
@@ -738,6 +794,7 @@ function Toggles() {
         <PlugIcon aria-label="Plug" />
         <SunIcon aria-label="Sun" />
         <SteerIcon aria-label="Steer" />
+        <SearchIcon aria-label="Search" />
       </Row>
     </Section>
   )
@@ -1115,6 +1172,7 @@ export function KitPage() {
         <Sliders />
         <Selects />
         <Comboboxes />
+        <SearchSelects />
 
         <Section title="Tabs">
           <Tabs defaultValue="chat">

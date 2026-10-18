@@ -92,6 +92,8 @@ const distinctRepos = (names: ReadonlyArray<string>) => [
 
 const runsPi = (runner: RunnerSummary) => runner.harnesses?.includes("Pi") === true
 
+const capitalized = (words: string) => words.charAt(0).toUpperCase() + words.slice(1)
+
 /**
  * Whether the page's URL asks for Claude Code: `?harness=claude-code`, the only way to start a
  * Session on it where a Runner runs pi (ADR 0029).
@@ -178,6 +180,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   // can't start, and the dialog says so before the form is filled in. Claude Code needs their
   // setup token; pi, one of their Models.
   const needsCredential = !pi && claudeCredential === null
+  // Who does the work: Claude, on Claude Code; on pi, whichever Model is picked.
+  const worker = pi ? "the Session" : "Claude"
   const needsModels = pi && providerModels?.length === 0
 
   // Recent: the person's own Sessions' Repos, newest first. Without a list from the Hub, the
@@ -343,7 +347,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         )
       }
       title="New Session"
-      description="Claude works on a branch of the Repo, in a Sandbox on a Runner."
+      description="A Session works on a branch of the Repo, in a Sandbox on a Runner."
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
@@ -454,7 +458,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
               // The list can be cut short, so this doesn't stop the Session from starting.
               "Branch not found on GitHub. Pick one, or create it."
             ) : (
-              "The branch Claude starts from."
+              `The branch ${worker} starts from.`
             )
           }
           disabled={!repoPicked}
@@ -507,8 +511,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
             label="Work on a new branch"
             description={
               newWorkBranch
-                ? `Claude commits to a new branch made from ${branchValue === "" ? "it" : branchValue}.`
-                : `Claude commits directly to ${branchValue === "" ? "it" : branchValue}.`
+                ? `${capitalized(worker)} commits to a new branch made from ${branchValue === "" ? "it" : branchValue}.`
+                : `${capitalized(worker)} commits directly to ${branchValue === "" ? "it" : branchValue}.`
             }
             checked={newWorkBranch}
             onCheckedChange={setNewWorkBranch}

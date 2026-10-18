@@ -54,13 +54,12 @@ const styles = stylex.create({
   },
 })
 
-const steerNow =
-  "Send it into the running Turn now, as Claude Code does with a prompt typed while it works"
+const steerNow = "Send it into the running Turn now, to be read at its next step"
 
 /** What Steer does; for a prompt with attachments, how they reach Claude (#278). */
 const steerTip = (prompt: QueuedPrompt) =>
   (prompt.attachments?.length ?? 0) > 0
-    ? `${steerNow}: its attachments go with it as markers, which Claude opens.`
+    ? `${steerNow}: its attachments go with it as markers, to be opened from there.`
     : steerNow
 
 /** A queued prompt as its row shows it: its text, and how many images and PDFs it carries. */

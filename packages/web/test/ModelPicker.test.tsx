@@ -146,7 +146,7 @@ test("the menu's rows are a group named Model", async () => {
   expect(document.getElementById(labelledBy)?.textContent).toBe("Model")
 })
 
-test("with no level set, the thinking slider says the Harness picks, and is on no level", async () => {
+test("with no level set, the thinking slider says the Model thinks as it usually does, and is on no level", async () => {
   const { container, changes } = await picker({ model: "opus" })
   await click(trigger(container, "Thinking"))
   const popover = thinkingPopover()
@@ -154,7 +154,7 @@ test("with no level set, the thinking slider says the Harness picks, and is on n
   expect(popover?.getAttribute("aria-label")).toBe("Thinking")
   expect(popover?.hasAttribute("aria-labelledby")).toBe(false)
   expect(popover?.textContent).toContain("Default")
-  expect(popover?.textContent).toContain("The Harness picks the level.")
+  expect(popover?.textContent).toContain("The Model's usual level.")
   expect(popover?.textContent).not.toContain("Medium")
   expect(slider()?.getAttribute("aria-valuetext")).toBe("Default")
   // Nothing to go back to while none is set.
@@ -284,12 +284,37 @@ async function piPicker(initial: ModelSetting) {
   return { changes, container: view.container }
 }
 
-/** The open menu's groups: each one's name and its rows. */
+/** The open list's groups: each one's name and its rows. */
 const groups = () =>
-  [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="group"]')].map((group) => [
+  [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="group"]')].map((group) => [
     document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
-    [...group.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
+    [...group.querySelectorAll('[role="option"]')].map((row) => row.textContent),
   ])
+
+/** The open list's rows, by their text. */
+const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+const option = (label: string) => {
+  const found = options().find((row) => row.textContent === label)
+  if (!found) throw new Error(`no "${label}" row in ${options().map((row) => row.textContent)}`)
+  return found
+}
+const selected = () =>
+  options()
+    .filter((row) => row.getAttribute("aria-selected") === "true")
+    .map((row) => row.textContent)
+
+/** The open list's search field. */
+const search = () => document.querySelector<HTMLInputElement>('input[aria-label="Search Models"]')
+
+async function typeSearch(text: string): Promise<void> {
+  const field = search()
+  if (!field) throw new Error("no search field")
+  await step(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, text)
+    field.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await settle()
+}
 
 test("a pi Session's picker lists its Creator's Models by Provider, and sends the one chosen as provider/id", async () => {
   const { container, changes } = await piPicker({
@@ -305,10 +330,10 @@ test("a pi Session's picker lists its Creator's Models by Provider, and sends th
     ["OpenAI", ["GPT-6-Sol", "GPT-6-Sol mini", "GPT-4.1"]],
   ])
   // A pi Session always runs a Model of its own: there is no default row.
-  expect(radios().some((row) => row.textContent?.startsWith("Default"))).toBe(false)
-  expect(checked()).toEqual(["Claude Sonnet 5.5"])
+  expect(options().some((row) => row.textContent?.startsWith("Default"))).toBe(false)
+  expect(selected()).toEqual(["Claude Sonnet 5.5"])
 
-  await click(radio("GPT-6-Sol"))
+  await click(option("GPT-6-Sol"))
   expect(changes).toEqual([{ model: "openai/gpt-6-sol", thinkingLevel: "high" }])
   expect(trigger(container, "Model")?.textContent).toBe("GPT-6-Sol")
 })
@@ -327,12 +352,53 @@ test("a pi Session's thinking slider has its Model's own levels, and a Model wit
 
   // GPT-6-Sol mini has no Extra: the level goes.
   await click(trigger(container, "Model"))
-  await click(radio("GPT-6-Sol mini"))
+  await click(option("GPT-6-Sol mini"))
   expect(changes.at(-1)).toEqual({ model: "openai/gpt-6-sol-mini" })
   // GPT-4.1 doesn't think: no thinking button.
   await click(trigger(container, "Model"))
-  await click(radio("GPT-4.1"))
+  await click(option("GPT-4.1"))
   expect(trigger(container, "Thinking")).toBeNull()
+})
+
+test("a pi Session's picker opens with a search, which narrows its Models by every word, and the Provider", async () => {
+  const { container, changes } = await piPicker({ model: "openai/gpt-6-sol" })
+  await click(trigger(container, "Model"))
+  expect(search()).not.toBeNull()
+
+  // Each word typed is in the Model's name, its id or its Provider's name.
+  await typeSearch("sol mini")
+  expect(groups()).toEqual([["OpenAI", ["GPT-6-Sol mini"]]])
+  await typeSearch("anthropic haiku")
+  expect(groups()).toEqual([["Anthropic", ["Claude Haiku 4.5"]]])
+  await typeSearch("gpt-4.1")
+  expect(groups()).toEqual([["OpenAI", ["GPT-4.1"]]])
+
+  // Nothing matching says so.
+  await typeSearch("llama")
+  expect(groups()).toEqual([])
+  expect(document.body.textContent).toContain('No Models match "llama".')
+
+  // Picking from what's left sends it; opened again, the whole list is back.
+  await typeSearch("haiku")
+  await click(option("Claude Haiku 4.5"))
+  expect(changes).toEqual([{ model: "anthropic/claude-haiku-4-5" }])
+  await click(trigger(container, "Model"))
+  expect(search()?.value).toBe("")
+  expect(options()).toHaveLength(6)
+  expect(selected()).toEqual(["Claude Haiku 4.5"])
+})
+
+test("a pi Session's picker says so when its Creator has no Models", async () => {
+  const changes: Array<ModelSetting> = []
+  const view = await render(
+    <ModelPicker harness="Pi" models={[]} value={{}} onChange={(next) => changes.push(next)} />,
+  )
+  cleanup = view.unmount
+  await click(trigger(view.container, "Model"))
+  expect(search()).toBeNull()
+  expect(document.body.textContent).toContain(
+    "No Models yet. Connect a Provider on your Account page.",
+  )
 })
 
 test("someone watching a pi Session sees its Model's label as it is known", async () => {

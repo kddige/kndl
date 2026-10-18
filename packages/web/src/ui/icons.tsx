@@ -247,6 +247,15 @@ export function ExternalLinkIcon(props: IconProps) {
   )
 }
 
+export function SearchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="7" cy="7" r="4.25" />
+      <path d="m10.25 10.25 3 3" />
+    </Icon>
+  )
+}
+
 export function MenuIcon(props: IconProps) {
   return (
     <Icon {...props}>

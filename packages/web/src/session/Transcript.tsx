@@ -47,6 +47,16 @@ type NameTurnModel = (model: string) => string | undefined
 
 const TurnModelContext = createContext<NameTurnModel>(() => undefined)
 
+/**
+ * Who answers a Turn, by the model it ran (undefined while it runs): Claude, on Claude Code; a pi
+ * Session's Model, by name (ADR 0029).
+ */
+export type NameReplier = (turnModel: string | undefined) => string
+
+const claude: NameReplier = () => "Claude"
+
+const ReplierContext = createContext<NameReplier>(claude)
+
 const styles = stylex.create({
   list: {
     display: "flex",
@@ -263,29 +273,34 @@ export const Transcript = memo(function Transcript({
   sessionId,
   items,
   nameTurnModel = noTurnModel,
+  nameReplier = claude,
 }: {
   sessionId: SessionId
   items: ReadonlyArray<TranscriptItem>
   /** Names a Turn's model in its footer when it isn't the Session's own. */
   nameTurnModel?: NameTurnModel
+  /** Names who answers each Turn: Claude unless said. */
+  nameReplier?: NameReplier
 }) {
   return (
     <SessionContext value={sessionId}>
-      <TurnModelContext value={nameTurnModel}>
-        <ol aria-label="Conversation" {...stylex.props(styles.list)}>
-          {items.map((item) => (
-            <li key={item.key}>
-              {item.kind === "turn" ? (
-                <Turn turn={item.turn} />
-              ) : item.kind === "cancelled" ? (
-                <CancelledPrompt at={item.at} prompt={item.event} />
-              ) : (
-                <Notice at={item.at} event={item.event} />
-              )}
-            </li>
-          ))}
-        </ol>
-      </TurnModelContext>
+      <ReplierContext value={nameReplier}>
+        <TurnModelContext value={nameTurnModel}>
+          <ol aria-label="Conversation" {...stylex.props(styles.list)}>
+            {items.map((item) => (
+              <li key={item.key}>
+                {item.kind === "turn" ? (
+                  <Turn turn={item.turn} />
+                ) : item.kind === "cancelled" ? (
+                  <CancelledPrompt at={item.at} prompt={item.event} />
+                ) : (
+                  <Notice at={item.at} event={item.event} />
+                )}
+              </li>
+            ))}
+          </ol>
+        </TurnModelContext>
+      </ReplierContext>
     </SessionContext>
   )
 })
@@ -293,6 +308,7 @@ export const Transcript = memo(function Transcript({
 const noTurnModel: NameTurnModel = () => undefined
 
 const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
+  const replier = useContext(ReplierContext)(turn.end?.usage?.model)
   return (
     <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
       <div {...stylex.props(styles.speaker)}>
@@ -309,9 +325,9 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
       />
       <div {...stylex.props(styles.speaker)}>
         <span aria-hidden="true" {...stylex.props(styles.claudeMark)}>
-          C
+          {replier.charAt(0).toUpperCase()}
         </span>
-        <span {...stylex.props(styles.name)}>Claude</span>
+        <span {...stylex.props(styles.name)}>{replier}</span>
       </div>
       <div {...stylex.props(styles.reply)}>
         <Blocks blocks={turn.blocks} ended={turn.end !== null} />
@@ -321,8 +337,8 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
             prompt={prompt}
             note={
               turn.end === null
-                ? "Steered in · Claude reads it at its next step"
-                : "Steered in, not read before the Turn ended · Claude reads it with the next prompt"
+                ? `Steered in · ${replier} reads it at its next step`
+                : `Steered in, not read before the Turn ended · ${replier} reads it with the next prompt`
             }
             unread
           />

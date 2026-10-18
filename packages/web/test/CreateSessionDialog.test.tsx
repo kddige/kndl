@@ -290,11 +290,11 @@ const modelButton = (dialog: HTMLElement) =>
     el.getAttribute("aria-label")?.startsWith("Model: "),
   ) ?? null
 const menuGroups = () =>
-  [...document.querySelectorAll('[role="menu"] [role="group"]')].map(
+  [...document.querySelectorAll('[role="listbox"] [role="group"]')].map(
     (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
   )
 const menuRow = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+  [...document.querySelectorAll<HTMLElement>('[role="option"], [role="menuitemradio"]')].find(
     (row) => row.textContent === label,
   ) as HTMLElement
 

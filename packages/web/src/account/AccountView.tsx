@@ -185,9 +185,9 @@ function ClaudeSection() {
           Anthropic
         </h3>
         <p {...stylex.props(styles.note)}>
-          Claude runs in the Sessions you start on your own Claude account, through a setup token,
-          on whichever Runner they are on. Without one, Claude's Models aren't yours to pick, and a
-          Session on Claude Code can't start.
+          Your Claude subscription, through a setup token. The Sessions you start run Claude's
+          Models on it, on any Runner. Without one, Claude's Models aren't yours to pick, and Claude
+          Code Sessions can't start.
         </p>
       </div>
       {credential === undefined ? (
@@ -243,7 +243,7 @@ function SavedCredential({
         <Fact term="Ends in">
           <span {...stylex.props(styles.mono)}>…{credential.last4}</span>
         </Fact>
-        <Fact term="Added">{new Date(credential.addedAt).toLocaleDateString()}</Fact>
+        <Fact term="Connected">{day(credential.addedAt)}</Fact>
       </dl>
       <div {...stylex.props(styles.actions)}>
         <Button size="sm" onClick={onReplace}>

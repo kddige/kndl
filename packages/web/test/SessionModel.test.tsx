@@ -76,6 +76,15 @@ const radio = (start: string) => {
   return found
 }
 
+/** A row of a pi Session's picker, which is a list to search (ADR 0029). */
+const option = (label: string) => {
+  const found = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (row) => row.textContent === label,
+  )
+  if (!found) throw new Error(`no "${label}" option`)
+  return found
+}
+
 function typeInto(field: HTMLInputElement, value: string): void {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, value)
   field.dispatchEvent(new Event("input", { bubbles: true }))
@@ -180,11 +189,13 @@ test("a pi Session's Creator switches among their Models, by Provider; the switc
   await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
   await step(() => picker()?.click())
   await settle()
-  const groups = [...document.querySelectorAll('[role="menu"] [role="group"]')].map(
+  const groups = [...document.querySelectorAll('[role="listbox"] [role="group"]')].map(
     (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
   )
   expect(groups).toEqual(["Anthropic", "OpenAI"])
-  await step(() => radio("Claude Opus 5.5").click())
+  // Nothing restarts for a switch: it isn't asked about, even with agents running.
+  await step(() => option("Claude Opus 5.5").click())
+  expect(document.querySelector('[role="dialog"]:not([data-type])')).toBeNull()
 
   await eventually(() =>
     expect(conversation()).toContain("Alice Kim switched to Claude Opus 5.5, High"),
@@ -202,4 +213,20 @@ test("someone watching a pi Session sees its Model as the transcript names it, n
     page.querySelector('[title="The model and thinking level this Session runs on"]')?.textContent
   await eventually(() => expect(shown()).toBe("GPT-6-Sol·High"))
   expect(picker()).toBeNull()
+})
+
+test("a pi Session names its Model, not Claude or Claude Code, and wakes without a setup token", async () => {
+  const { page, conversation } = await open(`/sessions/${piSessionId}`, false, {
+    claudeCredential: null,
+  })
+  await eventually(() => expect(conversation()).toContain("pi sends each model call"))
+  // Its reply is the Model's, by the name its Creator's Models give it.
+  const speakers = [...page.querySelectorAll("article span")].map((span) => span.textContent)
+  expect(speakers).toContain("GPT-6-Sol")
+  expect(speakers).not.toContain("Claude")
+  expect(page.querySelector("textarea")?.getAttribute("placeholder")).toBe("Send a prompt")
+  // It runs on the Creator's Connected providers, so it wakes as any Asleep Session does.
+  expect(page.textContent).toContain("This Session is Asleep")
+  expect(page.textContent).not.toContain("can't wake")
+  expect(page.textContent).not.toContain("Claude Code")
 })

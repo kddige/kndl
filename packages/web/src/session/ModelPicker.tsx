@@ -11,11 +11,11 @@ import {
   Button,
   ChevronDownIcon,
   Menu,
-  MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
   type MenuSide,
   Popover,
+  SearchSelect,
   Slider,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -205,8 +205,9 @@ function ClaudeCodeModelPicker({
 
 /**
  * A pi Session's picker (ADR 0029): its Creator's Models, a group for each Provider, valued as
- * `openai/gpt-6-sol`, with no default row, since a pi Session always runs a Model it names. A Model
- * that doesn't take the level set drops it.
+ * `openai/gpt-6-sol`, with no default row, since a pi Session always runs a Model it names. A
+ * Provider can list hundreds (OpenRouter), so it opens with a search. A Model that doesn't take
+ * the level set drops it.
  */
 function PiModelPicker({
   models,
@@ -238,10 +239,9 @@ function PiModelPicker({
 
   return (
     <div {...stylex.props(styles.pickers, appearance === "field" && styles.fieldPickers)}>
-      <Menu
+      <SearchSelect
         side={side}
         align="start"
-        sx={styles.popup}
         trigger={
           <Button
             {...look(appearance)}
@@ -253,30 +253,24 @@ function PiModelPicker({
             <ChevronDownIcon />
           </Button>
         }
-      >
-        {models === undefined || models.length === 0 ? (
-          <MenuItem disabled>
-            {models === undefined ? "Loading your Models…" : "No Models: connect a Provider"}
-          </MenuItem>
-        ) : (
-          groupByProvider(models).map((group) => (
-            <MenuRadioGroup
-              key={group.provider}
-              value={current?.provider === group.provider ? providerModelName(current) : undefined}
-              onValueChange={chooseModel}
-              label={providerNames[group.provider]}
-            >
-              {group.models.map((model) => (
-                <MenuRadioItem
-                  key={model.id}
-                  value={providerModelName(model)}
-                  label={model.label}
-                />
-              ))}
-            </MenuRadioGroup>
-          ))
-        )}
-      </Menu>
+        groups={groupByProvider(models ?? []).map((group) => ({
+          label: providerNames[group.provider],
+          options: group.models.map((model) => ({
+            value: providerModelName(model),
+            label: model.label,
+            keywords: model.id,
+          })),
+        }))}
+        value={current === undefined ? undefined : providerModelName(current)}
+        onValueChange={chooseModel}
+        searchLabel="Search Models"
+        noMatch={(query) => `No Models match "${query}".`}
+        empty={
+          models === undefined
+            ? "Loading your Models…"
+            : "No Models yet. Connect a Provider on your Account page."
+        }
+      />
       {levels.length > 0 && (
         <ThinkingPicker
           levels={levels}
@@ -346,7 +340,7 @@ function ThinkingPicker({
   appearance,
 }: {
   levels: ReadonlyArray<ThinkingLevel>
-  /** The level set; undefined when none is, and the Harness picks. */
+  /** The level set; undefined when none is, and the Model thinks at its usual level. */
   value: ThinkingLevel | undefined
   onChange: (level: ThinkingLevel | undefined) => void
   disabled: boolean
@@ -367,7 +361,7 @@ function ThinkingPicker({
       align="start"
       label="Thinking"
       title={shown === undefined ? "Default" : thinkingLevelNames[shown]}
-      description={shown === undefined ? "The Harness picks the level." : thinkingLevelNotes[shown]}
+      description={shown === undefined ? "The Model's usual level." : thinkingLevelNotes[shown]}
       onOpenChange={(open, reason) => {
         if (open || moved === undefined) return
         // Escape takes back what was moved; any other way out sets it.

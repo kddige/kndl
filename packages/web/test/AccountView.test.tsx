@@ -289,6 +289,12 @@ test("signs in to GitHub Copilot with a code, from its line, and it moves up onc
   await eventually(() => expect(providerSection("github-copilot")).not.toBeNull())
   const copilot = providerSection("github-copilot") as HTMLElement
   await step(() => button("Sign in with GitHub Copilot", copilot).click())
+  // It asks which GitHub first.
+  await eventually(() =>
+    expect(copilot.textContent).toContain("Which GitHub is your Copilot subscription on?"),
+  )
+  await step(() => button("GitHub.com", copilot).click())
+  expect(fakeHub().received.find((m) => m._tag === "AnswerSignIn")).toBeDefined()
   await eventually(() =>
     expect(copilot.querySelector('[aria-label="Sign-in code"]')?.textContent).toBe("WDJB-MJHT"),
   )
@@ -312,12 +318,16 @@ test("signs in with ChatGPT: a page to open, then the address it lands on pasted
   const page = link(openai, "Open the sign-in page")
   expect(page?.getAttribute("href")).toContain("https://auth.openai.com/")
   expect(page?.getAttribute("target")).toBe("_blank")
-  expect(openai.textContent).toContain("Sign in with your ChatGPT account, then come back here.")
+  // Two steps, numbered: the page, then the address it lands on, which won't load, pasted back.
+  expect(openai.querySelector("ol")?.children).toHaveLength(2)
+  expect(openai.textContent).toContain("Sign in to ChatGPT in the page this opens.")
+  expect(openai.textContent).toContain("that's expected")
 
-  const pasteLabel = "Paste the address the page you landed on shows"
+  const pasteLabel = "Address of the page you landed on"
   await eventually(() => expect(openai.textContent).toContain(pasteLabel))
+  expect(openai.textContent).toContain("it starts with http://127.0.0.1:1455/")
   const field = openai.querySelector<HTMLInputElement>(
-    'input[placeholder^="http://localhost:1455"]',
+    'input[placeholder^="http://127.0.0.1:1455"]',
   )
   await step(() =>
     typeInto(field as HTMLInputElement, "http://localhost:1455/auth/callback?code=made-up&state=x"),
@@ -356,16 +366,42 @@ test("a sign-in that fails says why, and can be tried again", async () => {
   const openai = providerSection("openai") as HTMLElement
   await step(() => button("Sign in with ChatGPT", openai).click())
   await eventually(() =>
-    expect(openai.querySelector('input[placeholder^="http://localhost:1455"]')).not.toBeNull(),
+    expect(openai.querySelector('input[placeholder^="http://127.0.0.1:1455"]')).not.toBeNull(),
   )
   const field = openai.querySelector<HTMLInputElement>(
-    'input[placeholder^="http://localhost:1455"]',
+    'input[placeholder^="http://127.0.0.1:1455"]',
   )
   await step(() => typeInto(field as HTMLInputElement, "http://localhost:1455/"))
   await step(() => button("Continue", openai).click())
   await eventually(() => expect(openai.textContent).toContain("The sign-in failed"))
   expect(openai.textContent).toContain("That address has no code in it")
   expect(button("Sign in with ChatGPT", openai)).toBeDefined()
+})
+
+test("the focus follows a sign-in: to its page, to the box to paste in, and back once it ends", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("openai")).not.toBeNull())
+  const openai = providerSection("openai") as HTMLElement
+  const signIn = button("Sign in with ChatGPT", openai)
+  signIn.focus()
+  await step(() => signIn.click())
+  // The button goes; the sign-in's page takes the focus, as what to do next.
+  await eventually(() =>
+    expect(document.activeElement).toBe(link(openai, "Open the sign-in page") ?? null),
+  )
+  await eventually(() =>
+    expect(openai.querySelector('input[placeholder^="http://127.0.0.1:1455"]')).not.toBeNull(),
+  )
+  // Opening it readies the box for the address, to paste into on coming back.
+  await step(() => link(openai, "Open the sign-in page")?.click())
+  expect(document.activeElement).toBe(
+    openai.querySelector('input[placeholder^="http://127.0.0.1:1455"]'),
+  )
+  // Cancelled, the focus is back on the button that starts it.
+  await step(() => button("Cancel", openai).click())
+  await eventually(() =>
+    expect(document.activeElement).toBe(button("Sign in with ChatGPT", openai)),
+  )
 })
 
 test("disconnects a Provider after asking", async () => {

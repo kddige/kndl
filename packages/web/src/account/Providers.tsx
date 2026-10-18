@@ -10,7 +10,7 @@
 
 import type { ConnectableProvider, ConnectedProvider, ProviderId, SignInStep } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, type ReactNode, useEffect, useState } from "react"
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import { day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { SignInProgress } from "../hub/store.ts"
@@ -27,6 +27,7 @@ import {
   IconButton,
   Input,
   KeyIcon,
+  PlugIcon,
   Spinner,
   toast,
   WarningIcon,
@@ -152,8 +153,44 @@ const styles = stylex.create({
     rowGap: space.s2,
     minHeight: "2rem",
   },
-  lineName: { fontSize: text.base, fontWeight: weight.medium },
+  lineName: { flexGrow: 1, fontSize: text.base, fontWeight: weight.medium },
+  // Wrapped under a long name, on a phone, the buttons stay at the end of the line.
+  lineActions: { justifyContent: "flex-end", marginInlineStart: "auto" },
   more: { alignSelf: "flex-start" },
+  // A sign-in's numbered steps: the page to sign in on, then the address it lands on.
+  stepList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s4,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  step: { display: "flex", alignItems: "flex-start", gap: space.s2_5 },
+  stepNumber: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    width: "1.25rem",
+    height: "1.25rem",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.full,
+    backgroundColor: color.surface,
+    color: color.textMuted,
+    fontSize: text.xs,
+    fontWeight: weight.semibold,
+  },
+  stepBody: { display: "flex", flexDirection: "column", gap: space.s2, flex: 1, minWidth: 0 },
+  footer: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.s2,
+  },
 })
 
 /** How many of the Providers that take only a key are listed before "Show more". */
@@ -166,7 +203,10 @@ const keyLinesShown = 6
 export function ProvidersSection({ claude }: { claude: ReactNode }) {
   const hub = useHub()
   const providers = useHubState((state) => state.providers)
+  const claudeCredential = useHubState((state) => state.claudeCredential)
   const [error, setError] = useState<string | null>(null)
+  // Nothing to run a Session on yet: say so first, and where to start.
+  const nothing = providers?.connected.length === 0 && claudeCredential === null
 
   // The Hub sends them after its welcome; ask, in case this page came first.
   const missing = providers === null
@@ -182,10 +222,15 @@ export function ProvidersSection({ claude }: { claude: ReactNode }) {
           Providers
         </h2>
         <p {...stylex.props(styles.note)}>
-          Your own accounts, which the Sessions you start run their Models on. Only your Sessions
-          use them, and only you drive those.
+          The accounts your Sessions run their Models on. Only the Sessions you start use them.
         </p>
       </div>
+      {nothing && (
+        <Banner intent="accent" icon={<PlugIcon />} title="Connect a Provider to start Sessions">
+          A Session runs on its Creator's own accounts. Add your Claude setup token, or sign in or
+          paste an API key for any Provider below.
+        </Banner>
+      )}
       {claude}
       {providers === null ? (
         error === null ? (
@@ -336,15 +381,17 @@ function ProviderLine({ connectable }: { connectable: ConnectableProvider }) {
   const [keyOpen, setKeyOpen] = useState(false)
   const flow = useSignIn(connectable, () => setKeyOpen(false))
   const titleId = `provider-${provider}`
+  const ref = useRef<HTMLElement>(null)
+  useFocusKept(ref)
 
   return (
-    <section aria-labelledby={titleId} {...stylex.props(styles.line)}>
+    <section ref={ref} aria-labelledby={titleId} {...stylex.props(styles.line)}>
       <div {...stylex.props(styles.lineHead)}>
         <span id={titleId} {...stylex.props(styles.lineName)}>
           {name}
         </span>
         {!flow.running && (
-          <div {...stylex.props(styles.actions)}>
+          <div {...stylex.props(styles.actions, styles.lineActions)}>
             {connectable.signIn !== undefined && (
               <Button size="sm" onClick={flow.start}>
                 {connectable.signIn}
@@ -399,9 +446,11 @@ function ProviderCard({
   const [disconnecting, setDisconnecting] = useState(false)
   const flow = useSignIn(connectable, () => setReplacing(false))
   const titleId = `provider-${provider}`
+  const ref = useRef<HTMLElement>(null)
+  useFocusKept(ref)
 
   return (
-    <section aria-labelledby={titleId} {...stylex.props(styles.section)}>
+    <section ref={ref} aria-labelledby={titleId} {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
         <h3 id={titleId} {...stylex.props(styles.sectionTitle)}>
           {name}
@@ -640,14 +689,17 @@ function KeyForm({
       <Field
         label={connectable.keyName ?? "API key"}
         description={`Checked with ${name} as it is saved. It is stored encrypted and never shown again.`}
-        invalid={touched && empty}
+        invalid={(touched && empty) || error !== null}
         error={touched && empty ? "Paste a key." : undefined}
       >
         <Input
           type="password"
           value={apiKey}
           autoComplete="off"
-          onValueChange={(next: string) => setApiKey(next)}
+          onValueChange={(next: string) => {
+            setApiKey(next)
+            setError(null)
+          }}
           spellCheck={false}
           autoCapitalize="off"
           autoFocus={autoFocus}
@@ -674,13 +726,16 @@ function KeyForm({
 }
 
 /**
- * A sign-in in progress, as far as the Hub's steps go: the page to open, or the code to enter
- * there; then what it asks, a paste or a choice, or what it is doing; and Cancel.
+ * A sign-in in progress, as far as the Hub's steps go. ChatGPT's and OpenRouter's are two numbered
+ * steps: the page to sign in on, then the address the browser lands on, pasted back. A device-code
+ * sign-in's is the code to enter on the Provider's page. Then what it asks, a paste or a choice, or
+ * what it is doing; and Cancel.
  */
 function SignInSteps({ name, signIn }: { name: string; signIn: SignInProgress }) {
   const hub = useHub()
   // How many steps had come when the last answer was sent: it is asked again only by a new one.
   const [answeredAt, setAnsweredAt] = useState(-1)
+  const pasteField = useRef<HTMLInputElement>(null)
   const { steps } = signIn
   const page = steps.findLast((step) => step._tag === "OpenUrl" || step._tag === "EnterCode")
   const last = steps.at(-1)
@@ -690,75 +745,117 @@ function SignInSteps({ name, signIn }: { name: string; signIn: SignInProgress })
   const answer = (value: string) => {
     if (hub.answerSignIn(value)) setAnsweredAt(steps.length)
   }
+  const cancel = (
+    <Button size="sm" intent="ghost" onClick={() => hub.cancelSignIn()}>
+      Cancel
+    </Button>
+  )
 
-  return (
-    <div aria-label={`Signing in to ${name}`} {...stylex.props(styles.signIn)}>
-      {page?._tag === "OpenUrl" && (
-        <>
-          {page.instructions !== undefined && page.instructions !== "" && (
-            <p {...stylex.props(styles.note)}>{page.instructions}</p>
-          )}
-          <PageLink url={page.url} />
-        </>
-      )}
-      {page?._tag === "EnterCode" && (
-        <>
-          <p {...stylex.props(styles.note)}>Open {name}'s page, and enter this code there:</p>
-          <div {...stylex.props(styles.codeRow)}>
-            <span aria-label="Sign-in code" {...stylex.props(styles.code)}>
-              {page.code}
-            </span>
-            <IconButton label="Copy code" size="sm" onClick={() => void copyCode(page.code)}>
-              <CopyIcon />
-            </IconButton>
-          </div>
-          <PageLink url={page.url} />
-        </>
-      )}
-      {asking && last?._tag === "Paste" && (
-        <PasteForm
-          step={last}
-          afterPage={page?._tag === "OpenUrl"}
-          onAnswer={answer}
-          key={steps.length}
-        />
-      )}
-      {asking && last?._tag === "Choose" && (
-        <div {...stylex.props(styles.form)}>
-          <p {...stylex.props(styles.note)}>{last.message}</p>
-          <div {...stylex.props(styles.actions)}>
-            {last.options.map((option) => (
-              <Button key={option.id} size="sm" onClick={() => answer(option.id)}>
-                {option.label}
-              </Button>
-            ))}
-          </div>
+  const next =
+    asking && last?._tag === "Paste" ? (
+      <PasteForm
+        step={last}
+        afterPage={page?._tag === "OpenUrl"}
+        inputRef={pasteField}
+        onAnswer={answer}
+        cancel={cancel}
+        key={steps.length}
+      />
+    ) : asking && last?._tag === "Choose" ? (
+      <div {...stylex.props(styles.form)}>
+        <p {...stylex.props(styles.note)}>{last.message}</p>
+        <div {...stylex.props(styles.actions)}>
+          {last.options.map((option) => (
+            <Button key={option.id} size="sm" onClick={() => answer(option.id)}>
+              {option.label}
+            </Button>
+          ))}
+          {cancel}
         </div>
-      )}
-      {!asking && (
+      </div>
+    ) : (
+      <div {...stylex.props(styles.footer)}>
         <div role="status" {...stylex.props(styles.progress)}>
           <Spinner size="sm" />
           <span>{progress ?? `Waiting for ${name}…`}</span>
         </div>
-      )}
-      <div {...stylex.props(styles.actions)}>
-        <Button size="sm" intent="ghost" onClick={() => hub.cancelSignIn()}>
-          Cancel
-        </Button>
+        {cancel}
       </div>
+    )
+
+  return (
+    <div role="group" aria-label={`Signing in to ${name}`} {...stylex.props(styles.signIn)}>
+      {page?._tag === "OpenUrl" ? (
+        <ol {...stylex.props(styles.stepList)}>
+          <SignInStepItem number={1}>
+            <p {...stylex.props(styles.note)}>
+              {page.instructions !== undefined && page.instructions !== ""
+                ? page.instructions
+                : `Sign in to ${name} on its page.`}
+            </p>
+            <PageLink url={page.url} onOpen={() => pasteField.current?.focus()} />
+          </SignInStepItem>
+          <SignInStepItem number={2}>{next}</SignInStepItem>
+        </ol>
+      ) : (
+        <>
+          {page?._tag === "EnterCode" && (
+            <>
+              <p {...stylex.props(styles.note)}>Enter this code on {name}'s sign-in page:</p>
+              <div {...stylex.props(styles.codeRow)}>
+                <span aria-label="Sign-in code" {...stylex.props(styles.code)}>
+                  {page.code}
+                </span>
+                <IconButton label="Copy code" size="sm" onClick={() => void copyCode(page.code)}>
+                  <CopyIcon />
+                </IconButton>
+              </div>
+              <PageLink url={page.url} />
+            </>
+          )}
+          {next}
+        </>
+      )}
     </div>
   )
 }
 
-/** The Provider's sign-in page, in a new tab. */
-function PageLink({ url }: { url: string }) {
+function SignInStepItem({ number, children }: { number: number; children: ReactNode }) {
+  return (
+    <li {...stylex.props(styles.step)}>
+      <span aria-hidden="true" {...stylex.props(styles.stepNumber)}>
+        {number}
+      </span>
+      <div {...stylex.props(styles.stepBody)}>{children}</div>
+    </li>
+  )
+}
+
+/**
+ * The Provider's sign-in page, in a new tab. It takes the focus as it comes, from the sign-in's
+ * Cancel or from nowhere, as when the button that started the sign-in went: it's what to do next.
+ */
+function PageLink({ url, onOpen }: { url: string; onOpen?: () => void }) {
+  const ref = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    const link = ref.current
+    const active = document.activeElement
+    if (link === null) return
+    if (
+      active === null ||
+      active === document.body ||
+      link.closest('[role="group"]')?.contains(active)
+    )
+      link.focus()
+  }, [])
   return (
     <div {...stylex.props(styles.actions)}>
       <Button
         intent="primary"
         size="sm"
         nativeButton={false}
-        render={<a href={url} target="_blank" rel="noreferrer noopener" />}
+        render={<a ref={ref} href={url} target="_blank" rel="noreferrer noopener" />}
+        onClick={onOpen}
       >
         Open the sign-in page
         <ExternalLinkIcon aria-hidden="true" />
@@ -769,16 +866,21 @@ function PageLink({ url }: { url: string }) {
 
 /**
  * A Paste step's box. After a page to open, it is for the address the browser landed on: ChatGPT's
- * sign-in sends it to the Hub's own machine, which doesn't load from here.
+ * and OpenRouter's sign-ins send it to the Hub's own machine, which doesn't load from here. The
+ * box takes the focus as the page opens, ready to paste into on coming back.
  */
 function PasteForm({
   step,
   afterPage,
+  inputRef,
   onAnswer,
+  cancel,
 }: {
   step: Extract<SignInStep, { _tag: "Paste" }>
   afterPage: boolean
+  inputRef: RefObject<HTMLInputElement | null>
   onAnswer: (value: string) => void
+  cancel: ReactNode
 }) {
   const [value, setValue] = useState("")
   const empty = value.trim() === ""
@@ -792,21 +894,18 @@ function PasteForm({
       {...stylex.props(styles.form)}
     >
       <Field
-        label={afterPage ? "Paste the address the page you landed on shows" : step.message}
-        description={
-          afterPage
-            ? "Once you've signed in, your browser goes to a page that may not load. That's expected: copy its address from the address bar."
-            : undefined
-        }
+        label={afterPage ? "Address of the page you landed on" : step.message}
+        description={afterPage && step.message !== "" ? step.message : undefined}
       >
         <Input
+          ref={inputRef}
           value={value}
           autoComplete="off"
           onValueChange={(next: string) => setValue(next)}
           {...(step.placeholder !== undefined && { placeholder: step.placeholder })}
           spellCheck={false}
           autoCapitalize="off"
-          autoFocus
+          autoFocus={!afterPage}
           sx={styles.mono}
         />
       </Field>
@@ -814,6 +913,7 @@ function PasteForm({
         <Button type="submit" size="sm" disabled={empty}>
           Continue
         </Button>
+        {cancel}
       </div>
     </form>
   )
@@ -889,6 +989,42 @@ function DisconnectDialog({
       )}
     </Dialog>
   )
+}
+
+/**
+ * Keeps the focus in `ref` when what had it there goes, as the Sign in button does when the
+ * sign-in's steps take its place, and they do when it ends: it moves to the first control left.
+ */
+function useFocusKept(ref: RefObject<HTMLElement | null>) {
+  const within = useRef(false)
+  useEffect(() => {
+    const region = ref.current
+    if (region === null) return
+    const focusIn = () => {
+      within.current = true
+    }
+    const focusOut = (event: FocusEvent) => {
+      // Moved elsewhere on the page. A control that goes takes the focus nowhere.
+      if (event.relatedTarget instanceof Node && !region.contains(event.relatedTarget))
+        within.current = false
+    }
+    region.addEventListener("focusin", focusIn)
+    region.addEventListener("focusout", focusOut)
+    return () => {
+      region.removeEventListener("focusin", focusIn)
+      region.removeEventListener("focusout", focusOut)
+    }
+  }, [ref])
+  useEffect(() => {
+    const region = ref.current
+    if (!within.current || region === null) return
+    const active = document.activeElement
+    if (active !== null && active !== document.body) {
+      if (!region.contains(active)) within.current = false
+      return
+    }
+    region.querySelector<HTMLElement>("button:not(:disabled), a[href], input")?.focus()
+  })
 }
 
 const messageOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))

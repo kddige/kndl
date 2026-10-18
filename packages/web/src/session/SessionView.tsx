@@ -291,18 +291,22 @@ function LoadedSession({
     const timer = setTimeout(() => setPicked(null), switchSentMs)
     return () => clearTimeout(timer)
   }, [picked])
+  // A pi Session switches between Turns without stopping anything (ADR 0029), so it doesn't ask.
   const pick = (next: ModelSetting) => {
     const from = setting
     setPicked({ from, to: next, sent: false })
-    interrupting({
-      title: "Switch the model?",
-      action: "Switch",
-      go: () =>
-        setPicked(
-          command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
-        ),
-      cancel: () => setPicked(null),
-    })
+    const go = () =>
+      setPicked(
+        command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
+      )
+    if (pi) go()
+    else
+      interrupting({
+        title: "Switch the model?",
+        action: "Switch",
+        go,
+        cancel: () => setPicked(null),
+      })
   }
   const nameTurnModel = useCallback(
     (model: string) =>
@@ -314,6 +318,16 @@ function LoadedSession({
   const settingName = pi
     ? providerModelLabel(providerModels, setting, knownLabel)
     : modelName(models, setting)
+  // Who answers: Claude, on Claude Code; on pi, the Model a Turn ran, by name, or the Session's.
+  const nameReplier = useCallback(
+    (turnModel: string | undefined) =>
+      !pi
+        ? "Claude"
+        : turnModel === undefined
+          ? settingName
+          : (otherProviderTurnModel(providerModels, setting, turnModel) ?? settingName),
+    [pi, providerModels, setting, settingName],
+  )
 
   const you = useHubState((hubState) => hubState.you)
   // Only its Creator drives it (ADR 0026): anyone else watches.
@@ -329,7 +343,7 @@ function LoadedSession({
   const hint = !drives
     ? undefined
     : busy
-      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
+      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`
       : summary.modelPending === true && running
         ? `${settingName} takes over when this Turn ends.`
         : state === "Asleep"
@@ -511,7 +525,7 @@ function LoadedSession({
         title={confirming?.title}
         description={`${
           runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
-        }; stopping Claude Code interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`}
+        }; stopping ${pi ? "the Session" : "Claude Code"} interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`}
         footer={
           <>
             <DialogClose>Cancel</DialogClose>
@@ -571,8 +585,8 @@ function LoadedSession({
                       title="Nothing here yet"
                       description={
                         drives
-                          ? "Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
-                          : `Once ${summary.creator.name} sends the first prompt, you see Claude's answer here as it streams.`
+                          ? `Send the first prompt. Everyone in the Session sees ${pi ? "the" : "Claude's"} answer as it streams.`
+                          : `Once ${summary.creator.name} sends the first prompt, you see ${pi ? "the" : "Claude's"} answer here as it streams.`
                       }
                     />
                   ) : (
@@ -580,6 +594,7 @@ function LoadedSession({
                       sessionId={summary.id}
                       items={items}
                       nameTurnModel={nameTurnModel}
+                      nameReplier={nameReplier}
                     />
                   )}
                 </div>
@@ -620,10 +635,11 @@ function LoadedSession({
                   disabledReason={disabledReason}
                   hint={
                     drives && asking
-                      ? "Claude is waiting on an answer: a reply here declines its question."
+                      ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
                       : hint
                   }
                   attach={drives ? attach : undefined}
+                  {...(pi && { placeholder: "Send a prompt" })}
                   {...(drives && asking && { copy: replyCopy, needsText: true })}
                   picker={
                     drives ? (
@@ -750,6 +766,7 @@ function StartingBanner({
   const output = starting && startLog?.since === starting.since ? startLog.text : ""
   const plain = useMemo(() => terminalText(output), [output])
   const version = starting?.environmentVersion
+  const pi = summary.harness === "Pi"
   return (
     <Banner
       intent="accent"
@@ -766,11 +783,13 @@ function StartingBanner({
       }
     >
       {starting === undefined
-        ? `${asker ? `${asker} asked for a restart. ` : ""}Stopping Claude Code and its Sandbox, to start them again on ${summary.repo}'s latest Environment. `
+        ? `${asker ? `${asker} asked for a restart. ` : ""}${pi ? "Stopping its Sandbox, to start it" : "Stopping Claude Code and its Sandbox, to start them"} again on ${summary.repo}'s latest Environment. `
         : version === undefined
-          ? "Starting Claude Code in a fresh Sandbox. "
+          ? pi
+            ? "Starting a fresh Sandbox. "
+            : "Starting Claude Code in a fresh Sandbox. "
           : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its start script. `}
-      {drives && "Prompts sent now wait in the queue until Claude Code is up."}
+      {drives && `Prompts sent now wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`}
     </Banner>
   )
 }
@@ -806,6 +825,8 @@ function StateBanner({
   const navigate = useNavigate()
   // Its Creator's setup token, which it can't wake without (ADR 0026); undefined while loading.
   const credential = useHubState((state) => state.claudeCredential)
+  // A pi Session runs on its Creator's Connected providers, and wakes without one (ADR 0029).
+  const pi = summary.harness === "Pi"
   const why = change?.state === summary.state ? change.message : undefined
   const busy = summary.starting !== undefined || summary.restarting !== undefined
   if (busy && (summary.state === "Active" || summary.state === "Asleep")) {
@@ -854,9 +875,9 @@ function StateBanner({
           title="MCP servers changed"
           action={restartButton}
         >
-          {summary.repo}'s Installations changed since this Session started, and Claude Code gets
-          its MCP servers as it starts. A Restart applies the change, with the Workspace and
-          conversation as they are.
+          {summary.repo}'s Installations changed since this Session started, and{" "}
+          {pi ? "the Session gets" : "Claude Code gets"} its MCP servers as it starts. A Restart
+          applies the change, with the Workspace and conversation as they are.
           {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
         </Banner>
       )
@@ -898,7 +919,7 @@ function StateBanner({
         )
       }
       // It runs on its Creator's setup token, and can't wake without one (ADR 0026).
-      if (drives && credential === null) {
+      if (drives && !pi && credential === null) {
         return (
           <Banner
             intent="danger"
@@ -931,8 +952,13 @@ function StateBanner({
           detail={
             // What Claude Code printed before it exited on its own, as why it did (#105).
             summary.lastOutput !== undefined && (
-              <Disclosure variant="plain" summary="Show Claude Code's last output">
-                <LogView label="Claude Code's last output">{summary.lastOutput}</LogView>
+              <Disclosure
+                variant="plain"
+                summary={pi ? "Show its last output" : "Show Claude Code's last output"}
+              >
+                <LogView label={pi ? "Its last output" : "Claude Code's last output"}>
+                  {summary.lastOutput}
+                </LogView>
               </Disclosure>
             )
           }

@@ -3,8 +3,9 @@
 // connects is offered, by the sign-in and key pi-ai has for it. An API key with REJECTED in it is
 // refused, as a Provider rejecting it; any other connects, named by its last 4 characters. The
 // sign-ins are played by FakeHub with the steps below: ChatGPT's and OpenRouter's open a page and
-// take the address the browser landed on, pasted, which must have a code in it; the others show a
-// code to enter, and connect a few seconds later. Every account, key and code here is made up.
+// take the address the browser landed on, pasted, which must have a code in it, worded as the Hub
+// words them (ConnectedProviders.ts); the others show a code to enter, and connect a few seconds
+// later, GitHub Copilot's once asked which GitHub. Every account, key and code here is made up.
 
 import {
   type ConnectableProvider,
@@ -51,6 +52,41 @@ export const claudeModels: ReadonlyArray<ProviderModelWire> = [
   model("anthropic", "claude-haiku-4-5", "Claude Haiku 4.5", [], 200_000),
 ]
 
+/**
+ * A gateway's long list, as OpenRouter's few hundred and Vercel's: made-up Models of a dozen
+ * vendors, named as the gateway names them.
+ */
+function gatewayModels(
+  provider: ProviderModelWire["provider"],
+  name: (vendor: string, model: string) => string,
+): ReadonlyArray<ProviderModelWire> {
+  const vendors: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+    ["anthropic", "Anthropic", ["Claude Sonnet 5", "Claude Haiku 5", "Claude Opus 4.6"]],
+    ["openai", "OpenAI", ["GPT-6-Sol mini", "GPT-5.5", "GPT-5.5 mini", "o5", "o5-mini"]],
+    ["google", "Google", ["Gemini 4 Argon", "Gemini 3.8 Flash", "Gemini 3.8 Flash Lite"]],
+    ["x-ai", "xAI", ["Grok 5", "Grok 5 Fast", "Grok Code 2"]],
+    ["deepseek", "DeepSeek", ["DeepSeek V5", "DeepSeek R3", "DeepSeek V4.2"]],
+    ["mistralai", "Mistral", ["Mistral Large 4", "Devstral 3", "Codestral 3", "Mistral Small 4"]],
+    ["qwen", "Qwen", ["Qwen 4 Coder 480B", "Qwen 4 235B", "Qwen 4 32B", "Qwen 4 Max"]],
+    ["moonshotai", "MoonshotAI", ["Kimi K3", "Kimi K3 Thinking"]],
+    ["z-ai", "Z.AI", ["GLM 5.5", "GLM 5.5 Air"]],
+    ["meta-llama", "Meta", ["Llama 5 Maverick", "Llama 5 Scout"]],
+    ["minimax", "MiniMax", ["MiniMax M3"]],
+    ["nvidia", "NVIDIA", ["Nemotron Ultra 300B", "Nemotron Super 70B"]],
+  ]
+  return vendors.flatMap(([vendor, vendorName, names]) =>
+    names.map((each) =>
+      model(
+        provider,
+        `${vendor}/${each.toLowerCase().replaceAll(" ", "-")}`,
+        name(vendorName, each),
+        /thinking|^o5|r3|opus|sonnet|argon/i.test(each) ? ["low", "medium", "high"] : [],
+        200_000,
+      ),
+    ),
+  )
+}
+
 /** What some Providers list under an account, most capable first. */
 const listed: Partial<Record<ProviderId, ReadonlyArray<ProviderModelWire>>> = {
   openai: [
@@ -75,7 +111,9 @@ const listed: Partial<Record<ProviderId, ReadonlyArray<ProviderModelWire>>> = {
   openrouter: [
     model("openrouter", "anthropic/claude-opus-5", "Anthropic: Claude Opus 5", ["high"], 200_000),
     model("openrouter", "openai/gpt-6-sol", "OpenAI: GPT-6-Sol", ["low", "high"], 400_000),
+    ...gatewayModels("openrouter", (vendor, name) => `${vendor}: ${name}`),
   ],
+  "vercel-ai-gateway": gatewayModels("vercel-ai-gateway", (_, name) => name),
   google: [
     model("google", "gemini-4-argon", "Gemini 4 Argon", ["low", "medium", "high"], 1_048_576),
     model("google", "gemini-3.8-flash", "Gemini 3.8 Flash", ["low", "high"], 1_048_576),
@@ -145,7 +183,7 @@ const signedInAs: Partial<Record<ProviderId, string>> = {
 
 /** The ChatGPT sign-in's page, which sends the browser to its loopback once signed in. */
 export const chatGptUrl =
-  "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_fake_kndl&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&state=fake-state"
+  "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_fake_kndl&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback&state=fake-state"
 
 /** Where each device-code sign-in has its code entered. */
 const devicePages: Partial<Record<ProviderId, string>> = {
@@ -166,16 +204,28 @@ export function signInSteps(provider: ProviderId): ReadonlyArray<SignInStepWire>
           provider === "openai"
             ? chatGptUrl
             : "https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A3000%2Fcallback",
-        instructions: `Sign in with your ${name} account, then come back here.`,
+        instructions: `Sign in to ${name} in the page this opens. It then lands on a page at 127.0.0.1 that may not load: that's expected. Copy that page's address from the address bar and paste it below.`,
       },
       {
         _tag: "Paste",
-        message: "Paste the authorization code, or the whole redirect URL.",
-        placeholder: "http://localhost:1455/auth/callback?code=…",
+        message: `Paste the address of the page your browser landed on after you signed in: it starts with ${provider === "openai" ? "http://127.0.0.1:1455/" : "http://127.0.0.1"}.`,
+        placeholder: "http://127.0.0.1:1455/auth/callback?code=…",
       },
     ]
   }
   return [
+    ...(provider === "github-copilot"
+      ? [
+          {
+            _tag: "Choose" as const,
+            message: "Which GitHub is your Copilot subscription on?",
+            options: [
+              { id: "github.com", label: "GitHub.com" },
+              { id: "enterprise", label: "GitHub Enterprise" },
+            ],
+          },
+        ]
+      : []),
     { _tag: "Progress", message: `Asking ${providerNames[provider]} for a code…` },
     {
       _tag: "EnterCode",
