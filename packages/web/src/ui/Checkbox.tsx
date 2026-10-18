@@ -1,7 +1,7 @@
 import { Checkbox as BaseCheckbox } from "@base-ui/react/checkbox"
 import { Switch as BaseSwitch } from "@base-ui/react/switch"
 import * as stylex from "@stylexjs/stylex"
-import type { ReactNode } from "react"
+import { type ReactNode, useId } from "react"
 import { CheckIcon } from "./icons.tsx"
 import { focus } from "./shared.ts"
 import { color, leading, motion, radius, space, text, weight } from "./tokens.stylex.ts"
@@ -100,6 +100,12 @@ const styles = stylex.create({
   },
 })
 
+/** How Labelled names its control: by the label's id, and the description's. */
+interface Named {
+  "aria-labelledby": string
+  "aria-describedby"?: string
+}
+
 function Labelled({
   label,
   description,
@@ -110,15 +116,23 @@ function Labelled({
   label: ReactNode
   description: ReactNode
   disabled: boolean
-  control: ReactNode
+  /** The control, given the ids to name and describe it by. */
+  control: (named: Named) => ReactNode
   sx: stylex.StyleXStyles | undefined
 }) {
+  const labelId = useId()
+  const descriptionId = useId()
   return (
-    // The label around the control names it, and clicking the text toggles it.
+    // Clicking anywhere on the row toggles it; the label alone names it, and the description
+    // describes it rather than joining the name.
     <label {...(disabled && { "data-disabled": "" })} {...stylex.props(styles.row, sx)}>
-      {control}
+      {control({
+        "aria-labelledby": labelId,
+        ...(description !== undefined && { "aria-describedby": descriptionId }),
+      })}
       <span {...stylex.props(styles.text)}>
         <span
+          id={labelId}
           {...stylex.props(
             styles.label,
             description !== undefined && styles.labelStrong,
@@ -128,7 +142,9 @@ function Labelled({
           {label}
         </span>
         {description !== undefined && (
-          <span {...stylex.props(styles.description)}>{description}</span>
+          <span id={descriptionId} {...stylex.props(styles.description)}>
+            {description}
+          </span>
         )}
       </span>
     </label>
@@ -150,8 +166,9 @@ export function Checkbox({
       description={description}
       disabled={disabled}
       sx={sx}
-      control={
+      control={(named) => (
         <BaseCheckbox.Root
+          {...named}
           checked={checked}
           disabled={disabled}
           {...(onCheckedChange && { onCheckedChange: (next: boolean) => onCheckedChange(next) })}
@@ -161,7 +178,7 @@ export function Checkbox({
             <CheckIcon {...stylex.props(styles.check)} />
           </BaseCheckbox.Indicator>
         </BaseCheckbox.Root>
-      }
+      )}
     />
   )
 }
@@ -181,8 +198,9 @@ export function Switch({
       description={description}
       disabled={disabled}
       sx={sx}
-      control={
+      control={(named) => (
         <BaseSwitch.Root
+          {...named}
           checked={checked}
           disabled={disabled}
           {...(onCheckedChange && { onCheckedChange: (next: boolean) => onCheckedChange(next) })}
@@ -190,7 +208,7 @@ export function Switch({
         >
           <BaseSwitch.Thumb {...stylex.props(styles.thumb)} />
         </BaseSwitch.Root>
-      }
+      )}
     />
   )
 }

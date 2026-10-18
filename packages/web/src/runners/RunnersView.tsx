@@ -44,10 +44,11 @@ import {
   Spinner,
   SunIcon,
   toast,
-  Tooltip,
+  Popover,
   WarningIcon,
   textRole,
 } from "../ui/index.ts"
+import { focus } from "../ui/shared.ts"
 import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   codeOutcome,
@@ -68,6 +69,15 @@ const RunnerMonitor = lazy(async () => ({
 }))
 
 const styles = stylex.create({
+  // A badge that opens what it means: no button look of its own.
+  badgeButton: {
+    display: "inline-flex",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: radius.sm,
+    backgroundColor: "transparent",
+    cursor: "pointer",
+  },
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   scroll: { flex: 1, overflowY: "auto" },
   page: {
@@ -399,19 +409,32 @@ function RunnerRow({
             <span {...stylex.props(styles.name)}>{runner.name}</span>
             {runner.isOnline ? <Badge intent="success">online</Badge> : <Badge>offline</Badge>}
             {note && (
-              <Tooltip content={note.title}>
-                <span tabIndex={0}>
-                  <Badge intent="warning">{note.label}</Badge>
-                </span>
-              </Tooltip>
+              // What the badge means has to be readable on touch and to a screen reader: a Popover,
+              // not a Tooltip.
+              <Popover
+                title={note.label}
+                trigger={
+                  <button type="button" {...stylex.props(styles.badgeButton, focus.ring)}>
+                    <Badge intent="warning">{note.label}</Badge>
+                  </button>
+                }
+              >
+                {note.title}
+              </Popover>
             )}
             {update && <Badge intent={update.intent}>{update.label}</Badge>}
             {lowDisk && (
-              <Tooltip content="Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it runs out.">
-                <span tabIndex={0}>
-                  <Badge intent="warning">low disk</Badge>
-                </span>
-              </Tooltip>
+              <Popover
+                title="Low disk"
+                trigger={
+                  <button type="button" {...stylex.props(styles.badgeButton, focus.ring)}>
+                    <Badge intent="warning">low disk</Badge>
+                  </button>
+                }
+              >
+                Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it
+                runs out.
+              </Popover>
             )}
           </div>
           <p {...stylex.props(styles.facts)}>
@@ -440,23 +463,23 @@ function RunnerRow({
             </span>
             {keptAwake.length > 0 && (
               // Which ones, and who keeps them awake (ADR 0016).
-              <Tooltip
-                content={
-                  <ul {...stylex.props(styles.keptAwakeList)}>
-                    {keptAwake.map((session) => (
-                      <li key={session.id}>
-                        {sessionTitle(session)}
-                        {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
-                      </li>
-                    ))}
-                  </ul>
+              <Popover
+                title="Kept awake"
+                trigger={
+                  <Button size="sm" intent="ghost" icon={<SunIcon />}>
+                    {keptAwake.length} kept awake
+                  </Button>
                 }
               >
-                <span tabIndex={0} {...stylex.props(styles.fact)}>
-                  <SunIcon />
-                  {keptAwake.length} kept awake
-                </span>
-              </Tooltip>
+                <ul {...stylex.props(styles.keptAwakeList)}>
+                  {keptAwake.map((session) => (
+                    <li key={session.id}>
+                      {sessionTitle(session)}
+                      {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
+                    </li>
+                  ))}
+                </ul>
+              </Popover>
             )}
           </p>
           {update && (

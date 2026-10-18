@@ -495,8 +495,9 @@ function SearchSelects() {
     >
       <Row label="models">
         <SearchSelect
+          label={`Model: ${label}`}
           trigger={
-            <Button aria-label={`Model: ${label}`}>
+            <Button>
               {label}
               <ChevronDownIcon />
             </Button>
@@ -508,6 +509,7 @@ function SearchSelects() {
           noMatch={(query) => `No Models match "${query}".`}
         />
         <SearchSelect
+          label="Model"
           trigger={<Button>Empty</Button>}
           groups={[]}
           value={undefined}

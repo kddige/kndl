@@ -24,6 +24,11 @@ export interface SearchSelectGroup {
 export interface SearchSelectProps {
   /** The button that opens it, usually a Button showing what is picked. */
   trigger: ReactElement
+  /**
+   * The trigger's accessible name: a combobox never takes it from its content. Where the trigger
+   * shows the value, include it, so the visible text stays part of the name: `Model: Opus 5.5`.
+   */
+  label: string
   groups: ReadonlyArray<SearchSelectGroup>
   /** The value picked; none of the options' leaves none checked. */
   value: string | undefined
@@ -138,6 +143,7 @@ export function searchGroups(
  */
 export function SearchSelect({
   trigger,
+  label,
   groups,
   value,
   onValueChange,
@@ -170,7 +176,7 @@ export function SearchSelect({
       }}
       autoHighlight
     >
-      <BaseCombobox.Trigger render={trigger} />
+      <BaseCombobox.Trigger render={trigger} aria-label={label} />
       <BaseCombobox.Portal>
         <BaseCombobox.Positioner
           side={side}

@@ -33,8 +33,9 @@ export interface ToastOptions {
   /** One button in the toast, typically "Undo" after something destructive. */
   action?: ToastAction
   /**
-   * Milliseconds before the toast closes on its own; 0 keeps it until dismissed. Defaults to 5s,
-   * or 10s with an action, so there's time to reach it. Hovering or focusing toasts pauses this.
+   * Milliseconds before the toast closes on its own; 0 keeps it until dismissed. Defaults to 5s.
+   * A toast with an action, such as Undo, or an error stays until dismissed: someone who heard it
+   * while busy elsewhere mustn't lose it to a timer. Hovering or focusing toasts pauses this.
    */
   timeout?: number
   /** Showing a toast with the id of an open one replaces it, instead of stacking another. */
@@ -54,7 +55,7 @@ export const toast = {
       title,
       description,
       type: intent,
-      timeout: timeout ?? (action ? 10_000 : 5_000),
+      timeout: timeout ?? (action !== undefined || intent === "danger" ? 0 : 5_000),
       // Errors interrupt the screen reader; everything else waits its turn.
       priority: intent === "danger" ? "high" : "low",
       ...(id !== undefined && { id }),
