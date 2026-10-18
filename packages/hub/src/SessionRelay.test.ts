@@ -2708,6 +2708,17 @@ describe("switching Harness (ADR 0030)", () => {
     const relaunch = await runner.take("RelaunchSession")
     expect(relaunch).toMatchObject({ harness: "ClaudeCode" })
     expect(relaunch).not.toHaveProperty("model")
+    // Stored as a new Claude Code Session's is: as none.
+    const [stored] = await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) =>
+          sql<{
+            readonly harness: string | null
+          }>`SELECT harness FROM sessions WHERE id = ${sessionId}`,
+      ),
+    )
+    expect(stored).toEqual({ harness: null })
   })
 
   test("between Turns, it relaunches on the other Harness, which is handed what it hasn't seen before the next prompt, and resumes its own conversation", async () => {

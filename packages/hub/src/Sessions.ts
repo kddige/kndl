@@ -678,7 +678,11 @@ export class Sessions extends Context.Service<
         if (row.handoffFrom === null && seenUpTo !== undefined) {
           yield* setSeenSeq(id, from, seenUpTo)
         }
-        yield* sql`UPDATE sessions SET harness = ${to}, handoff_from = ${from} WHERE id = ${id}`
+        // Claude Code is stored as none, as for a Session from before pi.
+        yield* sql`
+          UPDATE sessions SET harness = ${to === "Pi" ? to : null}, handoff_from = ${from}
+          WHERE id = ${id}
+        `
       }, sql.withTransaction)
 
       const handoffFrom = Effect.fn("Sessions.handoffFrom")(function* (id: SessionId) {
