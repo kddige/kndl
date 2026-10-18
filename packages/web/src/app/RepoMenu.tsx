@@ -19,7 +19,8 @@ export function RepoMenu({ repo }: { repo: string }) {
     <Menu
       align="end"
       trigger={
-        <IconButton label={`${repo} actions`} size="sm">
+        // A row of the sidebar's one-Tab-stop list: arrow keys reach it, Tab doesn't stop on it.
+        <IconButton label={`${repo} actions`} size="sm" data-roving-row="">
           <MoreIcon />
         </IconButton>
       }

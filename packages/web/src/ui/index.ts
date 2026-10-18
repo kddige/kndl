@@ -31,6 +31,8 @@ export { InlineEdit, type InlineEditProps } from "./InlineEdit.tsx"
 export { LogView } from "./LogView.tsx"
 export { Markdown } from "./Markdown.tsx"
 export {
+  ContextMenu,
+  type ContextMenuProps,
   Menu,
   MenuGroup,
   MenuItem,

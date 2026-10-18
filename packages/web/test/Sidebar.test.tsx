@@ -181,8 +181,9 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
   other.start()
   const otherName = () => other.getState().sessions?.find((s) => s.id === "s-dotfiles")?.name
   try {
-    // The row's Rename turns it into a field holding its Work branch.
-    await step(() => button("Rename claude/zsh-prompt", row("s-dotfiles")).click())
+    // F2 on the row turns it into a field holding its Work branch.
+    const rename = () => press(row("s-dotfiles").querySelector("a") as HTMLElement, "F2")
+    await step(rename)
     const field = nameField(nav() ?? document)
     expect(field?.value).toBe("claude/zsh-prompt")
     expect(field?.placeholder).toBe("claude/zsh-prompt")
@@ -194,7 +195,7 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
     expect(hub.received.some((m) => m._tag === "RenameSession")).toBe(false)
 
     // Enter renames it, trimmed, here and in the other tab.
-    await step(() => button("Rename claude/zsh-prompt", row("s-dotfiles")).click())
+    await step(rename)
     const again = nameField(nav() ?? document)
     await step(() => again && typeInto(again, "  Prompt colours "))
     await step(() => again && press(again, "Enter"))
@@ -206,10 +207,10 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
 
     // Leaving it unchanged sends nothing; clearing it goes back to the Work branch.
     const renames = () => hub.received.filter((m) => m._tag === "RenameSession").length
-    await step(() => button("Rename Prompt colours", row("s-dotfiles")).click())
+    await step(rename)
     await step(() => nameField()?.blur())
     expect(renames()).toBe(1)
-    await step(() => button("Rename Prompt colours", row("s-dotfiles")).click())
+    await step(rename)
     const cleared = nameField(nav() ?? document)
     await step(() => cleared && typeInto(cleared, ""))
     await step(() => cleared && press(cleared, "Enter"))
@@ -408,4 +409,49 @@ test("a fold lasts across reloads, and opens when one of its agents' views opens
   await eventually(() => expect(current()).toEqual(["Document the protocol"]))
   await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
   expect(localStorage.getItem("kndl:sidebar-folded")).toBe("[]")
+})
+
+test("the Sessions are one Tab stop: arrows move, ← → fold, and each row has a menu", async () => {
+  await open("/sessions/s-readme")
+  await eventually(() => expect(groups().length).toBe(2))
+  const links = () =>
+    [...(nav()?.querySelectorAll<HTMLAnchorElement>("li a[href^='/sessions/']") ?? [])].filter(
+      (link) => link.closest("[hidden]") === null,
+    )
+  // One row takes Tab, the current one; the rest, their ⋯ and the chevrons, don't.
+  await eventually(() =>
+    expect(
+      links()
+        .filter((link) => link.tabIndex === 0)
+        .map((link) => link.textContent),
+    ).toEqual(["claude/readme-run"]),
+  )
+  expect(button("Agents of Release 0.4", nav() ?? document).tabIndex).toBe(-1)
+  expect(button("claude/readme-run actions", nav() ?? document).tabIndex).toBe(-1)
+
+  // ↓ moves to the next row, and it becomes the one Tab enters at.
+  const readme = row("s-readme").querySelector("a") as HTMLAnchorElement
+  await step(() => readme.focus())
+  await step(() => press(readme, "ArrowDown"))
+  const next = document.activeElement as HTMLAnchorElement
+  expect(next.textContent).toBe("claude/pi-harness")
+  expect(next.tabIndex).toBe(0)
+  expect(readme.tabIndex).toBe(-1)
+
+  // ← on a row with agents folds them, → opens them again and then moves in.
+  const release = row("s-release").querySelector("a") as HTMLAnchorElement
+  const chevron = () => button("Agents of Release 0.4", nav() ?? document)
+  await step(() => release.focus())
+  await step(() => press(release, "ArrowLeft"))
+  expect(chevron().getAttribute("aria-expanded")).toBe("false")
+  await step(() => press(release, "ArrowRight"))
+  expect(chevron().getAttribute("aria-expanded")).toBe("true")
+  await step(() => press(release, "ArrowRight"))
+  expect((document.activeElement as HTMLElement).closest("ul[id]")).not.toBeNull()
+
+  // Its ⋯ offers what the right-click does: Rename, Copy link, Delete Session for its Creator.
+  await step(() => button("claude/readme-run actions", nav() ?? document).click())
+  await eventually(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
+  const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent)
+  expect(items).toEqual(expect.arrayContaining(["RenameF2", "Copy link", "Delete Session"]))
 })

@@ -1,3 +1,4 @@
+import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu"
 import { Menu as BaseMenu } from "@base-ui/react/menu"
 import * as stylex from "@stylexjs/stylex"
 import type { ReactElement, ReactNode } from "react"
@@ -87,6 +88,33 @@ export function Menu({
         </BaseMenu.Positioner>
       </BaseMenu.Portal>
     </BaseMenu.Root>
+  )
+}
+
+export interface ContextMenuProps {
+  /** The element a right-click, Shift+F10 or the Menu key opens the menu on. */
+  trigger: ReactElement
+  /** MenuItems, MenuGroups and MenuSeparators, as in a Menu. */
+  children: ReactNode
+}
+
+/**
+ * A Menu that opens where the element is right-clicked, or from the keyboard with Shift+F10 or the
+ * Menu key while focus is in it. The same actions should also be reachable another way, such as a
+ * ⋯ Menu: a context menu alone is hidden.
+ */
+export function ContextMenu({ trigger, children }: ContextMenuProps) {
+  return (
+    <BaseContextMenu.Root>
+      <BaseContextMenu.Trigger render={trigger} />
+      <BaseContextMenu.Portal>
+        <BaseContextMenu.Positioner {...stylex.props(popup.positioner)}>
+          <BaseContextMenu.Popup {...stylex.props(popup.surface, popup.list)}>
+            {children}
+          </BaseContextMenu.Popup>
+        </BaseContextMenu.Positioner>
+      </BaseContextMenu.Portal>
+    </BaseContextMenu.Root>
   )
 }
 

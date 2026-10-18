@@ -1,10 +1,18 @@
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import * as stylex from "@stylexjs/stylex"
-import { type ReactElement, type ReactNode, useEffect, useId, useRef } from "react"
+import {
+  type KeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+} from "react"
 import { IconButton } from "./Button.tsx"
 import { ChevronRightIcon } from "./icons.tsx"
 import { navRow } from "./markers.stylex.ts"
+import { ContextMenu } from "./Menu.tsx"
 import { focus } from "./shared.ts"
 import {
   chrome,
@@ -333,6 +341,10 @@ export interface NavItemProps {
    * while the row is hovered or holds focus, and always on the current item.
    */
   action?: ReactNode
+  /** Items for a menu on the row's right-click, Shift+F10 and Menu key; repeat them in `action`. */
+  contextMenu?: ReactNode
+  /** F2 on the row: rename it in place, as the file managers do. */
+  onRename?: () => void
   /** Shown in place of the link and the action while set, such as an InlineEdit: the icon stays. */
   editor?: ReactNode
   /**
@@ -365,6 +377,8 @@ export function NavItem({
   trailing,
   title,
   action,
+  contextMenu,
+  onRename,
   editor,
   nested,
 }: NavItemProps) {
@@ -395,6 +409,13 @@ export function NavItem({
         ),
         ...(current && { "aria-current": "page" }),
         ...(title !== undefined && { title }),
+        ...(onRename && {
+          onKeyDown: (event: KeyboardEvent<HTMLAnchorElement>) => {
+            if (event.key !== "F2") return
+            event.preventDefault()
+            onRename()
+          },
+        }),
       },
       {
         children: (
@@ -424,37 +445,40 @@ export function NavItem({
       </li>
     )
   }
+  const row = (
+    <div {...stylex.props(styles.row, navRow)}>
+      {link}
+      {action !== undefined && (
+        <span
+          {...stylex.props(
+            styles.action,
+            current && styles.actionShown,
+            nested && styles.actionBesideToggle,
+          )}
+        >
+          {action}
+        </span>
+      )}
+      {nested && (
+        <span {...stylex.props(styles.toggle)}>
+          <IconButton
+            label={nested.label}
+            size="sm"
+            aria-expanded={nested.open}
+            aria-controls={nestedId}
+            onClick={() => nested.onOpenChange(!nested.open)}
+          >
+            <ChevronRightIcon
+              {...stylex.props(styles.chevron, nested.open && styles.chevronOpen)}
+            />
+          </IconButton>
+        </span>
+      )}
+    </div>
+  )
   return (
     <li>
-      <div {...stylex.props(styles.row, navRow)}>
-        {link}
-        {action !== undefined && (
-          <span
-            {...stylex.props(
-              styles.action,
-              current && styles.actionShown,
-              nested && styles.actionBesideToggle,
-            )}
-          >
-            {action}
-          </span>
-        )}
-        {nested && (
-          <span {...stylex.props(styles.toggle)}>
-            <IconButton
-              label={nested.label}
-              size="sm"
-              aria-expanded={nested.open}
-              aria-controls={nestedId}
-              onClick={() => nested.onOpenChange(!nested.open)}
-            >
-              <ChevronRightIcon
-                {...stylex.props(styles.chevron, nested.open && styles.chevronOpen)}
-              />
-            </IconButton>
-          </span>
-        )}
-      </div>
+      {contextMenu === undefined ? row : <ContextMenu trigger={row}>{contextMenu}</ContextMenu>}
       {nestedList}
     </li>
   )

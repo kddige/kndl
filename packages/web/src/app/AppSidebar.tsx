@@ -18,6 +18,7 @@ import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import { setFolded, useFolded } from "../sessions/folds.ts"
 import { groupByRepo } from "../sessions/groups.ts"
 import { renameSession } from "../sessions/rename.ts"
+import { onRenameRequest } from "../sessions/renameRequests.ts"
 import {
   AgentStatus,
   ArchiveIcon,
@@ -34,7 +35,6 @@ import {
   NavSection,
   NavSlot,
   type NestedNavItems,
-  PencilIcon,
   PlusIcon,
   SettingsIcon,
   SessionStatus,
@@ -45,18 +45,22 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, radius, space, text } from "../ui/tokens.stylex.ts"
+import { useRovingRows } from "../ui/useRovingRows.ts"
 import { Brand } from "./Brand.tsx"
 import { SearchButton } from "./commands.tsx"
 import { counted, environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 import { isSettingsPath, lastSettingsPath, useRememberPlace } from "./lastPlaces.ts"
 import { RepoMenu } from "./RepoMenu.tsx"
+import { SessionRowMenuItems } from "./SessionRowMenu.tsx"
 import { SettingsSidebar } from "./SettingsSidebar.tsx"
 
 // Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
 const HOVER = "@media (hover: hover)"
 
 const styles = stylex.create({
+  // The Repo groups, spaced as the nav spaces its sections.
+  sessions: { display: "flex", flexDirection: "column", gap: space.s4 },
   note: {
     paddingBlock: space.s1,
     paddingInline: space.s2,
@@ -157,6 +161,9 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
     if (sessionId !== undefined && agentId !== undefined) setFolded(sessionId, false)
   }, [sessionId, agentId])
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
+  // Before the early return below: hooks run on every render.
+  const [list, setList] = useState<HTMLDivElement | null>(null)
+  const onListKeyDown = useRovingRows(list)
 
   // On a settings page, Settings takes the sidebar over (#398).
   if (isSettingsPath(pathname)) return <SettingsSidebar {...(onClose && { onClose })} />
@@ -247,52 +254,55 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         </>
       }
     >
-      {groups === null ? (
-        <NavSection>
-          <li {...stylex.props(styles.note)}>
-            <Spinner size="sm" label="Loading Sessions" />
-          </li>
-        </NavSection>
-      ) : groups.length === 0 ? (
-        <NavSection>
-          <li {...stylex.props(styles.note)}>No Sessions yet</li>
-        </NavSection>
-      ) : (
-        // Each Repo is a section of its own, under its name.
-        groups.map((group) => (
-          <NavSection key={group.repo} label={group.repo} action={<RepoMenu repo={group.repo} />}>
-            {group.sessions.map((session) => {
-              const current = session.id === sessionId
-              // The open Session's log, once it has come, has every agent the summary lists.
-              const agents =
-                current && openAgents !== undefined && openAgents.length > 0
-                  ? recentAgents(openAgents, agentId)
-                  : (session.agents ?? [])
-              return (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  current={current && agentId === undefined}
-                  {...(agents.length > 0 && {
-                    nested: {
-                      open: !folded.has(session.id),
-                      onOpenChange: (open) => setFolded(session.id, !open, known),
-                      children: agents.map((agent) => (
-                        <AgentRow
-                          key={agent.id}
-                          session={session}
-                          agent={agent}
-                          current={current && agent.id === agentId}
-                        />
-                      )),
-                    },
-                  })}
-                />
-              )
-            })}
+      {/* The Sessions are one Tab stop; arrow keys move between them (#400). */}
+      <div ref={setList} onKeyDown={onListKeyDown} {...stylex.props(styles.sessions)}>
+        {groups === null ? (
+          <NavSection>
+            <li {...stylex.props(styles.note)}>
+              <Spinner size="sm" label="Loading Sessions" />
+            </li>
           </NavSection>
-        ))
-      )}
+        ) : groups.length === 0 ? (
+          <NavSection>
+            <li {...stylex.props(styles.note)}>No Sessions yet</li>
+          </NavSection>
+        ) : (
+          // Each Repo is a section of its own, under its name.
+          groups.map((group) => (
+            <NavSection key={group.repo} label={group.repo} action={<RepoMenu repo={group.repo} />}>
+              {group.sessions.map((session) => {
+                const current = session.id === sessionId
+                // The open Session's log, once it has come, has every agent the summary lists.
+                const agents =
+                  current && openAgents !== undefined && openAgents.length > 0
+                    ? recentAgents(openAgents, agentId)
+                    : (session.agents ?? [])
+                return (
+                  <SessionRow
+                    key={session.id}
+                    session={session}
+                    current={current && agentId === undefined}
+                    {...(agents.length > 0 && {
+                      nested: {
+                        open: !folded.has(session.id),
+                        onOpenChange: (open) => setFolded(session.id, !open, known),
+                        children: agents.map((agent) => (
+                          <AgentRow
+                            key={agent.id}
+                            session={session}
+                            agent={agent}
+                            current={current && agent.id === agentId}
+                          />
+                        )),
+                      },
+                    })}
+                  />
+                )
+              })}
+            </NavSection>
+          ))
+        )}
+      </div>
     </Sidebar>
   )
 }
@@ -314,7 +324,9 @@ function SessionRow({
   const hub = useHub()
   const drives = useDrives(session)
   const [renaming, setRenaming] = useState(false)
+  useEffect(() => onRenameRequest(session.id, () => setRenaming(true)), [session.id])
   const title = sessionTitle(session)
+  const menu = <SessionRowMenuItems session={session} />
   return (
     <NavItem
       // Exact, so the Link doesn't mark itself current while one of its agents' views is open.
@@ -330,13 +342,22 @@ function SessionRow({
       title={session.name === undefined ? title : `${title} · ${session.workBranch}`}
       trailing={<SessionIndicators session={session} />}
       {...(nested && { nested: { ...nested, label: `Agents of ${title}` } })}
+      // The same menu on a pointer's ⋯ (no Tab stop of its own: the list is one) and on a
+      // right-click, Shift+F10 or the Menu key.
       action={
-        drives ? (
-          <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
-            <PencilIcon />
-          </IconButton>
-        ) : undefined
+        <Menu
+          align="end"
+          trigger={
+            <IconButton label={`${title} actions`} size="sm" tabIndex={-1}>
+              <MoreIcon />
+            </IconButton>
+          }
+        >
+          {menu}
+        </Menu>
       }
+      contextMenu={menu}
+      {...(drives && { onRename: () => setRenaming(true) })}
       {...(drives &&
         renaming && {
           editor: (
