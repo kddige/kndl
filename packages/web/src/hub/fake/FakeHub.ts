@@ -55,7 +55,6 @@ import {
   unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
-  parseProviderModelName,
   type ProviderId,
   providerModelName,
   hubPinnedMessage,
@@ -2012,10 +2011,12 @@ export class FakeHub implements HubTransport {
     }
   }
 
-  /** The model a Session's Turns run, as its Runner's Claude Code resolves its setting. */
+  /**
+   * The model a Session's Turns run, as their usage names it (TurnUsage.model): as its Runner's
+   * Claude Code resolves its setting, or, on pi, its model name, `<provider>/<id>`.
+   */
   #modelId(session: FakeSession): string {
-    if (session.summary.harness === "Pi")
-      return parseProviderModelName(session.summary.model ?? "")?.id ?? "gpt-6-sol"
+    if (session.summary.harness === "Pi") return session.summary.model ?? "openai/gpt-6-sol"
     const models = this.runners.find((runner) => runner.id === session.summary.runnerId)?.models
     const { model } = session.summary
     if (models === undefined) return model ?? "claude-opus-5-5"

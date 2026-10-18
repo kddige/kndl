@@ -5,6 +5,7 @@
 import {
   defaultProviderModel,
   findModel,
+  findProviderModel,
   type Harness,
   type ModelName,
   type ModelOption,
@@ -111,12 +112,16 @@ export function otherTurnModel(
   if (expected === undefined || sameModel(turnModel, expected.id)) return undefined
   const known =
     (models && [models.default, ...models.models].find((m) => sameModel(m.id, turnModel))) ??
-    providerModels?.find((m) => m.id === turnModel)
+    (providerModels && findProviderModel(providerModels, turnModel))
   return known?.label ?? turnModel
 }
 
-/** Whether a Turn's model is Claude's, as Anthropic names its Models: `claude-opus-5-5`. */
-export const isClaudeModel = (turnModel: string): boolean => turnModel.startsWith("claude")
+/**
+ * Whether a Turn's model is Claude's: as Anthropic names its Models, `claude-opus-5-5`, on Claude
+ * Code, or Anthropic's on pi, `anthropic/claude-opus-5-5` (TurnUsage.model).
+ */
+export const isClaudeModel = (turnModel: string): boolean =>
+  turnModel.startsWith("claude") || parseProviderModelName(turnModel)?.provider === "anthropic"
 
 /**
  * What every one of these Runners' Claude Code has, for a Session the Hub may start on any of
@@ -297,15 +302,19 @@ export function knownModelLabel(
 }
 
 /**
- * The name of the Model a pi Session's Turn ran, as pi-ai names it, when it isn't the one the
- * Session is set to: undefined when it is.
+ * The name of the Model a pi Session's Turn ran, which pi reports as `<provider>/<id>`
+ * (TurnUsage.model), when it isn't the one the Session is set to: undefined when it is. Its label
+ * among the Creator's Models, else the Provider's id for it.
  */
 export function otherProviderTurnModel(
   models: ReadonlyArray<ProviderModel> | undefined,
   setting: ModelSetting,
   turnModel: string,
 ): string | undefined {
-  const expected = setting.model === undefined ? undefined : parseProviderModelName(setting.model)
-  if (expected === undefined || expected.id === turnModel) return undefined
-  return models?.find((model) => model.id === turnModel)?.label ?? turnModel
+  if (setting.model === undefined || setting.model === turnModel) return undefined
+  return (
+    (models && findProviderModel(models, turnModel))?.label ??
+    parseProviderModelName(turnModel)?.id ??
+    turnModel
+  )
 }

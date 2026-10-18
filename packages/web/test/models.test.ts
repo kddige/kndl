@@ -5,6 +5,8 @@ import {
   fitSetting,
   modelName,
   modelSwitchedText,
+  isClaudeModel,
+  otherProviderTurnModel,
   otherTurnModel,
   providerGroupLabel,
   sharedModels,
@@ -108,6 +110,50 @@ test("otherTurnModel names a Turn's model only when it isn't the Session's", () 
   expect(otherTurnModel(fakeModels, {}, "claude-unknown-1")).toBe("claude-unknown-1")
   // Not knowing the Session's model, it can't say.
   expect(otherTurnModel(undefined, {}, "claude-opus-5-5")).toBeUndefined()
+})
+
+// pi reports a Turn's model as a pi Session's model name, `<provider>/<id>` (TurnUsage.model).
+describe("a pi Turn's model", () => {
+  const gpt = {
+    provider: "openai",
+    id: "gpt-6-sol",
+    label: "GPT-6-Sol",
+    thinkingLevels: [],
+  } as const
+  const opus = {
+    provider: "anthropic",
+    id: "claude-opus-5-5",
+    label: "Claude Opus 5.5",
+    thinkingLevels: [],
+  } as const
+  const models = [opus, gpt]
+
+  test("isn't named on a pi Session set to it", () => {
+    const setting = { model: "openai/gpt-6-sol" }
+    expect(otherProviderTurnModel(models, setting, "openai/gpt-6-sol")).toBeUndefined()
+    expect(otherProviderTurnModel(undefined, setting, "openai/gpt-6-sol")).toBeUndefined()
+  })
+
+  test("is named by its label when it isn't the Session's, or by its id without one", () => {
+    const setting = { model: "openai/gpt-6-sol" }
+    expect(otherProviderTurnModel(models, setting, "anthropic/claude-opus-5-5")).toBe(
+      "Claude Opus 5.5",
+    )
+    expect(otherProviderTurnModel(undefined, setting, "anthropic/claude-opus-5-5")).toBe(
+      "claude-opus-5-5",
+    )
+  })
+
+  test("is named by its label on a Session that switched to Claude Code since", () => {
+    expect(otherTurnModel(fakeModels, {}, "openai/gpt-6-sol", models)).toBe("GPT-6-Sol")
+  })
+
+  test("is Claude's when its Provider is Anthropic", () => {
+    expect(isClaudeModel("claude-opus-5-5")).toBe(true)
+    expect(isClaudeModel("anthropic/claude-opus-5-5")).toBe(true)
+    expect(isClaudeModel("openai/gpt-6-sol")).toBe(false)
+    expect(isClaudeModel("openrouter/anthropic/claude-sonnet-4")).toBe(false)
+  })
 })
 
 describe("sharedModels", () => {

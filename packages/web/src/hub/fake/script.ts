@@ -539,7 +539,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
               text: "pi sends each model call to the Hub's Gateway with the Session token, and the Hub adds your ChatGPT sign-in on the way, so it never enters the Sandbox.",
             },
           ],
-          "gpt-6-sol",
+          "openai/gpt-6-sol",
         ),
         { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
       ],
