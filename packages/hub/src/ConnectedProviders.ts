@@ -23,8 +23,8 @@
 //   `modelsProblem` says which. Claude's come from Anthropic under the
 //   Member's Claude credential (ClaudeCredentials.ts), kept the same way, and are the catalogue's
 //   current ones when Anthropic can't say.
-// - Every key and token, and every one replaced or forgotten since the Hub started, is masked in
-//   what Sessions print (Redaction.ts), as Claude credentials are.
+// - Every key and token, and every one replaced or forgotten since the Hub started, until a
+//   sign-in's expires, is masked in what Sessions print (Redaction.ts), as Claude credentials are.
 // - Removing a Member forgets theirs.
 // - Each Member chooses which Harness runs Claude's Models in their new Sessions (ADR 0030): Claude
 //   Code unless they chose pi, kept with them as a Participant.
@@ -584,7 +584,10 @@ export class ConnectedProviders extends Context.Service<
       provider: ModelProvider,
       call: ApiCall,
     ) => Effect.Effect<Called, ProviderUnusable>
-    /** Every key and token held, and every one replaced or forgotten since the Hub started. */
+    /**
+     * Every key and token held, and every one replaced or forgotten since the Hub started: a
+     * sign-in's until it expires.
+     */
     readonly values: () => ReadonlyArray<string>
     /** Each change to a Member's Connected providers, or the Models they can run, from now on. */
     readonly changes: Effect.Effect<PubSub.Subscription<ProvidersChanged>, never, Scope.Scope>
@@ -603,7 +606,11 @@ export class ConnectedProviders extends Context.Service<
 
       const connections = new Map<ParticipantId, Map<ProviderId, Connection>>()
       const claudeModels = new Map<ParticipantId, ClaudeModels>()
-      const retired = new Set<string>()
+      /**
+       * The secrets of credentials no longer held, for redaction: each with when a sign-in's
+       * expired, after which it is let go, as it can't be used; a key's for as long as the Hub runs.
+       */
+      const retired = new Map<string, number | undefined>()
       /** One refresh at a time for each credential. */
       const refreshing = new Map<string, Semaphore.Semaphore>()
       /** The Model lists being asked for off a call, so each is asked once at a time. */
@@ -656,11 +663,22 @@ export class ConnectedProviders extends Context.Service<
         connections.set(participantId, held)
       }
 
-      /** Keeps the secrets of a credential no longer held, for redaction. */
-      const retire = (before: Credential | undefined, after?: Credential) => {
+      /**
+       * Keeps the secrets of a credential no longer held, for redaction, letting those that
+       * expired by `now` go.
+       */
+      const retire = (now: number, before: Credential | undefined, after?: Credential) => {
+        for (const [secret, expires] of retired) {
+          if (expires !== undefined && expires < now) retired.delete(secret)
+        }
         if (before === undefined) return
         const kept = new Set(after === undefined ? [] : secretsOf(after))
-        for (const secret of secretsOf(before)) if (!kept.has(secret)) retired.add(secret)
+        const expires = before.type === "oauth" ? before.expires : undefined
+        for (const secret of secretsOf(before)) {
+          if (!kept.has(secret) && !(expires !== undefined && expires < now)) {
+            retired.set(secret, expires)
+          }
+        }
       }
 
       const changed = (participantId: ParticipantId, answered: boolean) =>
@@ -925,7 +943,7 @@ export class ConnectedProviders extends Context.Service<
             models_problem = excluded.models_problem, problem = NULL
         `
         const before = connectionOf(participantId, provider)
-        retire(before?.credential, credential)
+        retire(now, before?.credential, credential)
         for (const secret of secretsOf(credential)) retired.delete(secret)
         keep(participantId, {
           provider,
@@ -1036,7 +1054,7 @@ export class ConnectedProviders extends Context.Service<
         `
         const before = connectionOf(participantId, provider)
         if (before === undefined) return false
-        retire(before.credential)
+        retire(yield* Clock.currentTimeMillis, before.credential)
         connections.get(participantId)?.delete(provider)
         yield* changed(participantId, true)
         return true
@@ -1046,8 +1064,9 @@ export class ConnectedProviders extends Context.Service<
         participantId: ParticipantId,
       ) {
         yield* sql`DELETE FROM connected_providers WHERE participant_id = ${participantId}`
+        const now = yield* Clock.currentTimeMillis
         for (const connection of connections.get(participantId)?.values() ?? []) {
-          retire(connection.credential)
+          retire(now, connection.credential)
         }
         connections.delete(participantId)
         claudeModels.delete(participantId)
@@ -1185,7 +1204,7 @@ export class ConnectedProviders extends Context.Service<
                 Effect.result,
               )
               if (!stillHeld(participantId, connection, stored)) {
-                retire(credential)
+                retire(now, credential)
                 return yield* usable(participantId, provider)
               }
               // Used for calls all the same: the Provider may have spent the old one.
@@ -1195,7 +1214,7 @@ export class ConnectedProviders extends Context.Service<
                   stored.failure,
                 )
               }
-              retire(connection.credential, credential)
+              retire(now, connection.credential, credential)
               const current = connectionOf(participantId, connection.provider) ?? connection
               const next: Connection = { ...current, credential, refreshedAt: now }
               keep(participantId, next)
@@ -1309,7 +1328,7 @@ export class ConnectedProviders extends Context.Service<
           ...[...connections.values()].flatMap((held) =>
             [...held.values()].flatMap((connection) => secretsOf(connection.credential)),
           ),
-          ...retired,
+          ...retired.keys(),
         ],
         changes: PubSub.subscribe(published),
       })

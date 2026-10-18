@@ -890,6 +890,26 @@ describe("a sign-in's tokens", () => {
     expect(refreshes).toBe(2)
   })
 
+  test("those it replaced are redacted until they expire, then forgotten", async () => {
+    const { hub, fakes } = await signedIn(oauth("access-0", 60 * 1000))
+    let refreshes = 0
+    fakes.refresh = async () => oauth(`access-${++refreshes}`, 60 * 1000)
+    fakes.other = () => Response.json({ ok: true })
+    const values = () => hub.run(Effect.map(ConnectedProviders, (p) => p.values()))
+
+    await hub.run(modelCall())
+    expect(await values()).toEqual(
+      expect.arrayContaining(["access-0", "refresh-of-access-0", "access-1"]),
+    )
+    // Two hours on, both expired long ago: the next refresh lets them go.
+    await hub.run(modelCall().pipe(onClock(2 * 60 * 60 * 1000)))
+    const now = await values()
+    expect(now).toContain("access-2")
+    expect(now).not.toContain("access-0")
+    expect(now).not.toContain("refresh-of-access-0")
+    expect(now).not.toContain("access-1")
+  })
+
   test("one refreshed for a call given up meanwhile is kept all the same", async () => {
     const { hub, fakes } = await signedIn(oauth("access-old", 60 * 1000))
     const refreshing = Promise.withResolvers<void>()
