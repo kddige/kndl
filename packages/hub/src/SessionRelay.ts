@@ -599,10 +599,10 @@ const harnessNow = (session: { readonly harness?: Harness }): Harness =>
 
 /**
  * The Harness the Session's model runs on (ADR 0030): the one it runs on from its next start, which
- * differs from the one it runs on now (`harnessNow`) until a switch between Harnesses is made.
+ * differs from the one it runs on now (`harnessNow`) until a switch between Harnesses is made. No
+ * model is Claude Code's default: a pi Session always names its model.
  */
-const harnessSet = (session: SessionSummary): Harness =>
-  session.model === undefined ? harnessNow(session) : harnessOfModel(session.model)
+const harnessSet = (session: SessionSummary): Harness => harnessOfModel(session.model)
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
@@ -2669,9 +2669,10 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
-              // The model says its Harness (ADR 0030); without one, the Session's.
+              // The model says its Harness (ADR 0030): Claude Code's default, which names none,
+              // is Claude Code's. A pi Session always names its model.
               const was = harnessSet(session.value)
-              const to = message.model === undefined ? was : harnessOfModel(message.model)
+              const to = harnessOfModel(message.model)
               const harness = harnesses.of({ harness: to })
               const checked = yield* harness.check(message, {
                 runnerId: session.value.runnerId,

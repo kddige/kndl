@@ -2613,6 +2613,24 @@ const withoutPresence = (commands: ReadonlyArray<Command>) =>
   commands.filter((command) => command._tag !== "PresenceChanged")
 
 describe("switching Harness (ADR 0030)", () => {
+  test("Claude Code's default, which no model names, switches a pi Session to Claude Code", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const scene = await sessionScene(hub, { ...piRunner, create: { harness: "Pi" } })
+    const { runner, web, sessionId, mod } = scene
+    expect((await mod.hello({ switchesModels: true, takesHandoffs: true })).status).toBe(200)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "SetSessionModel", sessionId })
+    expect((await web.take("SessionEventLogged", modelSwitched)).entry.event).toMatchObject({
+      _tag: "ModelSwitched",
+      by: alice,
+      harness: "ClaudeCode",
+    })
+    const relaunch = await runner.take("RelaunchSession")
+    expect(relaunch).toMatchObject({ harness: "ClaudeCode" })
+    expect(relaunch).not.toHaveProperty("model")
+  })
+
   test("between Turns, it relaunches on the other Harness, which is handed what it hasn't seen before the next prompt, and resumes its own conversation", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
