@@ -26,6 +26,19 @@ export class SessionLog extends Context.Service<
       sessionId: SessionId,
       afterSeq?: EventSeq,
     ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
+    /**
+     * The Session's log from the start of the `count`th last Turn of its main loop (ADR 0030),
+     * among its entries after `after` and before `before`, oldest first: all of those, with fewer
+     * Turns. `earlier` says whether a Turn starts before them. Only those are read, so paging back
+     * through a long log reads each page alone.
+     */
+    readonly lastTurns: (
+      sessionId: SessionId,
+      range: { readonly count: number; readonly after?: EventSeq; readonly before?: EventSeq },
+    ) => Effect.Effect<
+      { readonly entries: ReadonlyArray<SessionLogEntry>; readonly earlier: boolean },
+      SqlError
+    >
     /** The seq of the Session's last entry, or none for an empty log. */
     readonly lastSeq: (sessionId: SessionId) => Effect.Effect<EventSeq | undefined, SqlError>
   }
@@ -76,6 +89,32 @@ export class SessionLog extends Context.Service<
         return rows.map(toEntry)
       })
 
+      const lastTurns = Effect.fn("SessionLog.lastTurns")(function* (
+        sessionId: SessionId,
+        range: { readonly count: number; readonly after?: EventSeq; readonly before?: EventSeq },
+      ) {
+        const after = range.after ?? -1
+        const before = range.before ?? Number.MAX_SAFE_INTEGER
+        // The main loop's: a subagent's Turn says its agent.
+        const starts = yield* sql<{ readonly seq: number }>`
+          SELECT seq FROM session_events
+          WHERE session_id = ${sessionId} AND seq > ${after} AND seq < ${before}
+            AND json_extract(event, '$._tag') = 'TurnStarted'
+            AND json_extract(event, '$.agentId') IS NULL
+          ORDER BY seq DESC
+          LIMIT ${range.count + 1}
+        `
+        const earlier = starts.length > range.count
+        const from = earlier ? (starts[range.count - 1]?.seq ?? after + 1) : after + 1
+        const rows = yield* sql<Row>`
+          SELECT seq, at, event FROM session_events
+          WHERE session_id = ${sessionId} AND seq >= ${from} AND seq > ${after}
+            AND seq < ${before}
+          ORDER BY seq
+        `
+        return { entries: rows.map(toEntry), earlier }
+      })
+
       const lastSeq = Effect.fn("SessionLog.lastSeq")(function* (sessionId: SessionId) {
         const rows = yield* sql<{ readonly seq: number | null }>`
           SELECT MAX(seq) AS seq FROM session_events WHERE session_id = ${sessionId}
@@ -84,7 +123,7 @@ export class SessionLog extends Context.Service<
         return seq === null || seq === undefined ? undefined : EventSeq.make(seq)
       })
 
-      return SessionLog.of({ append, history, lastSeq })
+      return SessionLog.of({ append, history, lastTurns, lastSeq })
     }),
   )
 }

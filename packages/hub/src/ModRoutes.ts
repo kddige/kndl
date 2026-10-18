@@ -168,12 +168,16 @@ export const ModRoutes = HttpRouter.use(
         const query = yield* HttpServerRequest.schemaSearchParams(HistoryQuery)
         const session = yield* sessions.get(grant.sessionId).pipe(Effect.orDie)
         if (Option.isNone(session)) return errorResponse(404, "There is no such Session")
-        const entries = yield* log.history(grant.sessionId).pipe(Effect.orDie)
+        const limit = Math.min(query.limit ?? DefaultHistoryLimit, MaxHistoryLimit)
+        // The page's Turns alone, read back from `before`: an agent paging back reads each once.
+        const { entries, earlier } = yield* log
+          .lastTurns(grant.sessionId, {
+            count: limit,
+            ...(query.before !== undefined && { before: query.before }),
+          })
+          .pipe(Effect.orDie)
         return yield* HttpServerResponse.schemaJson(ModHistory)(
-          historyPage(entries, {
-            before: query.before,
-            limit: Math.min(query.limit ?? DefaultHistoryLimit, MaxHistoryLimit),
-          }),
+          historyPage(entries, { before: query.before, limit, earlier }),
         )
       }).pipe(badRequest),
     )

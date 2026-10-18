@@ -6,7 +6,8 @@
 //   isn't its own. `GET /mod/history` serves them a page at a time.
 // - The context handoff: after a switch of Harness, the Turns the new Harness hasn't seen, and the
 //   model switches among them, in kndl's voice, oldest first, kept within a budget: the newest
-//   that fit, and where the earlier ones start, for the agent to read with its history tool.
+//   that fit, and where the earlier ones start, for the agent to read with its history tool. The
+//   log is read back from its end only as far as that takes.
 
 import {
   type EventSeq,
@@ -17,6 +18,7 @@ import {
   type SessionLogEntry,
   type TurnEndReason,
 } from "@kndl/protocol"
+import { Effect } from "effect"
 
 /** The longest prompt or answer a Turn is told with, in characters. */
 export const MaxTurnTextLength = 4_000
@@ -26,6 +28,8 @@ export const MaxToolCallLength = 200
 export const MaxToolCalls = 30
 /** The longest handoff, in characters: about 16,000 tokens. */
 export const HandoffBudget = 64_000
+/** How many Turns a handoff's history is read back from the end at a time, until it is full. */
+export const HandoffReadTurns = 50
 /** The Turns `GET /mod/history` gives when not asked for a number, and the most it gives. */
 export const DefaultHistoryLimit = 20
 export const MaxHistoryLimit = 50
@@ -167,20 +171,26 @@ export const historyTurns = (entries: ReadonlyArray<SessionLogEntry>): Array<His
 /**
  * The page of Turns `GET /mod/history` answers: the latest `limit` that started before `before`
  * (the latest without it), oldest first, and, when there are earlier ones, the `before` that
- * reads them.
+ * reads them. `earlier` says Turns start before the entries given, as when they are the log's
+ * last few Turns alone (SessionLog's `lastTurns`).
  */
 export const historyPage = (
   entries: ReadonlyArray<SessionLogEntry>,
-  ask: { readonly before?: EventSeq | undefined; readonly limit: number },
+  ask: {
+    readonly before?: EventSeq | undefined
+    readonly limit: number
+    readonly earlier?: boolean
+  },
 ): ModHistory => {
   const before = readLog(entries).turns.filter(
     (turn) => ask.before === undefined || turn.seq < ask.before,
   )
   const page = before.slice(Math.max(0, before.length - ask.limit))
   const first = page[0]
+  const more = page.length < before.length || ask.earlier === true
   return {
     turns: page.map(historyTurn),
-    ...(first !== undefined && page.length < before.length && { earlierBefore: first.seq }),
+    ...(first !== undefined && more && { earlierBefore: first.seq }),
   }
 }
 
@@ -269,3 +279,39 @@ export const buildHandoff = (input: {
     ...(earlierBefore !== undefined && { earlierBefore }),
   }
 }
+
+/** A few of a Session's last Turns, as SessionLog's `lastTurns` reads them. */
+export interface LastTurns {
+  readonly entries: ReadonlyArray<SessionLogEntry>
+  /** Whether a Turn starts before them. */
+  readonly earlier: boolean
+}
+
+/**
+ * The handoff of a log a Harness hasn't seen, which `read` gives a few Turns at a time from the
+ * end (SessionLog's `lastTurns`, after where the Harness last saw it), read until the handoff is
+ * full or there are no Turns before: so a long Session's start is never read. The same as
+ * `buildHandoff` of the whole of it, and the last entry it covers, for the Harness to have seen.
+ */
+export const readHandoff = Effect.fnUntraced(function* <E, R>(
+  read: (range: {
+    readonly count: number
+    readonly before?: EventSeq
+  }) => Effect.Effect<LastTurns, E, R>,
+) {
+  let entries: ReadonlyArray<SessionLogEntry> = []
+  let before: EventSeq | undefined
+  for (;;) {
+    const page = yield* read({
+      count: HandoffReadTurns,
+      ...(before !== undefined && { before }),
+    })
+    entries = [...page.entries, ...entries]
+    const handoff = buildHandoff({ entries })
+    const first = page.entries[0]
+    if (!page.earlier || first === undefined || handoff?.earlierBefore !== undefined) {
+      return { handoff, through: entries.at(-1)?.seq }
+    }
+    before = first.seq
+  }
+})

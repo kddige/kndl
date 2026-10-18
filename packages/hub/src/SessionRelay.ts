@@ -355,7 +355,7 @@ import {
 import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import { buildHandoff } from "./Handoff.ts"
+import { readHandoff } from "./Handoff.ts"
 import { makeHarnesses, type SessionHarness } from "./Harnesses.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubUpdateRuns } from "./HubUpdateRuns.ts"
@@ -3810,10 +3810,10 @@ export class SessionRelay extends Context.Service<
         const to = harnessNow(session)
         const { name } = harnesses.of(session)
         const was = harnesses.of({ harness: from.value }).name
-        const seen = yield* sessions.seenSeq(session.id, to)
-        const entries = yield* log.history(session.id, Option.getOrUndefined(seen))
-        const through = entries.at(-1)?.seq
-        const handoff = buildHandoff({ entries })
+        const seen = Option.getOrUndefined(yield* sessions.seenSeq(session.id, to))
+        const { handoff, through } = yield* readHandoff((range) =>
+          log.lastTurns(session.id, { ...range, ...(seen !== undefined && { after: seen }) }),
+        )
         if (handoff === undefined) return yield* handedOff(session.id, to, through)
         yield* Effect.logInfo(
           `Handing ${session.id}'s ${name} what happened on ${was}: ${handoff.text.length} characters`,
