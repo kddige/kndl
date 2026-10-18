@@ -50,16 +50,18 @@ const styles = stylex.create({
     placeItems: "center",
     padding: space.s4,
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   popup: {
     display: "flex",
     flexDirection: "column",
     maxHeight: `calc(100dvh - ${space.s8})`,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.xl,
     boxShadow: shadow.lg,
     outline: "none",
@@ -105,6 +107,7 @@ const styles = stylex.create({
     paddingTop: space.s4,
     paddingInline: space.s5,
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   footer: {
     display: "flex",

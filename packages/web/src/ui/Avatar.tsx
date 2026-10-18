@@ -30,10 +30,13 @@ const styles = stylex.create({
     userSelect: "none",
     verticalAlign: "middle",
   },
+  // A light photo would bleed into the page without an edge.
   image: {
     width: "100%",
     height: "100%",
     objectFit: "cover",
+    outline: `1px solid ${color.imageOutline}`,
+    outlineOffset: "-1px",
   },
   // Each person keeps one hue everywhere; the theme decides how light and saturated it is.
   tint: (hue: number) => ({

@@ -3,7 +3,7 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { CheckIcon, ChevronUpDownIcon } from "./icons.tsx"
 import { focus, popup } from "./shared.ts"
-import { color, control, motion, radius, shadow, space, text } from "./tokens.stylex.ts"
+import { color, control, motion, radius, space, text } from "./tokens.stylex.ts"
 
 export interface SelectOption<Value extends string> {
   value: Value
@@ -54,7 +54,6 @@ const styles = stylex.create({
       "[data-popup-open]": color.surfaceHover,
       "[data-disabled]": color.surfaceMuted,
     },
-    boxShadow: shadow.sm,
     color: { default: color.text, "[data-disabled]": color.textDisabled },
     fontFamily: "inherit",
     fontSize: text.base,

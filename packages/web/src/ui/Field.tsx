@@ -60,7 +60,10 @@ const styles = stylex.create({
     borderStyle: "solid",
     borderColor: {
       default: color.borderControl,
-      ":hover:not([data-disabled]):not(:focus)": { default: null, [HOVER]: color.borderControlHover },
+      ":hover:not([data-disabled]):not(:focus)": {
+        default: null,
+        [HOVER]: color.borderControlHover,
+      },
       "[data-invalid]": color.danger,
     },
     borderRadius: radius.md,

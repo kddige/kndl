@@ -41,12 +41,12 @@ const styles = stylex.create({
     display: "flex",
     flexDirection: "column",
     // Wide enough for a branch name, with a strip of the page left showing to tap away.
-    width: "min(18rem, calc(100vw - 3rem))",
+    width: "min(18rem, calc(100% - 3rem))",
     backgroundColor: color.surface,
     color: color.text,
     borderInlineEndWidth: "1px",
     borderInlineEndStyle: "solid",
-    borderInlineEndColor: color.border,
+    borderInlineEndColor: "transparent",
     boxShadow: shadow.lg,
     outline: "none",
     // It slides in from its edge; under reduced motion it fades instead.

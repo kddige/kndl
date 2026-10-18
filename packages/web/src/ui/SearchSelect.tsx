@@ -53,7 +53,7 @@ const styles = stylex.create({
     display: "flex",
     flexDirection: "column",
     width: "18rem",
-    maxWidth: "calc(100vw - 2rem)",
+    maxWidth: "min(18rem, var(--available-width))",
     maxHeight: "min(24rem, var(--available-height))",
   },
   // A long list keeps its height as typing narrows it, so the search field stays where it is,
@@ -95,7 +95,7 @@ const styles = stylex.create({
     position: "sticky",
     top: `calc(${space.s1} * -1)`,
     zIndex: 1,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
   },
   label: {
     flex: 1,

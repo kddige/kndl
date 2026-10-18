@@ -35,6 +35,10 @@ const lightColor = {
   surfaceMuted: light.surfaceMuted,
   surfaceHover: "oklch(94.7% 0.012 80)",
   surfaceActive: "oklch(92.3% 0.015 78)",
+  // Overlays: menus, popovers, dialogs, toasts. In light, the page's surface and a shadow.
+  surfaceRaised: light.surface,
+  // A photo's edge: plain black, so no palette tint fringes it.
+  imageOutline: "oklch(0 0 0 / 0.1)",
   surfaceInverse: "oklch(25% 0.018 48)",
   overlay: "oklch(22% 0.02 45 / 0.32)",
 
@@ -124,6 +128,9 @@ const darkColor: typeof lightColor = {
   surfaceMuted: dark.surfaceMuted,
   surfaceHover: "oklch(26% 0.018 78)",
   surfaceActive: "oklch(29.5% 0.02 78)",
+  // Overlays sit lighter than the card they open over, as a shadow can't show in the dark.
+  surfaceRaised: "oklch(24.5% 0.017 78)",
+  imageOutline: "oklch(1 0 0 / 0.1)",
   surfaceInverse: "oklch(93% 0.014 80)",
   overlay: "oklch(8% 0.016 78 / 0.6)",
 
@@ -214,6 +221,8 @@ export const color = stylex.defineVars({
   surfaceMuted: { default: lightColor.surfaceMuted, [DARK]: darkColor.surfaceMuted },
   surfaceHover: { default: lightColor.surfaceHover, [DARK]: darkColor.surfaceHover },
   surfaceActive: { default: lightColor.surfaceActive, [DARK]: darkColor.surfaceActive },
+  surfaceRaised: { default: lightColor.surfaceRaised, [DARK]: darkColor.surfaceRaised },
+  imageOutline: { default: lightColor.imageOutline, [DARK]: darkColor.imageOutline },
   surfaceInverse: { default: lightColor.surfaceInverse, [DARK]: darkColor.surfaceInverse },
   overlay: { default: lightColor.overlay, [DARK]: darkColor.overlay },
 
@@ -352,14 +361,15 @@ export const color = stylex.defineVars({
 
 const lightShadow = {
   sm: "0 1px 2px oklch(25% 0.025 50 / 0.06)",
-  md: "0 4px 12px -2px oklch(25% 0.025 50 / 0.1), 0 1px 3px oklch(25% 0.025 50 / 0.06)",
-  lg: "0 16px 40px -8px oklch(25% 0.025 50 / 0.18), 0 2px 6px oklch(25% 0.025 50 / 0.06)",
+  // An overlay's edge is the first layer: a 1px ring, which leaves its border to forced colors.
+  md: "0 0 0 1px oklch(0 0 0 / 0.06), 0 4px 12px -2px oklch(25% 0.025 50 / 0.1), 0 1px 3px oklch(25% 0.025 50 / 0.06)",
+  lg: "0 0 0 1px oklch(0 0 0 / 0.06), 0 16px 40px -8px oklch(25% 0.025 50 / 0.18), 0 2px 6px oklch(25% 0.025 50 / 0.06)",
 }
 
 const darkShadow: typeof lightShadow = {
   sm: "0 1px 2px oklch(5% 0.01 78 / 0.3)",
-  md: "0 4px 12px -2px oklch(5% 0.01 78 / 0.45), 0 0 0 1px oklch(95% 0.02 80 / 0.04)",
-  lg: "0 16px 40px -8px oklch(5% 0.01 78 / 0.6), 0 0 0 1px oklch(95% 0.02 80 / 0.05)",
+  md: "0 0 0 1px oklch(1 0 0 / 0.08), 0 4px 12px -2px oklch(5% 0.01 78 / 0.45)",
+  lg: "0 0 0 1px oklch(1 0 0 / 0.08), 0 16px 40px -8px oklch(5% 0.01 78 / 0.6)",
 }
 
 export const shadow = stylex.defineVars({

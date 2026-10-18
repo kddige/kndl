@@ -83,7 +83,7 @@ const styles = stylex.create({
     zIndex: layer.toast,
     insetInlineEnd: space.s4,
     bottom: space.s4,
-    width: `min(22.5rem, calc(100vw - ${space.s8}))`,
+    width: `min(22.5rem, calc(100% - ${space.s8}))`,
     display: "flex",
     // Newest first in the DOM; shown at the bottom, nearest where the eye already is.
     flexDirection: "column-reverse",
@@ -97,11 +97,12 @@ const styles = stylex.create({
     paddingBlock: space.s3,
     paddingInlineStart: space.s3,
     paddingInlineEnd: space.s2,
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.lg,
     boxShadow: shadow.lg,
     userSelect: "none",

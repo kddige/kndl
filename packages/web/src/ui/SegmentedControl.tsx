@@ -32,7 +32,8 @@ const styles = stylex.create({
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: color.border,
-    borderRadius: radius.md,
+    // Concentric with the 4px segments inside its 2px padding and 1px border.
+    borderRadius: `calc(${radius.sm} + ${space.s0_5} + 1px)`,
     // Sunk below the card it is on: the chosen one, raised and outlined, stands out either way.
     backgroundColor: color.bg,
   },

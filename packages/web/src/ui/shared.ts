@@ -8,7 +8,6 @@
 import * as stylex from "@stylexjs/stylex"
 import {
   color,
-  control,
   layer,
   leading,
   motion,
@@ -43,11 +42,12 @@ export const popup = stylex.create({
   },
   surface: {
     boxSizing: "border-box",
-    backgroundColor: color.surface,
+    backgroundColor: color.surfaceRaised,
     color: color.text,
+    // The edge is in the shadow; the transparent border is what forced colors draw.
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: color.border,
+    borderColor: "transparent",
     borderRadius: radius.lg,
     boxShadow: shadow.md,
     outline: "none",
@@ -73,18 +73,22 @@ export const popup = stylex.create({
     minWidth: "10rem",
     maxHeight: "var(--available-height)",
     overflowY: "auto",
+    overscrollBehavior: "contain",
   },
   item: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
-    minHeight: control.md,
+    // One row height and radius with the sidebar's rows; taller on touch.
+    minHeight: { default: "1.75rem", "@media (pointer: coarse)": "2.25rem" },
     paddingInline: space.s2,
-    borderRadius: radius.md,
+    // Concentric with the panel: 4px + its 4px padding + 1px border ≈ its 8px corner.
+    borderRadius: radius.sm,
     fontSize: text.base,
     lineHeight: leading.tight,
     color: { default: color.text, "[data-disabled]": color.textDisabled },
-    backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceHover },
+    // surfaceActive: on the raised fill in dark, surfaceHover would barely show.
+    backgroundColor: { default: "transparent", "[data-highlighted]": color.surfaceActive },
     cursor: { default: "default", "[data-disabled]": "not-allowed" },
     userSelect: "none",
     outline: "none",
