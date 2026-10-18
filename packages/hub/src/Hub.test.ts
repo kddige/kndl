@@ -445,6 +445,7 @@ describe("web channel", () => {
       { _tag: "ClaudeCredentialState", credential: null },
       {
         _tag: "ProvidersState",
+        claudeHarness: "ClaudeCode",
         connected: [],
         connectable: expect.arrayContaining([
           {

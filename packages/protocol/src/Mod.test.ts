@@ -102,6 +102,14 @@ const hubToMod = [
   },
   { _tag: "SwitchModel", sessionId: "s-1", model: "openai/gpt-6-sol", thinkingLevel: "high" },
   { _tag: "SwitchModel", sessionId: "s-1" },
+  {
+    _tag: "DeliverHandoff",
+    sessionId: "s-1",
+    from: "Pi",
+    text: "Context handoff: Ada asked for a health check; GPT-6-Sol added one.",
+    earlierBefore: 12,
+  },
+  { _tag: "DeliverHandoff", sessionId: "s-1", from: "ClaudeCode", text: "" },
 ]
 
 describe("ModToHub", () => {

@@ -10,7 +10,7 @@ import {
   SessionId,
   ToolCallId,
 } from "./Ids.ts"
-import { ModelName, ThinkingLevel } from "./Model.ts"
+import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { Participant, PresenceChanged, QuestionAnswer, StopAgent, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -65,6 +65,11 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    * between Turns that way, instead of restarting its Harness with a RelaunchSession.
    */
   switchesModels: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It takes a {@link DeliverHandoff} (ADR 0030), and serves its agent `GET /mod/history`. A mod
+   * from before doesn't say so: a Session switched to its Harness starts without the handoff.
+   */
+  takesHandoffs: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
@@ -254,6 +259,23 @@ export type ModAttachment = typeof ModAttachment.Type
 export type ModAttachmentEncoded = typeof ModAttachment.Encoded
 
 /**
+ * What happened in the Session while its agent's Harness wasn't running it (ADR 0030): the Turns
+ * since this Harness last saw the Session, or all of them for a Harness that never ran it,
+ * budgeted, oldest first. Sent once, after a switch of Harness, before the next prompt; the mod
+ * gives it to its agent as context for that prompt, not as a prompt of its own.
+ */
+export const DeliverHandoff = Schema.TaggedStruct("DeliverHandoff", {
+  sessionId: SessionId,
+  /** The Harness the Session ran on before. */
+  from: Harness,
+  /** The handoff, as the agent reads it. */
+  text: Schema.String,
+  /** The earliest Turn it leaves out, which the agent can read with `GET /mod/history`. */
+  earlierBefore: Schema.optionalKey(Schema.Natural),
+})
+export type DeliverHandoff = typeof DeliverHandoff.Type
+
+/**
  * Run the Session's next Turns on this model and thinking level (ADR 0029), sent only while no
  * Turn runs, and only to a mod whose hello says it `switchesModels`. Absent, each is the
  * Harness's default.
@@ -277,6 +299,7 @@ export const HubToMod = Schema.Union([
   PresenceChanged,
   DeliverAnswer,
   SwitchModel,
+  DeliverHandoff,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
 export type HubToModEncoded = typeof HubToMod.Encoded
@@ -298,8 +321,37 @@ export const ModCommand = Schema.Union([
   PresenceChanged,
   DeliverAnswer,
   SwitchModel,
+  DeliverHandoff,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
+
+/**
+ * One Turn of the Session's history as `GET /mod/history` gives it to its agent (ADR 0030): who
+ * prompted, what, which tools the agent called, and what it answered, each clipped.
+ */
+export const HistoryTurn = Schema.Struct({
+  /** Its place in the Session's history: `GET /mod/history?before=<seq>` reads what came before. */
+  seq: Schema.Natural,
+  /** Who prompted it: a Participant's name, an agent's, or the terminal. */
+  by: Schema.String,
+  prompt: Schema.String,
+  /** Each tool call, as `<tool>: <input>`, clipped. */
+  tools: Schema.Array(Schema.String),
+  answer: Schema.String,
+  /** The model it ran on, `<provider>/<id>` or a Claude Code model, when known. */
+  model: Schema.optionalKey(Schema.String),
+})
+export type HistoryTurn = typeof HistoryTurn.Type
+
+/**
+ * The answer to `GET /mod/history?before=<seq>&limit=<n>` (ADR 0030): the Turns before `before`
+ * (the latest without it), oldest first, and where the earlier ones start, if any are left.
+ */
+export const ModHistory = Schema.Struct({
+  turns: Schema.Array(HistoryTurn),
+  earlierBefore: Schema.optionalKey(Schema.Natural),
+})
+export type ModHistory = typeof ModHistory.Type
 
 /** The longest the Hub holds `GET /mod/commands` open before answering with no commands. */
 export const MaxCommandWaitMs = 25_000

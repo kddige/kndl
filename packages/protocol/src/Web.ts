@@ -137,6 +137,11 @@ export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
    */
   modelLabel: Schema.optionalKey(Schema.NonEmptyString),
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
+  /**
+   * The Harness it runs on, when the switch changed it (ADR 0030): the next Turn runs there, with
+   * a handoff of what that Harness hasn't seen.
+   */
+  harness: Schema.optionalKey(Harness),
 })
 export type ModelSwitched = typeof ModelSwitched.Type
 

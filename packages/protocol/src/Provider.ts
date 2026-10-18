@@ -6,7 +6,7 @@ import {
 } from "./ClaudeCredential.ts"
 import { SecretValue } from "./Environment.ts"
 import { RequestId } from "./Ids.ts"
-import { type ModelName, ThinkingLevel } from "./Model.ts"
+import { Harness, type ModelName, ThinkingLevel } from "./Model.ts"
 import { EpochMillis } from "./Session.ts"
 
 // Connected providers (ADR 0029): a Member's own accounts at Providers, held on the Hub, which
@@ -257,6 +257,16 @@ export const AnswerSignIn = Schema.TaggedStruct("AnswerSignIn", {
 })
 export type AnswerSignIn = typeof AnswerSignIn.Type
 
+/**
+ * Set which Harness runs Claude's Models in the signed-in Member's new Sessions (ADR 0030).
+ * Answered with {@link ProvidersState}.
+ */
+export const SetClaudeHarness = Schema.TaggedStruct("SetClaudeHarness", {
+  requestId: RequestId,
+  harness: Harness,
+})
+export type SetClaudeHarness = typeof SetClaudeHarness.Type
+
 /** Cancel a sign-in. Answered with its {@link SignInEnded}. */
 export const CancelSignIn = Schema.TaggedStruct("CancelSignIn", {
   requestId: RequestId,
@@ -296,6 +306,11 @@ export const ProvidersState = Schema.TaggedStruct("ProvidersState", {
   connectable: Schema.Array(ConnectableProvider),
   /** Every Model the Member's pi Sessions can run, most capable first within each Provider. */
   models: Schema.Array(ProviderModel),
+  /**
+   * Which Harness runs Claude's Models in the Member's new Sessions, as they set it on the
+   * Account page (ADR 0030): Claude Code, on their setup token, unless they chose pi.
+   */
+  claudeHarness: Harness,
 })
 export type ProvidersState = typeof ProvidersState.Type
 
@@ -333,6 +348,7 @@ export const ProviderCommand = Schema.Union([
   CancelSignIn,
   DisconnectProvider,
   RefreshProviderModels,
+  SetClaudeHarness,
 ])
 export type ProviderCommand = typeof ProviderCommand.Type
 

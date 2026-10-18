@@ -289,6 +289,15 @@ const hubToRunner = [
   },
   {
     _tag: "RelaunchSession",
+    sessionId: "s-1",
+    repo: "kddige/kndl",
+    workBranch: "claude/s-1",
+    modToken: "mod-4",
+    harness: "Pi",
+    model: "openai/gpt-6-sol",
+  },
+  {
+    _tag: "RelaunchSession",
     sessionId: "s-2",
     repo: "kddige/kndl",
     workBranch: "claude/s-2",
@@ -411,6 +420,7 @@ describe("HubToRunner", () => {
       repo: "kddige/kndl",
       workBranch: "claude/s-1",
       modToken: "m",
+      harness: "Codex",
     })
   })
 

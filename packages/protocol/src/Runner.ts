@@ -315,10 +315,18 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,
   repo: RepoName,
   workBranch: BranchName,
-  /** The conversation to resume, from its mod's last hello. */
-  resume: ConversationId,
+  /**
+   * The conversation to resume, from its mod's last hello on this Harness; absent when the
+   * Session has never run on it, which starts a new one (ADR 0030).
+   */
+  resume: Schema.optionalKey(ConversationId),
   /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */
   modToken: Schema.NonEmptyString,
+  /**
+   * What runs its agent now (ADR 0030); absent, Claude Code. One other than the Session ran on
+   * switches its Harness: the Runner stops the one and starts the other, in the same Sandbox.
+   */
+  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /** The Session's MCP servers, as its last start gave them: a relaunch changes none. */

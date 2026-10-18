@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { harnessOfModel } from "./Model.ts"
 import {
   defaultProviderModel,
   findProviderModel,
@@ -89,4 +90,11 @@ describe("a pi Session's model among its Creator's Models (ADR 0029)", () => {
     expect(thinkingLevelRefusal(gpt, "max")).toBe("GPT-6-Sol has no thinking level 'max'.")
     expect(thinkingLevelRefusal(grok, "low")).toBe("Grok 5 takes no thinking level.")
   })
+})
+
+test("a model name says its Harness: a Provider's Model is pi's, anything else Claude Code's", () => {
+  expect(harnessOfModel("openai/gpt-6-sol")).toBe("Pi")
+  expect(harnessOfModel("anthropic/claude-opus-5-5")).toBe("Pi")
+  for (const model of ["opus", "opus[1m]", "claude-sonnet-5-5", "default", undefined])
+    expect(harnessOfModel(model)).toBe("ClaudeCode")
 })

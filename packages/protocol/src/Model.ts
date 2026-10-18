@@ -12,6 +12,14 @@ import { Schema } from "effect"
 export const Harness = Schema.Literals(["ClaudeCode", "Pi"])
 export type Harness = typeof Harness.Type
 
+/**
+ * The Harness a Session's model name runs on (ADR 0030): a Provider's Model, `openai/gpt-6-sol`
+ * or `anthropic/claude-opus-5-5`, is pi's; anything else, a Claude Code alias such as `opus` or
+ * Claude Code's default, is Claude Code's.
+ */
+export const harnessOfModel = (model: string | undefined): Harness =>
+  model !== undefined && /^[a-z][a-z0-9-]*\/./.test(model) ? "Pi" : "ClaudeCode"
+
 /** The longest model name the Hub takes, in characters. */
 export const MaxModelNameLength = 200
 

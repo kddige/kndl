@@ -45,6 +45,13 @@ const sessionEvents = [
     thinkingLevel: "high",
   },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
+  {
+    _tag: "ModelSwitched",
+    by: alice,
+    model: "openai/gpt-6-sol",
+    modelLabel: "GPT-6-Sol",
+    harness: "Pi",
+  },
   { _tag: "ModelSwitched", by: bob },
   {
     _tag: "PromptCancelled",
@@ -215,6 +222,7 @@ const webToHub = [
   { _tag: "DisconnectProvider", requestId: "q-43", provider: "openai" },
   { _tag: "RefreshProviderModels", requestId: "q-44" },
   { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
+  { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
   {
     _tag: "CreateSession",
     requestId: "q-46",
@@ -749,6 +757,7 @@ const hubToWeb = [
         thinkingLevels: [],
       },
     ],
+    claudeHarness: "ClaudeCode",
   },
   {
     _tag: "SignInStepped",

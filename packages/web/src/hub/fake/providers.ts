@@ -255,6 +255,7 @@ export class FakeProviders {
       ...(requestId !== undefined && { requestId }),
       connected: [...this.connected],
       connectable: [...connectable],
+      claudeHarness: "ClaudeCode",
       models: [
         ...(withClaude ? claudeModels : []),
         ...ProviderIds.flatMap(

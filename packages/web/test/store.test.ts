@@ -771,6 +771,7 @@ describe("Connected providers (ADR 0029)", () => {
   } as const
   const providers = hub({
     _tag: "ProvidersState",
+    claudeHarness: "ClaudeCode",
     connected: [
       {
         provider: "openai",
@@ -807,7 +808,14 @@ describe("Connected providers (ADR 0029)", () => {
     expect(state.providers?.models.map((model) => model.id)).toEqual(["gpt-6-sol"])
     const none = reduce(
       state,
-      hub({ _tag: "ProvidersState", requestId: "q-1", connected: [], connectable: [], models: [] }),
+      hub({
+        _tag: "ProvidersState",
+        requestId: "q-1",
+        connected: [],
+        connectable: [],
+        models: [],
+        claudeHarness: "ClaudeCode",
+      }),
     )
     expect(none.providers).toEqual({ connected: [], connectable: [], models: [] })
   })

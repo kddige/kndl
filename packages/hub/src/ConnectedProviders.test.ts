@@ -239,6 +239,7 @@ describe("connecting a Provider with an API key", () => {
       connected: [],
       connectable: expect.any(Array),
       models: [],
+      claudeHarness: "ClaudeCode",
     })
     // The most used first, each as pi-ai names it and signs in to it.
     expect(welcomed.connectable.slice(0, 5)).toEqual([
@@ -315,6 +316,7 @@ describe("connecting a Provider with an API key", () => {
       ],
       connectable: expect.any(Array),
       models,
+      claudeHarness: "ClaudeCode",
     })
     expect(fakes.seen).toContainEqual(
       expect.objectContaining({

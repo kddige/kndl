@@ -84,6 +84,8 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     return ProvidersState.make({
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
+      // Until the Member can choose (ADR 0030).
+      claudeHarness: "ClaudeCode",
     })
   })
 
@@ -213,6 +215,8 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         yield* providers.refreshModels(you.id, message.provider)
         return yield* changed(you.id, asker)
       }
+      case "SetClaudeHarness":
+        return refuse(client, message, "This Hub can't choose the Harness for Claude yet.")
     }
   })
 
