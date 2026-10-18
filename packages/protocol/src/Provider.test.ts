@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   defaultProviderModel,
   findProviderModel,
+  harnessForNewSession,
   harnessOfModel,
   modelGatewayPath,
   parseProviderModelName,
@@ -112,4 +113,52 @@ test("a model name is pi's exactly when it names a Provider's Model", () => {
     expect(harnessOfModel(name)).toBe(
       parseProviderModelName(name) === undefined ? "ClaudeCode" : "Pi",
     )
+})
+
+describe("the Harness a new Session runs on until a model is picked (ADR 0030)", () => {
+  const claude = [{ provider: "anthropic" }, { provider: "openai" }] as const
+  const others = [{ provider: "openai" }] as const
+  const both = { pi: true, claudeCode: true } as const
+
+  test("is the one offered, where only one is", () => {
+    for (const claudeHarness of ["ClaudeCode", "Pi"] as const) {
+      expect(
+        harnessForNewSession({ pi: false, claudeCode: true, models: claude, claudeHarness }),
+      ).toBe("ClaudeCode")
+      expect(
+        harnessForNewSession({ pi: true, claudeCode: false, models: claude, claudeHarness }),
+      ).toBe("Pi")
+      expect(
+        harnessForNewSession({
+          pi: false,
+          claudeCode: false,
+          models: claude,
+          claudeHarness,
+          asked: "Pi",
+        }),
+      ).toBe("ClaudeCode")
+    }
+  })
+
+  test("is the one asked for, where both are offered", () => {
+    expect(
+      harnessForNewSession({ ...both, models: claude, claudeHarness: "Pi", asked: "ClaudeCode" }),
+    ).toBe("ClaudeCode")
+    expect(
+      harnessForNewSession({ ...both, models: claude, claudeHarness: "ClaudeCode", asked: "Pi" }),
+    ).toBe("Pi")
+  })
+
+  test("is pi only when Claude's Models are the Creator's, and their claudeHarness says pi", () => {
+    expect(harnessForNewSession({ ...both, models: claude, claudeHarness: "Pi" })).toBe("Pi")
+    expect(harnessForNewSession({ ...both, models: claude, claudeHarness: "ClaudeCode" })).toBe(
+      "ClaudeCode",
+    )
+    expect(harnessForNewSession({ ...both, models: others, claudeHarness: "Pi" })).toBe(
+      "ClaudeCode",
+    )
+    expect(harnessForNewSession({ ...both, models: undefined, claudeHarness: "Pi" })).toBe(
+      "ClaudeCode",
+    )
+  })
 })

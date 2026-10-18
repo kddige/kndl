@@ -108,6 +108,39 @@ export const defaultProviderModel = <M extends Pick<ProviderModel, "provider">>(
   models: ReadonlyArray<M>,
 ): M | undefined => models.find((model) => model.provider === "anthropic") ?? models[0]
 
+/**
+ * The Harness a new Session runs on until its Creator picks a model (ADR 0029, 0030), which New
+ * Session preselects: a model names its own (`harnessOfModel`), so this is for none. In order:
+ *
+ * - Claude Code, where pi isn't offered: a Runner the Session may start on doesn't run it;
+ * - pi, where Claude Code isn't: such a Runner doesn't run it, or the Creator can't (no Claude
+ *   credential) and didn't ask for it;
+ * - the Harness asked for, as by New Session's `?harness=claude-code`;
+ * - pi, when the Creator's default Model ({@link defaultProviderModel}) is Claude's and their
+ *   ProvidersState's `claudeHarness` runs Claude's Models on pi;
+ * - else Claude Code, on its default.
+ *
+ * The Hub's own choice for a CreateSession with neither a model nor a Harness is to be this one.
+ */
+export const harnessForNewSession = (on: {
+  /** Whether pi is offered: every Runner the Session may start on runs it. */
+  readonly pi: boolean
+  /** Whether Claude Code is offered: those Runners run it, and the Creator can run it there. */
+  readonly claudeCode: boolean
+  /** The Harness asked for, if any: taken where both are offered. */
+  readonly asked?: Harness | undefined
+  /** The Creator's Models, from their ProvidersState; undefined before it came. */
+  readonly models: ReadonlyArray<Pick<ProviderModel, "provider">> | undefined
+  /** Which Harness runs Claude's Models in the Creator's new Sessions. */
+  readonly claudeHarness: Harness
+}): Harness => {
+  if (!on.pi) return "ClaudeCode"
+  if (!on.claudeCode) return "Pi"
+  if (on.asked !== undefined) return on.asked
+  const claudeFirst = on.models && defaultProviderModel(on.models)?.provider === "anthropic"
+  return on.claudeHarness === "Pi" && claudeFirst === true ? "Pi" : "ClaudeCode"
+}
+
 /** The Model a pi Session's model name (`openai/gpt-6-sol`) names among `models`, if any. */
 export const findProviderModel = <M extends Pick<ProviderModel, "provider" | "id">>(
   models: ReadonlyArray<M>,
