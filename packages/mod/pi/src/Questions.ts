@@ -11,14 +11,9 @@
 
 import { Type } from "@earendil-works/pi-ai/compat"
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
-import type {
-  ModCommand,
-  Participant,
-  Question,
-  QuestionAnswer,
-  QuestionOutcome,
-} from "@kndl/protocol"
+import type { Question, QuestionAnswer, QuestionOutcome } from "@kndl/protocol"
 import { askedQuestions, deliveredPrompt } from "../../src/HubMessages.ts"
+import type { Command, Sender } from "../../src/HubMessages.ts"
 
 /** The tool's name, as the model calls it. */
 export const questionTool = "ask_user_question"
@@ -64,9 +59,8 @@ export const questionParameters = Type.Object({
   ),
 })
 
-type Sender = typeof Participant.Encoded
 type Outcome = typeof QuestionOutcome.Encoded
-type DeliverAnswer = Extract<ModCommand, { _tag: "DeliverAnswer" }>
+type DeliverAnswer = Command<"DeliverAnswer">
 
 /** How an Open question closed: its outcome, and who answered from the web UI, if anyone did. */
 export interface Closed {

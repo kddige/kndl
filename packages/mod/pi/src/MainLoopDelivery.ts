@@ -119,10 +119,15 @@ export class MainLoopDelivery {
     this.next()
   }
 
-  /** An agent's result: given to the main loop once it is idle, after those before it. */
+  /**
+   * An agent's result: given to the main loop once it is idle, after those before it, and never
+   * in the middle of handling another event (as pi's session starting, when Subagents gives again
+   * the results the main loop hadn't taken).
+   */
   result(result: AgentResultMessage) {
     this.results.push(result)
-    this.next()
+    this.options.soon(() => this.next())
+    this.look()
   }
 
   /**

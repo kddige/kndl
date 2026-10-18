@@ -984,4 +984,53 @@ describe.skipIf(cannotRun !== undefined)("a pi Session's agents outlive pi", () 
     expect(asked).toContain("I will remember kiwi.")
     expect(asked).toContain("Which word?")
   }, 60_000)
+
+  test("an agent's result that waited for a busy main loop when pi stopped starts its Turn when pi starts again", async () => {
+    pi ??= start()
+    const hellos = hub.hellos.length
+    await hub.until(() => hub.hellos[hellos - 1])
+    hub.scripts.push(
+      ofParent(
+        toolCallReply(
+          "agent",
+          { description: "Count files", prompt: "Count the files." },
+          { input: 10, output: 2 },
+        ),
+      ),
+      ofChild(textReply("There are 3 files.", { input: 10, output: 2 })),
+      // The main loop is still busy when the agent ends: its result waits for it.
+      ofParent(hangingReply("Counting...")),
+    )
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q3", text: "count", sender: ada })
+    const started = await hub.eventsUntil(from, (event) => event._tag === "AgentStarted")
+    const agentId = String(started.at(-1)?.agentId)
+    await hub.eventsUntil(
+      from,
+      (event) =>
+        event._tag === "AgentStatusChanged" && event.agentId === agentId && event.status === "Done",
+    )
+
+    await stopPi(pi)
+    hub.scripts.push(
+      when(textReply("It counted 3.", { input: 10, output: 2 }), "There are 3 files."),
+    )
+    const restarted = hub.events.length
+    pi = start()
+    const again = await untilResultTurnEnds(hub, restarted)
+    expect(resultTurn(again)).toMatchObject({
+      text: expect.stringContaining("<result>There are 3 files.</result>"),
+      sender: { _tag: "FromAgent", agentId },
+    })
+    // Taken: it isn't given again.
+    const agents = join(home, "agent", "kndl", "agents")
+    const index = JSON.parse(readFileSync(join(agents, "index.json"), "utf8")).agents
+    expect(index.find((agent: { agentId: string }) => agent.agentId === agentId)).toEqual({
+      agentId,
+      description: "Count files",
+      model: "openai/gpt-4.1",
+      status: "Done",
+      reported: true,
+    })
+  }, 60_000)
 })

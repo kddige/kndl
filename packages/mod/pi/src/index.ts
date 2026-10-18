@@ -460,10 +460,7 @@ export default async function kndl(pi: ExtensionAPI) {
       },
       submittedPrompts(context),
     )
-    // The Session's agents, from its volume: those pi's stopping interrupted are said to the model,
-    // and the results it hadn't taken given it again.
     toolContext = undefined
-    subagents.load()
     link = new HubLink({
       hubUrl: env.hubUrl,
       modToken: env.modToken,
@@ -483,6 +480,9 @@ export default async function kndl(pi: ExtensionAPI) {
       log,
     })
     link.start()
+    // The Session's agents, from its volume: those pi's stopping interrupted are said to the model,
+    // and the results it hadn't taken given it again, as Turns the link reports.
+    subagents.load()
   })
 
   pi.on("session_shutdown", async () => {

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { ModEvent } from "@kndl/protocol"
+import { ModEvent, providerModelName } from "@kndl/protocol"
 import { Schema } from "effect"
 import {
+  modelName,
   toolResultSummary,
   turnEndReason,
   turnErrorMessageLength,
@@ -405,6 +406,16 @@ describe("how a Turn ends", () => {
       ]),
     ).toEqual({ model: "openai/gpt-test", input: 1, output: 1, cacheRead: 0, cacheWrite: 0 })
     expect(turnUsage([])).toBeUndefined()
+  })
+
+  // As the Session's model is named (the protocol's providerModelName): the web compares them.
+  test("usage names the model as <provider>/<id>, an id's own slashes kept", () => {
+    expect(
+      turnUsage([assistant({ provider: "openrouter", model: "anthropic/claude-sonnet-4" })])?.model,
+    ).toBe("openrouter/anthropic/claude-sonnet-4")
+    expect(modelName({ provider: "anthropic", id: "claude-haiku-5-5" })).toBe(
+      providerModelName({ provider: "anthropic", id: "claude-haiku-5-5" }),
+    )
   })
 })
 
