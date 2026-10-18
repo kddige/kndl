@@ -1401,6 +1401,17 @@ describe("pi Sessions (ADR 0029)", () => {
     expect(h.hub.all("SessionStartFailed")).toEqual([])
   })
 
+  test("gives pi the MCP servers of the Session's Installations, for the extension to add at the Gateway (ADR 0020)", async () => {
+    const h = startRunner()
+    await connected(h)
+    const mcpServers = [{ installationId: "inst-1", server: "docs" }]
+    h.hub.send(startPiSession("s-1", { mcpServers }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    const env = h.tmux.launched[0]?.env ?? {}
+    expect(JSON.parse(env["KNDL_MCP_SERVERS"] ?? "null")).toEqual(mcpServers)
+  })
+
   test("wakes a pi Session with the same --session-id, which pi resumes, without Claude Code's transcripts", async () => {
     const h = startRunner()
     await connected(h)

@@ -323,7 +323,8 @@ export const SessionsLive = Layer.effect(
      * Starts the Session's pi in a new tmux session in its running Sandbox, as Claude Code starts
      * (ADR 0029), and watches it. It holds a new Session token, and its Creator's setup token when
      * the Hub gave it, for its Claude bridge, both given to it alone (PiLaunch.ts), and loads the
-     * mod's pi extension from a new copy of the Runner's mod.
+     * mod's pi extension from a new copy of the Runner's mod, which adds the MCP servers of its
+     * Installations (ADR 0020).
      */
     const launchPi = (
       request: StartSession | RelaunchSession,
@@ -343,6 +344,7 @@ export const SessionsLive = Layer.effect(
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
           ...(credential === undefined ? {} : { claudePath: sandbox.claude.path }),
+          ...(request.mcpServers === undefined ? {} : { mcpServers: request.mcpServers }),
         })
         const sessionToken = yield* admit(sessionId, request.modToken)
         launchSecrets.set(sessionId, [

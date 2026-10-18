@@ -1,6 +1,6 @@
 // A Hub for the pi extension's end-to-end test: it plays the mod endpoints (hello, events,
 // commands, providers, attachments) and the Gateway, where it answers pi-ai's OpenAI Responses
-// requests with scripted streams.
+// requests with scripted streams, and serves each Installation's MCP server: one tool, `echo`.
 
 import { ProtocolVersion } from "@kndl/protocol"
 import type { ModAttachmentEncoded, ModProviders } from "@kndl/protocol"
@@ -11,11 +11,21 @@ export interface GatewayRequest {
   readonly body: Record<string, unknown>
 }
 
+/** An MCP request to an Installation's server at the Gateway. */
+export interface McpRequest {
+  readonly installationId: string
+  readonly authorization: string | null
+  readonly method: string
+  readonly params?: unknown
+}
+
 /** How the Gateway answers one request: a stream of Responses events, which may never end. */
 export interface Script {
   readonly events: ReadonlyArray<Record<string, unknown>>
   /** Keep the stream open after the events, until pi gives up on it. */
   readonly hang?: boolean
+  /** Refuse the request instead, with this status and the Provider's error message. */
+  readonly error?: { readonly status: number; readonly message: string }
 }
 
 type Event = Record<string, unknown> & { readonly _tag: string }
@@ -113,6 +123,12 @@ export const toolCallReply = (
   }
 }
 
+/** The Provider refusing the request, with `status` and its error `message`. */
+export const errorReply = (status: number, message: string): Script => ({
+  events: [],
+  error: { status, message },
+})
+
 /** A Responses stream that starts to say `text`, and never finishes. */
 export const hangingReply = (text: string): Script => {
   const id = `resp_${++responses}`
@@ -162,6 +178,9 @@ export class FakeHub {
   readonly hellos: Array<Record<string, unknown>> = []
   readonly events: Array<Event> = []
   readonly gatewayRequests: Array<GatewayRequest> = []
+  readonly mcpRequests: Array<McpRequest> = []
+  /** What `/mod/providers` answers: the Creator's Models, now. */
+  providers: ModProviders
   /** What the Gateway answers next, in order. */
   readonly scripts: Array<Script> = []
   private readonly commands: Array<{ seq: number; message: unknown }> = []
@@ -176,6 +195,7 @@ export class FakeHub {
       readonly attachments: Record<string, ModAttachmentEncoded>
     },
   ) {
+    this.providers = options.providers
     this.server = Bun.serve({ port: 0, idleTimeout: 0, fetch: (request) => this.handle(request) })
   }
 
@@ -232,10 +252,18 @@ export class FakeHub {
       const script = this.scripts.shift()
       if (script === undefined)
         return Response.json({ error: { message: "no script" } }, { status: 500 })
+      if (script.error !== undefined)
+        return Response.json(
+          { error: { message: script.error.message } },
+          { status: script.error.status },
+        )
       return new Response(sse(script, request.signal), {
         headers: { "content-type": "text/event-stream" },
       })
     }
+    const installation = /^\/gateway\/([^/]+)$/.exec(url.pathname)
+    if (installation?.[1] !== undefined)
+      return this.mcp(decodeURIComponent(installation[1]), authorization, request)
     if (authorization !== `Bearer ${this.options.modToken}`)
       return new Response(null, { status: 403 })
     if (url.pathname === "/mod/hello") {
@@ -253,7 +281,7 @@ export class FakeHub {
       this.heard()
       return new Response(null, { status: 204 })
     }
-    if (url.pathname === "/mod/providers") return Response.json(this.options.providers)
+    if (url.pathname === "/mod/providers") return Response.json(this.providers)
     if (url.pathname === "/mod/commands") {
       const after = Number(url.searchParams.get("after") ?? 0)
       const pending = () => this.commands.filter((command) => command.seq > after)
@@ -272,5 +300,67 @@ export class FakeHub {
         : Response.json(file)
     }
     return new Response(null, { status: 404 })
+  }
+
+  /**
+   * An Installation's MCP server, over streamable HTTP with JSON answers: it says who it is, lists
+   * one tool, `echo`, and answers a call with the text it was given.
+   */
+  private async mcp(
+    installationId: string,
+    authorization: string | null,
+    request: Request,
+  ): Promise<Response> {
+    if (request.method !== "POST") return new Response(null, { status: 405 })
+    const message = (await request.json()) as {
+      readonly id?: number | string
+      readonly method: string
+      readonly params?: Record<string, unknown>
+    }
+    this.mcpRequests.push({
+      installationId,
+      authorization,
+      method: message.method,
+      params: message.params,
+    })
+    this.heard()
+    if (authorization !== `Bearer ${this.options.modToken}`)
+      return Response.json({ error: "bad token" }, { status: 401 })
+    if (message.id === undefined) return new Response(null, { status: 202 })
+    const result = (() => {
+      switch (message.method) {
+        case "initialize":
+          return {
+            protocolVersion: message.params?.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: `fake-${installationId}`, version: "1.0.0" },
+          }
+        case "tools/list":
+          return {
+            tools: [
+              {
+                name: "echo",
+                description: "Says the text back.",
+                inputSchema: {
+                  type: "object",
+                  properties: { text: { type: "string" } },
+                  required: ["text"],
+                },
+              },
+            ],
+          }
+        case "tools/call": {
+          const args = message.params?.arguments as { readonly text?: string } | undefined
+          return { content: [{ type: "text", text: `echo: ${args?.text ?? ""}` }] }
+        }
+        default:
+          return undefined
+      }
+    })()
+    return Response.json(
+      result === undefined
+        ? { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } }
+        : { jsonrpc: "2.0", id: message.id, result },
+    )
   }
 }

@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { ModEvent } from "@kndl/protocol"
 import { Schema } from "effect"
-import { toolResultSummary, turnEndReason, Turns, turnUsage } from "./Turns.ts"
+import {
+  toolResultSummary,
+  turnEndReason,
+  turnErrorMessageLength,
+  Turns,
+  turnUsage,
+} from "./Turns.ts"
 import type { AssistantEnd } from "./Turns.ts"
 
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
@@ -300,6 +306,74 @@ describe("how a Turn ends", () => {
       reason: "aborted",
       durationMs: 10,
     })
+  })
+
+  test("a Turn that ends in an error says why, as the Provider said", () => {
+    const { turns, events } = tracker()
+    turns.beforeAgentStart("go")
+    turns.agentStart()
+    turns.assistantEnded(
+      assistant({
+        stopReason: "error",
+        errorMessage: "429 You exceeded your current quota.",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+    )
+    turns.settled(false)
+    expect(events.at(-1)).toEqual({
+      _tag: "TurnEnded",
+      turnId: "t1",
+      reason: "error",
+      durationMs: 10,
+      errorMessage: "429 You exceeded your current quota.",
+    })
+    expect(valid(events)).toBe(true)
+  })
+
+  test("only its last request's error counts, and only when the Turn ends in one", () => {
+    const { turns, events } = tracker()
+    turns.beforeAgentStart("go")
+    turns.agentStart()
+    // pi retried, and the retry answered.
+    turns.assistantEnded(assistant({ stopReason: "error", errorMessage: "503 overloaded" }))
+    turns.assistantEnded(assistant())
+    turns.settled(false)
+    expect(events.at(-1)).not.toHaveProperty("errorMessage")
+    // Stopped while a request failed: it was stopped, not an error.
+    turns.beforeAgentStart("again")
+    turns.agentStart()
+    turns.assistantEnded(assistant({ stopReason: "error", errorMessage: "socket closed" }))
+    turns.settled(true)
+    expect(events.at(-1)).toMatchObject({ reason: "aborted" })
+    expect(events.at(-1)).not.toHaveProperty("errorMessage")
+  })
+
+  test("the error is clipped, and has no secrets in it", () => {
+    const events: Array<Record<string, unknown>> = []
+    const turns = new Turns({
+      report: (event) => events.push(event),
+      now: () => 0,
+      newId: () => "t1",
+      secrets: ["tok-session$1"],
+    })
+    turns.beforeAgentStart("go")
+    turns.agentStart()
+    turns.assistantEnded(
+      assistant({
+        stopReason: "error",
+        errorMessage:
+          "401 Incorrect API key provided: tok-session$1. Sent Authorization: Bearer abc.def-123, " +
+          `key sk-proj-AbCdEf0123456789xyz and AIzaSyA0123456789abcdefghijklmnop. ${"x".repeat(2_000)}`,
+      }),
+    )
+    turns.settled(false)
+    const message = String(events.at(-1)?.errorMessage)
+    expect(message).toStartWith(
+      "401 Incorrect API key provided: [redacted]. Sent Authorization: Bearer [redacted], " +
+        "key [redacted] and [redacted]. xxx",
+    )
+    expect(message).not.toContain("tok-session")
+    expect(message.length).toBeLessThanOrEqual(turnErrorMessageLength)
   })
 
   test("usage leaves the cost out when pi reports none", () => {

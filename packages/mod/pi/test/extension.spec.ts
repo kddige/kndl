@@ -2,11 +2,11 @@
 // a fake Hub, and runs its models through the fake Hub's Gateway. Skipped when pi can't run here.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Subprocess } from "bun"
-import { FakeHub, hangingReply, textReply, toolCallReply } from "./FakeHub.ts"
+import { errorReply, FakeHub, hangingReply, textReply, toolCallReply } from "./FakeHub.ts"
 
 const root = join(import.meta.dir, "../..")
 const extension = join(root, "pi/dist/kndl.js")
@@ -62,6 +62,12 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       },
     })
     home = mkdtempSync(join(tmpdir(), "kndl-pi-e2e-"))
+    // The Workspace is a Repo with a Claude Code skill.
+    mkdirSync(join(home, ".claude", "skills", "greet"), { recursive: true })
+    writeFileSync(
+      join(home, ".claude", "skills", "greet", "SKILL.md"),
+      "---\nname: greet\ndescription: Greets the e2e person by name.\n---\n\nSay hello.\n",
+    )
     pi = Bun.spawn(
       [
         "node",
@@ -91,6 +97,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
           KNDL_URL: hub.url,
           KNDL_MOD_TOKEN: modToken,
           KNDL_SESSION_ID: sessionId,
+          KNDL_MCP_SERVERS: JSON.stringify([{ installationId: "inst-1", server: "linear" }]),
         },
       },
     )
@@ -223,6 +230,54 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(events).toEqual([{ _tag: "PromptAlreadySubmitted", promptId: "q1" }])
   })
 
+  test("the Repo's Claude Code skills load, and the model reaches the Session's MCP servers at the Gateway, with the Session token (ADR 0020, ADR 0029)", async () => {
+    // pi connects to it as the session starts.
+    await hub.until(() => hub.mcpRequests.find((request) => request.method === "tools/list"))
+    expect(hub.mcpRequests[0]).toMatchObject({
+      installationId: "inst-1",
+      authorization: `Bearer ${modToken}`,
+      method: "initialize",
+    })
+    expect(JSON.stringify(hub.gatewayRequests[0]?.body)).toContain("Greets the e2e person by name.")
+    hub.scripts.push(
+      toolCallReply(
+        "codemode",
+        { code: 'const r = await tools.mcp__kndl_linear__echo({ text: "hi" })\nreturn r.content' },
+        { input: 10, output: 2 },
+      ),
+      textReply("It said hi.", { input: 20, output: 2 }),
+    )
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q11", text: "echo", sender: ada })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolCallEnded",
+        tool: "codemode",
+        outcome: "Succeeded",
+        output: expect.stringContaining("echo: hi"),
+      }),
+    )
+    expect(hub.mcpRequests.find((request) => request.method === "tools/call")).toMatchObject({
+      installationId: "inst-1",
+      authorization: `Bearer ${modToken}`,
+      params: { name: "echo", arguments: { text: "hi" } },
+    })
+  }, 30_000)
+
+  test("a Turn the Provider refuses ends in an error that says why, without the Session token", async () => {
+    hub.scripts.push(errorReply(400, `Incorrect API key provided: ${modToken}. Check it.`))
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q12", text: "fail", sender: ada })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    const ended = events.at(-1)
+    expect(ended).toMatchObject({ _tag: "TurnEnded", reason: "error" })
+    expect(String(ended?.errorMessage)).toContain(
+      "Incorrect API key provided: [redacted]. Check it.",
+    )
+    expect(String(ended?.errorMessage)).not.toContain(modToken)
+  }, 30_000)
+
   test("SwitchModel runs the next Turns on another Provider's model, at its thinking level", async () => {
     hub.send({ _tag: "SwitchModel", sessionId, model: "xai/grok-4.3", thinkingLevel: "low" })
     hub.scripts.push(textReply("Hi from Grok.", { input: 50, output: 4 }))
@@ -239,6 +294,47 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(request?.path).toBe("/gateway/models/xai/v1/responses")
     expect(request?.body.model).toBe("grok-4.3")
     expect(request?.body.reasoning).toMatchObject({ effort: "low" })
+  }, 30_000)
+
+  test("SwitchModel to a Provider connected since pi started asks the Hub again, and switches", async () => {
+    hub.providers = {
+      models: [
+        ...hub.providers.models,
+        { provider: "meta", id: "muse-spark-1.3", label: "Muse Spark 1.3", thinkingLevels: [] },
+      ],
+    } as never
+    hub.send({ _tag: "SwitchModel", sessionId, model: "meta/muse-spark-1.3" })
+    hub.scripts.push(textReply("Hi from Muse.", { input: 30, output: 4 }))
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q13", text: "hello", sender: ada })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events.find((event) => event._tag === "ModelSwitchFailed")).toBeUndefined()
+    expect(events.at(-1)).toMatchObject({ usage: { model: "meta/muse-spark-1.3" } })
+    expect(hub.gatewayRequests[requests]?.path).toBe("/gateway/models/meta/v1/responses")
+  }, 30_000)
+
+  test("a SwitchModel it can't make is said, and the Session keeps its model", async () => {
+    // pi has OpenAI's GPT-4o built in, but the Creator's Models don't have it.
+    for (const asked of ["openai/gpt-4o", "mistral/not-a-model"]) {
+      const from = hub.events.length
+      hub.send({ _tag: "SwitchModel", sessionId, model: asked })
+      const events = await hub.eventsUntil(from, (event) => event._tag === "ModelSwitchFailed")
+      expect(events.at(-1)).toEqual({
+        _tag: "ModelSwitchFailed",
+        asked,
+        model: "meta/muse-spark-1.3",
+        message:
+          "it isn't one of the Creator's Models: its Provider isn't connected, or doesn't offer it",
+      })
+    }
+    // Back on the first, for the tests after.
+    const from = hub.events.length
+    hub.send({ _tag: "SwitchModel", sessionId, model: "openai/gpt-4.1" })
+    hub.scripts.push(textReply("Back.", { input: 5, output: 1 }))
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q14", text: "back?", sender: ada })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events.at(-1)).toMatchObject({ usage: { model: "openai/gpt-4.1" } })
   }, 30_000)
 
   test("a prompt steered into the running Turn joins it, and is read at its next request (ADR 0018)", async () => {

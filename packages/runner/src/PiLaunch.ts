@@ -9,7 +9,13 @@
 // Claude Code, so what is kept out of Claude Code's is kept out of pi's.
 
 import { posix } from "node:path"
-import type { ClaudeCredential, ModelName, SessionId, ThinkingLevel } from "@kndl/protocol"
+import type {
+  ClaudeCredential,
+  GatewayServer,
+  ModelName,
+  SessionId,
+  ThinkingLevel,
+} from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvironment.ts"
 import { ModEnvironment } from "./ClaudeLaunch.ts"
@@ -24,6 +30,12 @@ export const HarnessVariable = "KNDL_HARNESS"
 
 /** The variable pi's Claude bridge finds the pinned Claude Code by. */
 export const ClaudeCodeVariable = "KNDL_CLAUDE_CODE"
+
+/**
+ * The variable the extension finds the Session's MCP servers in (the mod's pi/src/RepoSetup.ts):
+ * the {@link GatewayServer}s, as JSON.
+ */
+export const McpServersVariable = "KNDL_MCP_SERVERS"
 
 /**
  * The ids pi's `--session-id` takes: anything else, it refuses to start with. A UUID, which the
@@ -53,6 +65,8 @@ export interface PiLaunchOptions {
    * Claude credential, for the extension's Claude bridge; absent when they don't.
    */
   readonly claudePath?: string
+  /** The MCP servers of the Installations it runs with (ADR 0020); none when absent. */
+  readonly mcpServers?: ReadonlyArray<GatewayServer>
 }
 
 export interface PiLaunch {
@@ -71,6 +85,10 @@ export interface PiLaunch {
  *
  * With a Claude credential, the Claude bridge gets what Claude Code itself runs with: its state
  * directory, `IS_SANDBOX`, as it runs as root, and the pinned Claude Code.
+ *
+ * The Session's MCP servers go to the extension, which adds them to pi at the Gateway, as Claude
+ * Code's are (ADR 0020): their Installations and names only, as pi reaches them with the Session
+ * token it already has.
  */
 export function piLaunch(options: PiLaunchOptions): PiLaunch {
   return {
@@ -92,6 +110,9 @@ export function piLaunch(options: PiLaunchOptions): PiLaunch {
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.conversationId]: options.conversationId,
       [HarnessVariable]: "Pi",
+      ...(options.mcpServers?.length
+        ? { [McpServersVariable]: JSON.stringify(options.mcpServers) }
+        : {}),
       ...(options.claudePath === undefined
         ? {}
         : { ...claudeStateEnv, [ClaudeCodeVariable]: options.claudePath }),

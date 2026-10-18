@@ -4,9 +4,11 @@
 // which Harness a Session has.
 //
 // - At load: asks the Hub for the Creator's Models and points pi's providers for them at the
-//   Gateway (Providers.ts); Claude's go to the Claude bridge (`registerClaude`).
+//   Gateway (Providers.ts); Claude's go to the Claude bridge (`registerClaude`). Adds the
+//   Session's MCP servers, at the Gateway too, and the Repo's Claude Code skills (RepoSetup.ts).
 // - The Hub: says hello once pi's session is known, reports each pi run as a Turn (Turns.ts), and
-//   runs the Hub's commands: prompts, steering, stopping, switching the model, presence.
+//   runs the Hub's commands: prompts, steering, stopping, switching the model (ModelSwitch.ts),
+//   presence.
 // - The model: the system prompt says the Session is shared, and a tool opens attachments; others
 //   ask the people questions (Questions.ts) and start subagents (Subagents.ts).
 // - The person at the terminal: a line above the editor shows the link and who watches.
@@ -21,7 +23,7 @@ import { join } from "node:path"
 import { getModels, Type } from "@earendil-works/pi-ai/compat"
 import { getAgentDir } from "@earendil-works/pi-coding-agent"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { parseProviderModelName } from "@kndl/protocol"
+import { providerModelName } from "@kndl/protocol"
 import type { ModCommand, ModProviders } from "@kndl/protocol"
 import { HubLink } from "../../src/HubLink.ts"
 import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
@@ -34,9 +36,11 @@ import {
 } from "../../src/HubMessages.ts"
 import { attachmentTool, openAttachment } from "./Attachments.ts"
 import { registerClaude } from "./claude/Claude.ts"
+import { switchModel as switchToModel, throughKndl } from "./ModelSwitch.ts"
 import { presenceLine, watching } from "./Presence.ts"
-import { defaultModel, fetchProviders, gatewayProviders } from "./Providers.ts"
+import { fetchProviders, gatewayProviders } from "./Providers.ts"
 import { Questions, questionToolDefinition } from "./Questions.ts"
+import { claudeSkills, installationServers, McpServersVariable } from "./RepoSetup.ts"
 import { agentToolDefinition, Subagents } from "./Subagents.ts"
 import { Turns } from "./Turns.ts"
 
@@ -74,6 +78,9 @@ const agentMessage = "kndl-agent"
 const widgetKey = "kndl"
 
 type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { _tag: Tag }>
+
+/** The Models the Hub lists, as `<provider>/<id>`. */
+const modelNames = (listed: ModProviders) => listed.models.map(providerModelName)
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -117,28 +124,54 @@ export default async function kndl(pi: ExtensionAPI) {
     }
   }
 
-  // pi waits for this before it picks the model the Runner named.
-  const providers: ModProviders = (await fetchProviders({
-    hubUrl: env.hubUrl,
-    modToken: env.modToken,
-    fetch: fetchHub,
-    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    log,
-  })) ?? { models: [] }
-  for (const provider of gatewayProviders(providers, {
-    hubUrl: env.hubUrl,
-    modToken: env.modToken,
-    catalog: (name) => getModels(name as never) as never,
-  })) {
-    pi.registerProvider(provider.name, provider.config)
-    if (provider.missing.length > 0)
-      log(`kndl: pi doesn't know ${provider.name}'s ${provider.missing.join(", ")}`)
+  const askForProviders = () =>
+    fetchProviders({
+      hubUrl: env.hubUrl,
+      modToken: env.modToken,
+      fetch: fetchHub,
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      log,
+    })
+  /**
+   * Points pi's providers for the Creator's Models at the Gateway (Providers.ts). One the Hub no
+   * longer lists stays registered, at the Gateway, which refuses it: taken back, pi's built-in one
+   * would call the Provider itself.
+   */
+  const registerGateway = (listed: ModProviders) => {
+    for (const provider of gatewayProviders(listed, {
+      hubUrl: env.hubUrl,
+      modToken: env.modToken,
+      catalog: (name) => getModels(name as never) as never,
+    })) {
+      pi.registerProvider(provider.name, provider.config)
+      if (provider.missing.length > 0)
+        log(`kndl: pi doesn't know ${provider.name}'s ${provider.missing.join(", ")}`)
+    }
   }
+
+  // pi waits for this before it picks the model the Runner named.
+  let providers: ModProviders = (await askForProviders()) ?? { models: [] }
+  registerGateway(providers)
+  /** The Models a subagent may run on: the Creator's, as the Hub listed them last. */
+  const agentModels = modelNames(providers)
   registerClaude(
     pi,
     providers.models.filter((model) => model.provider === "anthropic"),
     { log },
   )
+
+  // The Session's MCP servers, at the Gateway, and the Repo's Claude Code skills (RepoSetup.ts).
+  for (const server of installationServers(process.env[McpServersVariable], env.hubUrl, log)) {
+    try {
+      pi.registerMcpServer(server.name, server.config)
+    } catch (error) {
+      log(`kndl: couldn't add the MCP server ${server.name}: ${error}`)
+    }
+  }
+  pi.on("resources_discover", (event) => {
+    const skills = claudeSkills(event.cwd)
+    return skills === undefined ? undefined : { skillPaths: [skills] }
+  })
 
   /** The session's context, from its start: commands from the Hub act through it. */
   let ctx: ExtensionContext | undefined
@@ -152,13 +185,16 @@ export default async function kndl(pi: ExtensionAPI) {
   let waitTimer: ReturnType<typeof setInterval> | undefined
 
   const report = (event: Record<string, unknown>) => link?.report(event)
-  const turns = new Turns({ report, now: () => performance.now(), newId: randomUUID })
+  // What a failed Turn's message must never say: a Provider may say back the key pi sent.
+  const secrets = [env.modToken, process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""].filter(Boolean)
+  const turns = new Turns({ report, now: () => performance.now(), newId: randomUUID, secrets })
   // Open questions and subagents (ADR 0014, #193): Questions.ts, Subagents.ts.
   const questions = new Questions({ report })
   const subagents = new Subagents({
     report,
     now: () => performance.now(),
     newId: randomUUID,
+    secrets,
     notify: (text) =>
       pi.sendMessage(
         { customType: agentMessage, content: text, display: true },
@@ -263,21 +299,47 @@ export default async function kndl(pi: ExtensionAPI) {
     turns.steered({ promptId, sender, text, attachments })
   }
 
-  /** Runs the Session's next Turns on a model and thinking level (ADR 0029). */
+  /**
+   * Asks the Hub again for the Creator's Models, as for a Provider connected since pi started,
+   * and gives pi those it lists; false when the Hub doesn't answer.
+   */
+  const refreshProviders = async () => {
+    const listed = await askForProviders()
+    if (listed === undefined) return false
+    providers = listed
+    registerGateway(listed)
+    agentModels.splice(0, agentModels.length, ...modelNames(listed))
+    return true
+  }
+
+  /**
+   * Runs the Session's next Turns on a model and thinking level (ADR 0029). One it can't switch to
+   * is said to the Hub, which keeps the Session on the model it runs on (ModelSwitch.ts). The
+   * thinking level is set either way, as the Hub keeps it.
+   */
   const switchModel = async (command: Command<"SwitchModel">) => {
     const current = ctx
     if (current === undefined) return
     const registry = current.modelRegistry
-    const target =
-      command.model === undefined
-        ? defaultModel(providers, (provider, id) => registry.find(provider, id) !== undefined)
-        : parseProviderModelName(command.model)
-    const model = target === undefined ? undefined : registry.find(target.provider, target.id)
-    if (model === undefined) {
-      log(`kndl: no model ${command.model ?? "to switch to"}`)
-      current.ui.notify(`kndl: pi has no model ${command.model ?? "to switch to"}`, "warning")
-    } else if (!(await pi.setModel(model))) {
-      log(`kndl: pi has no credential for ${model.provider}/${model.id}`)
+    const switched = await switchToModel(command.model, {
+      providers: () => providers,
+      find: (provider, id) => {
+        const model = registry.find(provider, id)
+        return model !== undefined && throughKndl(model, env.hubUrl) ? model : undefined
+      },
+      refresh: refreshProviders,
+      setModel: (model) => pi.setModel(model),
+    })
+    if (switched._tag === "Failed") {
+      const text = `couldn't switch to ${command.model ?? "the default model"}: ${switched.message}`
+      log(`kndl: ${text}`)
+      current.ui.notify(`kndl: ${text}`, "warning")
+      report({
+        _tag: "ModelSwitchFailed",
+        ...(command.model === undefined ? {} : { asked: command.model }),
+        model: modelName(),
+        message: switched.message,
+      })
     }
     pi.setThinkingLevel(command.thinkingLevel ?? pi.getSettings().defaultThinkingLevel ?? "medium")
   }
@@ -357,7 +419,7 @@ export default async function kndl(pi: ExtensionAPI) {
     agentToolDefinition({
       subagents,
       turnId: () => turns.turnId,
-      models: providers.models.map((model) => `${model.provider}/${model.id}`),
+      models: agentModels,
       pi,
       agentDir: getAgentDir,
     }),

@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test"
-import { type ClaudeCredential, credentialFromSecret, type SessionId } from "@kndl/protocol"
+import {
+  type ClaudeCredential,
+  credentialFromSecret,
+  type GatewayServer,
+  type SessionId,
+} from "@kndl/protocol"
 import { Redacted } from "effect"
 import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { ModEnvironment } from "./ClaudeLaunch.ts"
-import { HarnessVariable, piEnvironment, piLaunch, PiSessionIdPattern } from "./PiLaunch.ts"
+import {
+  HarnessVariable,
+  McpServersVariable,
+  piEnvironment,
+  piLaunch,
+  PiSessionIdPattern,
+} from "./PiLaunch.ts"
 
 const options = {
   nodePath: "/opt/kndl/pi/node-v24.22.0-musl/bin/node",
@@ -76,6 +87,19 @@ describe("piLaunch", () => {
     })
     expect(piLaunch(options).env).not.toHaveProperty("KNDL_CLAUDE_CODE")
     expect(piLaunch(options).env).not.toHaveProperty("CLAUDE_CONFIG_DIR")
+  })
+
+  test("gives the extension the MCP servers of the Session's Installations, with no secret in them (ADR 0020)", () => {
+    const mcpServers = [
+      { installationId: "inst-1", server: "linear" },
+      { installationId: "inst-2", server: "linear-2" },
+    ] as unknown as ReadonlyArray<GatewayServer>
+    const { argv, env } = piLaunch({ ...options, mcpServers })
+    expect(JSON.parse(env[McpServersVariable] ?? "")).toEqual(mcpServers)
+    expect(argv).toEqual(piLaunch(options).argv)
+    // None, no variable.
+    expect(piLaunch(options).env).not.toHaveProperty(McpServersVariable)
+    expect(piLaunch({ ...options, mcpServers: [] }).env).not.toHaveProperty(McpServersVariable)
   })
 
   test("a UUID is a session id pi takes, and an id it would refuse isn't", () => {

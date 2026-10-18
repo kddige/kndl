@@ -31,6 +31,8 @@ export interface AssistantEnd {
   readonly provider: string
   readonly model: string
   readonly stopReason: string
+  /** What went wrong, when the stop reason is `error`: the Provider's message, or pi's. */
+  readonly errorMessage?: string | undefined
   readonly usage?:
     | {
         readonly input: number
@@ -53,6 +55,11 @@ export interface TurnsOptions {
    * has no TurnStarted: the web groups its events by agent.
    */
   readonly agentId?: string | undefined
+  /**
+   * What must never reach the Hub in an error's message, such as the Session token, which a
+   * Provider may say back when it refuses the key pi sent.
+   */
+  readonly secrets?: ReadonlyArray<string> | undefined
 }
 
 /**
@@ -72,6 +79,41 @@ export const turnEndReason = (aborted: boolean, stopReason: string | undefined):
     default:
       return "stop"
   }
+}
+
+/** The longest a Turn's error message is, after which it is clipped. */
+export const turnErrorMessageLength = 500
+
+/**
+ * What looks like a credential in a Provider's message: a bearer token, or a key of a shape
+ * Providers give out (OpenAI's, Anthropic's and others' `sk-`, xAI's, Groq's, GitHub's, Hugging
+ * Face's, NVIDIA's, Google's `AIza`). A Provider that refuses a key often says part of it back.
+ */
+const credentialPatterns: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(Bearer\s+)[^\s"',;]+/gi, "$1[redacted]"],
+  [
+    /\b(?:sk|xai|gsk|csk|ghp|gho|ghu|ghs|ghr|github_pat|hf|nvapi|pplx)[-_][A-Za-z0-9_*.-]{8,}/g,
+    "[redacted]",
+  ],
+  [/\bAIza[A-Za-z0-9_-]{20,}/g, "[redacted]"],
+]
+
+/**
+ * Why a Turn failed, as the Hub shows it: the Provider's or pi's message, without the `secrets`
+ * or anything that looks like a credential, on one line, and clipped; undefined when there is
+ * nothing to say.
+ */
+export const turnErrorMessage = (
+  message: string | undefined,
+  secrets: ReadonlyArray<string> = [],
+): string | undefined => {
+  if (message === undefined) return undefined
+  let text = message
+  for (const secret of secrets)
+    if (secret.length >= 8) text = text.replaceAll(secret, () => "[redacted]")
+  for (const [pattern, replacement] of credentialPatterns) text = text.replace(pattern, replacement)
+  text = text.replace(/\s+/g, " ").trim()
+  return text === "" ? undefined : clip(text, turnErrorMessageLength)
 }
 
 const tokens = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0)
@@ -284,13 +326,18 @@ export class Turns {
     // Left unread, it stays in the conversation, and the model reads it with the next prompt.
     this.unread.clear()
     const usage = turnUsage(turn.requests)
+    const last = turn.requests.at(-1)
+    const reason = turnEndReason(aborted, last?.stopReason)
+    const errorMessage =
+      reason === "error" ? turnErrorMessage(last?.errorMessage, this.options.secrets) : undefined
     this.options.report({
       _tag: "TurnEnded",
       turnId: turn.turnId,
       ...this.loop,
-      reason: turnEndReason(aborted, turn.requests.at(-1)?.stopReason),
+      reason,
       durationMs: Math.max(0, Math.round(this.options.now() - turn.startedAt)),
       ...(usage === undefined ? {} : { usage }),
+      ...(errorMessage === undefined ? {} : { errorMessage }),
     })
   }
 }

@@ -207,6 +207,8 @@ export interface SubagentsOptions {
   readonly newId: () => string
   /** Tells the main loop, with its next prompt, how a run it didn't wait for ended. */
   readonly notify: (text: string) => void
+  /** What its runs' error messages must never say (Turns.ts). */
+  readonly secrets?: ReadonlyArray<string> | undefined
 }
 
 export interface RunOptions {
@@ -363,7 +365,13 @@ export class Subagents {
     session: ChildSession,
     report: (event: Record<string, unknown>) => void,
   ): Agent {
-    const turns = new Turns({ report, now: this.options.now, newId: this.options.newId, agentId })
+    const turns = new Turns({
+      report,
+      now: this.options.now,
+      newId: this.options.newId,
+      agentId,
+      secrets: this.options.secrets,
+    })
     const onEvent = (event: AgentSessionEvent) => {
       switch (event.type) {
         case "agent_start":
