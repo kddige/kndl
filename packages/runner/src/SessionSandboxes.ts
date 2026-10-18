@@ -41,8 +41,7 @@ import type {
 } from "@kndl/protocol"
 import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@kndl/protocol"
 import { HomeConfig } from "@kndl/protocol/home"
-import { Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
-import type { Cause } from "effect"
+import { Cause, Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { ClaudeProjectsDir } from "./ClaudeConfig.ts"
 import {
@@ -212,6 +211,19 @@ const errorMessage = (error: unknown) =>
 
 const failureMessage = (cause: Cause.Cause<unknown>) =>
   errorMessage(Option.getOrElse(Exit.findErrorOption(Exit.failCause(cause)), () => cause))
+
+/**
+ * Any failure of `effect` as a {@link SandboxError} that says `describe` of it; but an
+ * interruption, as of an exec the Sandbox stopped under, which stays one.
+ */
+const failingAs =
+  (describe: (cause: Cause.Cause<unknown>) => string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, SandboxError, R> =>
+    Effect.catchCause(effect, (cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.interrupt
+        : Effect.fail(new SandboxError({ message: describe(cause) })),
+    )
 
 /**
  * The Session's copy of the mod, whose plugins Claude Code loads with `--plugin-dir` (ADR 0013,
@@ -675,12 +687,9 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }
         yield* readyHarness(sessionId, started.pi.node, harness)
       }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.fail(
-            new SandboxError({
-              message: `the Sandbox could not be readied for ${harness === "Pi" ? "pi" : "Claude Code"}: ${failureMessage(cause)}`,
-            }),
-          ),
+        failingAs(
+          (cause) =>
+            `the Sandbox could not be readied for ${harness === "Pi" ? "pi" : "Claude Code"}: ${failureMessage(cause)}`,
         ),
       )
 
@@ -884,11 +893,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           claude: { path, env: { ...env, ...claudeStateEnv } },
           pi: { node, env },
         }
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.fail(new SandboxError({ message: failureMessage(cause) })),
-        ),
-      )
+      }).pipe(failingAs(failureMessage))
 
     const hasTranscript = (sessionId: SessionId, directories: SessionDirectories, id: string) =>
       ensureTranscript(backend, sessionId, id, { cwd: directories.claude, projectsDir }).pipe(

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
 import type { RepoName, RunnerToHub, SandboxStateReport, SessionId } from "@kndl/protocol"
-import { Effect, Layer, Schedule } from "effect"
+import { Cause, Effect, Exit, Layer, Schedule } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
@@ -618,6 +618,33 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
               ? { exitCode: 1 }
               : {},
           ),
+      },
+    )
+  })
+
+  test("readying a Sandbox, or taking it back, that is interrupted stays interrupted, not a failure", () => {
+    let interrupting = false
+    return withSandboxes(
+      (root) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const directories = yield* directoriesIn(root)
+          const started = yield* sandboxes.start(s1, directories, target)
+          interrupting = true
+
+          const exits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
+            yield* Effect.exit(sandboxes.readyFor(s1, "Pi", started)),
+            yield* Effect.exit(sandboxes.keep(s1, directories)),
+          ]
+          for (const exit of exits) {
+            expect(Exit.hasInterrupts(exit)).toBe(true)
+            expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(false)
+          }
+        }),
+      {
+        pi: true,
+        // An exec cut short, as by the Sandbox stopping under it.
+        onExec: () => (interrupting ? Effect.interrupt : Effect.succeed({})),
       },
     )
   })
