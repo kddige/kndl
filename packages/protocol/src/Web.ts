@@ -202,8 +202,10 @@ export const CreateSession = Schema.TaggedStruct("CreateSession", {
   branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
   /**
-   * What runs its agent (ADR 0029); absent, pi when the Runner runs it, else Claude Code. A pi
-   * Session's `model` is one of its Creator's ProvidersState Models, `openai/gpt-6-sol`.
+   * What runs its agent (ADR 0029, 0030). Absent, the model says (`harnessOfModel`); without a
+   * model, Claude's Models run on the Creator's `claudeHarness`, and others on pi when the Runner
+   * runs it. Given, it must agree with the model. A pi Session's `model` is one of its Creator's
+   * ProvidersState Models, `openai/gpt-6-sol`.
    */
   harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
