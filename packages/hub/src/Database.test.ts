@@ -45,11 +45,36 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0042, a Session's Harness (ADR 0029): the migrator
- * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0044, a Member's Harness for Claude (ADR 0030): the
+ * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
+ * first.
+ */
+const beforeClaudeHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE participants DROP COLUMN claude_harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'claude_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0043, each Harness's conversation (ADR 0030), and
+ * 0044. A conversation recorded since is lost.
+ */
+const beforeSessionConversations = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeClaudeHarness
+  yield* sql`DROP TABLE session_conversations`
+  yield* sql`ALTER TABLE sessions DROP COLUMN handoff_from`
+  yield* sql`ALTER TABLE sessions ADD COLUMN conversation_id TEXT`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_conversations'`
+})
+
+/**
+ * Takes the database back to before migration 0042, a Session's Harness (ADR 0029), and the ones
+ * after it.
  */
 const beforeSessionHarness = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeSessionConversations
   yield* sql`ALTER TABLE sessions DROP COLUMN harness`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_harness'`
 })
@@ -384,6 +409,96 @@ describe("migration 0041, Connected providers", () => {
   })
 })
 
+describe("migration 0044, a Member's Harness for Claude", () => {
+  test("keeps every Member, on Claude Code until they choose pi", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeClaudeHarness
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1), ('p-2', 'bob', 'Bob', 1, 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE participants SET claude_harness = 'Pi' WHERE id = 'p-2'`
+        return yield* sql<{ readonly id: string; readonly claudeHarness: string | null }>`
+          SELECT id, claude_harness AS claudeHarness FROM participants ORDER BY id
+        `
+      }),
+    )
+    expect(after).toEqual([
+      { id: "p-1", claudeHarness: null },
+      { id: "p-2", claudeHarness: "Pi" },
+    ])
+  })
+})
+
+describe("migration 0043, each Harness's conversation", () => {
+  test("keeps each Session's conversation as its Harness's, and a purge forgets them", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const conversation = ConversationId.make("0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeSessionConversations
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, harness,
+            conversation_id
+          ) VALUES
+            ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, NULL, ${conversation}),
+            ('s-2', 'o/r', 'main', 'claude/s-2', 'Asleep', 'r-1', 'p-1', 1, 'Pi', ${conversation}),
+            ('s-3', 'o/r', 'main', 'claude/s-3', 'Asleep', 'r-1', 'p-1', 1, NULL, NULL)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const sql = yield* SqlClient.SqlClient
+        const of = (id: string, harness: "ClaudeCode" | "Pi") =>
+          Effect.map(sessions.conversationId(SessionId.make(id), harness), Option.getOrUndefined)
+        const found = {
+          claudeCode: yield* of("s-1", "ClaudeCode"),
+          notPi: yield* of("s-1", "Pi"),
+          pi: yield* of("s-2", "Pi"),
+          notClaudeCode: yield* of("s-2", "ClaudeCode"),
+          none: yield* of("s-3", "ClaudeCode"),
+        }
+        const s1 = Option.getOrThrow(yield* sessions.get(SessionId.make("s-1")))
+        yield* sessions.purge(s1, 2)
+        const left = yield* sql<{ readonly id: string }>`
+          SELECT session_id AS id FROM session_conversations ORDER BY session_id
+        `
+        return { found, left: left.map((row) => row.id) }
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(after.found).toEqual({
+      claudeCode: conversation,
+      notPi: undefined,
+      pi: conversation,
+      notClaudeCode: undefined,
+      none: undefined,
+    })
+    expect(after.left).toEqual(["s-2"])
+  })
+})
+
 describe("migration 0042, a Session's Harness", () => {
   test("a Session from before runs Claude Code, and a new one keeps its Harness", async () => {
     const dir = testDatabaseDir("kndl-migration-")
@@ -505,7 +620,7 @@ describe("migration 0040, pi-ai's vocabulary", () => {
         return {
           history: (yield* log.history(id)).map((entry): unknown => entry.event),
           setting: { model: session.model, thinkingLevel: session.thinkingLevel },
-          conversation: yield* sessions.conversationId(id),
+          conversation: yield* sessions.conversationId(id, "ClaudeCode"),
           runnerModels: yield* sql`SELECT models FROM runners`,
         }
       }).pipe(Effect.provide([SessionsTest, SessionLog.layer])),

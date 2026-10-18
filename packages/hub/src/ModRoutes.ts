@@ -6,9 +6,14 @@
 // `GET /mod/providers` (ADR 0029) answers a pi Session's kndl extension, as it loads, before its
 // hello, with its Creator's Models (ModelCatalog.ts): which Providers to reach through the
 // Gateway, and Claude's.
+//
+// `GET /mod/history?before=<seq>&limit=<n>` (ADR 0030) serves a Session's agent its earlier Turns,
+// as the context handoff tells them (Handoff.ts), a page at a time: what a handoff left out, or
+// what came before the Harness ran the Session.
 
 import {
   checkHandshake,
+  EventSeq,
   HandshakeRejected,
   MaxCommandWaitMs,
   ModCommands,
@@ -17,6 +22,7 @@ import {
   ModEvents,
   ModHello,
   ModHelloReply,
+  ModHistory,
   ModProviders,
   ProtocolVersion,
   type SessionId,
@@ -29,9 +35,11 @@ import {
   HttpServerResponse,
 } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
+import { DefaultHistoryLimit, historyPage, MaxHistoryLimit } from "./Handoff.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
 import { ModOutbox } from "./ModOutbox.ts"
+import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 
@@ -56,6 +64,19 @@ const badRequest = Effect.catchTags({
 
 const replyToHello = HttpServerResponse.schemaJson(ModHelloReply)
 
+/**
+ * `GET /mod/history`'s query (ADR 0030): the Turns before `before`, the latest without it, and
+ * how many, at least 1; more than {@link MaxHistoryLimit} gives that many.
+ */
+const HistoryQuery = Schema.Struct({
+  before: Schema.optionalKey(Schema.FiniteFromString.pipe(Schema.decodeTo(EventSeq))),
+  limit: Schema.optionalKey(
+    Schema.FiniteFromString.pipe(
+      Schema.decodeTo(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+    ),
+  ),
+})
+
 export const ModRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const outbox = yield* ModOutbox
@@ -63,6 +84,7 @@ export const ModRoutes = HttpRouter.use(
     const shutdown = yield* HubShutdown
     const sessions = yield* Sessions
     const catalog = yield* ModelCatalog
+    const log = yield* SessionLog
     /** The Sessions whose mod has said hello since the Hub started. */
     const greeted = new Set<SessionId>()
 
@@ -130,6 +152,24 @@ export const ModRoutes = HttpRouter.use(
           ...(signedIn.length > 0 && { signedIn }),
         })
       }),
+    )
+
+    yield* router.add(
+      "GET",
+      "/mod/history",
+      Effect.gen(function* () {
+        const grant = yield* authenticateMod
+        const query = yield* HttpServerRequest.schemaSearchParams(HistoryQuery)
+        const session = yield* sessions.get(grant.sessionId).pipe(Effect.orDie)
+        if (Option.isNone(session)) return errorResponse(404, "There is no such Session")
+        const entries = yield* log.history(grant.sessionId).pipe(Effect.orDie)
+        return yield* HttpServerResponse.schemaJson(ModHistory)(
+          historyPage(entries, {
+            before: query.before,
+            limit: Math.min(query.limit ?? DefaultHistoryLimit, MaxHistoryLimit),
+          }),
+        )
+      }).pipe(badRequest),
     )
 
     yield* router.add(

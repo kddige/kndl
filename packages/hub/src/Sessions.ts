@@ -4,6 +4,7 @@ import {
   type AgentSummary,
   ConversationId,
   EnvironmentVersion,
+  EventSeq,
   Harness,
   installationsDiffer,
   ModelName,
@@ -36,7 +37,7 @@ export interface NewSession {
   /** The Creator, a signed-in Participant: it runs on their Claude credential (ADR 0026). */
   readonly creatorId: ParticipantId
   readonly createdAt: number
-  /** What runs its agent (ADR 0029), for life; absent for Claude Code. */
+  /** What runs its agent (ADR 0029), until a switch (ADR 0030); absent for Claude Code. */
   readonly harness?: Harness
   /** Its model and thinking level (#128); absent for Claude Code's default. */
   readonly model?: ModelName
@@ -236,7 +237,8 @@ const openQuestionOf = (row: SessionRow) => {
  * Every Session the Hub knows, in SQLite: its Repo and branches, lifecycle state, Runner,
  * Creator, the Turn running now, its subagents (ADR 0014), and while it is Archived who archived
  * it. People are shown with their current login and name. A summary lists the Running and
- * Interrupted subagents; the others are only history, in the event log.
+ * Interrupted subagents; the others are only history, in the event log. Each Harness a Session
+ * ran on keeps its own conversation and how far into its history it has seen (ADR 0030).
  *
  * Purging a Session deletes it, with its event log and Prompt queue, and leaves a
  * note for its Runner to delete what it holds, until the Runner says it has.
@@ -339,18 +341,54 @@ export class Sessions extends Context.Service<
       id: SessionId,
       version: EnvironmentVersion | null,
     ) => Effect.Effect<void, SqlError>
-    /** Its Harness's conversation, from the mod's hello, for waking the Session (#12). */
+    /**
+     * The Harness's conversation, from its mod's hello, for waking the Session (#12) or switching
+     * back to it (ADR 0030).
+     */
     readonly setConversationId: (
       id: SessionId,
+      harness: Harness,
       conversationId: ConversationId,
     ) => Effect.Effect<void, SqlError>
     /**
-     * The conversation last recorded, or none if its mod never said hello or the one recorded
-     * isn't a conversation id.
+     * The Harness's conversation last recorded, or none if the Session never ran on it, its mod
+     * never said hello, or the one recorded isn't a conversation id.
      */
     readonly conversationId: (
       id: SessionId,
+      harness: Harness,
     ) => Effect.Effect<Option.Option<ConversationId>, SqlError>
+    /**
+     * How far into the Session's history the Harness has seen (ADR 0030): the last entry it ran
+     * through or was handed, or none, as for a Harness that never ran the Session.
+     */
+    readonly seenSeq: (
+      id: SessionId,
+      harness: Harness,
+    ) => Effect.Effect<Option.Option<EventSeq>, SqlError>
+    /** The Harness has seen the Session's history up to `seq`: it was handed it. */
+    readonly setSeenSeq: (
+      id: SessionId,
+      harness: Harness,
+      seq: EventSeq,
+    ) => Effect.Effect<void, SqlError>
+    /**
+     * Records the Session on another Harness (ADR 0030), as it is relaunched or woken on it: the one
+     * it ran on has seen its history up to `seenUpTo`, unless it was yet to be handed what it
+     * hadn't, and the new one is to be handed what it hasn't seen (`handoffFrom`).
+     */
+    readonly switchHarness: (
+      id: SessionId,
+      to: Harness,
+      seenUpTo: EventSeq | undefined,
+    ) => Effect.Effect<void, SqlError>
+    /**
+     * The Harness the Session switched from, while the one it runs now is yet to be handed what it
+     * hasn't seen; none once it was.
+     */
+    readonly handoffFrom: (id: SessionId) => Effect.Effect<Option.Option<Harness>, SqlError>
+    /** The Harness the Session runs now was handed what it hadn't seen, or never will be. */
+    readonly handoffDone: (id: SessionId) => Effect.Effect<void, SqlError>
     /**
      * What Claude Code's terminal showed last when it exited on its own, already redacted, or
      * null to forget it. Its summary shows it while the Session is Asleep.
@@ -572,9 +610,65 @@ export class Sessions extends Context.Service<
 
       const setConversationId = Effect.fn("Sessions.setConversationId")(function* (
         id: SessionId,
+        harness: Harness,
         conversationId: ConversationId,
       ) {
-        yield* sql`UPDATE sessions SET conversation_id = ${conversationId} WHERE id = ${id}`
+        yield* sql`
+          INSERT INTO session_conversations (session_id, harness, conversation_id)
+          VALUES (${id}, ${harness}, ${conversationId})
+          ON CONFLICT (session_id, harness) DO UPDATE SET conversation_id = excluded.conversation_id
+        `
+      })
+
+      const seenSeq = Effect.fn("Sessions.seenSeq")(function* (id: SessionId, harness: Harness) {
+        const rows = yield* sql<{ readonly seenSeq: number | null }>`
+          SELECT seen_seq AS seenSeq FROM session_conversations
+          WHERE session_id = ${id} AND harness = ${harness}
+        `
+        return Option.map(Option.fromNullishOr(rows[0]?.seenSeq), (seq) => EventSeq.make(seq))
+      })
+
+      const setSeenSeq = Effect.fn("Sessions.setSeenSeq")(function* (
+        id: SessionId,
+        harness: Harness,
+        seq: EventSeq,
+      ) {
+        yield* sql`
+          INSERT INTO session_conversations (session_id, harness, seen_seq)
+          VALUES (${id}, ${harness}, ${seq})
+          ON CONFLICT (session_id, harness) DO UPDATE SET seen_seq = excluded.seen_seq
+        `
+      })
+
+      const switchHarness = Effect.fn("Sessions.switchHarness")(function* (
+        id: SessionId,
+        to: Harness,
+        seenUpTo: EventSeq | undefined,
+      ) {
+        const rows = yield* sql<{
+          readonly harness: string | null
+          readonly handoffFrom: string | null
+        }>`SELECT harness, handoff_from AS handoffFrom FROM sessions WHERE id = ${id}`
+        const row = rows[0]
+        if (row === undefined) return
+        const from = harnessOf(row).harness ?? "ClaudeCode"
+        if (from === to) return
+        // One yet to be handed what it hadn't seen has seen no more than before.
+        if (row.handoffFrom === null && seenUpTo !== undefined) {
+          yield* setSeenSeq(id, from, seenUpTo)
+        }
+        yield* sql`UPDATE sessions SET harness = ${to}, handoff_from = ${from} WHERE id = ${id}`
+      }, sql.withTransaction)
+
+      const handoffFrom = Effect.fn("Sessions.handoffFrom")(function* (id: SessionId) {
+        const rows = yield* sql<{ readonly handoffFrom: string | null }>`
+          SELECT handoff_from AS handoffFrom FROM sessions WHERE id = ${id}
+        `
+        return Option.flatMap(Option.fromNullishOr(rows[0]?.handoffFrom), decodeHarness)
+      })
+
+      const handoffDone = Effect.fn("Sessions.handoffDone")(function* (id: SessionId) {
+        yield* sql`UPDATE sessions SET handoff_from = NULL WHERE id = ${id}`
       })
 
       const setEnvironmentVersion = Effect.fn("Sessions.setEnvironmentVersion")(function* (
@@ -584,9 +678,13 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET environment_version = ${version} WHERE id = ${id}`
       })
 
-      const conversationId = Effect.fn("Sessions.conversationId")(function* (id: SessionId) {
+      const conversationId = Effect.fn("Sessions.conversationId")(function* (
+        id: SessionId,
+        harness: Harness,
+      ) {
         const rows = yield* sql<{ readonly conversationId: string | null }>`
-          SELECT conversation_id AS conversationId FROM sessions WHERE id = ${id}
+          SELECT conversation_id AS conversationId FROM session_conversations
+          WHERE session_id = ${id} AND harness = ${harness}
         `
         // One recorded before conversation ids were checked may not be one: then it is unknown.
         return Option.flatMap(Option.fromNullishOr(rows[0]?.conversationId), decodeConversationId)
@@ -716,6 +814,11 @@ export class Sessions extends Context.Service<
         setConversationId,
         setEnvironmentVersion,
         conversationId,
+        seenSeq,
+        setSeenSeq,
+        switchHarness,
+        handoffFrom,
+        handoffDone,
         setLastOutput,
         setMcpServers,
       })

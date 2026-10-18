@@ -5,6 +5,8 @@
 //   Sessions can run (ProvidersState) after the welcome, and to each of their connections whenever
 //   that changes: a connection made or lost, a refresh refused, the Models found again, or their
 //   Claude credential changed, since Claude's Models are among them. No one else is sent them.
+// - Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030) is theirs to set
+//   (SetClaudeHarness), sent with the rest.
 // - Connecting with an API key waits for the Provider to list its Models with it, off the lock.
 // - A sign-in runs the Provider's flow on the Hub, off the connection's own messages, so the
 //   Member can answer its steps: each is sent to the connection that started it (SignInStepped),
@@ -84,8 +86,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     return ProvidersState.make({
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
-      // Until the Member can choose (ADR 0030).
-      claudeHarness: "ClaudeCode",
+      claudeHarness: yield* providers.claudeHarness(participantId),
     })
   })
 
@@ -215,8 +216,10 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         yield* providers.refreshModels(you.id, message.provider)
         return yield* changed(you.id, asker)
       }
-      case "SetClaudeHarness":
-        return refuse(client, message, "This Hub can't choose the Harness for Claude yet.")
+      case "SetClaudeHarness": {
+        yield* providers.setClaudeHarness(you.id, message.harness)
+        return yield* changed(you.id, asker)
+      }
     }
   })
 

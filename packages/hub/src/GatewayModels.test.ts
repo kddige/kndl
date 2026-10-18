@@ -119,17 +119,23 @@ async function scene(
   })
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
-  const start = await startSession(web, runner)
+  const start = await startSession(web, runner, options.harness ?? "Pi")
   return { hub, runner, web, start, fakes }
 }
 
 /** Creates a Session of `repo` and plays its Runner's start: the StartSession it was sent. */
-async function startSession(web: Connection<Web>, runner: Connection<ToRunner>) {
+async function startSession(
+  web: Connection<Web>,
+  runner: Connection<ToRunner>,
+  harness: "Pi" | "ClaudeCode",
+) {
   web.send({
     _tag: "CreateSession",
     requestId: `m-${++requests}`,
     repo,
     branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    // alice's first Model is Claude's, which runs on Claude Code unless pi is asked for (ADR 0030).
+    harness,
   })
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })

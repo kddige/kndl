@@ -818,6 +818,36 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE sessions ADD COLUMN harness TEXT`
   }),
+  // A Session switches Harness (ADR 0030): each Harness it ran on keeps its own conversation, from
+  // its mod's last hello, and how far into the Session's history it has seen (`seen_seq`, the last
+  // entry, null for none), so a switch back resumes it and hands it only what came after. A
+  // Session's conversation from before is its Harness's. `handoff_from` is the Harness it switched
+  // from while the one it runs now is yet to be handed what it hasn't seen.
+  "0043_session_conversations": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE session_conversations (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        harness TEXT NOT NULL,
+        conversation_id TEXT,
+        seen_seq INTEGER,
+        PRIMARY KEY (session_id, harness)
+      ) WITHOUT ROWID
+    `
+    yield* sql`
+      INSERT INTO session_conversations (session_id, harness, conversation_id)
+      SELECT id, COALESCE(harness, 'ClaudeCode'), conversation_id FROM sessions
+      WHERE conversation_id IS NOT NULL
+    `
+    yield* sql`ALTER TABLE sessions DROP COLUMN conversation_id`
+    yield* sql`ALTER TABLE sessions ADD COLUMN handoff_from TEXT`
+  }),
+  // Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030): null for Claude Code,
+  // on their setup token, until they choose pi.
+  "0044_claude_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN claude_harness TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

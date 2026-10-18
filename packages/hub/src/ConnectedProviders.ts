@@ -26,6 +26,8 @@
 // - Every key and token, and every one replaced or forgotten since the Hub started, is masked in
 //   what Sessions print (Redaction.ts), as Claude credentials are.
 // - Removing a Member forgets theirs.
+// - Each Member chooses which Harness runs Claude's Models in their new Sessions (ADR 0030): Claude
+//   Code unless they chose pi, kept with them as a Participant.
 
 import { randomUUID } from "node:crypto"
 import type {
@@ -41,6 +43,7 @@ import {
   type ConnectableProvider,
   type ConnectedProvider,
   type ConnectionKind,
+  type Harness,
   type ModelProvider,
   type ParticipantId,
   type ProviderId,
@@ -546,6 +549,16 @@ export class ConnectedProviders extends Context.Service<
     readonly refreshModels: (
       participantId: ParticipantId,
       provider?: ProviderId,
+    ) => Effect.Effect<void, SqlError>
+    /**
+     * Which Harness runs Claude's Models in the Member's new Sessions (ADR 0030): Claude Code, on
+     * their setup token, unless they chose pi.
+     */
+    readonly claudeHarness: (participantId: ParticipantId) => Effect.Effect<Harness, SqlError>
+    /** Sets which Harness runs Claude's Models in the Member's new Sessions. */
+    readonly setClaudeHarness: (
+      participantId: ParticipantId,
+      harness: Harness,
     ) => Effect.Effect<void, SqlError>
     /** Forgets every connection of the Member, as when they are removed. */
     readonly forget: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
@@ -1213,8 +1226,29 @@ export class ConnectedProviders extends Context.Service<
           Effect.withSpan("ConnectedProviders.call"),
         )
 
+      const claudeHarness = Effect.fn("ConnectedProviders.claudeHarness")(function* (
+        participantId: ParticipantId,
+      ) {
+        const chosen = yield* sql<{ readonly harness: string | null }>`
+          SELECT claude_harness AS harness FROM participants WHERE id = ${participantId}
+        `
+        return chosen[0]?.harness === "Pi" ? ("Pi" as const) : ("ClaudeCode" as const)
+      })
+
+      const setClaudeHarness = Effect.fn("ConnectedProviders.setClaudeHarness")(function* (
+        participantId: ParticipantId,
+        harness: Harness,
+      ) {
+        yield* sql`
+          UPDATE participants SET claude_harness = ${harness === "Pi" ? harness : null}
+          WHERE id = ${participantId}
+        `
+      })
+
       return ConnectedProviders.of({
         state,
+        claudeHarness,
+        setClaudeHarness,
         modelsFor,
         connectKey,
         signIn,

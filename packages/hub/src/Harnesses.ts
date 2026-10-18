@@ -1,5 +1,6 @@
-// What runs a Session's agent (ADR 0029): Claude Code or pi, for the Session's life. The Session
-// relay asks a Session's Harness, or a new Session's, instead of branching on which it is:
+// What runs a Session's agent (ADR 0029): Claude Code or pi, switched between Turns when its model
+// is one of the other's (ADR 0030). The Session relay asks a Session's Harness, or a new
+// Session's, instead of branching on which it is:
 //
 // - What it is called, in what a Session says of its start and exit: "Claude Code", "pi".
 // - Which Harness a new Session gets: pi where its Runner's hello says it runs pi, unless Claude
@@ -11,6 +12,7 @@
 // - What it runs on, and why it can't: Claude Code on its Creator's setup token (ADR 0026), pi on
 //   their Models, of a Connected provider or Claude's (ADR 0029). Whether its Creator is still a
 //   Member is the relay's: it holds for every Harness.
+// - Whether a Session can switch to it (ADR 0030): its Runner must run both.
 
 import {
   defaultProviderModel,
@@ -75,11 +77,17 @@ export interface SessionHarness {
 
 /** What a Harness asks of the Hub. */
 export interface HarnessDependencies {
-  /** A Runner the Hub knows: its name, and the models its Claude Code last said it has. */
-  readonly runner: (
-    id: RunnerId,
-  ) => Effect.Effect<
-    { readonly name: string; readonly models: RunnerModels | null } | undefined,
+  /**
+   * A Runner the Hub knows: its name, the models its Claude Code last said it has, and the
+   * Harnesses it said it runs, if it has said since the Hub started.
+   */
+  readonly runner: (id: RunnerId) => Effect.Effect<
+    | {
+        readonly name: string
+        readonly models: RunnerModels | null
+        readonly harnesses?: ReadonlyArray<Harness> | null
+      }
+    | undefined,
     SqlError
   >
   /** The Models a Member's pi Sessions can run now (ModelCatalog). */
@@ -99,6 +107,14 @@ export interface Harnesses {
     asked: Harness | undefined,
     runner: { readonly name: string; readonly runsPi: boolean },
   ) => SessionHarness | string
+  /**
+   * Why a Session on the Runner can't switch to the Harness (ADR 0030), or undefined when it can:
+   * the Runner must run both.
+   */
+  readonly switchRefusal: (
+    to: Harness,
+    runnerId: RunnerId,
+  ) => Effect.Effect<string | undefined, SqlError>
 }
 
 /** Why a pi Session can't start for its Creator, told to them (ADR 0029). */
@@ -202,5 +218,11 @@ export const makeHarnesses = (hub: HarnessDependencies): Harnesses => {
       }
       return harness === "Pi" ? pi : claudeCode
     },
+    switchRefusal: Effect.fn("Harnesses.switchRefusal")(function* (to, runnerId) {
+      const known = yield* hub.runner(runnerId)
+      const runs = known?.harnesses ?? []
+      if (runs.includes("ClaudeCode") && runs.includes("Pi")) return undefined
+      return `${known?.name ?? "The Runner"} doesn't run both Claude Code and pi: update it to switch this Session to ${to === "Pi" ? pi.name : claudeCode.name}.`
+    }),
   }
 }

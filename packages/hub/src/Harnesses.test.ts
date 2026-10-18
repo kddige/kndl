@@ -45,7 +45,7 @@ const hub = (models: ReadonlyArray<ProviderModel>) =>
     runner: (id) =>
       Effect.succeed(
         id === mac
-          ? { name: "mac", models: runnerModels }
+          ? { name: "mac", models: runnerModels, harnesses: ["ClaudeCode", "Pi"] as const }
           : id === old
             ? { name: "old", models: null }
             : undefined,
@@ -83,6 +83,22 @@ describe("which Harness", () => {
     expect(harnesses.forNew(undefined, before)).toBe(harnesses.of({}))
     expect(harnesses.forNew("Pi", before)).toBe(
       "old doesn't run pi: update it, or start a Claude Code Session there.",
+    )
+  })
+})
+
+describe("switching a Session's Harness (ADR 0030)", () => {
+  test("needs a Runner that runs both", async () => {
+    const harnesses = hub([])
+    const refusal = (to: "ClaudeCode" | "Pi", runnerId: RunnerId) =>
+      Effect.runPromise(harnesses.switchRefusal(to, runnerId))
+    expect(await refusal("Pi", mac)).toBeUndefined()
+    expect(await refusal("ClaudeCode", mac)).toBeUndefined()
+    expect(await refusal("Pi", old)).toBe(
+      "old doesn't run both Claude Code and pi: update it to switch this Session to pi.",
+    )
+    expect(await refusal("ClaudeCode", old)).toBe(
+      "old doesn't run both Claude Code and pi: update it to switch this Session to Claude Code.",
     )
   })
 })

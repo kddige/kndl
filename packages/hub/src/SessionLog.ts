@@ -26,6 +26,8 @@ export class SessionLog extends Context.Service<
       sessionId: SessionId,
       afterSeq?: EventSeq,
     ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
+    /** The seq of the Session's last entry, or none for an empty log. */
+    readonly lastSeq: (sessionId: SessionId) => Effect.Effect<EventSeq | undefined, SqlError>
   }
 >()("@kndl/hub/SessionLog") {
   static readonly layer = Layer.effect(
@@ -74,7 +76,15 @@ export class SessionLog extends Context.Service<
         return rows.map(toEntry)
       })
 
-      return SessionLog.of({ append, history })
+      const lastSeq = Effect.fn("SessionLog.lastSeq")(function* (sessionId: SessionId) {
+        const rows = yield* sql<{ readonly seq: number | null }>`
+          SELECT MAX(seq) AS seq FROM session_events WHERE session_id = ${sessionId}
+        `
+        const seq = rows[0]?.seq
+        return seq === null || seq === undefined ? undefined : EventSeq.make(seq)
+      })
+
+      return SessionLog.of({ append, history, lastSeq })
     }),
   )
 }
