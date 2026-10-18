@@ -194,7 +194,10 @@ test("a Hub that doesn't check, as one run from a checkout, has no Hub page", as
 // ── Updating the Hub (#362) ────────────────────────────────────────────────
 
 const main = () => document.querySelector("main")?.textContent ?? ""
-const latest = () => document.querySelector('[aria-labelledby="latest-update"]')?.textContent ?? ""
+const latest = () =>
+  [...document.querySelectorAll("main section")].find(
+    (section) => section.querySelector("h2")?.textContent === "Latest update",
+  )?.textContent ?? ""
 const restartingBanner = () =>
   [...document.querySelectorAll("[data-banner]")].find((el) =>
     el.textContent?.includes("Updating the Hub"),

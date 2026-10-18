@@ -6,7 +6,7 @@ import { hubMcpServerId, RequestId, type SessionId } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { act } from "react"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, dialog, menuItem, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -940,7 +940,7 @@ test("an Archived Session is purged now once it's confirmed, warning that it can
   const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
 
-  await step(() => button("Purge claude/flaky-login", page).click())
+  await menuItem("Actions for claude/flaky-login", "Purge claude/flaky-login", page)
   await eventually(() => expect(purgeDialog()?.textContent).toContain("Purge claude/flaky-login?"))
   const asked = purgeDialog()?.textContent ?? ""
   expect(asked).toContain("1 Session")
