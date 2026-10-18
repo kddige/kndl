@@ -19,8 +19,9 @@ import {
 import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 type AgentMessage = AgentSession["messages"][number]
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
 import { FakeClaudeCode, init, result, streamedToolCalls, text } from "../../test/FakeClaudeCode.ts"
-import { markRebuildForSession, resetBridge, setQuery } from "./Bridge.ts"
+import { markRebuildForSession } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { ClaudeApi } from "./Names.ts"
 import { newAssistantOutput } from "./QueryState.ts"

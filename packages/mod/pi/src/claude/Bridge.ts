@@ -16,7 +16,6 @@
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.
 
-import { query } from "@anthropic-ai/claude-agent-sdk"
 import type { EffortLevel, Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai"
 import type {
@@ -30,6 +29,8 @@ import type {
   Tool,
 } from "@earendil-works/pi-ai"
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent"
+import { bridge } from "./BridgeState.ts"
+import type { ClaudeQuery } from "./BridgeState.ts"
 import { userTurnText } from "./Convert.ts"
 import { debug, diag } from "./Log.ts"
 import { claudeCodeModelId, defaultLongContext } from "./Models.ts"
@@ -48,8 +49,15 @@ import type { Checkpoint } from "./Rewind.ts"
 import { sessionCwdFor, summarySessionFor } from "./SessionCwd.ts"
 import {
   deleteClaudeSession,
+  historyReplaced,
+  queryCompleted,
+  queryDiscarded,
+  queryFailed,
+  queryStopped,
+  resultsDelivered,
   sessionStateFor,
-  setSessionStateFor,
+  steerMissed,
+  stoppedClaudeCodeExited,
   syncSharedSession,
   turnStart,
 } from "./SessionMirror.ts"
@@ -112,16 +120,7 @@ export interface SdkMessage {
   >
 }
 
-/** A Claude Code query, as the bridge drives it: what the SDK's `query()` returns. */
-export type ClaudeQuery = AsyncIterable<unknown> & {
-  readonly interrupt: () => Promise<unknown>
-  readonly close: () => void
-}
-
-export type QueryFn = (params: {
-  readonly prompt: string | AsyncIterable<SDKUserMessage>
-  readonly options: Options
-}) => ClaudeQuery
+export type { ClaudeQuery, QueryFn } from "./BridgeState.ts"
 
 /** A block of a prompt to Claude Code. */
 type PromptBlock =
@@ -135,44 +134,14 @@ type PromptBlock =
       }
     }
 
-// --- The bridge's state ---
+// --- The bridge's state (BridgeState.ts) ---
 
-/** The SDK's query(), or a test's. */
-let queryImpl: QueryFn = query as unknown as QueryFn
-
-/** What registration set: the pinned Claude Code, and its environment. */
-let settings: ClaudeSettings | undefined
-
-/** The environment Claude Code runs with, as registration found it. */
-let childEnv: () => Record<string, string> = () => claudeCodeEnvironment(process.env)
-
-let piUI: ExtensionUIContext | null = null
-
-/** Every query in flight, whose tool results a call may bring. */
-const activeQueryContexts = new Set<QueryContext>()
-
-/**
- * The pi sessions whose history pi replaced (compaction, tree navigation) under a query held at a
- * tool call: its result starts a query on the new history instead of going to the old one.
- */
-const historyRewrittenBySession = new Set<string>()
-
-/** Queries pi's history moved out from under: their ending touches neither mirror nor stream. */
-const abandonedQueries = new WeakSet<object>()
-
-/**
- * Per pi session, the stopped query whose Claude Code may still be writing to the session file:
- * settles once it has exited, or given up on. The session's next query waits for it.
- */
-const stoppingQueries = new Map<string, Promise<void>>()
+const { activeQueryContexts, historyRewrittenBySession, abandonedQueries } = bridge
 
 const stoppingKey = (piSessionId: string | null) => piSessionId ?? "(none)"
 
 /** What holds a context while its query waits for the stopped one's Claude Code to exit. */
 const WaitingForExit: QueryHandle = {}
-
-/** The top-level context, reused query to query; a reentrant query (a subagent's) gets its own. */
-let topContext = new QueryContext()
 
 const promptCaptures = sharedPromptCaptures((diagnostic) => {
   const first = diagnostic.matches[0]
@@ -181,7 +150,10 @@ const promptCaptures = sharedPromptCaptures((diagnostic) => {
       (first
         ? `closest known (${first.key.length}-char) diverges at offset ${first.firstDivergent}: ` +
           JSON.stringify(
-            diagnostic.systemPrompt.slice(first.firstDivergent - 40, first.firstDivergent + 60),
+            diagnostic.systemPrompt.slice(
+              Math.max(0, first.firstDivergent - 40),
+              first.firstDivergent + 60,
+            ),
           )
         : "no known captures to compare against."),
   )
@@ -192,12 +164,12 @@ export function configureBridge(options: {
   readonly settings: ClaudeSettings
   readonly env: NodeJS.ProcessEnv
 }): void {
-  settings = options.settings
-  childEnv = () => claudeCodeEnvironment(options.env)
+  bridge.settings = options.settings
+  bridge.childEnv = () => claudeCodeEnvironment(options.env)
 }
 
 export function setPiUI(ui: ExtensionUIContext | null): void {
-  piUI = ui
+  bridge.piUI = ui
 }
 
 export const capturedPrompts = () => promptCaptures
@@ -209,13 +181,12 @@ export const capturedPrompts = () => promptCaptures
  * rebuilds, and its queries held at a tool call are discarded when their result comes.
  */
 export function markRebuildForSession(piSession: string | null, event: string): void {
-  const state = sessionStateFor(piSession)
-  if (!state) {
-    debug(`${event}: history rewritten, no session to mark yet`)
-  } else {
-    setSessionStateFor(piSession, { ...state, needsRebuild: true })
-    debug(`${event}: marking needsRebuild on session ${state.sessionId.slice(0, 8)}`)
-  }
+  const state = historyReplaced(piSession)
+  debug(
+    state
+      ? `${event}: marking needsRebuild on session ${state.sessionId.slice(0, 8)}`
+      : `${event}: history rewritten, no session to mark yet`,
+  )
   // Now, not on delivery: compaction runs inside pi's turn loop, while a query is held.
   if (piSession) historyRewrittenBySession.add(piSession)
   armStaleContexts()
@@ -284,6 +255,10 @@ function steerBlocks(messages: Context["messages"]): Array<PromptBlock> | null {
   return text ? [{ type: "text", text }] : null
 }
 
+/**
+ * A prompt's blocks as the SDK takes a user message's content. An image's type is pi's, which
+ * the Messages API checks: one it doesn't take fails the request there, as it would from pi.
+ */
 const promptContent = (blocks: ReadonlyArray<PromptBlock>) =>
   blocks as unknown as SDKUserMessage["message"]["content"]
 
@@ -389,22 +364,10 @@ export function effortForReasoning(
 
 // --- Summaries: compaction, branch summaries ---
 
-/** The one user message a summary call is, as its prompt. */
-function extractIsolatedSummaryPrompt(messages: Context["messages"]): string {
-  if (messages.length !== 1 || messages[0]?.role !== "user") {
-    throw new Error(
-      `isolatedStreamFn: expected exactly 1 user message, got ${messages.length} ` +
-        `(${messages.map((m) => m.role).join(",")})`,
-    )
-  }
-  const promptText = extractUserPrompt(messages)
-  if (!promptText) throw new Error("isolatedStreamFn: summarization prompt is empty")
-  return promptText
-}
-
 /**
  * A one-off summary (compaction, branch summary), in a Claude Code of its own that keeps no
- * session, leaving the Session's own Claude Code session to the next turn.
+ * session, leaving the Session's own Claude Code session to the next turn. pi marks every such
+ * call `cacheRetention: "none"`, which is how the stream function routes it here.
  */
 export function isolatedStreamFn(
   model: Model<Api>,
@@ -442,25 +405,28 @@ async function runIsolatedSummary(
     })
     stream.end()
   }
+  const aborted = () => {
+    stream.push({
+      type: "error",
+      reason: "aborted",
+      error: newAssistantOutput(model, "", "aborted", "Operation aborted"),
+    })
+    stream.end()
+  }
 
   try {
-    // pi marks every one-off summary call `cacheRetention: "none"`: routed on the marker, so a
-    // new one needs no change here.
-    const isOneOffSummary = options?.cacheRetention === "none"
-    const promptText = isOneOffSummary
-      ? extractUserPrompt(context.messages)
-      : extractIsolatedSummaryPrompt(context.messages)
+    const promptText = extractUserPrompt(context.messages)
     if (!promptText) throw new Error("runIsolatedSummary: one-off summary without a user prompt")
     const cwd = sessionCwdFor(summarySessionFor(options?.signal) ?? options?.sessionId)
     const cliModel = claudeCodeModelId(model, defaultLongContext)
     const effort = effortForReasoning(model, options?.reasoning)
     debug(`compact summary: model=${cliModel} effort=${effort ?? "default"}`)
 
-    sdkQuery = queryImpl({
+    sdkQuery = bridge.query({
       prompt: promptText,
       options: {
         cwd,
-        env: childEnv(),
+        env: bridge.childEnv(),
         settings: { autoMemoryEnabled: false },
         tools: [],
         strictMcpConfig: true,
@@ -471,7 +437,7 @@ async function runIsolatedSummary(
         model: cliModel,
         maxTurns: 1,
         ...(effort ? { effort } : {}),
-        ...(settings ? { pathToClaudeCodeExecutable: settings.executable } : {}),
+        ...(bridge.settings ? { pathToClaudeCodeExecutable: bridge.settings.executable } : {}),
       },
     })
 
@@ -498,22 +464,16 @@ async function runIsolatedSummary(
       }
     }
 
-    if (wasAborted) {
-      stream.push({
-        type: "error",
-        reason: "aborted",
-        error: newAssistantOutput(model, "", "aborted", "Operation aborted"),
-      })
-      stream.end()
-      return
-    }
+    if (wasAborted) return aborted()
     const text = finalText || assistantText
     if (failure || !text.trim()) return fail(failure ?? "Claude Code summary returned empty text")
     stream.push({ type: "done", reason: "stop", message: newAssistantOutput(model, text, "stop") })
     stream.end()
   } catch (error) {
     debug("runIsolatedSummary threw", error)
-    fail(errorText(error))
+    // Killing the stopped Claude Code can end the query with a throw: it was still a stop.
+    if (wasAborted) aborted()
+    else fail(errorText(error))
   } finally {
     options?.signal?.removeEventListener("abort", onAbort)
     try {
@@ -746,7 +706,7 @@ function processStreamEvent(
   }
 
   if (event?.type === "content_block_delta") {
-    const index = c.turnBlocks.findIndex((b) => b.index === event.index)
+    const index = openBlockIndex(c, event.index)
     const block = c.turnBlocks[index]
     if (!block) return
     const delta = event.delta
@@ -779,7 +739,7 @@ function processStreamEvent(
   }
 
   if (event?.type === "content_block_stop") {
-    const index = c.turnBlocks.findIndex((b) => b.index === event.index)
+    const index = openBlockIndex(c, event.index)
     const block = c.turnBlocks[index]
     if (!block) return
     delete block.index
@@ -816,6 +776,14 @@ function processStreamEvent(
   }
 
   if (event?.type !== "ping") debug("processStreamEvent: unhandled event type", event?.type)
+}
+
+/**
+ * Where the open block a stream event's `index` names is in the turn's blocks, or -1. An event
+ * without an index names none: a closed block has none either.
+ */
+function openBlockIndex(c: QueryContext, index: number | undefined): number {
+  return index === undefined ? -1 : c.turnBlocks.findIndex((block) => block.index === index)
 }
 
 /**
@@ -882,6 +850,7 @@ function processAssistantMessage(
     if (c.turnStreamOpen) dropAbandonedStreamBlocks(c, `non-streaming fallback ${id}`)
   }
   c.turnToolCallIds = []
+  c.turnSawWholeContent = true
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
       c.ensureTurnStarted()
@@ -967,6 +936,8 @@ export async function consumeQuery(
           queryCtx.rateLimitRejection = null
         }
         debug(`consumeQuery: error result, subtype=${message.subtype}, error=${resultError}`)
+        // Claude Code wrote its record of the failure into the session: not pi's history.
+        queryCtx.failed = true
         // The open turn's, as it streams: its end carries it. With none open, there's no
         // message for it, and none pi holds is touched.
         if (queryCtx.turnOutput) {
@@ -995,10 +966,12 @@ export async function consumeQuery(
         processAssistantMessage(message, model, customToolNameToPi, queryCtx)
         break
       case "result": {
-        // The failure was taken above; on success, the result's text when nothing streamed it.
+        // The failure was taken above; on success, the result's text when nothing brought it,
+        // neither a stream nor a whole assistant message.
         if (
           resultError === undefined &&
           !queryCtx.turnSawStreamEvent &&
+          !queryCtx.turnSawWholeContent &&
           message.subtype === "success"
         ) {
           queryCtx.ensureTurnStarted()
@@ -1023,7 +996,10 @@ export async function consumeQuery(
         break
       }
       case "system":
-        if (message.subtype === "init" && message.session_id) capturedSessionId = message.session_id
+        if (message.subtype === "init" && message.session_id) {
+          capturedSessionId = message.session_id
+          queryCtx.capturedSessionId = capturedSessionId
+        }
         break
       case "user":
         // The SDK echoing a prompt or tool result: nothing to stream.
@@ -1046,7 +1022,7 @@ function noteRateLimit(c: QueryContext, info: RateLimitInfo | undefined): void {
     c.lastRateLimitWarnStep = null
     c.lastRateLimitWarnThreshold = undefined
     const resetsAt = info.resetsAt ? new Date(info.resetsAt * 1000).toLocaleTimeString() : "unknown"
-    piUI?.notify(
+    bridge.piUI?.notify(
       `Claude subscription rate limit reached (${info.rateLimitType ?? "unknown"}) — resets at ${resetsAt}`,
       "warning",
     )
@@ -1061,7 +1037,7 @@ function noteRateLimit(c: QueryContext, info: RateLimitInfo | undefined): void {
     if (rose || info.surpassedThreshold !== c.lastRateLimitWarnThreshold) {
       c.lastRateLimitWarnStep = step
       c.lastRateLimitWarnThreshold = info.surpassedThreshold
-      piUI?.notify(
+      bridge.piUI?.notify(
         `Claude rate limit warning: ${percent}% used (${info.rateLimitType ?? ""})`,
         "warning",
       )
@@ -1075,54 +1051,34 @@ function noteRateLimit(c: QueryContext, info: RateLimitInfo | undefined): void {
  */
 function steerMissedSession(c: QueryContext, text: string): void {
   c.missedSteer = true
-  const state = sessionStateFor(c.piSessionId)
-  if (state) setSessionStateFor(c.piSessionId, { ...state, needsRebuild: true })
+  steerMissed(c.piSessionId)
   debug(`provider: steer never reached Claude Code, marked for rebuild: ${text.slice(0, 60)}`)
 }
 
 /**
  * A query stopped before its end (an abort): its Claude Code may still write to the session for a
- * moment. The next sync cuts the session back to where the query began (`rewindTo`), once that
- * Claude Code has exited; with no checkpoint to cut back to, it rebuilds, as it does should the
- * Claude Code not exit.
+ * moment. The next sync cuts the session back to where the query began, once that Claude Code has
+ * exited; with no checkpoint to cut back to, it rebuilds, as it does should the Claude Code not
+ * exit (SessionMirror's `queryStopped`).
  */
 function markStopped(
   piSessionId: string | null,
   checkpoint: Checkpoint | undefined,
   capturedSessionId?: string,
 ): void {
-  const state = sessionStateFor(piSessionId)
-  if (!state) return
-  const rewindTo =
-    checkpoint?.sessionId === state.sessionId &&
-    (capturedSessionId === undefined || capturedSessionId === checkpoint.sessionId)
-      ? checkpoint
-      : undefined
-  setSessionStateFor(piSessionId, {
-    ...state,
-    forceRotate: true,
-    ...(rewindTo ? { rewindTo } : { needsRebuild: true }),
-  })
-  debug(
-    `provider: query stopped, ${rewindTo ? `cut back to ${rewindTo.bytes}B next` : "rebuild next"}`,
-  )
+  const next = queryStopped(piSessionId, checkpoint, capturedSessionId)
+  if (next !== undefined) debug(`provider: query stopped, ${next} next`)
 }
 
 /**
  * Holds the session's next query until the stopped query's Claude Code has exited, and then lets
- * the session file be touched again (forceRotate cleared). One that doesn't exit in time leaves
- * the session to be rebuilt under a new id.
+ * the session file be touched again. One that doesn't exit in time leaves the session to be
+ * rebuilt under a new id.
  */
 function noteStoppedQuery(piSessionId: string | null, claudeProcess: ProcessWatch): void {
   const settle = (exited: boolean) => {
-    const state = sessionStateFor(piSessionId)
-    if (!state) return
-    if (exited) {
-      if (state.forceRotate) setSessionStateFor(piSessionId, { ...state, forceRotate: undefined })
-    } else {
-      setSessionStateFor(piSessionId, { ...state, needsRebuild: true, forceRotate: true })
-      debug("provider: the stopped Claude Code didn't exit; the next query rebuilds")
-    }
+    stoppedClaudeCodeExited(piSessionId, exited)
+    if (!exited) debug("provider: the stopped Claude Code didn't exit; the next query rebuilds")
   }
   // No process, nothing writing.
   if (!claudeProcess.spawned()) return settle(true)
@@ -1130,9 +1086,9 @@ function noteStoppedQuery(piSessionId: string | null, claudeProcess: ProcessWatc
   const stopping = claudeProcess.exited().then((exited) => {
     debug(`provider: the stopped Claude Code ${exited ? "exited" : "is still running"}`)
     settle(exited)
-    if (stoppingQueries.get(key) === stopping) stoppingQueries.delete(key)
+    if (bridge.stoppingQueries.get(key) === stopping) bridge.stoppingQueries.delete(key)
   })
-  stoppingQueries.set(key, stopping)
+  bridge.stoppingQueries.set(key, stopping)
 }
 
 /**
@@ -1182,7 +1138,7 @@ export async function deliverToolResults(
   }
   if (c.pendingToolCalls.size > 0) {
     debug(`WARNING: ${c.pendingToolCalls.size} MCP handlers still waiting`)
-    piUI?.notify(
+    bridge.piUI?.notify(
       `Claude bridge: ${c.pendingToolCalls.size} tool handler(s) still waiting — provider may be stuck`,
       "warning",
     )
@@ -1228,9 +1184,9 @@ export function discardRewrittenQuery(c: QueryContext): void {
   } catch {
     // Gone already.
   }
+  c.stop = undefined
   // The killed Claude Code may still write to the session: rotate, as after an abort.
-  const state = sessionStateFor(c.piSessionId)
-  if (state) setSessionStateFor(c.piSessionId, { ...state, needsRebuild: true, forceRotate: true })
+  queryDiscarded(c.piSessionId)
   if (c.piSessionId) historyRewrittenBySession.delete(c.piSessionId)
   debug("provider: history rewritten under a held query — discarded it")
 }
@@ -1260,7 +1216,6 @@ export function streamClaude(
   const lastMsg = context.messages[context.messages.length - 1]
   const lastMsgRole = lastMsg?.role
 
-  let activeQuery = topContext.activeQuery !== null
   const allResults =
     activeQueryContexts.size > 0
       ? extractAllToolResults(context.messages as ReadonlyArray<{ role: string }>).results
@@ -1273,26 +1228,17 @@ export function streamClaude(
   if (resultCtx && rewrittenUnderQuery) {
     discardRewrittenQuery(resultCtx)
     resultCtx = undefined
-    activeQuery = topContext.activeQuery !== null
   }
 
   // --- A held turn's tool results ---
   if (resultCtx) {
     claimCurrentPiStream(stream, "tool-result", resultCtx, options)
     resultCtx.resetTurnState(model)
-    if (
-      !resultCtx.historyStale &&
-      resultCtx.piSessionId &&
-      historyRewrittenBySession.has(resultCtx.piSessionId)
-    )
-      resultCtx.historyStale = true
     // A message steered in while the tool ran comes after its results.
     const steer = lastMsgRole === "user" ? steerBlocks(context.messages) : null
     // After the steer's write, so detached: the stream goes back now.
     void deliverToolResults(resultCtx, allResults, steer, context.messages.length)
-    const state = sessionStateFor(resultCtx.piSessionId)
-    if (state)
-      setSessionStateFor(resultCtx.piSessionId, { ...state, cursor: context.messages.length })
+    resultsDelivered(resultCtx.piSessionId, context.messages.length)
     resultCtx.latestCursor = Math.max(resultCtx.latestCursor, context.messages.length)
     return stream
   }
@@ -1303,12 +1249,6 @@ export function streamClaude(
   const unparkedToolResult = lastMsgRole === "toolResult" && !rewrittenUnderQuery
   if (unparkedToolResult && options?.signal?.aborted) {
     debug(`provider: orphaned tool result after abort, ending the turn`)
-    const orphanState = sessionStateFor(options.sessionId ?? null)
-    if (orphanState && activeQueryContexts.size === 0)
-      setSessionStateFor(options.sessionId ?? null, {
-        ...orphanState,
-        cursor: context.messages.length,
-      })
     const message = newAssistantOutput(model, "", "stop")
     queueMicrotask(() => {
       stream.push({ type: "done", reason: "stop", message })
@@ -1318,10 +1258,13 @@ export function streamClaude(
   }
 
   // --- A new query ---
-  const isReentrant = activeQuery
-  const queryCtx = isReentrant ? new QueryContext() : topContext
-  const isReentrantUserQuery = activeQuery && lastMsgRole === "user" && allResults.length === 0
-  debug(`provider: new query, reentrant=${isReentrant}, active=${activeQueryContexts.size}`)
+  // In the top-level context, unless another query holds it (a subagent's query while its
+  // parent's is held at the agent's tool call): then in a context of its own.
+  const topContextBusy = bridge.topContext.activeQuery !== null
+  const queryCtx = topContextBusy ? new QueryContext() : bridge.topContext
+  const promptWhileTopContextBusy =
+    topContextBusy && lastMsgRole === "user" && allResults.length === 0
+  debug(`provider: new query, topContextBusy=${topContextBusy}, active=${activeQueryContexts.size}`)
 
   // The prompt first: one that can't be accounted for fails the turn before anything is claimed.
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context)
@@ -1343,9 +1286,11 @@ export function streamClaude(
     diag("prompt_capture_unresolved", {
       promptChars: context.systemPrompt?.length ?? 0,
       knownKeys: promptCaptures.size,
-      reentrantUserQuery: isReentrantUserQuery,
+      promptWhileTopContextBusy,
       error: errorText(error),
     })
+    // As the refusal says: the whole prompt, in the debug log (KNDL_CLAUDE_DEBUG=1).
+    debug(`provider: the system prompt refused, in full:\n${context.systemPrompt ?? ""}`)
     return stream
   }
 
@@ -1360,7 +1305,9 @@ export function streamClaude(
   queryCtx.piSessionId = options?.sessionId ?? null
   queryCtx.historyStale = false
   queryCtx.missedSteer = false
+  queryCtx.failed = false
   queryCtx.aborted = false
+  queryCtx.capturedSessionId = undefined
 
   const cwd = sessionCwdFor(options?.sessionId)
   const cliModel = claudeCodeModelId(model, defaultLongContext)
@@ -1389,7 +1336,7 @@ export function streamClaude(
       diag("empty_prompt", {
         contextLength: context.messages.length,
         lastMsgRole,
-        isReentrant,
+        topContextBusy,
         messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" "),
       })
       promptText = "[continue]"
@@ -1410,7 +1357,7 @@ export function streamClaude(
     if (effort) extraArgs["thinking-display"] = "summarized"
 
     const claudeProcess = watchProcess(
-      settings?.debug
+      bridge.settings?.debug
         ? (text) => {
             for (const line of text.split(/\r?\n/)) if (line) debug(`[claude-code] ${line}`)
           }
@@ -1419,7 +1366,7 @@ export function streamClaude(
 
     const queryOptions: Options = {
       cwd,
-      env: childEnv(),
+      env: bridge.childEnv(),
       tools: [],
       permissionMode: "bypassPermissions",
       includePartialMessages: true,
@@ -1441,7 +1388,7 @@ export function streamClaude(
       ...(effort ? { effort } : {}),
       ...(mcpServers ? { mcpServers } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-      ...(settings ? { pathToClaudeCodeExecutable: settings.executable } : {}),
+      ...(bridge.settings ? { pathToClaudeCodeExecutable: bridge.settings.executable } : {}),
       // Spawned by the bridge, which so knows when it has exited (ProcessExit.ts).
       spawnClaudeCodeProcess: claudeProcess.spawn,
     }
@@ -1454,7 +1401,7 @@ export function streamClaude(
     )
 
     let wasAborted = false
-    const sdkQuery = queryImpl({ prompt: promptStream.stream, options: queryOptions })
+    const sdkQuery = bridge.query({ prompt: promptStream.stream, options: queryOptions })
     const handle: QueryHandle = sdkQuery
     queryCtx.activeQuery = handle
     activeQueryContexts.add(queryCtx)
@@ -1477,15 +1424,33 @@ export function streamClaude(
       if (options.signal.aborted) onAbort()
       else options.signal.addEventListener("abort", onAbort, { once: true })
     }
+    // pi's run can end with the query held at a tool call: it is stopped then (runSettled).
+    queryCtx.stop = onAbort
+
+    /**
+     * The query ran in a Claude Code session of its own, the mirror being a longer history's
+     * (`preserveSharedSession`): that session is never resumed, so it goes.
+     */
+    const deleteOwnSession = (capturedSessionId: string | undefined) => {
+      if (!syncResult.preserveSharedSession || capturedSessionId === undefined) return
+      if (capturedSessionId === sessionStateFor(queryCtx.piSessionId)?.sessionId) return
+      deleteClaudeSession(capturedSessionId, cwd)
+      debug(`provider: deleted ephemeral session ${capturedSessionId.slice(0, 8)}`)
+    }
 
     consumeQuery(sdkQuery, customToolNameToPi, model, () => wasAborted, queryCtx)
       .then(({ capturedSessionId }) => {
+        queryCtx.stop = undefined
         // Discarded: the query that took over owns the context, the session and the stream.
         if (abandonedQueries.has(handle)) return
 
         if (wasAborted || options?.signal?.aborted) {
-          markStopped(queryCtx.piSessionId, syncResult.checkpoint, capturedSessionId)
-          noteStoppedQuery(queryCtx.piSessionId, claudeProcess)
+          // A query in a session of its own left the mirror's untouched.
+          if (syncResult.preserveSharedSession) deleteOwnSession(capturedSessionId)
+          else {
+            markStopped(queryCtx.piSessionId, syncResult.checkpoint, capturedSessionId)
+            noteStoppedQuery(queryCtx.piSessionId, claudeProcess)
+          }
           // The turn open now, if one is, ends aborted, with a new message; a turn that ended
           // already (a tool call pi was running) is pi's, and stays as it is.
           queryCtx.endTurn({ stopReason: "aborted", errorMessage: "Operation aborted" })
@@ -1493,61 +1458,50 @@ export function streamClaude(
           return
         }
 
-        if (syncResult.preserveSharedSession) {
-          const state = sessionStateFor(queryCtx.piSessionId)
-          if (capturedSessionId && capturedSessionId !== state?.sessionId) {
-            deleteClaudeSession(capturedSessionId, cwd)
-            debug(`provider: deleted ephemeral session ${capturedSessionId.slice(0, 8)}`)
-          }
-        } else {
-          const state = sessionStateFor(queryCtx.piSessionId)
-          const sessionId = capturedSessionId ?? state?.sessionId
+        if (syncResult.preserveSharedSession) deleteOwnSession(capturedSessionId)
+        else {
+          const sessionId = capturedSessionId ?? sessionStateFor(queryCtx.piSessionId)?.sessionId
           if (sessionId) {
-            const cursor = Math.max(
-              context.messages.length,
-              queryCtx.latestCursor,
-              state?.cursor ?? 0,
-            )
-            // A steer that never reached Claude Code is in pi's history only: the session is cut
-            // back to where the query began, and pi's messages since written after it, unless pi
-            // rewrote its history meanwhile, which rebuilds.
-            const rewindTo =
-              queryCtx.missedSteer &&
-              !queryCtx.historyStale &&
-              !(piSessionId !== null && historyRewrittenBySession.has(piSessionId)) &&
-              syncResult.checkpoint?.sessionId === sessionId
-                ? syncResult.checkpoint
-                : undefined
-            setSessionStateFor(queryCtx.piSessionId, {
-              ...state,
+            // A steer that never reached Claude Code is in pi's history only, and a request the
+            // API failed left Claude Code's record of the failure in the session: either way the
+            // session is cut back to where the query began, and pi's messages since written after
+            // it, unless pi rewrote its history meanwhile, which rebuilds.
+            const rewrittenSince =
+              queryCtx.historyStale ||
+              (piSessionId !== null && historyRewrittenBySession.has(piSessionId))
+            const cutBack = queryCompleted(queryCtx.piSessionId, {
               sessionId,
-              cursor,
+              cursor: Math.max(context.messages.length, queryCtx.latestCursor),
               cwd,
-              piSessionId: queryCtx.piSessionId ?? undefined,
-              needsRebuild: rewindTo ? undefined : queryCtx.missedSteer || state?.needsRebuild,
-              rewindTo,
+              incomplete: queryCtx.missedSteer || queryCtx.failed,
+              checkpoint: rewrittenSince ? undefined : syncResult.checkpoint,
             })
-            if (rewindTo) noteStoppedQuery(queryCtx.piSessionId, claudeProcess)
+            if (cutBack) noteStoppedQuery(queryCtx.piSessionId, claudeProcess)
           }
         }
 
-        if (!isReentrant && queryCtx.activeQuery === handle) queryCtx.activeQuery = null
+        if (!topContextBusy && queryCtx.activeQuery === handle) queryCtx.activeQuery = null
         finalizeCurrentStream(queryCtx)
       })
       .catch((error: unknown) => {
+        queryCtx.stop = undefined
         debug(`provider: query error, model=${cliModel}, error=`, error)
         if (abandonedQueries.has(handle)) return
         const aborted = wasAborted || options?.signal?.aborted === true
-        if (aborted) {
+        if (syncResult.preserveSharedSession) {
+          // A query in a session of its own left the mirror's untouched.
+          deleteOwnSession(queryCtx.capturedSessionId)
+          if (aborted) queryCtx.heldRateLimit = undefined
+        } else if (aborted) {
           markStopped(queryCtx.piSessionId, syncResult.checkpoint)
           noteStoppedQuery(queryCtx.piSessionId, claudeProcess)
           queryCtx.heldRateLimit = undefined
         } else {
-          // The session's state is unknown after the failure: drop this session's mirror.
-          setSessionStateFor(queryCtx.piSessionId, null)
+          // The session's state is unknown after the failure: the mirror goes, with its file.
+          queryFailed(queryCtx.piSessionId)
         }
         promptStream.fail(error instanceof Error ? error : new Error(String(error)))
-        if (!isReentrant && queryCtx.activeQuery === handle) {
+        if (!topContextBusy && queryCtx.activeQuery === handle) {
           queryCtx.releasePendingToolCalls("Query ended")
           queryCtx.activeQuery = null
         }
@@ -1575,7 +1529,7 @@ export function streamClaude(
 
   // A query of this session's that stopped may still be writing to its session file: the next
   // waits for its Claude Code to exit before touching it.
-  const stopping = stoppingQueries.get(stoppingKey(piSessionId))
+  const stopping = bridge.stoppingQueries.get(stoppingKey(piSessionId))
   if (stopping === undefined) {
     startQuery()
     return stream
@@ -1583,12 +1537,23 @@ export function streamClaude(
   debug("provider: waiting for the stopped Claude Code to exit")
   // Held meanwhile, so another session's query doesn't take this context.
   queryCtx.activeQuery = WaitingForExit
-  void stopping.then(() => {
+  let waiting = true
+  const release = () => {
+    waiting = false
+    options?.signal?.removeEventListener("abort", stoppedWhileWaiting)
     if (queryCtx.activeQuery === WaitingForExit) queryCtx.activeQuery = null
-    if (options?.signal?.aborted) {
-      queryCtx.endTurn({ stopReason: "aborted", errorMessage: "Operation aborted" })
-      return
-    }
+  }
+  // A stop while it waits ends the turn now, rather than once the stopped Claude Code has exited.
+  function stoppedWhileWaiting() {
+    if (!waiting) return
+    release()
+    queryCtx.endTurn({ stopReason: "aborted", errorMessage: "Operation aborted" })
+  }
+  if (options?.signal?.aborted) queueMicrotask(stoppedWhileWaiting)
+  else options?.signal?.addEventListener("abort", stoppedWhileWaiting, { once: true })
+  void stopping.then(() => {
+    if (!waiting) return
+    release()
     try {
       startQuery()
     } catch (error) {
@@ -1600,35 +1565,24 @@ export function streamClaude(
   return stream
 }
 
-// --- For tests ---
+// --- A pi session's runs and end ---
 
-/** Swaps the SDK's query() for a test's; null puts it back. */
-export function setQuery(fn: QueryFn | null): void {
-  queryImpl = fn ?? (query as unknown as QueryFn)
+/**
+ * pi settled a run of `piSessionId` (`agent_settled`): a query still held at a tool call is one pi
+ * won't call back, as when its run ended after a tool batch, or failed. It is stopped as an abort
+ * stops one, so its Claude Code doesn't live on, and the session's next query takes the top-level
+ * context.
+ */
+export function runSettled(piSessionId: string | null): void {
+  for (const c of activeQueryContexts) {
+    if (c.piSessionId !== piSessionId || c.currentPiStream !== null || c.stop === undefined)
+      continue
+    debug(`provider: pi's run settled with its query held at a tool call: stopping it`)
+    c.stop()
+  }
 }
 
-/** Forgets every query and rewrite mark, and starts a new top-level context. */
-export function resetBridge(): void {
-  activeQueryContexts.clear()
-  historyRewrittenBySession.clear()
-  stoppingQueries.clear()
-  topContext = new QueryContext()
-}
-
-export const bridgeState = {
-  get activeQueryContexts() {
-    return activeQueryContexts
-  },
-  get historyRewrittenBySession() {
-    return historyRewrittenBySession
-  },
-  isQueryAbandoned: (q: object) => abandonedQueries.has(q),
-  get topContext() {
-    return topContext
-  },
-}
-
-/** Ends what a session's shutdown leaves: every mirror and mark. */
-export function clearRewriteMarks(): void {
-  historyRewrittenBySession.clear()
+/** The pi session ended: its history-rewrite mark goes with it. */
+export function forgetRewriteMark(piSessionId: string): void {
+  historyRewrittenBySession.delete(piSessionId)
 }

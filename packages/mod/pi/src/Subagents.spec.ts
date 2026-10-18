@@ -17,6 +17,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { ModCommand, ModEvent } from "@kndl/protocol"
 import { Schema } from "effect"
+import { capturedPrompts } from "./claude/Bridge.ts"
 import { sessionCwdFor } from "./claude/SessionCwd.ts"
 import { childModel, childTools, createChild, Subagents } from "./Subagents.ts"
 import type { ChildSession } from "./Subagents.ts"
@@ -682,6 +683,8 @@ describe("what a subagent runs on", () => {
     expect(sessionCwdFor(session.sessionManager.getSessionId())).toBe(dir)
     faux.setResponses([fauxAssistantMessage("Hi.")])
     await session.prompt("hello")
+    // Its prompt reaches the captures the bridge's stream reads, as the parent's does.
+    expect(capturedPrompts().resolveOrDerive(session.systemPrompt)).toBeDefined()
     const id = session.sessionManager.getSessionId()
     session.dispose()
     const resumed = await open()

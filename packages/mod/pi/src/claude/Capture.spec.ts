@@ -6,14 +6,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { Api, AssistantMessageEventStream, Context, Model } from "@earendil-works/pi-ai"
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent"
-import { bridgeState, capturedPrompts, resetBridge, setQuery } from "./Bridge.ts"
+import { bridgeState, resetBridge, setQuery } from "../../test/BridgeTesting.ts"
+import { capturedPrompts } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
-import {
-  PiPreamble,
-  projectPromptCapture,
-  PromptCaptures,
-  sharedPromptCaptures,
-} from "./PromptCapture.ts"
+import { PiPreamble, projectPromptCapture } from "./PromptCapture.ts"
 
 type Handler = (event: unknown, ctx?: unknown) => unknown
 
@@ -167,20 +163,6 @@ const StrippedParent = parentSections.slice(0, 5).join("\n\n")
 const StrippedChild = `${StrippedParent}\n\n<active_agent name="Explore"/>\n\n# Environment\nWorking directory: /child\nGit repository: yes\nBranch: main\nPlatform: darwin`
 
 describe("what the captures don't cover", () => {
-  test("a capture recorded by the extension loaded again (a subagent's) is the stream's too", async () => {
-    // The registry is process-wide: a fresh module's records land where the stream resolves.
-    const freshModule = "./PromptCapture.ts?isolated-child"
-    const fresh = (await import(freshModule)) as {
-      readonly PromptCaptures: unknown
-      readonly sharedPromptCaptures: typeof sharedPromptCaptures
-    }
-    expect(fresh.PromptCaptures).not.toBe(PromptCaptures)
-    const isolatedPrompt = "You are an isolated smoke-test agent. Respond with ZZ_ISO_OK."
-    fresh.sharedPromptCaptures().record(isolatedPrompt, { contextFiles: [], skills: [] })
-    expect(fresh.sharedPromptCaptures()).toBe(sharedPromptCaptures())
-    expect(captures.resolveOrDerive(isolatedPrompt)).toBeDefined()
-  })
-
   test("a child embedding its parent's prompt less its tail matches nothing (reference #88)", () => {
     const pi = activate()
     pi.handler("before_agent_start")({ systemPrompt: ParentPrompt, systemPromptOptions: {} })

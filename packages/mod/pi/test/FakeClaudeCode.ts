@@ -215,7 +215,8 @@ const readRecords = (path: string): Array<Rec> =>
 /** A record as the message it makes in Claude Code's request. */
 function render(record: Rec): string {
   if (record.type === "attachment") return `attachment:${String((record.attachment as Rec).type)}`
-  const message = record.message as { role: string; content: string | Array<Rec> }
+  const message = record.message as { role: string; model?: string; content: string | Array<Rec> }
+  const role = message.model === "<synthetic>" ? "synthetic" : message.role
   const content =
     typeof message.content === "string"
       ? message.content
@@ -230,7 +231,7 @@ function render(record: Rec): string {
                   : `[${String(block.type)}]`,
           )
           .join("\n")
-  return `${message.role}:${content}`
+  return `${role}:${content}`
 }
 
 /** A Claude Code session file, written as Claude Code writes one, as far as the bridge's tests need. */
@@ -269,8 +270,20 @@ export class FakeTranscript {
     return this.chain().map(render)
   }
 
-  /** Follows the stream, writing each block once it's whole. */
+  /**
+   * Follows the stream, writing each block once it's whole, and the failure reports Claude Code
+   * writes as `<synthetic>` assistant messages.
+   */
   observe(step: Rec): void {
+    const reported = step.message as { model?: unknown; content?: Array<Rec> } | undefined
+    if (step.type === "assistant" && reported?.model === "<synthetic>") {
+      this.append({
+        type: "assistant",
+        isApiErrorMessage: true,
+        message: { role: "assistant", model: "<synthetic>", content: reported.content ?? [] },
+      })
+      return
+    }
     if (step.type !== "stream_event") return
     const event = step.event as Rec
     const block = event.content_block as Rec | undefined
@@ -378,6 +391,18 @@ export const result = (t: string) => ({
   is_error: false,
   result: t,
 })
+
+/**
+ * A request the API failed, as Claude Code reports it: a `<synthetic>` assistant message with the
+ * failure, which it also writes to its session, then a success-shaped result with `is_error`.
+ */
+export const apiError = (t: string) => [
+  {
+    type: "assistant",
+    message: { id: "msg_synthetic", model: "<synthetic>", content: [{ type: "text", text: t }] },
+  },
+  { type: "result", subtype: "success", is_error: true, result: t },
+]
 
 /** A step that calls a tool and waits for its answer, or for the query's killing. */
 export const callTool =

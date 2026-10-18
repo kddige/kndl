@@ -14,9 +14,10 @@ import type { ProviderModel } from "@kndl/protocol"
 import { builtinCatalog } from "../Providers.ts"
 import {
   capturedPrompts,
-  clearRewriteMarks,
   configureBridge,
+  forgetRewriteMark,
   markRebuildForSession,
+  runSettled,
   setPiUI,
   streamClaude,
 } from "./Bridge.ts"
@@ -26,7 +27,7 @@ import type { CatalogueModel } from "./Models.ts"
 import { ClaudeApi, ClaudeProvider } from "./Names.ts"
 import type { PromptCaptureInput } from "./PromptCapture.ts"
 import { forgetSessionCwd, rememberSessionCwd, rememberSummarySession } from "./SessionCwd.ts"
-import { clearSessionStates, sessionStateCount, setClaudeDir } from "./SessionMirror.ts"
+import { forgetSession, setClaudeDir } from "./SessionMirror.ts"
 import { claudeSettings } from "./Settings.ts"
 
 export interface RegisterClaudeOptions {
@@ -46,13 +47,6 @@ interface SystemPromptOptions {
   readonly skills?: PromptCaptureInput["skills"] | undefined
   readonly sections?: Readonly<Record<string, string>> | undefined
   readonly selectedTools?: ReadonlyArray<string> | undefined
-}
-
-/** Forgets every pi session's mirror. */
-const clearSessions = (event: string) => {
-  debug(`${event}: clearing ${sessionStateCount()} mirror(s)`)
-  clearSessionStates()
-  clearRewriteMarks()
 }
 
 /**
@@ -79,13 +73,15 @@ export const registerClaude = (
   setClaudeDir(settings.configDir)
   configureBridge({ settings, env })
 
-  // A new conversation in the same pi starts over with no mirror.
-  pi.on("session_start", (event, ctx) => {
-    setPiUI(ctx.ui)
-    if (event.reason === "new" || event.reason === "resume" || event.reason === "fork")
-      clearSessions(`session_start:${event.reason}`)
+  pi.on("session_start", (_event, ctx) => setPiUI(ctx.ui))
+  // The Session's conversation ending, or another taking its place in the same pi, ends its
+  // mirror: a new one starts over. A subagent's, a pi session of its own, stays.
+  pi.on("session_shutdown", (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId()
+    debug(`session_shutdown:${event.reason}: forgetting the mirror of ${sessionId}`)
+    forgetSession(sessionId)
+    forgetRewriteMark(sessionId)
   })
-  pi.on("session_shutdown", () => clearSessions("session_shutdown"))
   followClaudeSession(pi)
 
   const config: ProviderConfig = {
@@ -115,6 +111,10 @@ export const followClaudeSession = (pi: ExtensionAPI): void => {
     rememberSessionCwd(ctx.sessionManager.getSessionId(), ctx.cwd)
   })
   pi.on("session_shutdown", (_event, ctx) => forgetSessionCwd(ctx.sessionManager.getSessionId()))
+
+  // A run that ends with a query still held at a tool call (after a tool batch that ends it, or a
+  // failure) won't call back with the results: its Claude Code is stopped.
+  pi.on("agent_settled", (_event, ctx) => runSettled(ctx.sessionManager.getSessionId()))
 
   // Summaries run in a Claude Code of their own, in the session's directory: pi gives every
   // summary call the operation's signal.

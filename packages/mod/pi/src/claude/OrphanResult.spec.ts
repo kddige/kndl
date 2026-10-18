@@ -11,13 +11,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
 import type { Api, AssistantMessage, Context, Message, Model, Tool } from "@earendil-works/pi-ai"
-import {
-  bridgeState,
-  markRebuildForSession,
-  resetBridge,
-  setQuery,
-  streamClaude,
-} from "./Bridge.ts"
+import { bridgeState, resetBridge, setQuery } from "../../test/BridgeTesting.ts"
+import { markRebuildForSession, streamClaude } from "./Bridge.ts"
 import type { ClaudeQuery } from "./Bridge.ts"
 import { ClaudeApi } from "./Names.ts"
 import { clearSessionStates, setClaudeDir } from "./SessionMirror.ts"

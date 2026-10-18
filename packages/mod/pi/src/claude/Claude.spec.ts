@@ -5,11 +5,11 @@ import { join } from "node:path"
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai"
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent"
 import type { ProviderModel } from "@kndl/protocol"
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
 import { FakeClaudeCode, init, result, text } from "../../test/FakeClaudeCode.ts"
-import { resetBridge, setQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { ClaudeApi } from "./Names.ts"
-import { clearSessionStates } from "./SessionMirror.ts"
+import { clearSessionStates, sessionStateFor, setSessionStateFor } from "./SessionMirror.ts"
 
 const root = mkdtempSync(join(tmpdir(), "kndl-claude-register-"))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
@@ -112,6 +112,29 @@ describe("registerClaude", () => {
     expect(
       config?.models?.map((model) => ("contextWindow" in model ? model.contextWindow : 0)),
     ).toEqual([200_000, 1_000_000])
+  })
+})
+
+/** The context pi's events come with, for the session `sessionId`. */
+const ctxOf = (sessionId: string) => ({
+  ui: {},
+  cwd: root,
+  sessionManager: { getSessionId: () => sessionId },
+})
+
+describe("a pi session's end", () => {
+  // A subagent's session is a pi session of its own in the same process: the Session's own
+  // conversation ending, or another taking its place, leaves its mirror for its next turn.
+  test("forgets its own mirror, not a subagent's", () => {
+    const { pi, emit } = mockPi()
+    registerClaude(pi, [haiku], { env: credentialed })
+    const mirror = { sessionId: "cc", cursor: 2, cwd: root }
+    setSessionStateFor("main", mirror)
+    setSessionStateFor("subagent", mirror)
+    emit("session_shutdown", { type: "session_shutdown", reason: "new" }, ctxOf("main"))
+    emit("session_start", { type: "session_start", reason: "new" }, ctxOf("next"))
+    expect(sessionStateFor("main")).toBeNull()
+    expect(sessionStateFor("subagent")).toEqual(mirror)
   })
 })
 

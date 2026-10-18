@@ -5,7 +5,15 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -19,6 +27,7 @@ import { configureLog } from "./Log.ts"
 import type { Checkpoint } from "./Rewind.ts"
 import {
   clearSessionStates,
+  queryFailed,
   sessionStateFor,
   setClaudeDir,
   setSessionStateFor,
@@ -174,6 +183,21 @@ describe("syncSharedSession", () => {
     expect(rotated).not.toBe(sessionId)
     expect(sessionStateFor(null)).toMatchObject({ sessionId: rotated, cursor: 2 })
     expect(sessionStateFor(null)?.needsRebuild).toBeUndefined()
+    // The session it rotated from is never resumed again: its file goes.
+    expect(existsSync(getSessionPath(sessionId, normalizeProjectPath(cwd), claudeDir))).toBe(false)
+  })
+
+  test("a failed query's mirror goes, with its session file; another session's stays", () => {
+    const sessionId = randomUUID()
+    const seeded = createSession({ sessionId, projectPath: cwd, claudeDir })
+    seeded.importMessages([{ role: "user", content: "Hi" }])
+    seeded.save()
+    setSessionStateFor("failed", { sessionId, cursor: 1, cwd })
+    setSessionStateFor("other", { sessionId: randomUUID(), cursor: 1, cwd })
+    queryFailed("failed")
+    expect(sessionStateFor("failed")).toBeNull()
+    expect(existsSync(seeded.jsonlPath)).toBe(false)
+    expect(sessionStateFor("other")).not.toBeNull()
   })
 })
 

@@ -17,8 +17,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent"
 import type { AgentSession, AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
 import { callTool, FakeClaudeCode, init, result, text, toolUse } from "../../test/FakeClaudeCode.ts"
-import { resetBridge, setQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { ClaudeApi } from "./Names.ts"
 import { clearSessionStates } from "./SessionMirror.ts"

@@ -10,13 +10,11 @@ import { join } from "node:path"
 import type { Options } from "@anthropic-ai/claude-agent-sdk"
 import type { Api, AssistantMessageEventStream, Context, Model } from "@earendil-works/pi-ai"
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent"
-import { resetBridge, setQuery } from "./Bridge.ts"
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
 import type { ClaudeQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { forgetSessionCwd, rememberSessionCwd, sessionCwdFor } from "./SessionCwd.ts"
 import { clearSessionStates, setClaudeDir } from "./SessionMirror.ts"
-
-const Key = Symbol.for("kndl:claude-bridge:sessionCwds")
 
 describe("a session's working directory", () => {
   test("is the one remembered for it, and only it", () => {
@@ -35,16 +33,6 @@ describe("a session's working directory", () => {
     rememberSessionCwd("s2", "/x")
     forgetSessionCwd("s2")
     expect(sessionCwdFor("s2")).toBe(process.cwd())
-  })
-
-  test("is shared by every copy of the module, through globalThis", async () => {
-    const second = (await import(`./SessionCwd.ts?instance=${Date.now()}`)) as {
-      sessionCwdFor: typeof sessionCwdFor
-    }
-    rememberSessionCwd("s3", "/shared")
-    expect(second.sessionCwdFor("s3")).toBe("/shared")
-    expect((globalThis as Record<symbol, Map<string, string>>)[Key]?.get("s3")).toBe("/shared")
-    forgetSessionCwd("s3")
   })
 })
 

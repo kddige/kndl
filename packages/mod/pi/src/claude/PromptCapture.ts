@@ -293,17 +293,18 @@ interface PromptPart {
   readonly text: string
 }
 
-const SharedCapturesKey = Symbol.for("kndl:claude-bridge:promptCaptures")
+let sharedCaptures: PromptCaptures | undefined
 
 /**
- * The process's captures. One per process, as a subagent's session may load the extension again,
- * and its prompts must reach the stream that serves it. The first caller's onDiagnose wins.
+ * The process's captures: one, which every pi session's prompts reach, a subagent's too, as the
+ * bridge follows its session through this module (followClaudeSession). The first caller's
+ * onDiagnose wins.
  */
 export function sharedPromptCaptures(
   onDiagnose?: (diagnostic: PromptCaptureDiagnostic) => void,
 ): PromptCaptures {
-  const globals = globalThis as Record<symbol, PromptCaptures | undefined>
-  return (globals[SharedCapturesKey] ??= new PromptCaptures(256, onDiagnose))
+  sharedCaptures ??= new PromptCaptures(256, onDiagnose)
+  return sharedCaptures
 }
 
 export function projectPromptCapture(

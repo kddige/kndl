@@ -10,16 +10,15 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
 import type { Tool } from "@earendil-works/pi-ai"
+import { bridgeState, resetBridge } from "../../test/BridgeTesting.ts"
 import {
   armStaleContexts,
-  bridgeState,
   buildMcpServers,
   contextForToolResults,
   deliverToolResults,
   discardRewrittenQuery,
   drainForAbort,
   markRebuildForSession,
-  resetBridge,
 } from "./Bridge.ts"
 import { makePromptStream } from "./PromptStream.ts"
 import type { PromptStream } from "./PromptStream.ts"

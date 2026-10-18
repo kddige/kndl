@@ -133,14 +133,25 @@ export class QueryContext {
   historyStale = false
   /** A steer never reached Claude Code; the mirror the query completes has to rebuild. */
   missedSteer = false
+  /**
+   * The query's result was a failure (an API error): Claude Code wrote its record of it into the
+   * session, which pi's history doesn't hold.
+   */
+  failed = false
   /** pi aborted the query: a tool result pi brings next isn't for it. */
   aborted = false
+  /** Stops the query as an abort does, while it runs. */
+  stop: (() => void) | undefined
+  /** The Claude Code session the query runs in, once its init says. */
+  capturedSessionId: string | undefined
 
   // The open turn's, reset together.
   /** The open turn's message as it streams; null once its terminal event is pushed. */
   turnOutput: LiveMessage | null = null
   turnStarted = false
   turnSawStreamEvent = false
+  /** Content came whole, in an assistant message with nothing streamed: the result repeats it. */
+  turnSawWholeContent = false
   turnSawToolCall = false
   /**
    * The API message id of the last message_start, and whether its message_stop has come: an
@@ -174,6 +185,7 @@ export class QueryContext {
     this.turnOutput = newAssistantOutput(model, "", "stop")
     this.turnStarted = false
     this.turnSawStreamEvent = false
+    this.turnSawWholeContent = false
     this.turnSawToolCall = false
     this.turnStreamMessageId = undefined
     this.turnStreamOpen = false

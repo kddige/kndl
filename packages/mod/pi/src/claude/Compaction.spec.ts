@@ -19,7 +19,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent"
 import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { effortForReasoning, isolatedStreamFn, resetBridge, setQuery } from "./Bridge.ts"
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
+import { effortForReasoning, isolatedStreamFn } from "./Bridge.ts"
 import type { ClaudeQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { ClaudeApi } from "./Names.ts"
@@ -125,6 +126,31 @@ describe("a one-off summary call", () => {
     if (first === undefined) throw new Error("no query")
     return first.options
   }
+
+  test("stopped, as killing its Claude Code ends the query with an error, ends aborted", async () => {
+    let killed: ((error: Error) => void) | undefined
+    setQuery(() => {
+      const generator = (async function* () {
+        await new Promise<never>((_resolve, reject) => {
+          killed = reject
+        })
+        yield {}
+      })()
+      return Object.assign(generator, {
+        interrupt: async () => {},
+        close: () => killed?.(new Error("Claude Code process exited with code 143")),
+      }) as ClaudeQuery
+    })
+    const stop = new AbortController()
+    const summary = isolatedStreamFn(fable, context, {
+      cacheRetention: "none",
+      signal: stop.signal,
+    }).result()
+    stop.abort()
+    const message = await summary
+    expect(message.stopReason).toBe("aborted")
+    expect(message.errorMessage).toBe("Operation aborted")
+  })
 
   test("runs at the caller's thinking level", async () => {
     expect((await runIsolated(fable, { reasoning: "max" })).effort).toBe("max")

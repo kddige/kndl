@@ -428,6 +428,8 @@ export function syncSharedSession(
     cwd,
     piSessionId: piSessionId ?? undefined,
   })
+  // The session rotated from is never resumed again.
+  if (sharedSession && !preserveId) deleteClaudeSession(sharedSession.sessionId, sharedSession.cwd)
   debug(
     `syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`,
   )
@@ -437,5 +439,142 @@ export function syncSharedSession(
 
 /** Deletes a Claude Code session the bridge made and won't resume. */
 export function deleteClaudeSession(sessionId: string, cwd: string): void {
-  deleteSession(sessionId, cwd, claudeDir())
+  try {
+    deleteSession(sessionId, cwd, claudeDir())
+  } catch (error) {
+    debug(`WARNING: could not delete session ${sessionId.slice(0, 8)}:`, error)
+  }
+}
+
+// --- What happens to a pi session's mirror, as the bridge tells it ---
+
+/** Changes `piSessionId`'s mirror, if it has one; the mirror as it was. */
+function change(
+  piSessionId: string | null | undefined,
+  edit: (state: SessionState) => SessionState,
+): SessionState | null {
+  const state = sessionStateFor(piSessionId)
+  if (state) setSessionStateFor(piSessionId, edit(state))
+  return state
+}
+
+/**
+ * pi replaced the session's history under the mirror (a compaction, tree navigation): the next
+ * sync rebuilds it from pi's. The mirror as it was, if there is one.
+ */
+export function historyReplaced(piSessionId: string | null | undefined): SessionState | null {
+  return change(piSessionId, (state) => ({ ...state, needsRebuild: true }))
+}
+
+/**
+ * A steer never reached Claude Code, though the cursor counts it already: the next sync rebuilds,
+ * taking it from pi's history.
+ */
+export function steerMissed(piSessionId: string | null | undefined): void {
+  change(piSessionId, (state) => ({ ...state, needsRebuild: true }))
+}
+
+/**
+ * A query stopped before its end (an abort), and its Claude Code may still write to the session
+ * for a moment. The next sync cuts the session back to where the query began (`checkpoint`), once
+ * that Claude Code has exited ({@link stoppedClaudeCodeExited}). With no checkpoint of this
+ * session to cut back to, it rebuilds under a new id. Says which, when there is a mirror.
+ */
+export function queryStopped(
+  piSessionId: string | null | undefined,
+  checkpoint: Checkpoint | undefined,
+  capturedSessionId?: string,
+): "cut back" | "rebuild" | undefined {
+  let next: "cut back" | "rebuild" | undefined
+  change(piSessionId, (state) => {
+    const rewindTo =
+      checkpoint?.sessionId === state.sessionId &&
+      (capturedSessionId === undefined || capturedSessionId === checkpoint.sessionId)
+        ? checkpoint
+        : undefined
+    next = rewindTo ? "cut back" : "rebuild"
+    return { ...state, forceRotate: true, ...(rewindTo ? { rewindTo } : { needsRebuild: true }) }
+  })
+  return next
+}
+
+/**
+ * A stopped query's Claude Code has exited, so the session can be cut back now; or it hadn't in
+ * time, and the session is rebuilt under a new id, which it can't write to.
+ */
+export function stoppedClaudeCodeExited(
+  piSessionId: string | null | undefined,
+  exited: boolean,
+): void {
+  change(piSessionId, (state) =>
+    exited
+      ? { ...state, forceRotate: undefined }
+      : { ...state, needsRebuild: true, forceRotate: true },
+  )
+}
+
+/**
+ * A query held at a tool call was discarded, as pi replaced the history under it: its Claude Code
+ * was killed, and may still write, so the next sync rebuilds under a new id.
+ */
+export function queryDiscarded(piSessionId: string | null | undefined): void {
+  change(piSessionId, (state) => ({ ...state, needsRebuild: true, forceRotate: true }))
+}
+
+/** A held turn's tool results went to its query: the session holds pi's history to `cursor`. */
+export function resultsDelivered(piSessionId: string | null | undefined, cursor: number): void {
+  change(piSessionId, (state) => ({ ...state, cursor }))
+}
+
+/**
+ * A query ran to its result in Claude Code's session `sessionId`, which holds pi's history up to
+ * `cursor`. One that didn't run as pi holds it (`incomplete`: a steer that never reached Claude
+ * Code, or a request the API failed, whose failure Claude Code writes into the session) left
+ * records pi's history doesn't have: the next sync cuts the session back to where the query began
+ * (`checkpoint`), or, without one of this session, rebuilds. Returns whether it is to be cut back,
+ * once the query's Claude Code has exited.
+ */
+export function queryCompleted(
+  piSessionId: string | null | undefined,
+  query: {
+    readonly sessionId: string
+    readonly cursor: number
+    readonly cwd: string
+    readonly incomplete: boolean
+    readonly checkpoint: Checkpoint | undefined
+  },
+): boolean {
+  const state = sessionStateFor(piSessionId)
+  const rewindTo =
+    query.incomplete && query.checkpoint?.sessionId === query.sessionId
+      ? query.checkpoint
+      : undefined
+  setSessionStateFor(piSessionId, {
+    ...state,
+    sessionId: query.sessionId,
+    cursor: Math.max(query.cursor, state?.cursor ?? 0),
+    cwd: query.cwd,
+    piSessionId: piSessionId ?? undefined,
+    needsRebuild: rewindTo ? undefined : query.incomplete || state?.needsRebuild,
+    rewindTo,
+  })
+  return rewindTo !== undefined
+}
+
+/**
+ * A query failed, and Claude Code's session is in a state the bridge can't know: the mirror goes,
+ * and the session file with it. The next query rebuilds from pi's history.
+ */
+export function queryFailed(piSessionId: string | null | undefined): void {
+  const state = sessionStateFor(piSessionId)
+  setSessionStateFor(piSessionId, null)
+  if (state) deleteClaudeSession(state.sessionId, state.cwd)
+}
+
+/**
+ * The pi session ended (its own shutdown, or a new conversation in its place): its mirror goes.
+ * Other sessions' mirrors, such as subagents', stay for their next turns.
+ */
+export function forgetSession(piSessionId: string | null | undefined): void {
+  setSessionStateFor(piSessionId, null)
 }

@@ -18,9 +18,17 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import type { AgentSession, AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { getProjectDir, normalizeProjectPath } from "cc-session-io"
-import { callTool, FakeClaudeCode, init, result, text, toolUse } from "../../test/FakeClaudeCode.ts"
+import { bridgeState, resetBridge, setQuery } from "../../test/BridgeTesting.ts"
+import {
+  apiError,
+  callTool,
+  FakeClaudeCode,
+  init,
+  result,
+  text,
+  toolUse,
+} from "../../test/FakeClaudeCode.ts"
 import type { FakeClaudeCodeOptions, Step } from "../../test/FakeClaudeCode.ts"
-import { resetBridge, setQuery } from "./Bridge.ts"
 import { registerClaude } from "./Claude.ts"
 import { ClaudeApi } from "./Names.ts"
 import { clearSessionStates } from "./SessionMirror.ts"
@@ -61,8 +69,13 @@ const model: Model<string> = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 }
 
-/** A real pi session on the bridge, with one tool, `wait`, that runs until it's aborted. */
-async function startSession(options: FakeClaudeCodeOptions = {}): Promise<AgentSession> {
+/**
+ * A real pi session on the bridge, with one tool, `wait`, that runs until it's aborted; pi retries
+ * a failed turn at once when `retry` says so.
+ */
+async function startSession(
+  options: FakeClaudeCodeOptions & { readonly retry?: boolean } = {},
+): Promise<AgentSession> {
   fake = new FakeClaudeCode({ claudeDir: claudeDir(), ...options })
   setQuery(fake.query)
   const extension = (pi: ExtensionAPI) => {
@@ -85,10 +98,25 @@ async function startSession(options: FakeClaudeCodeOptions = {}): Promise<AgentS
           )
         }),
     })
+    // A tool whose result ends the run: pi calls the model no more.
+    pi.registerTool({
+      name: "finish",
+      label: "Finish",
+      description: "Finishes.",
+      parameters: Type.Object({}),
+      execute: async () => ({
+        content: [{ type: "text", text: "finished" }],
+        details: undefined,
+        terminate: true,
+      }),
+    })
   }
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: { enabled: false },
+    retry:
+      options.retry === true
+        ? { enabled: true, maxRetries: 1, baseDelayMs: 1 }
+        : { enabled: false },
   })
   const loader = new DefaultResourceLoader({
     cwd: root,
@@ -327,6 +355,144 @@ describe("the turn after a stopped one", () => {
       ])
       const file = join(projectDir(), `${first?.sessionId}.jsonl`)
       expect(readFileSync(file, "utf8")).not.toContain("[Request interrupted by user]")
+    } finally {
+      session.dispose()
+    }
+  }, 15_000)
+})
+
+// Claude Code reports a failed API request (an overload, a 529) as a result with `is_error`, and
+// writes the failure into its session. pi retries such a turn on the history before it, and the
+// retry, like the next prompt, must resume the same session, with its history, without Claude
+// Code's record of the failure.
+describe("the turn after an API error", () => {
+  const overloaded = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}'
+
+  test("pi's retry resumes the same session, its request as the failed one's", async () => {
+    const session = await startSession({ retry: true })
+    try {
+      fake.scripts.push(
+        { label: "first", steps: [init("cc"), ...text("Hello."), result("Hello.")] },
+        { label: "failed", steps: [init("cc"), ...apiError(overloaded)] },
+        { label: "retried", steps: [init("cc"), ...text("Sure.", "msg_after"), result("Sure.")] },
+      )
+      await session.prompt("one")
+      await session.prompt("two")
+
+      const [first, failed, retried] = fake.calls
+      expect(fake.calls).toHaveLength(3)
+      expect(failed?.options.resume).toBe(first?.sessionId)
+      expect(retried?.options.resume).toBe(first?.sessionId)
+      expect(retried?.request).toEqual(failed?.request)
+      expect(retried?.request).toEqual([
+        "user:one",
+        "attachment:total_tokens_reminder",
+        "assistant:Hello.",
+        "user:two",
+        "attachment:total_tokens_reminder",
+      ])
+      expect(sessionFiles()).toEqual([`${first?.sessionId}.jsonl`])
+      expect(lastAssistant(session)?.content).toEqual([{ type: "text", text: "Sure." }])
+    } finally {
+      session.dispose()
+    }
+  }, 15_000)
+
+  test("the next prompt resumes the same session, without Claude Code's record of the failure", async () => {
+    const session = await startSession()
+    try {
+      fake.scripts.push(
+        { label: "first", steps: [init("cc"), ...text("Hello."), result("Hello.")] },
+        { label: "failed", steps: [init("cc"), ...apiError(overloaded)] },
+        { label: "after", steps: [init("cc"), ...text("Sure.", "msg_after"), result("Sure.")] },
+      )
+      await session.prompt("one")
+      await session.prompt("two")
+      expect(lastAssistant(session)?.stopReason).toBe("error")
+      await session.prompt("three")
+
+      const [first, failed, after] = fake.calls
+      expect(after?.options.resume).toBe(first?.sessionId)
+      expect(after?.request).toEqual([
+        ...(failed?.request ?? []),
+        // The failed turn as pi holds it.
+        `assistant:${overloaded}`,
+        "user:three",
+        "attachment:total_tokens_reminder",
+      ])
+    } finally {
+      session.dispose()
+    }
+  }, 15_000)
+})
+
+describe("a run that ends with its query held at a tool call", () => {
+  // A tool can end pi's run after its batch, and pi then calls the model no more: the query held
+  // at the call would live on, with its Claude Code, and hold the top-level context.
+  test("stops its Claude Code, and the next prompt resumes the same session", async () => {
+    const session = await startSession()
+    try {
+      fake.scripts.push(
+        { label: "first", steps: [init("cc"), ...text("Hello."), result("Hello.")] },
+        {
+          label: "finished",
+          steps: [
+            init("cc"),
+            ...toolUse("toolu_finish", "finish"),
+            callTool("finish", "toolu_finish"),
+          ],
+        },
+        { label: "next", steps: [init("cc"), ...text("Sure.", "msg_next"), result("Sure.")] },
+      )
+      await session.prompt("one")
+      await session.prompt("finish up")
+      const [first, finished] = fake.calls
+      expect(finished?.closed).toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(bridgeState.activeQueryContexts.size).toBe(0)
+      expect(bridgeState.topContext.activeQuery).toBeNull()
+
+      await session.prompt("next")
+      const [, , next] = fake.calls
+      expect(next?.options.resume).toBe(first?.sessionId)
+      expect(next?.request).toEqual([
+        "user:one",
+        "attachment:total_tokens_reminder",
+        "assistant:Hello.",
+        "user:finish up",
+        "attachment:total_tokens_reminder",
+        "assistant:tool_use:toolu_finish",
+        "user:tool_result:toolu_finish",
+        "user:next",
+        "attachment:total_tokens_reminder",
+      ])
+      expect(lastAssistant(session)?.content).toEqual([{ type: "text", text: "Sure." }])
+    } finally {
+      session.dispose()
+    }
+  }, 15_000)
+})
+
+describe("a stop while the turn waits for a stopped Claude Code to exit", () => {
+  test("ends the turn at once, and starts no query", async () => {
+    const session = await startSession({ process: { lateMs: 3_000 } })
+    try {
+      const held = hold()
+      fake.scripts.push(
+        { label: "first", steps: [init("cc"), ...text("Hello."), result("Hello.")] },
+        { label: "stopped", steps: [init("cc"), ...stoppedReply("Once upon", held.step)] },
+      )
+      await session.prompt("one")
+      await stop(session, "tell me a story", held.reached)
+      // Its Claude Code goes on for 3 seconds: the next turn waits for it, and is stopped.
+      const waiting = session.prompt("three")
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const stoppedAt = performance.now()
+      await session.abort()
+      await waiting
+      expect(performance.now() - stoppedAt).toBeLessThan(1_000)
+      expect(lastAssistant(session)?.stopReason).toBe("aborted")
+      expect(fake.calls).toHaveLength(2)
     } finally {
       session.dispose()
     }

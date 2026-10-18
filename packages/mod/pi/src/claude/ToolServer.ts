@@ -36,7 +36,7 @@ export interface McpToolDef {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-/** MCP needs an object schema: anything else is a bug in the tool, named at startup. */
+/** MCP needs an object schema: anything else is a bug in the tool, named as a query serves it. */
 function assertObjectSchema(tool: McpToolDef): void {
   const schema = tool.inputSchema
   if (!isRecord(schema) || schema.type !== "object") {

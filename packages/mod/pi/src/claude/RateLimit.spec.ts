@@ -14,8 +14,9 @@ import type {
   ProviderResponse,
   Tool,
 } from "@earendil-works/pi-ai"
+import { resetBridge, setQuery } from "../../test/BridgeTesting.ts"
 import { consume, makeCtx, streamEvent, testModel } from "../../test/StreamHarness.ts"
-import { resetBridge, setQuery, streamClaude } from "./Bridge.ts"
+import { streamClaude } from "./Bridge.ts"
 import type { ClaudeQuery } from "./Bridge.ts"
 import { ClaudeApi } from "./Names.ts"
 import { rateLimitResponse } from "./RateLimit.ts"

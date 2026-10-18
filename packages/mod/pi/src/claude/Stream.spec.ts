@@ -329,6 +329,65 @@ describe("error results", () => {
     expect(c.turnStreamOpen).toBe(false)
   })
 
+  test("mark the query failed, even with no turn open, so its session isn't taken as pi's", async () => {
+    const { c } = makeCtx()
+    c.endTurn({ stopReason: "toolUse" })
+    await consume(c, [errorResult], bashMap)
+    expect(c.failed).toBe(true)
+    const ok = makeCtx().c
+    await consume(
+      ok,
+      [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+      bashMap,
+    )
+    expect(ok.failed).toBe(false)
+  })
+
+  // With no stream events, the reply comes as the whole assistant message, then the result with
+  // its text again.
+  test("a reply that came whole, with nothing streamed, isn't added again from the result", async () => {
+    const { c, stream } = makeCtx()
+    await consume(
+      c,
+      [
+        {
+          type: "assistant",
+          message: { id: "msg_whole", content: [{ type: "text", text: "Hi." }] },
+        },
+        { type: "result", subtype: "success", is_error: false, result: "Hi." },
+      ],
+      bashMap,
+    )
+    finalizeCurrentStream(c)
+    expect(ended(stream).content).toEqual([{ type: "text", text: "Hi." }])
+    expect(types(stream).filter((type) => type === "text_delta")).toHaveLength(1)
+  })
+
+  test("a block event without an index names no block, not one already closed", async () => {
+    const { c, stream } = makeCtx()
+    await consume(
+      c,
+      [
+        streamEvent({ type: "message_start", message: { id: "msg_1" } }),
+        streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+        streamEvent({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Hi." },
+        }),
+        streamEvent({ type: "content_block_stop", index: 0 }),
+        streamEvent({
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: " Again." },
+        }),
+        streamEvent({ type: "content_block_stop" }),
+      ],
+      bashMap,
+    )
+    expect(live(c).content).toEqual([{ type: "text", text: "Hi." }])
+    expect(types(stream).filter((type) => type === "text_end")).toHaveLength(1)
+  })
+
   test("a successful result still streams and ends the turn normally", async () => {
     const { c, stream } = makeCtx()
     await consume(
