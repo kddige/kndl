@@ -53,8 +53,10 @@ describe("the Gateway providers (ADR 0029)", () => {
       { ...listed, signedIn: ["openai"] },
       { hubUrl: "http://hub.test", modToken: "t", catalog },
     )
+    /** A registered model's compat flags, which only a chat model has. */
+    const compatOf = (model: unknown) => (model as { readonly compat?: unknown }).compat
     for (const model of openai?.config.models ?? []) {
-      expect(model.compat).toMatchObject({
+      expect(compatOf(model)).toMatchObject({
         supportsMaxOutputTokens: false,
         supportsMidConvoEffort: false,
         supportsLongCacheRetention: false,
@@ -62,7 +64,7 @@ describe("the Gateway providers (ADR 0029)", () => {
       })
     }
     const builtin = catalog("xai").find((model) => model.id === "grok-4.3")
-    expect(xai?.config.models?.[0]?.compat).toEqual(builtin?.compat as never)
+    expect(compatOf(xai?.config.models?.[0])).toEqual(builtin?.compat)
   })
 
   test("a Provider none of whose Models pi knows isn't registered", () => {
