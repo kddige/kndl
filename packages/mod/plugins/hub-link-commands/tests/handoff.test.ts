@@ -90,6 +90,48 @@ describe("a context handoff (ADR 0030)", () => {
     ])
   })
 
+  test("one that waits is kept when the prompt it went with fails, for the prompt after it", async ($, on) => {
+    linkedSession(on, [handoff, prompt])
+    const clock = mock.clock(on)
+    on("session.append", { door: "note" }, () => ({ deny: "the session is closing" }))
+    const contexts: Array<unknown> = []
+    on("prompt.submit", (_, e) => {
+      if (e.text === "[Ada Lovelace] Now test it.") return { drop: "not now" }
+      contexts.push(e.context)
+      return { text: e.text }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(200)
+    await $.prompt.submit({ text: "what changed?" } as never)
+
+    expect(contexts).toEqual([[expect.stringContaining(handoff.text)]])
+  })
+
+  test("one that waits goes no more once a later one is appended", async ($, on) => {
+    linkedSession(on, [handoff, { ...handoff, text: "Turn #13, prompted by Ada Lovelace" }])
+    const clock = mock.clock(on)
+    const session = mock.session(on)
+    let denied = false
+    on("session.append", { door: "note" }, (_, e, next) => {
+      if (denied) return next(e)
+      denied = true
+      return { deny: "the session is closing" }
+    })
+    const contexts: Array<unknown> = []
+    on("prompt.submit", (_, e) => {
+      contexts.push(e.context)
+      return { text: e.text }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(200)
+    await $.prompt.submit({ text: "what changed?" } as never)
+
+    expect(session.appended()).toHaveLength(1)
+    expect(contexts).toEqual([undefined])
+  })
+
   test("one Claude Code won't append goes with a prompt typed at the terminal, if that comes first", async ($, on) => {
     linkedSession(on, [handoff])
     const clock = mock.clock(on)

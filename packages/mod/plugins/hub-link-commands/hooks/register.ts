@@ -88,6 +88,11 @@ const takeHandoff = () => {
   return note
 }
 
+/** A handoff taken for a prompt that never went: it waits for the next, unless a later one does. */
+const putBackHandoff = (note: string | undefined) => {
+  state.handoff ??= note
+}
+
 const report = (event: Record<string, unknown>) => state.link?.report(event)
 
 /**
@@ -150,8 +155,10 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
     }
     return
   }
+  const handoff = takeHandoff()
   const failed = (message: string) => {
-    // No Turn starts with it.
+    // No Turn starts with it, nor with its handoff, which waits for the next prompt.
+    putBackHandoff(handoff)
     void $.state.set(delivered, null).catch(() => undefined)
     notSubmitted($, command.promptId)
     report({ _tag: "PromptFailed", promptId: command.promptId, message })
@@ -159,7 +166,7 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
   const attachments = command.attachments ?? []
   const text = deliveredPrompt(command.sender, command.text, attachments)
   const context = [
-    takeHandoff(),
+    handoff,
     attachments.length > 0 ? attachmentContext(attachments) : undefined,
   ].filter((part) => part !== undefined)
   try {
@@ -219,7 +226,8 @@ const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverInto
  * and no Turn starts with it (spike #195; in a new conversation too, checked against Claude Code
  * 2.1.296 with a stub API). It comes once Claude Code has started, before the next
  * prompt, so while Claude is idle; if it comes during a Turn, Claude reads it at the Turn's next
- * step. One Claude Code won't append goes with the next prompt instead.
+ * step. One Claude Code won't append goes with the next prompt instead, unless a later one is
+ * appended first, which takes its place.
  */
 const deliverHandoff = async ($: EngineInterface, command: Command<"DeliverHandoff">) => {
   const note = handoffNote(command, historyToolName)
@@ -233,6 +241,7 @@ const deliverHandoff = async ($: EngineInterface, command: Command<"DeliverHando
       message: { type: "user", content: [{ type: "text", text: note }] },
     })
     if (appended.deny !== undefined) held(appended.deny)
+    else state.handoff = undefined
   } catch (error) {
     held(String(error))
   }
