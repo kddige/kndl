@@ -45,12 +45,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0045, each subagent's Harness (ADR 0030): the
- * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
- * first.
+ * Takes the database back to before migration 0046, the Hub's one device id: the migrator runs only
+ * the migrations after the last it ran, so a test of an earlier one undoes this first. The device
+ * id is kept.
  */
+const beforeOneHubDevice = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`CREATE TABLE hub_device_any (id TEXT NOT NULL)`
+  yield* sql`INSERT INTO hub_device_any (id) SELECT id FROM hub_device`
+  yield* sql`DROP TABLE hub_device`
+  yield* sql`ALTER TABLE hub_device_any RENAME TO hub_device`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'one_hub_device'`
+})
+
+/** Takes the database back to before migration 0045, each subagent's Harness (ADR 0030), and 0046. */
 const beforeAgentHarness = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeOneHubDevice
   yield* sql`ALTER TABLE agents DROP COLUMN harness`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'agent_harness'`
 })
@@ -363,6 +374,34 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0046, the Hub's one device id", () => {
+  test("keeps the first a Hub made, and takes no second", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeOneHubDevice
+        yield* sql`INSERT INTO hub_device (id) VALUES ('device-1'), ('device-2')`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const kept = yield* sql`SELECT id FROM hub_device`
+        const second = yield* Effect.result(
+          sql`INSERT INTO hub_device (one, id) VALUES (1, 'device-3')`,
+        )
+        return { kept, second: second._tag }
+      }),
+    )
+    expect(after).toEqual({ kept: [{ id: "device-1" }], second: "Failure" })
+  })
+})
 
 describe("migration 0041, Connected providers", () => {
   test("keeps every Member, and a person's Connected providers go with them", async () => {

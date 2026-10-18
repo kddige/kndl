@@ -854,6 +854,22 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE agents ADD COLUMN harness TEXT`
   }),
+  // The Hub has one device id (0041): `hub_device` holds one row at most, keyed by `one`, always
+  // 1, as `secrets_check` does. A Hub that made two kept the first it made.
+  "0046_one_hub_device": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE hub_device_one (
+        one INTEGER PRIMARY KEY CHECK (one = 1),
+        id TEXT NOT NULL
+      )
+    `
+    yield* sql`
+      INSERT INTO hub_device_one (one, id) SELECT 1, id FROM hub_device ORDER BY rowid LIMIT 1
+    `
+    yield* sql`DROP TABLE hub_device`
+    yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

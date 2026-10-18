@@ -726,12 +726,11 @@ export class ConnectedProviders extends Context.Service<
 
       /** The Hub's one device id, which ChatGPT's sign-in names the Hub by: made on first use. */
       const deviceId = Effect.gen(function* () {
+        yield* sql`INSERT INTO hub_device (one, id) VALUES (1, ${randomUUID()}) ON CONFLICT DO NOTHING`
         const [found] = yield* sql<{ readonly id: string }>`SELECT id FROM hub_device`
-        if (found !== undefined) return found.id
-        const id = randomUUID()
-        yield* sql`INSERT INTO hub_device (id) VALUES (${id})`
-        return id
-      }).pipe(sql.withTransaction)
+        if (found === undefined) return yield* Effect.die("The Hub's device id wasn't kept")
+        return found.id
+      })
 
       // ── Asking for Models ──────────────────────────────────────────────
 
