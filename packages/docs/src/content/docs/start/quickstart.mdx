@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Install kndl on one machine, start a Claude Code Session on one of your Repos, and remove it again, in about 10 minutes.
+description: Install kndl on one machine, connect a Provider, start a Session on one of your Repos, and remove it again, in about 10 minutes.
 ---
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
@@ -11,7 +11,7 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
 
 - **A Mac with Apple Silicon, or Linux with KVM.** Each Session runs in a [microsandbox](https://github.com/microsandbox/microsandbox) microVM, which needs one of the two.
 - **git and curl.** The installer adds [Bun](https://bun.sh) if it's missing.
-- **A Claude subscription, and Claude Code on any machine,** to make a setup token with `claude setup-token`. You add it in step 4.
+- **An account at a Provider,** such as a ChatGPT or GitHub Copilot subscription, or an API key. For Claude, a Claude subscription and Claude Code on any machine, to make a setup token. You connect it after installing.
 - **A GitHub repository** this machine can clone. Any public repository works.
 
 ## Install and set up
@@ -51,11 +51,15 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
 
 </Steps>
 
+## Connect a Provider
+
+Press your name at the bottom of the sidebar, then **Account**. Under **Providers**, sign in with a subscription or paste an API key: see [Connect your Providers](/guides/connect-your-providers/). For Claude's Models, add your setup token under **Anthropic**: see [Add your Claude credential](/guides/add-your-claude-credential/).
+
 ## Start a Session
 
 <Steps>
 
-1. Press **New Session**. In **Repo**, enter your repository as `owner/name`. Leave **Branch** on its default branch and **Runner** on **Any online Runner**, then press **Start Session**.
+1. Press **New Session**. In **Repo**, enter your repository as `owner/name`. Leave **Branch** on its default branch, **Runner** on **Any online Runner** and **Model** on the Model it shows, then press **Start Session**.
 
    ![The New Session dialog: Repo, Branch, Work on a new branch, Runner and Model, with Start Session at the bottom.](../../../assets/screenshots/new-session.png)
 
@@ -66,8 +70,6 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
 3. Under **Apply**, pick your Runner in **Runner to build on** and press **Test build**. The log streams in below. The first build pulls the image, so it takes a few minutes.
 
 4. When the build passes, press **Apply and start Session**.
-
-   The first time, the dialog asks you to add your Claude credential. Follow [Add your Claude credential](/guides/add-your-claude-credential/), then start the Session again.
 
 </Steps>
 
@@ -81,11 +83,11 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
    List the files in this repository and tell me what it does.
    ```
 
-   Claude's reply streams in, with each tool call it makes.
+   The agent's reply streams in, with each tool call it makes.
 
    ![A Session: Bob's prompt, Claude's reply with a Bash tool call, and a subagent's result.](../../../assets/screenshots/session.png)
 
-2. Open the **Terminal** tab. It shows Claude Code's own screen, live, and you can type into it. Only you, the Session's Creator, see it.
+2. Open the **Terminal** tab. It shows the agent's own screen, pi's, live, and you can type into it. Only you, the Session's Creator, see it.
 
 3. Open [http://127.0.0.1:7777](http://127.0.0.1:7777) in a private window and sign in as someone else, such as `sam`. Open the same Session. Both windows show it live, but `sam` watches: only `alice`, who started it, can prompt it.
 
@@ -127,7 +129,7 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
   />
   <LinkCard
     title="How kndl works"
-    description="What runs where, and how the Claude credential stays out of the Sandbox."
+    description="What runs where, and how your Providers' credentials stay on the Hub."
     href="/kndl/concepts/architecture/"
   />
 </CardGrid>

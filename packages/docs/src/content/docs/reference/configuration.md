@@ -23,7 +23,7 @@ The Hub and Runners read environment variables. Where you set them:
 | `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the Hub. GitHub sends people back here after sign-in, cookie-authenticated requests must come from this origin, and pairing links carry it. |
 | `HUB_DATABASE` | `<home>/hub.db`; `packages/hub/hub.db` in a checkout | The SQLite database. |
 | `HUB_WEB_DIR` | `packages/web/dist` | The web UI's build, which the Hub serves. Without one, the Hub warns at startup and its pages answer 503. |
-| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `kndl secrets key`. Encrypts Sensitive values, people's Claude credentials and MCP servers' keys. Unset, none can be saved. Once any are saved, the Hub refuses to start without the same key. If it's lost, see [`secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `kndl secrets key`. Encrypts Sensitive values, people's Connected providers and Claude credentials, and MCP servers' keys. Unset, none can be saved. Once any are saved, the Hub refuses to start without the same key. If it's lost, see [`secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client ID and secret, for GitHub sign-in. Set both or neither. |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The GitHub App's ID and the path to its private key, for Repo access, clones and Sandbox tokens. Set both or neither. Unset, GitHub sign-ins have access to no Repo. The Hub checks the App's [permissions](/self-hosting/set-up-the-github-app/#the-permissions) as it starts and every hour. |
 | `GITHUB_WEBHOOK_SECRET` | unset | The App's webhook secret, which onboard saves. The Hub doesn't read it. |
@@ -45,12 +45,12 @@ The Hub and Runners read environment variables. Where you set them:
 | `RUNNER_NAME` | the short hostname | The name the Runner says hello with. |
 | `RUNNER_SESSIONS_ROOT` | `<home>/sessions` | Where each Session's directory goes. |
 | `RUNNER_TMUX_SOCKET` | `kndl`; `kndl-dev` in a checkout | With `RUNNER_SESSIONS_ROOT`, marks the Sandboxes this Runner makes, so Runners sharing a machine keep to their own. |
-| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod Claude Code loads. The Runner refuses to start if it isn't built. |
+| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod each Session's pi or Claude Code loads. The Runner refuses to start if it isn't built. Without its pi extension built, the Runner runs Claude Code Sessions only. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from. `{repo}` is `owner/name`. |
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The image of a Session whose Repo has no Environment. |
 | `RUNNER_SANDBOX_CLAUDE_VERSION` | the version this kndl is tested with | The Claude Code version Sandboxes run. Another may not work with the mod. |
-| `RUNNER_SANDBOX_CLAUDE_CACHE` | `<home>/claude-code` | Where the Runner keeps Linux builds of Claude Code. |
-| `RUNNER_SANDBOX_PI_CACHE` | `<home>/pi` | Where the Runner keeps the Node.js and pi that pi Sessions run. If getting them fails, the Runner logs why and runs Claude Code Sessions only. |
+| `RUNNER_SANDBOX_CLAUDE_CACHE` | `<home>/claude-code` | Where the Runner keeps Linux builds of Claude Code. See [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads). |
+| `RUNNER_SANDBOX_PI_CACHE` | `<home>/pi` | Where the Runner keeps the Node.js and pi that pi Sessions run. If getting them fails, the Runner logs why and runs Claude Code Sessions only. See [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads). |
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many Builds of each Repo's Environment the Runner keeps. |
@@ -99,4 +99,4 @@ The install script a Hub serves at `/cli`, and the binary it installs, read thes
 |---|---|---|
 | `KNDL_SANDBOX_IT` | unset | `1` adds the tests that boot real microsandbox Sandboxes to `bun test`. |
 
-The variables a Runner gives Claude Code in a Sandbox are in [Inside kndl](/contributing/internals/#what-a-runner-gives-claude-code).
+The variables a Runner gives the agent in a Sandbox are in [Inside kndl](/contributing/internals/#what-a-runner-gives-claude-code).

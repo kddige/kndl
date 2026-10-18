@@ -62,7 +62,7 @@ A new Sandbox then runs the Start script in `/workspace`. CPUs and memory are ca
 
 ## Tools on `PATH`
 
-Installers such as mise, rustup, nvm and Bun's add themselves to `PATH` in `~/.bashrc` or `~/.profile`. So kndl runs a login shell once after the Bootstrap script, and again in each new Sandbox, and gives every process it starts the environment that shell ends with. The Start script, Claude Code and every command Claude runs see the same `PATH` a terminal would.
+Installers such as mise, rustup, nvm and Bun's add themselves to `PATH` in `~/.bashrc` or `~/.profile`. So kndl runs a login shell once after the Bootstrap script, and again in each new Sandbox, and gives every process it starts the environment that shell ends with. The Start script, the agent and every command it runs see the same `PATH` a terminal would.
 
 ## Variables
 

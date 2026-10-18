@@ -1,11 +1,11 @@
 ---
 title: Git from Sessions
-description: How Claude commits, pushes and opens pull requests with plain git and gh, what the Sandbox's GitHub token can do, and how to protect your default branch.
+description: How the agent commits, pushes and opens pull requests with plain git and gh, what the Sandbox's GitHub token can do, and how to protect your default branch.
 sidebar:
   order: 4
 ---
 
-Claude, and anything else in a Session's Sandbox, uses plain `git` and `gh` to commit, push and open pull requests ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)). kndl adds no git tools of its own, and refuses no git command.
+The agent, and anything else in a Session's Sandbox, uses plain `git` and `gh` to commit, push and open pull requests ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)). kndl adds no git tools of its own, and refuses no git command.
 
 ## What a Session can do
 
@@ -22,7 +22,7 @@ The Hub mints a fresh token for each Session, and the Runner renews it every 45 
 - **`git push` and `git fetch` work** anywhere in the Sandbox, with no setup.
 - **`gh` is signed in**, if the image has it. kndl doesn't install `gh`: [add it in the Bootstrap script](/guides/set-up-an-environment/#write-the-bootstrap-script).
 - **Commits are by the Session's Creator**, with their GitHub name and noreply address, so GitHub links the commits to their account. With dev login, the address is `<login>@dev-login.invalid`, which GitHub links to no one.
-- **Whose prompt it was doesn't change the author.** To credit someone else, ask Claude to add a `Co-authored-by` trailer.
+- **Whose prompt it was doesn't change the author.** To credit someone else, ask the agent to add a `Co-authored-by` trailer.
 - **Your Environment's git identity wins.** One set by the image, a script, `git config --global`, the Repo's `.git/config` or `GIT_AUTHOR_*` and `GIT_COMMITTER_*` Variables is kept.
 
 Without the GitHub App, as with dev login, the Sandbox gets no token, so `git push` and `gh` have nothing to sign in with.

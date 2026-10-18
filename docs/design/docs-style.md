@@ -69,7 +69,7 @@ Reference pages are tables with the same columns throughout the page, examples o
 
 ## Glossary terms
 
-`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, Release, Channel, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
+`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, Harness, Provider, Connected provider, Model, Thinking level, Release, Channel, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
 
 - Link a term to its glossary entry or its page on first use in a page, when the reader may not know it.
 - Don't stack terms. "The Runner boots the Session's Sandbox from the Repo's Environment's Build" is four definitions in one sentence. Introduce one at a time, or say it plainly first and name it after.

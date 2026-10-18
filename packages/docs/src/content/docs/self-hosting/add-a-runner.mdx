@@ -9,7 +9,7 @@ import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
 Connect a machine to the Hub as a Runner, so Sessions can run on it.
 
-Each Runner connects out to the Hub, so the Hub never reaches into it. A Runner needs no Claude Code and no Claude sign-in: its Sessions run on their Creator's [Claude credential](/guides/add-your-claude-credential/).
+Each Runner connects out to the Hub, so the Hub never reaches into it. A Runner needs no Claude Code, no pi and no sign-in at any Provider: its Sessions run on their Creator's [Connected providers](/guides/connect-your-providers/).
 
 ## What you need
 
@@ -70,7 +70,7 @@ To script it from the Hub's machine, issue a token instead.
 
 ## Manage Runners
 
-The **Runners** page lists each Runner: online or offline, its version, and its Sessions. A Runner has no Claude credential of its own: each Session runs on its Creator's.
+The **Runners** page lists each Runner: online or offline, its version, and its Sessions. A Runner has no account at a Provider of its own: each Session runs on its Creator's.
 
 ![The Runners page, with studio online and its Monitor open, showing tiles and charts of its disk, memory and load, and ci-box offline, behind the Hub and low on disk.](../../../assets/screenshots/runners.png)
 
@@ -87,6 +87,20 @@ A Runner's name is its identity: its Sessions belong to the Runner of that name.
 - **A name the Hub has** can't be taken by a new Runner. `kndl runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up. Use **Re-pair** instead.
 - **A removed Runner's name** is free again. A machine paired under it takes over the removed Runner's Archived Sessions.
 - **For a clean slate**, pair under a new name: `--name build-box-2`.
+
+## What a Runner downloads
+
+A Runner gets the pinned versions of what Sessions run the first time it needs them, and keeps them for every later start. Each is mounted read-only into every Sandbox.
+
+| What                                                      | When                                       | From                                                                                   | Kept in              |
+| --------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------- |
+| pi, the agent Sessions run                                | As the Runner starts                       | The npm registry, installed with Bun                                                   | `<home>/pi`          |
+| Node.js, which pi runs on                                 | As the Runner starts                       | `nodejs.org` and `unofficial-builds.nodejs.org`, a build for each C library images use | `<home>/pi`          |
+| Claude Code, for Claude's Models and Claude Code Sessions | At the first Session that needs each build | The npm registry                                                                       | `<home>/claude-code` |
+
+The first start takes a few seconds more while it gets pi. Its log then says `Sessions can run pi …`. If it can't get pi, its log says `Sessions run Claude Code alone: …`, and its new Sessions run Claude Code until it next starts: see [New Sessions run Claude Code](/troubleshooting/sessions/#new-sessions-run-claude-code).
+
+`RUNNER_SANDBOX_PI_CACHE` and `RUNNER_SANDBOX_CLAUDE_CACHE` move the caches: see [Configuration](/reference/configuration/#runner).
 
 ## Keep Runners on the Hub's commit
 

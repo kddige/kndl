@@ -1,6 +1,6 @@
 ---
 title: Work with subagents
-description: Have a Session hand work to Claude Code's subagents, then follow, message, stop and resume them, and merge a worktree agent's work.
+description: Have a Session hand work to subagents, on any of your Models, then follow, message, stop and resume them, and merge a worktree agent's work.
 sidebar:
   order: 3
 ---
@@ -15,15 +15,14 @@ Have a Session hand work to [subagents](/reference/glossary/), then follow, mess
 
 ## Ask for subagents
 
-Claude starts subagents with Claude Code's Agent tool. Ask for them in a prompt:
+Ask for them in a prompt:
 
 ```text
-Use a background agent to write the changelog, and another, in a worktree, to update the API docs.
+Use one agent to find every caller of parseConfig, and another to draft the changelog.
 ```
 
-- **In the background**, the default, an agent keeps running after the Turn ends. When it's done, Claude Code starts a Turn to read its result.
-- **In the foreground**, the Turn waits for the agent.
-- **In a worktree**, the agent works in its own checkout, on its own branch.
+- **In a pi Session**, each agent runs on the Session's Model, or on any other of yours the prompt names. The Turn waits for the agents' answers, and several asked for at once run side by side. A subagent can't start agents of its own or ask anyone questions.
+- **In a Claude Code Session**, Claude Code's Agent tool starts them. **In the background**, the default, an agent keeps running after the Turn ends, and Claude Code starts a Turn to read its result when it's done. **In the foreground**, the Turn waits for it. **In a worktree**, it works in its own checkout, on its own branch.
 
 Every agent shares the Session's Sandbox. If they need more CPU or memory, raise the [Environment's resources](/guides/set-up-an-environment/#set-the-resources).
 
@@ -31,12 +30,12 @@ Every agent shares the Session's Sandbox. If they need more CPU or memory, raise
 
 Each agent is a card in the transcript that streams its work. In the sidebar, the Session's agents are listed under its row, each with a status:
 
-| Status      | Meaning                                                |
-| ----------- | ------------------------------------------------------ |
-| Running     | The agent is working.                                  |
-| Done        | The agent finished.                                    |
-| Stopped     | The Creator, or Claude, stopped it.                    |
-| Interrupted | The Session's Claude Code stopped while the agent ran. |
+| Status      | Meaning                                          |
+| ----------- | ------------------------------------------------ |
+| Running     | The agent is working.                            |
+| Done        | The agent finished.                              |
+| Stopped     | The Creator, or the Session's agent, stopped it. |
+| Interrupted | The Session's agent stopped while this one ran.  |
 
 To open an agent's view, click its row in the sidebar, or **Message or stop it** on its card. **Back to the chat** returns to the transcript.
 
@@ -50,23 +49,23 @@ In the agent's view:
 
 1. **To message a running agent**, type in the box and press **Send message**. The agent reads it, with your name, at its next tool call.
 
-2. **To stop it**, press **Stop agent**. Claude Code starts a Turn to tell the Session's Claude.
+2. **To stop it**, press **Stop agent**. The Session's agent is told it stopped.
 
 3. **To resume an agent** that is Done, Stopped or Interrupted, type what it should do and press **Resume**. It picks up where it left off. A message to an agent of an Asleep Session wakes the Session first.
 
 </Steps>
 
-**Stop** on a Turn doesn't stop a background agent. Stop it from its view.
+In a Claude Code Session, **Stop** on a Turn doesn't stop a background agent. Stop it from its view.
 
 ## After sleep or a restart
 
-Agents run inside the Session's Claude Code, so they stop when it does: when the Session sleeps, when its model or Environment changes, or when its Runner is lost. While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
+Subagents run inside the Session's pi or Claude Code, so they stop when it does: when the Session sleeps or restarts, when its Environment changes, or when its Runner is lost. A Claude Code Session's agents also stop when its model changes. While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
 
 Agents that were running show as Interrupted. Their work so far is kept: resume one to carry on.
 
 ## Merge a worktree agent's work
 
-A worktree agent works on the branch `worktree-agent-<agent id>`, shown on its card. To bring its work onto the Session's Work branch, ask:
+In a Claude Code Session, a worktree agent works on the branch `worktree-agent-<agent id>`, shown on its card. To bring its work onto the Session's Work branch, ask:
 
 ```text
 Merge the worktree agent's branch into this branch.

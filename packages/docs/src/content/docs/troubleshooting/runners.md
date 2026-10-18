@@ -163,7 +163,7 @@ Updating this Runner to the Hub's commit (the Hub runs 1a2b3c4d5e6f on main).
 The hub-link mod isn't built: …/packages/mod/plugins/hub-link/hooks/hub-link-lib.js is missing. Run `bun run mod:build`.
 ```
 
-**Why.** The Runner loads the mod into each Session's Claude Code, and nothing has built it.
+**Why.** The Runner loads the mod into each Session's agent, and nothing has built it.
 
 **Fix.**
 

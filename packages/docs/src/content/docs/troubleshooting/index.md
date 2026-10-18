@@ -28,7 +28,7 @@ kndl doctor --fix
 | `kndl logs hub`, `kndl logs runner` | Why a service won't start, refused connections, sign-in failures, what happened to Sandboxes. Add `-f` to follow. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`. |
 | **Show log** on a Session's **Starting…** banner | The output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** tab | Claude Code's own screen. |
+| A Session's **Terminal** tab | The agent's own screen: pi's or Claude Code's. |
 | `https://<your Hub>/health` | `{"status":"ok"}` when the Hub is up. |
 
 Running kndl from a checkout? The logs are in the terminals running `bun run hub` and `bun run runner`, and the Hub's settings in `packages/hub/.env.local`. See [Develop kndl](/contributing/develop-kndl/).
@@ -98,6 +98,9 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `You don't have access to … on GitHub` | [Sessions](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) |
 | A Sensitive variable can't be saved | [Sessions](/troubleshooting/sessions/#a-sensitive-variable-cant-be-saved) |
 | New Session asks for your Claude credential, or a Session sleeps for want of one | [Sessions](/troubleshooting/sessions/#you-have-no-claude-credential) |
+| **Connect a Provider first**, or a Session sleeps for want of Models | [Sessions](/troubleshooting/sessions/#you-have-no-models) |
+| A Turn says **Failed** in a pi Session | [Sessions](/troubleshooting/sessions/#a-turn-fails-on-a-providers-model) |
+| New Sessions run Claude Code, or `This Runner doesn't run pi Sessions` | [Sessions](/troubleshooting/sessions/#new-sessions-run-claude-code) |
 | `Only …, who started this Session, can drive it` | [Sessions](/troubleshooting/sessions/#only-someone-else-can-drive-this-session) |
 | A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |
 | `There is no such Session.` | [Sessions](/troubleshooting/sessions/#there-is-no-such-session) |

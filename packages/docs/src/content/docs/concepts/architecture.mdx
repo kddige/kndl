@@ -12,54 +12,55 @@ kndl has three parts: a Hub that people sign in to, Runners that run Sessions, a
 
 <ArchitectureDiagram />
 
-- **The Hub** is one Bun process with a SQLite database. It keeps every Session, its history and its [Prompt queue](/reference/glossary/#prompt-queue), and relays prompts and replies between people and Runners.
+- **The Hub** is one Bun process with a SQLite database. It keeps every Session, its history and its [Prompt queue](/reference/glossary/#prompt-queue), and relays prompts and replies between people and Runners. It also holds each person's [Connected providers](/reference/glossary/#connected-provider), and carries their Sessions' model calls.
 - **A Runner** is a machine that runs Sessions. It connects out to the Hub over a WebSocket, so the Hub never needs to reach it.
-- **A Sandbox** is a microVM on a Runner, one per Session. The Session's Claude Code runs there, with every tool, hook and command it starts.
+- **A Sandbox** is a microVM on a Runner, one per Session. The Session's agent runs there, with every tool and command it starts.
 
 Browsers, Runners and each Session's mod talk to the Hub, never to each other.
 
 ## A Session, end to end
 
-A Session is one Claude Code conversation on one Repo. When someone starts one:
+A Session is one agent conversation on one Repo. When someone starts one:
 
 1. The Hub records it and picks a Runner, or the one you chose.
 2. The Runner clones the Repo into the Session's Workspace, on its Work branch.
 3. The Runner boots the Sandbox from the Repo's [Environment](/concepts/environments/), with the Workspace mounted at `/workspace`.
-4. It starts Claude Code in the Sandbox, with kndl's mod loaded. The mod connects the Session to the Hub.
-5. A prompt from the Session's Creator goes to the Hub, into the Session's Prompt queue. When Claude Code is idle, the Hub hands the mod the next prompt.
-6. As Claude works, the mod reports its text, each tool call and each subagent to the Hub. The Hub masks secrets and sends it to everyone in the Session.
+4. It starts the Session's [Harness](/reference/glossary/#harness), the program that runs its agent, in the Sandbox, with kndl's mod loaded. The mod connects the Session to the Hub.
+5. A prompt from the Session's Creator goes to the Hub, into the Session's Prompt queue. When the agent is idle, the Hub hands the mod the next prompt.
+6. As the agent works, the mod reports its text, each tool call and each subagent to the Hub. The Hub masks secrets and sends it to everyone in the Session.
 
 The Hub holds the queue, so the Creator can send prompts while a Turn runs. They run in order, one Turn at a time.
 
-## Claude Code in the Sandbox
+## The agent in the Sandbox
 
-Claude Code runs inside the Sandbox, so its tools run where it runs ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)). Tools, hooks, skills, the Repo's `CLAUDE.md` and settings, and subagents behave as they do on a laptop.
+A Session's Harness runs inside the Sandbox, so its tools run where it runs ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)). It's [pi](https://pi.dev) wherever the Runner runs it, and Claude Code for a Session started with `?harness=claude-code`, or on a Runner that can't run pi ([ADR 0029](/contributing/decisions/0029-pi-is-the-harness-and-the-hub-is-the-gateway-to-every-provider/)). A Session keeps its Harness for life.
 
 - **It never asks for approval.** The Sandbox is the boundary, not a prompt ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- **It runs on its Creator's setup token.** The Runner fetches the token from the Hub as the Session starts or wakes, and Claude Code talks to Anthropic directly. See the [security model](/concepts/security-model/#the-creators-token).
-- **The mod reaches the Hub through the Runner.** The Runner's mod relay passes the mod's calls and MCP traffic to the Hub, so the Sandbox needs no route to it.
-- **Its version is pinned.** Each kndl version runs one tested Claude Code version, which the Runner downloads once and shares with every Sandbox.
+- **pi's model calls go through the Hub.** pi sends each one to the Hub's Gateway, on the Session token, and the Gateway sends it on to the Provider with the Creator's credential. The credential stays on the Hub. See the [security model](/concepts/security-model/#the-gateway).
+- **Claude's Models run through Claude Code.** For a Claude Model, pi runs Claude Code in the Sandbox as the model alone, with pi's tools, on the Creator's setup token. Claude Code talks to Anthropic directly, as it does in a Claude Code Session. See [The Creator's token](/concepts/security-model/#the-creators-token).
+- **The mod reaches the Hub through the Runner.** The Runner's mod relay passes the mod's calls, model calls and MCP traffic to the Hub, so the Sandbox needs no route to it.
+- **Its versions are pinned.** Each kndl version runs one tested pi, on one Node.js, and one tested Claude Code, which the Runner downloads once and shares with every Sandbox.
 
 ## Sandboxes are disposable
 
 A Session's data lives on disks that outlive its Sandbox ([ADR 0006](/contributing/decisions/0006-workspace-on-host-sandbox-disposable/)). The Runner can stop a Sandbox when the Session sleeps, or replace it with a newer one, and nothing is lost.
 
-| What                                    | Where it lives                                                   |
-| --------------------------------------- | ---------------------------------------------------------------- |
-| Source code                             | The Workspace, a directory on the Runner mounted at `/workspace` |
-| `node_modules` and package caches       | Disks of the Session's own, faster than the host mount           |
-| Docker's data                           | Its own disk, when the Environment turns Docker on               |
-| Claude Code's conversation and settings | Its own disk, so a woken Session carries on                      |
+| What                                  | Where it lives                                                   |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| Source code                           | The Workspace, a directory on the Runner mounted at `/workspace` |
+| `node_modules` and package caches     | Disks of the Session's own, faster than the host mount           |
+| Docker's data                         | Its own disk, when the Environment turns Docker on               |
+| The agent's conversation and settings | Its own disk, so a woken Session carries on                      |
 
 Only what git in the Sandbox pushes leaves the Runner.
 
 ## Several people, one Session
 
-The person who started a Session is its Creator. It runs on their Claude credential and commits as them, and only they drive it ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)).
+The person who started a Session is its Creator. It runs on their Connected providers and commits as them, and only they drive it ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)).
 
-- **The Creator drives.** They prompt it, steer and cancel its queued prompts, answer Claude's questions, and stop Turns and subagents. Sleep, wake, Keep awake, restart, the model and thinking level, rename, delete and restore are theirs too.
+- **The Creator drives.** They prompt it, steer and cancel its queued prompts, answer the agent's questions, and stop Turns and subagents. Sleep, wake, Keep awake, restart, the model and thinking level, rename, delete and restore are theirs too.
 - **Participants watch.** Anyone with access to the Repo on GitHub can join the Session, follow it live or Archived, see its Attachments, and [forward its ports](/guides/forward-a-sessions-ports/). Their prompt box is off, with a note saying who drives.
-- **The terminal is the Creator's.** The **Terminal** tab mirrors Claude Code's own screen, for what the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C. Only the Creator sees it.
+- **The terminal is the Creator's.** The **Terminal** tab mirrors the agent's own screen, pi's or Claude Code's, for what the chat doesn't handle, such as their dialogs, Esc and Ctrl-C. Only the Creator sees it.
 
 To carry on someone else's work, start a Session of your own on its Work branch once it's pushed. The conversation doesn't come with it. Forking a Session ([#332](https://github.com/kddige/kndl/issues/332)), suggesting prompts to its Creator ([#333](https://github.com/kddige/kndl/issues/333)) and Sessions on an API key that several people drive ([#334](https://github.com/kddige/kndl/issues/334)) are open issues.
 
@@ -69,10 +70,11 @@ To carry on someone else's work, start a Session of your own on its Work branch 
 | --------------------------------------------------------- | ----------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
 | Sessions, history, Prompt queues, Environments, Variables | Yes, in SQLite          |                               |                                                                                            |
 | The GitHub App's private key                              | Yes                     |                               |                                                                                            |
-| People's Claude credentials                               | Encrypted               | Passed on as a Session starts | The Creator's, in Claude Code's environment                                                |
+| People's Connected providers                              | Encrypted               |                               |                                                                                            |
+| People's Claude credentials                               | Encrypted               | Passed on as a Session starts | The Creator's, in pi's or Claude Code's environment                                        |
 | The mod relay                                             |                         | Yes                           |                                                                                            |
 | The Workspace                                             |                         | Yes                           | Mounted at `/workspace`                                                                    |
-| Claude Code, the mod, and your Repo's code running        |                         |                               | Yes                                                                                        |
+| pi, Claude Code, the mod, and your Repo's code running    |                         |                               | Yes                                                                                        |
 | A GitHub token for the Session's Repo                     |                         |                               | Yes, in memory ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)) |
 | The Environment's Variables                               | Encrypted, if Sensitive | In memory, while needed       | Yes                                                                                        |
 

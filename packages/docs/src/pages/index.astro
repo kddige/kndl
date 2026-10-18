@@ -36,7 +36,7 @@ const mallows = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>kndl · Multiplayer agentic sessions, self-hosted</title>
-    <meta name="description" content="kndl is a Hub you host. A team runs Claude Code Sessions in Sandboxes on machines you own: whoever starts a Session drives it, and the team watches it live from the web." />
+    <meta name="description" content="kndl is a Hub you host. A team runs coding-agent Sessions in Sandboxes on machines you own, on any Provider's Models: whoever starts a Session drives it, and the team watches it live from the web." />
     <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
     <link rel="icon" href={`${base}favicon.ico`} sizes="32x32" />
     <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
@@ -101,8 +101,8 @@ const mallows = [
         </div>
         <div class="pitch-body">
           <p class="lede">
-            kndl is a self-hosted Hub for Claude Code Sessions. Each Session works in its own Sandbox
-            on a machine you own. Whoever starts it drives it, and everyone with access to its Repo can
+            kndl is a self-hosted Hub for coding-agent Sessions, on any Provider's Models. Each Session
+            works in its own Sandbox on a machine you own. Whoever starts it drives it, and everyone with access to its Repo can
             watch it live.
           </p>
           <div class="install">
@@ -218,7 +218,7 @@ const mallows = [
       <div class="point">
         <h3>Sessions you share</h3>
         <p>
-          Everyone with access to a Repo can open its Sessions and follow Claude live. The person
+          Everyone with access to a Repo can open its Sessions and follow the agent live. The person
           who started one drives it: their prompts wait in a queue, or join the running Turn with
           <b>Steer</b>.
         </p>
@@ -227,7 +227,7 @@ const mallows = [
       <div class="point">
         <h3>A Sandbox per Session</h3>
         <p>
-          Claude Code and every command it runs live in a microVM, built from the Repo's
+          The agent and every command it runs live in a microVM, built from the Repo's
           Environment. Nothing runs on the host.
         </p>
         <a href={doc("concepts/environments/")}>Environments</a>
@@ -241,10 +241,10 @@ const mallows = [
         <a href={doc("concepts/architecture/")}>How kndl works</a>
       </div>
       <div class="point">
-        <h3>Your own Claude</h3>
+        <h3>Your own accounts</h3>
         <p>
-          Each person adds their own Claude setup token once. Only the Sessions they start run on
-          it, and only they prompt them.
+          Each person connects their own Providers once: a subscription, an API key or a Claude
+          setup token. Only the Sessions they start run on them, and only they prompt them.
         </p>
         <a href={doc("concepts/security-model/")}>The security model</a>
       </div>

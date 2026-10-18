@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Fixes for cloning and pushing. Two gits run for a Session: the Runner's, which clones the Repo, and the Sandbox's, which Claude uses. See [Git from Sessions](/concepts/git-from-sessions/) for how each gets access.
+Fixes for cloning and pushing. Two gits run for a Session: the Runner's, which clones the Repo, and the Sandbox's, which the agent uses. See [Git from Sessions](/concepts/git-from-sessions/) for how each gets access.
 
 ## git clone exited with 128
 

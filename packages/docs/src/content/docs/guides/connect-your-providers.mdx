@@ -1,0 +1,105 @@
+---
+title: Connect your Providers
+description: Sign in with a subscription or paste an API key on your Account page, so the Sessions you start can run on that Provider's Models.
+sidebar:
+  order: 7
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Connect your own accounts at OpenAI, xAI, GitHub Copilot, Google and other [Providers](/reference/glossary/#provider), so the Sessions you start can run on their Models.
+
+A Session runs only on its Creator's [Connected providers](/reference/glossary/#connected-provider). A Runner has none of its own, so until you connect one, **New Session** asks you to.
+
+## What you need
+
+- **An account at a Provider:** a subscription it lets you sign in with, such as ChatGPT, or an API key.
+- **The Hub's secrets key**, `HUB_SECRETS_KEY`, which whoever runs the Hub sets up: see [Use variables and secrets](/guides/use-variables-and-secrets/#what-you-need).
+
+Claude's Models run on your Claude setup token, not on a Provider you connect here: see [Add your Claude credential](/guides/add-your-claude-credential/).
+
+## Find your Providers
+
+Press your name at the bottom of the sidebar, then **Account**. Under **Providers**, your Connected providers come first, each with a card. Below them, **Connect a Provider** lists the rest in two groups:
+
+- **Subscriptions**: Providers you sign in to with a subscription. Most of them also take an API key.
+- **API keys**: Providers that take only a key. **Show … more** lists the ones after the first six.
+
+## Sign in with a subscription
+
+<Steps>
+
+1. On the Provider's line, press its sign-in button:
+
+   | Provider        | Button                                  | Then you          |
+   | --------------- | --------------------------------------- | ----------------- |
+   | OpenAI          | **Sign in with ChatGPT**                | Paste the address |
+   | xAI             | **Sign in with SuperGrok or X Premium** | Enter a code      |
+   | GitHub Copilot  | **Sign in with GitHub Copilot**         | Enter a code      |
+   | OpenRouter      | **Sign in with OpenRouter**             | Paste the address |
+   | Kimi For Coding | **Sign in with Kimi Code**              | Enter a code      |
+   | Meta            | **Sign in with Meta**                   | Enter a code      |
+
+   GitHub Copilot first asks **Which GitHub is your Copilot subscription on?** Pick **GitHub.com**, or **GitHub Enterprise** and type its address, such as `company.ghe.com`.
+
+2. Finish the sign-in, as the line shows:
+   - **To enter a code**, press **Copy code**, then **Open the sign-in page**, and enter the code there. The line says **Waiting for …** until you have.
+   - **To paste the address**, press **Open the sign-in page** and sign in. Your browser then lands on a page at `127.0.0.1` that may not load. That's expected: the Hub's machine is waiting for it, not yours. Copy the page's address from the address bar, paste it in **Paste the address the page you landed on shows**, and press **Continue**.
+
+3. When the sign-in is done, the page says **Connected …**, and the Provider gets a card of its own.
+
+</Steps>
+
+**Cancel** stops a sign-in. If one fails, the line says **The sign-in failed** and why; press the sign-in button to try again.
+
+## Paste an API key
+
+<Steps>
+
+1. On the Provider's line, press **API key**, or **Add API key** for a Provider that takes only a key.
+
+2. Paste the key in its field, named as the Provider names it, such as **Gemini API key**, and press **Connect**.
+
+</Steps>
+
+The Hub asks the Provider for its Models with the key before it saves it. If the Provider rejects it, nothing is saved, and the line says `<Provider> rejected this key…`.
+
+## Check its Models
+
+A Provider's card shows the **Account** you signed in as, or what the key **Ends in**, never the token or key itself. Under them, **… Models · checked …** opens the Models your Sessions can pick, each with its thinking levels.
+
+The Hub asks the Provider for them when you connect it, and again when its list is a day old. Press **Refresh models** to ask now, such as after you change plans.
+
+- **Couldn't check its Models** means the Provider didn't list them this time. Your Sessions keep the Models it listed before.
+- **It doesn't work anymore** means the Provider refused to renew the sign-in, such as after you signed out there. Press **Replace** and connect it again.
+
+## Replace or disconnect it
+
+- **Replace** signs in again, or takes a new key, in place of the old one.
+- **Disconnect** makes the Hub forget the tokens or key. It doesn't sign you out at the Provider or revoke the key.
+
+Your Sessions stay awake either way. After a disconnect, a Session on that Provider's Models can't run a Turn until you connect it again or [switch its Model](/guides/manage-a-session/#choose-the-model-and-thinking-level).
+
+## Where your accounts are used
+
+Only the Sessions you start run on your Connected providers, with their subagents, and only you prompt them. Your tokens and keys stay on the Hub, encrypted. A Session's model calls go through the Hub's [Gateway](/concepts/security-model/#the-gateway), which adds them on the way out, so they never reach a Runner or a Sandbox.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Work in a Session"
+    href="/kndl/guides/work-in-a-session/"
+    description="Start a Session on one of your Models, and drive it."
+  />
+  <LinkCard
+    title="Add your Claude credential"
+    href="/kndl/guides/add-your-claude-credential/"
+    description="Run Claude's Models on your own Claude subscription."
+  />
+  <LinkCard
+    title="Security model"
+    href="/kndl/concepts/security-model/"
+    description="Where your tokens and keys go, and who can use them."
+  />
+</CardGrid>

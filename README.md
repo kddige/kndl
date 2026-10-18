@@ -12,7 +12,7 @@
 > [!NOTE]
 > Issues and pull requests are open to maintainers only for now, while we set the baseline kndl grows from. Please use [Discussions](https://github.com/kddige/kndl/discussions) for bugs, ideas and questions in the meantime.
 
-kndl (said "kindle") is a self-hosted Hub where a team runs Claude Code Sessions in Sandboxes on any number of Runners, and watches them together from the web. Each Session is driven by the person who started it.
+kndl (said "kindle") is a self-hosted Hub where a team runs coding-agent Sessions in Sandboxes on any number of Runners, on the Models of any Provider they connect, and watches them together from the web. Each Session is driven by the person who started it.
 
 **Documentation: <https://kddige.github.io/kndl/>**
 
@@ -21,8 +21,8 @@ kndl is early: v1 is being built, and things change quickly.
 ## How it works
 
 - The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI. It is invite-only: its **Owner** invites everyone else.
-- A **Runner**, on each machine that runs Sessions, starts each Session's Claude Code in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing Claude runs touches the host.
-- Each Session runs on its **Creator**'s own Claude setup token. Claude Code has it in its environment, in the Sandbox, and talks to Anthropic directly.
+- A **Runner**, on each machine that runs Sessions, starts each Session's agent in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing the agent runs touches the host. The agent is [pi](https://pi.dev), or Claude Code for a Session started on it.
+- Each Session runs on its **Creator**'s own accounts: the **Providers** they connected on the Hub, with a subscription sign-in or an API key, and their Claude setup token for Claude's Models. The Hub keeps the Providers' credentials and adds them to model calls on the way out, so they never enter a Sandbox. Claude's token is the exception: Claude Code holds it in the Sandbox and talks to Anthropic directly.
 - Only the Creator drives a Session: prompts it, answers it, stops it, controls it and uses its terminal. Everyone else with access to its Repo watches it live, subagents included.
 
 Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and design decisions are in [`docs/adr/`](docs/adr/).
@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 
 It installs into `~/.kndl`. Then run `kndl onboard` to set up a Hub, a Runner, or both. See [Install kndl](https://kddige.github.io/kndl/self-hosting/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/guides/install-the-cli-from-a-hub/).
 
-To run it from this checkout on one machine, without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, a Claude subscription for a `claude setup-token` token, which you paste on your Account page, and a Mac with Apple Silicon or Linux with KVM.
+To run it from this checkout on one machine, without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, an account at a Provider (a subscription or an API key, or a Claude subscription for a `claude setup-token` token), which you connect on your Account page, and a Mac with Apple Silicon or Linux with KVM.
 
 ```sh
 bun install
@@ -62,9 +62,9 @@ One Bun workspace in TypeScript, with [Effect](https://effect.website).
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas. |
 | [`packages/hub`](packages/hub) | The Hub: an Effect HTTP server on Bun, with SQLite. |
-| [`packages/runner`](packages/runner) | A Runner: Claude Code in tmux in a microsandbox Sandbox, and the mod relay to the Hub. |
+| [`packages/runner`](packages/runner) | A Runner: pi or Claude Code in tmux in a microsandbox Sandbox, and the mod relay to the Hub. |
 | [`packages/cli`](packages/cli) | The `kndl` command: installs, runs and looks after a Hub and Runner as services. |
-| [`packages/mod`](packages/mod) | The Claude Code mod each Session loads, as two plugins: `hub-link` reports to the Hub, `hub-link-commands` runs its commands. |
+| [`packages/mod`](packages/mod) | The mod each Session loads: a pi extension, with the Claude bridge, and for Claude Code two plugins, `hub-link`, which reports to the Hub, and `hub-link-commands`, which runs its commands. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, Base UI and StyleX. |
 | [`packages/docs`](packages/docs) | The documentation site: Astro Starlight. |
 | [`brand/`](brand) | The logo's sources. `bun run --filter @kndl/docs brand` makes the PNG and ICO files from them. |

@@ -11,13 +11,14 @@ Install kndl, and set the machine up as a Hub, a Runner or both, running as serv
 
 ## What each machine needs
 
-|                                             | Hub                       | Runner |
-| ------------------------------------------- | ------------------------- | ------ |
-| macOS or Linux, with git and curl           | Yes                       | Yes    |
-| A Mac with Apple Silicon, or Linux with KVM |                           | Yes    |
-| A port that browsers and Runners reach      | `7777`, or behind a proxy |        |
+|                                             | Hub                               | Runner                                                                       |
+| ------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| macOS or Linux, with git and curl           | Yes                               | Yes                                                                          |
+| A Mac with Apple Silicon, or Linux with KVM |                                   | Yes                                                                          |
+| A port that browsers and Runners reach      | `7777`, or behind a proxy         |                                                                              |
+| Outbound HTTPS                              | To GitHub and the Providers' APIs | To GitHub, the npm registry, `nodejs.org` and `unofficial-builds.nodejs.org` |
 
-The Hub is one [Bun](https://bun.sh) process with a SQLite database, and needs little CPU or memory. A Runner runs one [microsandbox](https://github.com/microsandbox/microsandbox) microVM per running Session, so give it the CPU, memory and disk. A Runner needs no Claude Code and no Claude sign-in.
+The Hub is one [Bun](https://bun.sh) process with a SQLite database, and needs little CPU or memory. A Runner runs one [microsandbox](https://github.com/microsandbox/microsandbox) microVM per running Session, so give it the CPU, memory and disk. A Runner needs no Claude Code, no pi and no sign-in at any Provider: it [downloads](/self-hosting/add-a-runner/#what-a-runner-downloads) what Sessions run, and each Session runs on its Creator's accounts.
 
 ## Install
 

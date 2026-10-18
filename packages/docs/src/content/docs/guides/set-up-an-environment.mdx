@@ -31,7 +31,7 @@ Changes are a draft in your browser until you apply them.
 
 **Bootstrap script** runs once per build on each Runner, before any Workspace exists. Install what every Session needs here: language runtimes, CLIs and system packages.
 
-Tools that add themselves to `PATH` in `~/.bashrc` or `~/.profile`, such as mise, rustup and nvm, are on `PATH` for Claude's tools. For example, to install Bun through mise:
+Tools that add themselves to `PATH` in `~/.bashrc` or `~/.profile`, such as mise, rustup and nvm, are on `PATH` for the agent's tools. For example, to install Bun through mise:
 
 ```sh
 curl -fsSL https://mise.run | sh
@@ -39,7 +39,7 @@ echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
 ~/.local/bin/mise use -g bun@latest
 ```
 
-To let Claude use `gh`, install it here. On the default image:
+To let the agent use `gh`, install it here. On the default image:
 
 ```sh
 install -d -m 0755 /etc/apt/keyrings
@@ -68,7 +68,7 @@ Turn on **Docker in every Sandbox** if Sessions should run containers, such as a
 
 ## Add variables
 
-**Variables** reach both scripts and every tool Claude runs, as environment variables. See [Use variables and secrets](/guides/use-variables-and-secrets/).
+**Variables** reach both scripts and every tool the agent runs, as environment variables. See [Use variables and secrets](/guides/use-variables-and-secrets/).
 
 ## Test and apply
 

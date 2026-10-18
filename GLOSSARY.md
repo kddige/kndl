@@ -17,7 +17,7 @@ What a Runner reports of its host every 30 seconds: free and total disk of the v
 _Avoid_: health check, heartbeat, metrics
 
 **Claude credential**:
-A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub: their Connected provider for Anthropic. The Sessions they create run on it, on any Runner, and nobody else's prompts reach it.
+A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub: their Connected provider for Anthropic. Claude's Models, and Claude Code Sessions, run on it in the Sessions they create, on any Runner, and nobody else's prompts reach it.
 _Avoid_: login, Runner login, OAuth token, Claude key, API key
 
 **Pairing code**:
@@ -55,7 +55,7 @@ _Avoid_: track, branch, ring
 ## Models
 
 **Harness**:
-The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: Claude Code, or pi (ADR 0029). Each Session has one.
+The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: pi, wherever the Runner runs it, or Claude Code (ADR 0029). Each Session keeps the one it started with.
 _Avoid_: driver, engine, agent, backend
 
 **Provider**:
@@ -63,11 +63,11 @@ A company whose Models a Session can run on, such as Anthropic or OpenAI.
 _Avoid_: vendor, platform, backend
 
 **Connected provider**:
-A Member's own account at one Provider, connected on the Hub by signing in with a subscription or pasting an API key, and held write-only and encrypted there. Only the Sessions that Member creates use it.
+A Member's own account at one Provider, connected on the Hub by signing in with a subscription or pasting an API key, and held write-only and encrypted there; for Anthropic, their Claude credential. Only the Sessions that Member creates use it.
 _Avoid_: integration, linked account, API key (alone), Installation
 
 **Model**:
-One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it, to any Provider's, between Turns, and the conversation carries over.
+One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it between Turns, in a pi Session to any Provider's, and the conversation carries over.
 _Avoid_: engine, LLM, backend
 
 **Thinking level**:
