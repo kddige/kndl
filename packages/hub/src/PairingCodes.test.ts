@@ -287,7 +287,8 @@ describe("Runners", () => {
             updater,
             models,
             sysinfo: null,
-            harnesses: null,
+            // A hello that doesn't say runs Claude Code alone.
+            harnesses: ["ClaudeCode"],
           }),
         )
 
