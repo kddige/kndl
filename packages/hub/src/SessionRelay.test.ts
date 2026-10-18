@@ -2696,7 +2696,7 @@ describe("switching Harness (ADR 0030)", () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "Pi" } })
     const { runner, web, sessionId, mod } = scene
-    expect((await mod.hello({ switchesModels: true, takesHandoffs: true })).status).toBe(200)
+    expect((await mod.hello({ switchesModels: true })).status).toBe(200)
     joinSession(web, sessionId)
     await web.take("SessionHistory")
     web.send({ _tag: "SetSessionModel", sessionId })
@@ -2754,7 +2754,6 @@ describe("switching Harness (ADR 0030)", () => {
         await piMod.hello({
           conversationId: piConversation,
           model: "openai/gpt-6-sol",
-          takesHandoffs: true,
         })
       ).status,
     ).toBe(200)
@@ -2791,7 +2790,7 @@ describe("switching Harness (ADR 0030)", () => {
     })
     runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
     const claudeMod = new Mod(hub, sessionId, toClaudeCode.modToken)
-    expect((await claudeMod.hello({ takesHandoffs: true })).status).toBe(200)
+    expect((await claudeMod.hello()).status).toBe(200)
     const [back] = await claudeMod.next("DeliverHandoff", 500)
     expect(back).toMatchObject({ from: "Pi" })
     expect(back?.text).toContain("Done on GPT.")
@@ -2852,7 +2851,7 @@ describe("switching Harness (ADR 0030)", () => {
     expect(await runner.untaken("StartSession")).toEqual([])
   })
 
-  test("an Asleep Session switches as it wakes, and a mod that takes no handoff starts without one", async () => {
+  test("an Asleep Session switches as it wakes, and is handed what it hasn't seen there", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
     const { runner, web, sessionId, mod } = scene
@@ -2877,18 +2876,15 @@ describe("switching Harness (ADR 0030)", () => {
     const piMod = new Mod(hub, sessionId, start.modToken)
     expect((await piMod.hello({ conversationId: piConversation })).status).toBe(200)
     const commands = withoutPresence(await piMod.poll(500))
-    expect(commands.map((command) => command._tag)).toEqual(["DeliverPrompt"])
-    const prompt = commands[0] as Extract<Command, { _tag: "DeliverPrompt" }>
+    expect(commands.map((command) => command._tag)).toEqual(["DeliverHandoff", "DeliverPrompt"])
+    const [handoff, prompt] = commands as [
+      Extract<Command, { _tag: "DeliverHandoff" }>,
+      Extract<Command, { _tag: "DeliverPrompt" }>,
+    ]
+    expect(handoff).toMatchObject({ from: "ClaudeCode" })
+    expect(handoff.text).toContain("Added /health.")
     await piMod.post(...answered("t-2", "next", "Hello from pi.", prompt.promptId))
     await web.take("SessionEventLogged", turnEndedLogged("t-2"))
-    expect(
-      (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")).entry
-        .event,
-    ).toEqual({
-      _tag: "SandboxNoted",
-      message:
-        "pi started without a handoff of what happened on Claude Code: its mod doesn't take one.",
-    })
 
     // Its wake resumes pi's conversation now.
     await asleep(scene)
@@ -2917,9 +2913,7 @@ describe("switching Harness (ADR 0030)", () => {
     expect(start).not.toHaveProperty("resume")
     runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
     const piMod = new Mod(hub, sessionId, start.modToken)
-    expect(
-      (await piMod.hello({ conversationId: piConversation, takesHandoffs: true })).status,
-    ).toBe(200)
+    expect((await piMod.hello({ conversationId: piConversation })).status).toBe(200)
     const [handoff] = await piMod.next("DeliverHandoff", 500)
     expect(handoff?.text).toContain("alice switched the model to GPT-6-Sol, on pi.")
     expect(handoff?.text).toContain("Add a health check")

@@ -3821,30 +3821,15 @@ export class SessionRelay extends Context.Service<
       /**
        * Hands the Session's agent what its Harness hasn't seen, once the Session switched to it
        * (ADR 0030): a DeliverHandoff of its history after where that Harness last saw it, all of it
-       * for one new to the Session, queued before the next prompt, once. A mod that doesn't take
-       * one starts without it, and the Session says so.
+       * for one new to the Session, queued before the next prompt, once.
        */
-      const handOff = Effect.fn("SessionRelay.handOff")(function* (
-        session: SessionSummary,
-        hello: ModHello,
-      ) {
+      const handOff = Effect.fn("SessionRelay.handOff")(function* (session: SessionSummary) {
         const from = yield* sessions.handoffFrom(session.id)
         if (Option.isNone(from)) return
         yield* sessions.handoffDone(session.id)
         const to = harnessNow(session)
         const { name } = harnesses.of(session)
         const was = harnesses.of({ harness: from.value }).name
-        if (hello.takesHandoffs !== true) {
-          yield* Effect.logWarning(
-            `Session ${session.id}: its ${name} mod takes no handoff, so it starts without what happened on ${was}`,
-          )
-          return yield* logEvent(
-            session.id,
-            SandboxNoted.make({
-              message: `${name} started without a handoff of what happened on ${was}: its mod doesn't take one.`,
-            }),
-          )
-        }
         const seen = yield* sessions.seenSeq(session.id, to)
         const entries = yield* log.history(session.id, Option.getOrUndefined(seen))
         const last = entries.at(-1)
@@ -3881,7 +3866,7 @@ export class SessionRelay extends Context.Service<
           attaches: hello.attaches === true,
           switchesModels: hello.switchesModels === true,
         })
-        yield* handOff(session.value, hello)
+        yield* handOff(session.value)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
