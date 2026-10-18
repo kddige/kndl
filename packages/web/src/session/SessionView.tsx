@@ -35,6 +35,7 @@ import {
   DialogClose,
   Disclosure,
   EmptyState,
+  fieldText,
   IconButton,
   InfoIcon,
   InlineEdit,
@@ -54,7 +55,7 @@ import {
   Tooltip,
   TrashIcon,
 } from "../ui/index.ts"
-import { color, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, space } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
@@ -114,12 +115,10 @@ const styles = stylex.create({
   },
   centered: { display: "grid", placeItems: "center", flex: 1, padding: space.s4 },
   tabs: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
-  // The name being edited, in the title's type, as wide as a long name needs.
+  // The name being edited, as wide as a long name needs.
   nameField: {
     width: "24rem",
     maxWidth: "100%",
-    fontSize: text.md,
-    fontWeight: weight.semibold,
   },
   badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
   // Who keeps it awake, in the description line: the sun lines up with the text.
@@ -456,7 +455,7 @@ function LoadedSession({
                 renameSession(hub, summary, typed)
               }}
               onCancel={() => setRenaming(false)}
-              sx={styles.nameField}
+              sx={[styles.nameField, fieldText.title]}
             />
           ) : (
             title

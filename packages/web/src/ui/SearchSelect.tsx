@@ -40,6 +40,9 @@ export interface SearchSelectProps {
   sx?: stylex.StyleXStyles
 }
 
+// iOS zooms the page into a focused field under 16px, so the filter is 16px on touch screens.
+const TOUCH = "@media (pointer: coarse)"
+
 const styles = stylex.create({
   popup: {
     display: "flex",
@@ -71,7 +74,7 @@ const styles = stylex.create({
     backgroundColor: "transparent",
     color: color.text,
     fontFamily: font.sans,
-    fontSize: text.base,
+    fontSize: { default: text.base, [TOUCH]: text.lg },
     outline: "none",
     "::placeholder": { color: color.textSubtle },
   },

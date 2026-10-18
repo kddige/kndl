@@ -4,6 +4,9 @@ import * as stylex from "@stylexjs/stylex"
 import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode } from "react"
 import { color, control, leading, motion, radius, space, text, weight } from "./tokens.stylex.ts"
 
+// iOS zooms the page into a focused field under 16px, so fields are 16px on touch screens.
+const TOUCH = "@media (pointer: coarse)"
+
 export interface FieldProps {
   /** Every control needs a visible label; it is also the control's accessible name. */
   label: ReactNode
@@ -60,7 +63,7 @@ const styles = stylex.create({
     backgroundColor: { default: color.surface, "[data-disabled]": color.surfaceMuted },
     color: { default: color.text, "[data-disabled]": color.textSubtle },
     fontFamily: "inherit",
-    fontSize: text.base,
+    fontSize: { default: text.base, [TOUCH]: text.lg },
     lineHeight: leading.normal,
     cursor: { default: "text", "[data-disabled]": "not-allowed" },
     transitionProperty: "border-color",
@@ -78,10 +81,16 @@ const styles = stylex.create({
   input: {
     height: control.md,
   },
+  // On touch, 16px text needs the 32px box, as sidebar rows grow there too.
   inputSm: {
-    height: control.sm,
+    height: { default: control.sm, [TOUCH]: control.md },
     paddingInline: space.s2,
-    fontSize: text.sm,
+    fontSize: { default: text.sm, [TOUCH]: text.lg },
+  },
+  // A field that edits a title in place, in the title's type: 16px on touch, as every field is.
+  title: {
+    fontSize: { default: text.md, [TOUCH]: text.lg },
+    fontWeight: weight.semibold,
   },
   textarea: {
     display: "block",
@@ -141,6 +150,11 @@ export const fieldControl = {
   control: styles.control,
   input: styles.input,
   focus: styles.controlFocus,
+}
+
+/** Type for a field's text, where it isn't the field's own: `title` for a title edited in place. */
+export const fieldText = {
+  title: styles.title,
 }
 
 export type InputSize = "sm" | "md"
