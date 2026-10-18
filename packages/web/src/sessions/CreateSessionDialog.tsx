@@ -1,6 +1,6 @@
 import {
   type BranchChoice,
-  type Harness,
+  harnessForNewSession,
   harnessOfModel,
   branchNameProblem,
   newBranchProblem,
@@ -181,15 +181,13 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     (candidates.every(runsClaudeCode) && (claudeCredential !== null || claudeCodeAsked))
   // Until one is picked: Claude's Models on the Harness the Creator's Account page says, unless the
   // URL asks for Claude Code.
-  const defaultHarness: Harness = !piOffered
-    ? "ClaudeCode"
-    : !claudeCodeOffered
-      ? "Pi"
-      : !claudeCodeAsked &&
-          claudeHarness === "Pi" &&
-          providerModels?.some((model) => model.provider === "anthropic") === true
-        ? "Pi"
-        : "ClaudeCode"
+  const defaultHarness = harnessForNewSession({
+    pi: piOffered,
+    claudeCode: claudeCodeOffered,
+    asked: claudeCodeAsked ? "ClaudeCode" : undefined,
+    models: providerModels,
+    claudeHarness,
+  })
   // A choice another Runner picked since can't run goes back to the default.
   const chosenHarness = modelChoice === null ? defaultHarness : harnessOfModel(modelChoice.model)
   const harness = (chosenHarness === "Pi" ? piOffered : claudeCodeOffered)

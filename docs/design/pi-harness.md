@@ -128,7 +128,7 @@ A Session moves between pi and Claude Code when its Creator picks a model of the
 - **`GET /mod/history?before=<seq>&limit=<n>`** (`ModRoutes.ts`), on the mod token, answers `ModHistory { turns, earlierBefore? }`: the main loop's Turns before `before` (the latest, without it), oldest first, at most `limit` (20 by default, 50 at most), each a `HistoryTurn { seq, by, prompt, tools, answer, model? }` clipped as the handoff's. `earlierBefore` is there when earlier Turns are left. A Session the Hub doesn't know is `404`.
 - **The `session_history` tool**, in both mods, reads it as text: `before`, a Turn number, and `limit`, 10 by default and 50 at most, read leniently, as models pass numbers as strings. In Claude Code it is `mcp__hub-link-commands__session_history`, registered with `$.tool.register`, not deferred, so it is in the tool list from the first request.
 - **What runs Claude's Models** in a Member's new Sessions is theirs to choose, in the Account page's Anthropic section once they have a Claude credential: **Run Claude's Models with**, **Claude Code** or **pi**. The web sends `SetClaudeHarness { requestId, harness }`, which the Hub answers with `ProvidersState`, whose `claudeHarness` is the choice: `ClaudeCode` unless they chose pi.
-- **New Session** (`CreateSessionDialog.tsx`) preselects, until a model is picked:
+- **New Session** (`CreateSessionDialog.tsx`) preselects, until a model is picked, as the protocol's `harnessForNewSession` decides:
   - Claude Code's default, where a Runner it may start on doesn't run pi;
   - the Creator's first Model, on pi, where Claude Code isn't offered, as without a Claude credential;
   - Claude's first Model, on pi, when their `claudeHarness` is `Pi` and they have Claude's Models;
