@@ -115,7 +115,6 @@ test.skipIf(!enabled)(
         model: "haiku",
       })
       const { env, unset } = harnessEnvironment({
-        harness: "ClaudeCode",
         base: { ...started.claude.env, ...launch.env },
         relayUrl: relay.guestUrl,
         sessionToken,

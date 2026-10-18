@@ -5,7 +5,7 @@
 // token, and talks to Anthropic directly. All of it is set on the Harness's own process alone
 // (`tmux -e`), never on the Sandbox or written to its disk.
 
-import { type ClaudeCredential, type Harness, PiProviderKeyVariables } from "@kndl/protocol"
+import type { ClaudeCredential } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvironment.ts"
 
@@ -39,21 +39,11 @@ export const HarnessVariable = "KNDL_HARNESS"
  * - {@link KeptOutOfClaude}, which would sign Claude Code in some other way than its Creator's
  *   setup token, or send its requests somewhere else. pi passes its environment on to the Claude
  *   Code its Claude bridge runs, so pi is kept from them too.
- * - For pi, every Provider key variable pi-ai reads ({@link PiProviderKeyVariables}): pi reaches a
- *   Provider through the Gateway alone, never on a key from a Variable (ADR 0029).
  * - Without its Creator's Claude credential, a setup token from anywhere else, which would have
- *   the Claude bridge spend someone else's (ADR 0026). Claude Code always has its Creator's.
+ *   pi's Claude bridge spend someone else's (ADR 0026). Claude Code always has its Creator's.
  */
-export const keptOut = (
-  harness: Harness,
-  credential: ClaudeCredential | undefined,
-): ReadonlyArray<string> => [
-  ...new Set([
-    ...KeptOutOfClaude,
-    ...(harness === "Pi" ? PiProviderKeyVariables : []),
-    ...(credential === undefined ? [ClaudeTokenVariable] : []),
-  ]),
-]
+export const keptOut = (credential: ClaudeCredential | undefined): ReadonlyArray<string> =>
+  credential === undefined ? [...KeptOutOfClaude, ClaudeTokenVariable] : KeptOutOfClaude
 
 /** What a Harness's process is started with: its environment, and what is unset from it. */
 export interface HarnessEnvironment {
@@ -63,14 +53,13 @@ export interface HarnessEnvironment {
 }
 
 /**
- * The environment a Harness and its mod run with in the Sandbox: `base`, what the Sandbox and the
- * launch give it, less {@link keptOut}; then the relay and the Session token for the mod; and, when
- * the Creator has one, their Claude credential, as {@link ClaudeTokenVariable}, which wins over a
- * Variable of that name, with what keeps Claude Code quiet. Claude Code runs on it, and pi's Claude
- * bridge for Claude's Models.
+ * The environment a Harness and its mod run with in the Sandbox, Claude Code's and pi's alike:
+ * `base`, what the Sandbox and the launch give it, less {@link keptOut}; then the relay and the
+ * Session token for the mod; and, when the Creator has one, their Claude credential, as
+ * {@link ClaudeTokenVariable}, which wins over a Variable of that name, with what keeps Claude Code
+ * quiet. Claude Code runs on it, and pi's Claude bridge for Claude's Models.
  */
 export function harnessEnvironment(options: {
-  readonly harness: Harness
   readonly base: Readonly<Record<string, string>>
   /** The relay as the guest reaches it, such as `http://host.microsandbox.internal:7778`. */
   readonly relayUrl: string
@@ -81,7 +70,7 @@ export function harnessEnvironment(options: {
    */
   readonly credential?: ClaudeCredential
 }): HarnessEnvironment {
-  const unset = keptOut(options.harness, options.credential)
+  const unset = keptOut(options.credential)
   const env: Record<string, string> = { ...options.base }
   for (const name of unset) delete env[name]
   return {

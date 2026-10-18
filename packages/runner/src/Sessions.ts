@@ -339,7 +339,6 @@ export const SessionsLive = Layer.effect(
     const launch =
       <E>(
         request: StartSession | RelaunchSession,
-        harness: Harness,
         credential: ClaudeCredential | undefined,
         command: (
           mod: string,
@@ -361,7 +360,6 @@ export const SessionsLive = Layer.effect(
             ...(credential === undefined ? [] : [Redacted.value(credential.token)]),
           ])
           const environment = harnessEnvironment({
-            harness,
             base: env,
             relayUrl: relay.guestUrl,
             sessionToken,
@@ -390,7 +388,7 @@ export const SessionsLive = Layer.effect(
         const { sessionId } = request
         if (harness === "ClaudeCode") {
           const credential = yield* hubClaudeCredential.fetch(sessionId)
-          return launch(request, harness, credential, (mod, directories, sandbox) =>
+          return launch(request, credential, (mod, directories, sandbox) =>
             Effect.map(conversationFor(request, directories), (conversation) => {
               const started = claudeLaunch({
                 claudePath: sandbox.claude.path,
@@ -419,7 +417,7 @@ export const SessionsLive = Layer.effect(
             ),
           ),
         )
-        return launch(request, harness, credential, (mod, _directories, sandbox) =>
+        return launch(request, credential, (mod, _directories, sandbox) =>
           Effect.map(piConversationFor(request), (conversationId) => {
             const started = piLaunch({
               nodePath: sandbox.pi.node,

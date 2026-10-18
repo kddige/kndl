@@ -6,8 +6,7 @@
 // runs without its Creator's Claude credential. When it has one, pi gets it too, with the pinned
 // Claude Code, which the extension's Claude bridge runs for Claude's Models: on pi's own process
 // alone (`tmux -e`), as Claude Code gets it. pi passes its environment on to Claude Code, so what is
-// kept out of Claude Code's is kept out of pi's, and so is every Provider's key pi-ai would call
-// that Provider with itself, around the Gateway (HarnessEnvironment.ts).
+// kept out of Claude Code's is kept out of pi's (HarnessEnvironment.ts).
 
 import { posix } from "node:path"
 import type { GatewayServer, ModelName, SessionId, ThinkingLevel } from "@kndl/protocol"

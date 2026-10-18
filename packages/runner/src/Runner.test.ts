@@ -7,7 +7,6 @@ import { BunServices, BunSocket } from "@effect/platform-bun"
 import {
   ConversationId,
   type GatewayServer,
-  PiProviderKeyVariables,
   ProtocolVersion,
   SessionId,
   TestBuildId,
@@ -56,9 +55,6 @@ const models = {
 
 /** The pi bundle the Runner has ready, unless a test says it has none (ADR 0029). */
 const piReady = { cli: "/opt/pi/cli.js" }
-
-/** What pi is kept from, with its Creator's Claude credential or without (PiLaunch.ts). */
-const keptOutOfAnyPi = [...new Set([...KeptOutOfClaude, ...PiProviderKeyVariables])]
 
 /** A message the fake Hub received. */
 interface Received {
@@ -1397,7 +1393,7 @@ describe("pi Sessions (ADR 0029)", () => {
       DISABLE_AUTOUPDATER: "1",
       CLAUDE_CODE_OAUTH_TOKEN: setupToken,
     })
-    expect(spec?.unset).toEqual(keptOutOfAnyPi)
+    expect(spec?.unset).toEqual(KeptOutOfClaude)
     expect(JSON.stringify(spec)).not.toContain("chm_mod.secret")
     expect(h.hub.all("FetchClaudeCredential")).toHaveLength(1)
     // Its Sandbox is readied for pi.
@@ -1422,7 +1418,7 @@ describe("pi Sessions (ADR 0029)", () => {
     const env = h.tmux.launched[0]?.env ?? {}
     expect(Object.keys(env).filter((name) => name.includes("CLAUDE"))).toEqual([])
     expect(env).not.toHaveProperty("IS_SANDBOX")
-    expect(h.tmux.launched[0]?.unset).toEqual([...keptOutOfAnyPi, "CLAUDE_CODE_OAUTH_TOKEN"])
+    expect(h.tmux.launched[0]?.unset).toEqual([...KeptOutOfClaude, "CLAUDE_CODE_OAUTH_TOKEN"])
     expect(h.hub.all("SessionStartFailed")).toEqual([])
   })
 
@@ -1781,7 +1777,7 @@ describe("switching a Session's Harness (ADR 0030)", () => {
 
     const env = h.tmux.launched[1]?.env ?? {}
     expect(Object.keys(env).filter((name) => name.includes("CLAUDE"))).toEqual([])
-    expect(h.tmux.launched[1]?.unset).toEqual([...keptOutOfAnyPi, "CLAUDE_CODE_OAUTH_TOKEN"])
+    expect(h.tmux.launched[1]?.unset).toEqual([...KeptOutOfClaude, "CLAUDE_CODE_OAUTH_TOKEN"])
     expect(h.hub.all("SessionStartFailed")).toEqual([])
   })
 })

@@ -80,9 +80,6 @@
         "effect": "4.0.0",
         "microsandbox": "0.7.6",
       },
-      "devDependencies": {
-        "@earendil-works/pi-ai": "1.3.0",
-      },
     },
     "packages/web": {
       "name": "@kndl/web",
