@@ -580,11 +580,14 @@ export class ConnectedProviders extends Context.Service<
     ) => Effect.Effect<void, SqlError>
     /** Forgets every connection of the Member, as when they are removed. */
     readonly forget: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
-    /** How the Member connected the Provider, if they have. */
-    readonly kindOf: (
+    /**
+     * How the Member connected the Provider, if that connection can take a call now: else why
+     * not, as `call` would say before it refreshes a sign-in.
+     */
+    readonly usableAs: (
       participantId: ParticipantId,
       provider: ModelProvider,
-    ) => ConnectionKind | undefined
+    ) => Effect.Effect<ConnectionKind, ProviderUnusable>
     /**
      * Sends the call to the Provider's API with the Member's credential: to the origin it or pi-ai
      * names, the key in the call's `keyHeader`, and a sign-in's own headers over the call's. A
@@ -1343,7 +1346,8 @@ export class ConnectedProviders extends Context.Service<
         disconnect,
         refreshModels,
         forget,
-        kindOf: (participantId, provider) => connectionOf(participantId, provider)?.kind,
+        usableAs: (participantId, provider) =>
+          Effect.map(usable(participantId, provider), (connection) => connection.kind),
         call,
         values: () => [
           ...[...connections.values()].flatMap((held) =>

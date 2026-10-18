@@ -49,6 +49,7 @@
 //   - `429`: more calls at once than a Session may run. `503`: the Hub holds as many sign-ins'
 //     bodies as it may, or a sign-in couldn't be refreshed just now. `413`: a body larger than
 //     the Gateway takes. All three are in ModelCallLimits (Gateway.ts).
+//   - `502`: the Provider couldn't be reached, or redirected, which isn't followed.
 // - The call goes to the origin of the Provider's API (`https://api.openai.com`, or the one a
 //   sign-in names, as GitHub Copilot's does) with the path and query below the Provider's, so
 //   `/gateway/models/openai/v1/responses` goes to `https://api.openai.com/v1/responses`. Its
@@ -369,6 +370,11 @@ export const GatewayRoutes = HttpRouter.use(
           return yield* refused(503, sent.message)
         case "Unreachable":
           return yield* refused(502, "The Provider could not be reached.")
+        case "Redirected":
+          return yield* refused(
+            502,
+            `${nameOf(provider)} redirected the call, which the Gateway doesn't follow.`,
+          )
         case "Answered": {
           const response = sent.response
           // Logged once the answer has streamed back, or stopped.

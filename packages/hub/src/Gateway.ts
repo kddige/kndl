@@ -17,14 +17,15 @@
 // - A pi Session's model call (ADR 0029) goes to its Provider's own API, through its Creator's
 //   Connected provider (ConnectedProviders' `call`), if it is one of the calls pi makes there: an
 //   inference or model-listing endpoint of one of the Provider's Models' APIs (PiProviders.ts).
-//   Not a Claude Code Session's. A Session runs a few at once, and the Hub holds a sign-in's
-//   bodies, to send again once a sign-in refused is refreshed, up to ModelCallLimits; an API key's
-//   stream through. The answer streams back.
+//   Not a Claude Code Session's, nor one its Creator's connection can't take now, which is refused
+//   before its body is read. A Session runs a few at once, and the Hub holds a sign-in's bodies,
+//   to send again once a sign-in refused is refreshed, up to ModelCallLimits; an API key's stream
+//   through. The answer streams back; a redirect isn't followed.
 
 import type { InstallationId, ModelProvider, SessionId } from "@kndl/protocol"
 import { Context, type Duration, Effect, Layer, Option, Redacted } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { ConnectedProviders } from "./ConnectedProviders.ts"
+import { ConnectedProviders, type ProviderUnusable } from "./ConnectedProviders.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
 import { type KeyHeader, modelCallAllowed, upstreamUrl } from "./PiProviders.ts"
@@ -218,6 +219,16 @@ export type ModelCallSent =
   | { readonly _tag: "Unavailable"; readonly message: string }
   /** The Provider could not be reached. */
   | { readonly _tag: "Unreachable" }
+  /** The Provider redirected, which isn't followed. */
+  | { readonly _tag: "Redirected"; readonly status: number }
+
+/** What a call the Creator's connection can't take now is refused as. */
+const unusableAs = (
+  unusable: ProviderUnusable,
+): Extract<ModelCallSent, { readonly _tag: "NotConnected" | "Unavailable" }> =>
+  unusable.reason === "Unavailable"
+    ? { _tag: "Unavailable", message: unusable.message }
+    : { _tag: "NotConnected", message: unusable.message }
 
 /**
  * A request's body as it streams to the Provider, which errors past `max` bytes, and says so in
@@ -499,7 +510,7 @@ export class Gateway extends Context.Service<
       /**
        * Reads a sign-in's call's body, to send it again after a refusal, counting it against what
        * the Hub holds as it comes: the bytes, or why not. What it took is in `reserved`, for the
-       * caller to let go.
+       * caller to let go. Interrupted, it stops reading, and counts nothing more.
        */
       const hold = (
         stream: ReadableStream<Uint8Array>,
@@ -509,11 +520,15 @@ export class Gateway extends Context.Service<
         | Extract<ModelCallSent, { readonly _tag: "Full" | "TooLarge" | "BodyUnreadable" }>
       > =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             const reader = stream.getReader()
+            const stop = () => void reader.cancel().catch(() => undefined)
+            signal.addEventListener("abort", stop, { once: true })
             const chunks: Array<Uint8Array> = []
             let size = 0
             for (let read = await reader.read(); !read.done; read = await reader.read()) {
+              // Given up: what it held is let go already.
+              if (signal.aborted) return { _tag: "BodyUnreadable" } as const
               size += read.value.byteLength
               const refused =
                 size > limits.requestBytes
@@ -529,6 +544,7 @@ export class Gateway extends Context.Service<
               reserved.bytes = size
               chunks.push(read.value)
             }
+            signal.removeEventListener("abort", stop)
             return Buffer.concat(chunks, size)
           },
           catch: () => ({ _tag: "BodyUnreadable" }) as const,
@@ -569,10 +585,13 @@ export class Gateway extends Context.Service<
         const reserved = { bytes: 0 }
         const over = { limit: false }
         const sent = Effect.gen(function* () {
+          // Before any of its body is read: a connection that can't take it refuses it as it is.
+          const kind = yield* Effect.result(providers.usableAs(creator, provider))
+          if (kind._tag === "Failure") return unusableAs(kind.failure)
           let body: Uint8Array | ReadableStream<Uint8Array> | undefined
           if (call.body !== null && !["GET", "HEAD"].includes(call.method)) {
             // Only a sign-in's call may be sent again, so only its body is held.
-            if (providers.kindOf(creator, provider) === "SignIn") {
+            if (kind.success === "SignIn") {
               const read = yield* hold(call.body, reserved)
               if (!(read instanceof Uint8Array)) return read
               body = read
@@ -596,14 +615,14 @@ export class Gateway extends Context.Service<
             }
             return { _tag: "TooLarge", limit: limits.requestBytes } as const
           }
-          if (called._tag === "Failure") {
-            const { reason, message } = called.failure
-            return reason === "Unavailable"
-              ? ({ _tag: "Unavailable", message } as const)
-              : ({ _tag: "NotConnected", message } as const)
-          }
+          if (called._tag === "Failure") return unusableAs(called.failure)
           if (called.success._tag !== "Answered") return called.success
           const { response } = called.success
+          // A redirect isn't followed, nor passed on, as the MCP Gateway's aren't.
+          if (response.status >= 300 && response.status < 400) {
+            yield* discard(response)
+            return { _tag: "Redirected", status: response.status } as const
+          }
           const ended = Promise.withResolvers<ModelCallEnded>()
           const answered: ModelCallSent = {
             _tag: "Answered",

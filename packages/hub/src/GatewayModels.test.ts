@@ -5,9 +5,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { connect } from "node:net"
 import type { OAuthCredential } from "@earendil-works/pi-ai"
-import { Option, Redacted } from "effect"
+import { SessionId } from "@kndl/protocol"
+import { Effect, Fiber, Option, Redacted } from "effect"
 import { ProviderApis } from "./ConnectedProviders.ts"
-import type { ModelCallLimits } from "./Gateway.ts"
+import { Gateway, type ModelCallLimits } from "./Gateway.ts"
 import type { HubConfigInput } from "./HubConfig.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
@@ -317,6 +318,19 @@ describe("the Gateway's model calls", () => {
     expect(fakes.seen[0]?.headers["copilot-integration-id"]).toBe("vscode-chat")
   })
 
+  test("answer a Provider's redirect with a 502, as the MCP Gateway does: it isn't followed", async () => {
+    const { hub, web, start, fakes } = await scene()
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    fakes.answer = () =>
+      new Response(null, { status: 307, headers: { location: "https://elsewhere.example/v1" } })
+    const response = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(response.status).toBe(502)
+    expect(response.headers.get("location")).toBeNull()
+    expect(await response.json()).toEqual({
+      error: { message: "OpenAI redirected the call, which the Gateway doesn't follow." },
+    })
+  })
+
   test("refuse a request without a live Session token", async () => {
     const { hub, web } = await scene()
     await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
@@ -533,6 +547,82 @@ describe("the Gateway's model calls", () => {
     // Let go once its answer came.
     const third = await call(hub, "/openai/v1/responses", start.modToken, { body: big })
     expect(third.status).toBe(200)
+  })
+
+  test("let go of a held body once its call is given up, however much more of it comes", async () => {
+    const { hub, web, start, fakes } = await scene({
+      limits: { heldBytes: 1000, requestBytes: 800 },
+    })
+    await signIn(web, fakes, oauth("access-1"))
+    const chunk = new TextEncoder().encode("x".repeat(300))
+    const sent = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk)
+        sent.resolve(controller)
+      },
+    })
+    await hub.run(
+      Effect.gen(function* () {
+        const gateway = yield* Gateway
+        const given = yield* Effect.forkChild(
+          gateway.model(SessionId.make(start.sessionId), "openai", {
+            method: "POST",
+            path: "/v1/responses",
+            headers: new Headers({ "content-type": "application/json" }),
+            keyHeader: "authorization",
+            body,
+          }),
+        )
+        yield* Effect.sleep(50)
+        yield* Fiber.interrupt(given)
+      }),
+    )
+    // The rest of its body comes after it was given up, if the Hub still reads it.
+    const more = await sent.promise
+    try {
+      more.enqueue(chunk)
+      more.enqueue(chunk)
+      more.close()
+    } catch {
+      // It doesn't: the body was cancelled.
+    }
+    await Bun.sleep(50)
+
+    // The Hub holds nothing of it: a call as large as it holds goes through.
+    const big = JSON.stringify({ input: "x".repeat(580) })
+    const next = await call(hub, "/openai/v1/responses", start.modToken, { body: big })
+    expect(next.status).toBe(200)
+  })
+
+  test("refuse a Provider the Creator must connect again before reading the call's body", async () => {
+    const { hub, web, start, fakes } = await scene()
+    await signIn(web, fakes, oauth("access-1", 1000))
+    fakes.refresh = async () => {
+      throw new Error("OpenAI OAuth token request failed (401): invalid_grant")
+    }
+    expect((await call(hub, "/openai/v1/responses", start.modToken)).status).toBe(403)
+    let pulled = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (++pulled > 3) controller.close()
+        else controller.enqueue(new TextEncoder().encode("{}"))
+      },
+    })
+    const refused = await hub.run(
+      Effect.flatMap(Gateway, (gateway) =>
+        gateway.model(SessionId.make(start.sessionId), "openai", {
+          method: "POST",
+          path: "/v1/responses",
+          headers: new Headers({ "content-type": "application/json" }),
+          keyHeader: "authorization",
+          body,
+        }),
+      ),
+    )
+    expect(refused).toMatchObject({ _tag: "NotConnected" })
+    // Nothing of it was read, beyond what a stream asks for at once.
+    expect(pulled).toBeLessThanOrEqual(1)
   })
 
   test("stream an API key's request bodies, which are never sent again, so the Hub holds none", async () => {
