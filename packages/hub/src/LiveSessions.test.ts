@@ -4,7 +4,9 @@
 
 import { describe, expect, test } from "bun:test"
 import {
+  EventSeq,
   InstallationId,
+  ModCommandSeq,
   ParticipantId,
   PromptId,
   QuestionClosed,
@@ -36,6 +38,11 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
   live.steers.add(sessionId)
   live.attaches.add(sessionId)
   live.switchesModels.add(sessionId)
+  live.handoffs.set(sessionId, {
+    seq: ModCommandSeq.make(1),
+    harness: "Pi",
+    through: EventSeq.make(3),
+  })
   live.starting.add(sessionId)
   live.stopping.set(sessionId, { message: "Idle" })
   live.restarting.set(sessionId, alice)
@@ -66,6 +73,7 @@ const pieces = [
   "steers",
   "attaches",
   "switchesModels",
+  "handoffs",
   "starting",
   "stopping",
   "restarting",
@@ -143,6 +151,7 @@ describe("a Session's live state ending", () => {
       "steers",
       "attaches",
       "switchesModels",
+      "handoffs",
       "starting",
       "openPorts",
       "installationTrouble",

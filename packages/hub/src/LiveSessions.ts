@@ -14,8 +14,11 @@
 
 import {
   type EnvironmentVersion,
+  type EventSeq,
+  type Harness,
   type InstallationFailure,
   type InstallationId,
+  type ModCommandSeq,
   type OpenPort,
   type Participant,
   type ParticipantId,
@@ -59,6 +62,16 @@ export interface StartUnderWay {
   log: string
   /** Whether the Runner has sent a Snapshot of Claude Code's terminal: output after it is Claude's. */
   attached: boolean
+}
+
+/** A DeliverHandoff a Session's mod was sent (ADR 0030), until it polls past it. */
+export interface HandoffSent {
+  /** Its number in the mod's outbox. */
+  readonly seq: ModCommandSeq
+  /** The Harness it hands the Session's history to. */
+  readonly harness: Harness
+  /** The last entry of the Session's log it covers, if there is one. */
+  readonly through: EventSeq | undefined
 }
 
 /** Claude's text of a Turn's loop, as it streams. */
@@ -160,6 +173,12 @@ interface Pieces {
   /** Sessions whose mod said in its hello that it takes a SwitchModel (ADR 0029). */
   readonly switchesModels: SessionSet
   /**
+   * The DeliverHandoff each Session's mod was sent and hasn't polled past (ADR 0030). The Session
+   * records its Harness as handed what it hadn't seen only then, so a handoff its outbox dropped
+   * first, or a Hub restart lost, is handed again at the mod's next hello.
+   */
+  readonly handoffs: PerSession<HandoffSent>
+  /**
    * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
    * Prompts wait for that hello.
    */
@@ -231,7 +250,8 @@ type Piece = keyof Pieces
  * nothing changes between a check and the change it decides; it is synchronous, so a write never
  * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
  * check: `sandboxTokenMinted`, as a GitRequest's answer mints a Sandbox token (it waited on
- * GitHub), and `installationWorks`, as the Gateway says an Installation works.
+ * GitHub), and `installationWorks`, as the Gateway says an Installation works. One read is too:
+ * `handingOff`, as a mod polls, which takes the lock only when its handoff may be collected.
  */
 export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStreams"> {
   // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
@@ -274,6 +294,15 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
   readonly modAttaches: (id: SessionId) => boolean
   /** Whether the Session's mod said it takes a SwitchModel (ADR 0029). */
   readonly modSwitchesModels: (id: SessionId) => boolean
+  /** The mod was sent a DeliverHandoff (ADR 0030): it is on its way until the mod polls past it. */
+  readonly handoffSent: (id: SessionId, handoff: HandoffSent) => void
+  /** Whether a DeliverHandoff is on its way to the mod: sent, and not polled past. */
+  readonly handingOff: (id: SessionId) => boolean
+  /**
+   * The mod polled for the commands after `after`, so it took those up to it: the handoff, if
+   * that was one of them, which is no longer on its way.
+   */
+  readonly handoffCollected: (id: SessionId, after: ModCommandSeq) => HandoffSent | undefined
 
   // ── Steering (ADR 0018) ──
 
@@ -439,6 +468,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    // Its outbox is dropped: a handoff its mod didn't collect is handed to the next one.
+    "handoffs",
     "starting",
     "starts",
     "openPorts",
@@ -462,6 +493,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "handoffs",
     "starting",
     "starts",
     "openPorts",
@@ -485,6 +517,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    // Its outbox is dropped, as it is for ClaudeGone.
+    "handoffs",
     // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
     // drops off before it stops it leaves nothing to show after a restore.
     "openPorts",
@@ -501,8 +535,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // A start under way is settled by what it says when it is back, too.
     "starts",
     "restarts",
-    // `inFlight`, `starting`, `steering`, the mod's flags, `installationTrouble` and the streams
-    // are kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its
+    // `inFlight`, `starting`, `steering`, the mod's flags, `handoffs`, `installationTrouble` and
+    // the streams are kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its
     // own, so they stay true while it is Frozen. A Runner back without it ends them with
     // ClaudeGone. Going Frozen clears `openPorts`.
   ],
@@ -513,6 +547,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "handoffs",
     "starting",
     "stopping",
     "restarting",
@@ -548,6 +583,7 @@ export const makeLiveSessions = (): LiveSessions => {
     steers: new Set(),
     attaches: new Set(),
     switchesModels: new Set(),
+    handoffs: new Map(),
     starting: new Set(),
     stopping: new Map(),
     restarting: new Map(),
@@ -594,6 +630,8 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     relaunched: (id) => {
       pieces.steering.delete(id)
+      // Its outbox is dropped: a handoff the old mod didn't collect goes to the new one.
+      pieces.handoffs.delete(id)
       pieces.starting.add(id)
     },
     modHello: (id, { steers, attaches, switchesModels }) => {
@@ -607,6 +645,14 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     modAttaches: (id) => pieces.attaches.has(id),
     modSwitchesModels: (id) => pieces.switchesModels.has(id),
+    handoffSent: (id, handoff) => pieces.handoffs.set(id, handoff),
+    handingOff: (id) => pieces.handoffs.has(id),
+    handoffCollected: (id, after) => {
+      const sent = pieces.handoffs.get(id)
+      if (sent === undefined || after < sent.seq) return undefined
+      pieces.handoffs.delete(id)
+      return sent
+    },
     steer: (id, { promptId, by, turnRunning, queued, hasAttachments }) => {
       const verdict = steerVerdict({
         queued,

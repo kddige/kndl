@@ -185,9 +185,11 @@ export const ModRoutes = HttpRouter.use(
         const grant = yield* authenticateMod
         yield* requireHello(grant.sessionId)
         const query = yield* HttpServerRequest.schemaSearchParams(ModCommandsQuery)
+        const after = query.after ?? ModCommandSeq.make(0)
+        yield* relay.modPolled(grant.sessionId, after).pipe(Effect.orDie)
         const messages = yield* outbox
           .take(grant.sessionId, {
-            after: query.after ?? ModCommandSeq.make(0),
+            after,
             wait: Duration.millis(Math.min(query.waitMs ?? 0, MaxCommandWaitMs)),
           })
           .pipe(

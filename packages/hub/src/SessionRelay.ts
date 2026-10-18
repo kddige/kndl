@@ -223,6 +223,7 @@ import {
   DeliverPrompt,
   driveRefusal,
   type EnvironmentVersion,
+  type EventSeq,
   ForwardCloseCode,
   ForwardSession,
   GitAnswer,
@@ -230,6 +231,7 @@ import {
   type HubToForward,
   type HubToRunner,
   HubToWeb,
+  type ModCommandSeq,
   type ModEvent,
   type ModHello,
   type OpenPort,
@@ -672,6 +674,14 @@ export class SessionRelay extends Context.Service<
      * so an Active Session sleeps, and wakes on the Runner's own mod.
      */
     readonly modOutdated: (sessionId: SessionId) => Effect.Effect<void, SqlError>
+    /**
+     * The Session's mod polled for its commands after `after`, so it took those up to it: a
+     * context handoff among them has been handed (ADR 0030).
+     */
+    readonly modPolled: (
+      sessionId: SessionId,
+      after: ModCommandSeq,
+    ) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
     readonly modEvents: (
       sessionId: SessionId,
@@ -3821,29 +3831,54 @@ export class SessionRelay extends Context.Service<
       /**
        * Hands the Session's agent what its Harness hasn't seen, once the Session switched to it
        * (ADR 0030): a DeliverHandoff of its history after where that Harness last saw it, all of it
-       * for one new to the Session, queued before the next prompt, once.
+       * for one new to the Session, queued before the next prompt. The Harness has been handed it
+       * once its mod polls past it (`handedOff`): until then, the mod's next hello hands it again,
+       * after its outbox was dropped or the Hub restarted, and a second hello hands nothing more.
        */
       const handOff = Effect.fn("SessionRelay.handOff")(function* (session: SessionSummary) {
         const from = yield* sessions.handoffFrom(session.id)
-        if (Option.isNone(from)) return
-        yield* sessions.handoffDone(session.id)
+        if (Option.isNone(from) || live.handingOff(session.id)) return
         const to = harnessNow(session)
         const { name } = harnesses.of(session)
         const was = harnesses.of({ harness: from.value }).name
         const seen = yield* sessions.seenSeq(session.id, to)
         const entries = yield* log.history(session.id, Option.getOrUndefined(seen))
-        const last = entries.at(-1)
-        if (last !== undefined) yield* sessions.setSeenSeq(session.id, to, last.seq)
+        const through = entries.at(-1)?.seq
         const handoff = buildHandoff({ entries })
-        if (handoff === undefined) return
+        if (handoff === undefined) return yield* handedOff(session.id, to, through)
         yield* Effect.logInfo(
           `Handing ${session.id}'s ${name} what happened on ${was}: ${handoff.text.length} characters`,
         )
-        yield* outbox.enqueue(
+        const seq = yield* outbox.enqueue(
           session.id,
           DeliverHandoff.make({ sessionId: session.id, from: from.value, ...handoff }),
         )
+        live.handoffSent(session.id, { seq, harness: to, through })
       })
+
+      /** The Harness was handed the Session's history `through` that entry: it has seen it. */
+      const handedOff = Effect.fn("SessionRelay.handedOff")(function* (
+        sessionId: SessionId,
+        harness: Harness,
+        through: EventSeq | undefined,
+      ) {
+        yield* sessions.handoffDone(sessionId)
+        if (through !== undefined) yield* sessions.setSeenSeq(sessionId, harness, through)
+      })
+
+      /** The mod polled for its commands after `after`: a handoff among those it took is handed. */
+      const modPolled = (sessionId: SessionId, after: ModCommandSeq) =>
+        // Off the lock unless one is on its way, as most polls find none.
+        live.handingOff(sessionId)
+          ? serialized(
+              Effect.suspend(() => {
+                const collected = live.handoffCollected(sessionId, after)
+                return collected === undefined
+                  ? Effect.void
+                  : handedOff(sessionId, collected.harness, collected.through)
+              }),
+            )
+          : Effect.void
 
       const modHello = Effect.fn("SessionRelay.modHello")(function* (
         sessionId: SessionId,
@@ -4519,6 +4554,7 @@ export class SessionRelay extends Context.Service<
         membersChanged: memberRelay.membersChanged,
         modHello,
         modOutdated,
+        modPolled,
         modEvents,
         openTunnel,
         installationFailed,

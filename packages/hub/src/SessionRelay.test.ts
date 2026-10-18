@@ -2895,6 +2895,51 @@ describe("switching Harness (ADR 0030)", () => {
     })
   })
 
+  test("a handoff its mod didn't collect before its Harness stopped is handed at the next start", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
+    const { runner, web, sessionId, mod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(...answered("t-1", "Add a health check", "Added /health."))
+    await asleep(scene)
+    web.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
+    await web.take("SessionUpdated", (m) => m.session.harness === "Pi")
+    web.send({ _tag: "SendPrompt", sessionId, text: "next" })
+    const start = await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const piMod = new Mod(hub, sessionId, start.modToken)
+    expect((await piMod.hello({ conversationId: piConversation })).status).toBe(200)
+
+    // pi exits before its mod collects what it was handed.
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    web.send({ _tag: "WakeSession", sessionId })
+    const again = await runner.take("StartSession")
+    expect(again).toMatchObject({ harness: "Pi", resume: piConversation })
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const nextMod = new Mod(hub, sessionId, again.modToken)
+    expect((await nextMod.hello({ conversationId: piConversation })).status).toBe(200)
+    const commands = withoutPresence(await nextMod.poll(500))
+    expect(commands.map((command) => command._tag)).toEqual(["DeliverHandoff", "DeliverPrompt"])
+    const [handoff] = commands as [Extract<Command, { _tag: "DeliverHandoff" }>]
+    expect(handoff).toMatchObject({ from: "ClaudeCode" })
+    expect(handoff.text).toContain("Added /health.")
+
+    // Collected now, it isn't handed again.
+    await nextMod.poll()
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    web.send({ _tag: "WakeSession", sessionId })
+    const third = await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const lastMod = new Mod(hub, sessionId, third.modToken)
+    expect((await lastMod.hello({ conversationId: piConversation })).status).toBe(200)
+    expect(withoutPresence(await lastMod.poll(300)).map((command) => command._tag)).not.toContain(
+      "DeliverHandoff",
+    )
+  })
+
   test("a switch its Harness stopped before making is made at the next wake", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, { ...piRunner, create: { harness: "ClaudeCode" } })
