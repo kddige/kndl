@@ -8,8 +8,8 @@ import { describeMissing, hasPermissionDrift } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import { Banner, Button, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { color, space, weight } from "../ui/tokens.stylex.ts"
+import { focus, textLink } from "../ui/shared.ts"
+import { space, weight } from "../ui/tokens.stylex.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 const styles = stylex.create({
@@ -28,9 +28,6 @@ const styles = stylex.create({
     gap: space.s1,
     color: "inherit",
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
-    textDecorationColor: color.borderStrong,
     whiteSpace: "nowrap",
   },
 })
@@ -108,7 +105,7 @@ function ExternalLink({ href, children }: { href: string; children: string }) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      {...stylex.props(styles.link, focus.ring)}
+      {...stylex.props(textLink.underline, styles.link, focus.ring)}
     >
       {children}
       <ExternalLinkIcon aria-hidden="true" />

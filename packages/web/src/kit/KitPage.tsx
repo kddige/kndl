@@ -74,8 +74,9 @@ import {
   Tooltip,
   TrashIcon,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, font, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const route = getRouteApi("/kit")
 
@@ -94,11 +95,8 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s3,
   },
-  sectionTitle: {
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    lineHeight: leading.tight,
-  },
+  sectionTitle: { textWrap: "balance" },
+  stack: { display: "flex", flexDirection: "column", gap: space.s3 },
   sectionNote: { color: color.textMuted, fontSize: text.sm },
   card: {
     display: "flex",
@@ -238,7 +236,7 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   return (
     <section {...stylex.props(styles.section)}>
       <div>
-        <h2 {...stylex.props(styles.sectionTitle)}>{title}</h2>
+        <h2 {...stylex.props(textRole.heading, styles.sectionTitle)}>{title}</h2>
         {note && <p {...stylex.props(styles.sectionNote)}>{note}</p>}
       </div>
       <div {...stylex.props(styles.card)}>{children}</div>
@@ -1132,6 +1130,24 @@ export function KitPage() {
                 {name}
               </div>
             ))}
+          </div>
+        </Section>
+
+        <Section
+          title="Type roles"
+          note="Inter Variable. Each role pairs a size with its weight and line height; headings descend."
+        >
+          <div {...stylex.props(styles.stack)}>
+            <p {...stylex.props(textRole.title)}>Title: a page or a dialog</p>
+            <p {...stylex.props(textRole.heading)}>Heading: a section of a page</p>
+            <p {...stylex.props(textRole.subheading)}>Subheading: a part of a section, or a card</p>
+            <p {...stylex.props(textRole.overline)}>Overline: a group's label</p>
+            <p {...stylex.props(textRole.body)}>
+              Body: running text and controls, 13px, at about 75 characters a line at most.
+            </p>
+            <p {...stylex.props(textRole.meta)}>
+              Meta: 2 of 3 Runners online · 12m ago · 2026.10.2
+            </p>
           </div>
         </Section>
 

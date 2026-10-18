@@ -26,6 +26,7 @@ import {
   PlusIcon,
   Spinner,
   toast,
+  textRole,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { inviteFor, inviteTimeLeft, readLogin, usableInvites } from "./people.ts"
@@ -43,12 +44,7 @@ const styles = stylex.create({
     paddingInline: space.s4,
   },
   section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
+  sectionTitle: { margin: 0 },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -177,7 +173,7 @@ function People() {
             </div>
           ) : (
             <section aria-labelledby="members" {...stylex.props(styles.section)}>
-              <h2 id="members" {...stylex.props(styles.sectionTitle)}>
+              <h2 id="members" {...stylex.props(textRole.overline, styles.sectionTitle)}>
                 Members
               </h2>
               <ul aria-label="Members" {...stylex.props(styles.list)}>
@@ -196,7 +192,7 @@ function People() {
           )}
           {pending.length > 0 && (
             <section aria-labelledby="invites" {...stylex.props(styles.section)}>
-              <h2 id="invites" {...stylex.props(styles.sectionTitle)}>
+              <h2 id="invites" {...stylex.props(textRole.overline, styles.sectionTitle)}>
                 Invites not used yet
               </h2>
               <ul aria-label="Invites not used yet" {...stylex.props(styles.list)}>

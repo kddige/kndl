@@ -46,6 +46,7 @@ import {
   toast,
   TrashIcon,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -110,7 +111,6 @@ const styles = stylex.create({
     gap: space.s2,
     flexWrap: "wrap",
   },
-  sectionTitle: { fontSize: text.md, fontWeight: weight.semibold },
   sectionNote: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   script: { fontFamily: font.mono, fontSize: text.sm, minHeight: "6rem" },
   mono: { fontFamily: font.mono },
@@ -925,7 +925,7 @@ function Section({
   return (
     <section aria-label={title} {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h2 {...stylex.props(styles.sectionTitle)}>{title}</h2>
+        <h2 {...stylex.props(textRole.heading)}>{title}</h2>
         {note && <p {...stylex.props(styles.sectionNote)}>{note}</p>}
       </div>
       {children}

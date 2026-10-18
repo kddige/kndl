@@ -18,14 +18,14 @@ import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { andList, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { Avatar, Badge, type BadgeIntent, Button, Spinner, toast } from "../ui/index.ts"
+import { Avatar, Badge, type BadgeIntent, Button, Spinner, toast, textRole } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { neededText, valuesNeeded } from "./headerSecrets.ts"
 
 const styles = stylex.create({
   part: { display: "flex", flexDirection: "column", gap: space.s2 },
-  heading: { margin: 0, fontSize: text.sm, fontWeight: weight.semibold },
+  heading: { margin: 0 },
   list: { display: "flex", flexDirection: "column", margin: 0, padding: 0, listStyle: "none" },
   row: {
     display: "flex",
@@ -203,7 +203,7 @@ export function RepoMcpServers({ repo }: { repo: string }) {
         )}
       </div>
       <div {...stylex.props(styles.part)}>
-        <h3 {...stylex.props(styles.heading)}>Change log</h3>
+        <h3 {...stylex.props(textRole.subheading, styles.heading)}>Change log</h3>
         {log === undefined ? (
           <Spinner label="Loading the MCP server change log" />
         ) : log.length === 0 ? (

@@ -35,7 +35,7 @@ import {
   toast,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
@@ -97,7 +97,6 @@ const styles = stylex.create({
   },
   link: {
     color: color.accentSubtleText,
-    textDecoration: { default: "none", ":hover": "underline" },
     borderRadius: radius.sm,
   },
   mono: { fontFamily: font.mono },
@@ -243,7 +242,7 @@ function VariableRow({
                   <Link
                     to="/repos/$owner/$repo/environment"
                     params={repoParams(use.repo)}
-                    {...stylex.props(styles.link, focus.ring)}
+                    {...stylex.props(textLink.underline, styles.link, focus.ring)}
                   >
                     {use.repo}
                   </Link>

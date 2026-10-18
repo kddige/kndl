@@ -32,7 +32,7 @@ import {
   SteerIcon,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { modelSwitchedText } from "./models.ts"
 import { QuestionChip } from "./QuestionChip.tsx"
@@ -150,7 +150,7 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
     color: "inherit",
     textDecorationLine: { default: "none", ":hover": "underline" },
-    textUnderlineOffset: "2px",
+    textUnderlinePosition: "from-font",
     borderRadius: radius.sm,
   },
   reply: {
@@ -201,8 +201,6 @@ const styles = stylex.create({
   },
   agentLink: {
     color: color.textMuted,
-    textDecorationLine: { default: "underline", ":hover": "underline" },
-    textUnderlineOffset: "2px",
     borderRadius: radius.sm,
   },
   message: {
@@ -576,7 +574,7 @@ export function AgentMeta({ agent, link }: { agent: AgentView; link?: boolean })
       {agent.model !== "" && <span>{agent.model}</span>}
       <span>{agent.background ? "In the background" : "In the foreground"}</span>
       {link === true && (
-        <AgentLink agentId={agent.agentId} sx={styles.agentLink}>
+        <AgentLink agentId={agent.agentId} sx={[textLink.underline, styles.agentLink]}>
           Message or stop it
         </AgentLink>
       )}

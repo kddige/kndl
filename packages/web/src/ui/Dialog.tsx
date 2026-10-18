@@ -3,18 +3,8 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactElement, ReactNode } from "react"
 import { Button, type ButtonIntent, IconButton } from "./Button.tsx"
 import { CloseIcon } from "./icons.tsx"
-import {
-  color,
-  layer,
-  leading,
-  motion,
-  radius,
-  shadow,
-  space,
-  text,
-  tracking,
-  weight,
-} from "./tokens.stylex.ts"
+import { color, layer, leading, motion, radius, shadow, space } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export type DialogSize = "sm" | "md" | "lg"
 
@@ -96,15 +86,11 @@ const styles = stylex.create({
     minWidth: 0,
     paddingTop: space.s1,
   },
-  title: {
-    fontSize: text.lg,
-    fontWeight: weight.semibold,
-    lineHeight: leading.tight,
-    letterSpacing: tracking.tight,
-  },
+  title: { textWrap: "balance" },
   description: {
     color: color.textMuted,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
   close: {
     marginTop: `calc(${space.s0_5} * -1)`,
@@ -163,7 +149,9 @@ export function Dialog({
           <BaseDialog.Popup {...stylex.props(styles.popup, sizes[size])}>
             <div {...stylex.props(styles.header, !hasBody && !footer && styles.headerLast)}>
               <div {...stylex.props(styles.heading)}>
-                <BaseDialog.Title {...stylex.props(styles.title)}>{title}</BaseDialog.Title>
+                <BaseDialog.Title {...stylex.props(textRole.title, styles.title)}>
+                  {title}
+                </BaseDialog.Title>
                 {description && (
                   <BaseDialog.Description {...stylex.props(styles.description)}>
                     {description}

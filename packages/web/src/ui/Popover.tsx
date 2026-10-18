@@ -2,7 +2,8 @@ import { Popover as BasePopover } from "@base-ui/react/popover"
 import * as stylex from "@stylexjs/stylex"
 import type { ReactElement, ReactNode } from "react"
 import { popup } from "./shared.ts"
-import { color, leading, space, text, weight } from "./tokens.stylex.ts"
+import { color, leading, space, text } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export type PopoverSide = "top" | "bottom" | "left" | "right"
 export type PopoverAlign = "start" | "center" | "end"
@@ -43,15 +44,12 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s0_5,
   },
-  title: {
-    fontSize: text.base,
-    fontWeight: weight.semibold,
-    lineHeight: leading.snug,
-  },
+  title: { textWrap: "balance" },
   description: {
     color: color.textMuted,
     fontSize: text.sm,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
 })
 
@@ -95,10 +93,12 @@ export function Popover({
               <div {...stylex.props(styles.heading)}>
                 {title &&
                   (label === undefined ? (
-                    <BasePopover.Title {...stylex.props(styles.title)}>{title}</BasePopover.Title>
+                    <BasePopover.Title {...stylex.props(textRole.subheading, styles.title)}>
+                      {title}
+                    </BasePopover.Title>
                   ) : (
                     // Base UI's Title would name the popover, over the label.
-                    <p {...stylex.props(styles.title)}>{title}</p>
+                    <p {...stylex.props(textRole.subheading, styles.title)}>{title}</p>
                   ))}
                 {description && (
                   <BasePopover.Description {...stylex.props(styles.description)}>

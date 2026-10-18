@@ -2,7 +2,9 @@
 import * as stylex from "@stylexjs/stylex"
 import { Fragment, memo, type ReactNode } from "react"
 import { type Block, type Inline, parseMarkdown } from "./markdown.ts"
+import { textLink } from "./shared.ts"
 import { color, font, leading, radius, space, text, weight } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export interface MarkdownProps {
   /** Markdown source, such as Claude's answer. Partial (streaming) text renders too. */
@@ -19,11 +21,12 @@ const styles = stylex.create({
     lineHeight: leading.normal,
     overflowWrap: "anywhere",
   },
-  paragraph: { whiteSpace: "pre-line" },
-  h1: { fontSize: text.lg, fontWeight: weight.semibold, lineHeight: leading.tight },
-  h2: { fontSize: text.md, fontWeight: weight.semibold, lineHeight: leading.tight },
-  h3: { fontSize: text.base, fontWeight: weight.semibold, lineHeight: leading.tight },
+  // Prose stops at about 75 characters a line; code blocks and tables run as wide as they need.
+  paragraph: { whiteSpace: "pre-line", maxWidth: "60ch" },
+  // Headings sit under the host's: a Markdown h1 is a section heading, never a page title.
+  h3: { color: color.textMuted },
   list: {
+    maxWidth: "60ch",
     display: "flex",
     flexDirection: "column",
     gap: space.s1,
@@ -41,6 +44,7 @@ const styles = stylex.create({
     gap: space.s1,
   },
   quote: {
+    maxWidth: "60ch",
     display: "flex",
     flexDirection: "column",
     gap: space.s2,
@@ -81,11 +85,7 @@ const styles = stylex.create({
     fontSize: "0.9em",
   },
   strong: { fontWeight: weight.semibold },
-  link: {
-    color: color.accentSubtleText,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
-  },
+  link: { color: color.accentSubtleText },
   tableWrap: { overflowX: "auto" },
   table: {
     borderCollapse: "collapse",
@@ -126,7 +126,12 @@ function renderBlock(block: Block): ReactNode {
     case "paragraph":
       return <p {...stylex.props(styles.paragraph)}>{renderInlines(block.children)}</p>
     case "heading": {
-      const style = block.level === 1 ? styles.h1 : block.level === 2 ? styles.h2 : styles.h3
+      const style =
+        block.level === 1
+          ? textRole.heading
+          : block.level === 2
+            ? textRole.subheading
+            : [textRole.subheading, styles.h3]
       const Tag = (["h3", "h4", "h5", "h6"] as const)[Math.min(block.level, 4) - 1] ?? "h6"
       return <Tag {...stylex.props(style)}>{renderInlines(block.children)}</Tag>
     }
@@ -213,7 +218,7 @@ function renderInline(inline: Inline): ReactNode {
           href={inline.href}
           target="_blank"
           rel="noreferrer noopener"
-          {...stylex.props(styles.link)}
+          {...stylex.props(textLink.underline, styles.link)}
         >
           {renderInlines(inline.children)}
         </a>

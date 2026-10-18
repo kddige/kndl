@@ -49,7 +49,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, radius, space, text } from "../ui/tokens.stylex.ts"
+import { color, font, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
 import { environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
@@ -61,15 +61,17 @@ const styles = stylex.create({
     color: color.textSubtle,
     fontSize: text.sm,
   },
+  // Its count changes as Runners connect: figures of one width keep the line still.
   runners: {
     paddingInline: space.s2,
     color: color.textMuted,
     fontSize: text.sm,
+    fontVariantNumeric: "tabular-nums",
   },
   version: {
     color: color.textSubtle,
     fontSize: text.xs,
-    fontFamily: "monospace",
+    fontFamily: font.mono,
     userSelect: "text",
   },
   you: {

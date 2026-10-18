@@ -41,6 +41,7 @@ const styles = stylex.create({
     fontSize: text.sm,
     lineHeight: leading.snug,
     color: color.textMuted,
+    textWrap: "pretty",
   },
   error: {
     fontSize: text.sm,

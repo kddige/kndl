@@ -69,6 +69,7 @@ import {
   toast,
   TrashIcon,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -190,7 +191,7 @@ const styles = stylex.create({
   },
   section: { display: "flex", flexDirection: "column", gap: space.s3, margin: 0, padding: 0 },
   sectionHead: { display: "flex", flexDirection: "column", gap: space.s1 },
-  sectionTitle: { margin: 0, fontSize: text.sm, fontWeight: weight.semibold },
+  sectionTitle: { margin: 0 },
   secret: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr)) auto",
@@ -917,7 +918,7 @@ function McpServerDialog({
         ) : (
           <fieldset aria-label="Header secrets" {...stylex.props(styles.section)}>
             <div {...stylex.props(styles.sectionHead)}>
-              <h3 {...stylex.props(styles.sectionTitle)}>Header secrets</h3>
+              <h3 {...stylex.props(textRole.subheading, styles.sectionTitle)}>Header secrets</h3>
               <p {...stylex.props(styles.muted)}>
                 For a server that takes a key in a header. Each Installation enters its own value,
                 which only the Hub holds: it adds the header to every request it sends this server.

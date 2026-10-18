@@ -42,9 +42,11 @@ textarea {
   color: inherit;
 }
 
+/* A copy of font.mono in tokens.stylex.ts, which plain CSS can't read: keep the two the same. */
 code,
 kbd,
 pre,
 samp {
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }

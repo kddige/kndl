@@ -64,7 +64,7 @@ const styles = stylex.create({
 })
 
 const sizes = stylex.create({
-  sm: { width: "1.25rem", height: "1.25rem", fontSize: "0.5625rem" },
+  sm: { width: "1.25rem", height: "1.25rem", fontSize: text.xs },
   md: { width: "1.75rem", height: "1.75rem", fontSize: text.xs },
   lg: { width: "2.25rem", height: "2.25rem", fontSize: text.base },
 })

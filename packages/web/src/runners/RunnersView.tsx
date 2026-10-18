@@ -46,6 +46,7 @@ import {
   toast,
   Tooltip,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
 import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
@@ -79,12 +80,7 @@ const styles = stylex.create({
     paddingInline: space.s4,
   },
   section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
+  sectionTitle: { margin: 0 },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -334,7 +330,7 @@ export function RunnersView() {
           )}
           {waiting.length > 0 && (
             <section aria-labelledby="waiting-codes" {...stylex.props(styles.section)}>
-              <h2 id="waiting-codes" {...stylex.props(styles.sectionTitle)}>
+              <h2 id="waiting-codes" {...stylex.props(textRole.overline, styles.sectionTitle)}>
                 Pairing codes not used yet
               </h2>
               <ul aria-label="Pairing codes not used yet" {...stylex.props(styles.list)}>

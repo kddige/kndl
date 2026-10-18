@@ -333,19 +333,21 @@ export const lightTerminalTheme = stylex.createTheme(terminal, lightTerminal)
 export const darkTerminalTheme = stylex.createTheme(terminal, darkTerminal)
 
 export const font = stylex.defineVars({
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  // Inter Variable is bundled (fonts.css); the system stack is its fallback while it loads.
+  sans: '"Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace',
 })
 
-/** The type scale. Dense on purpose: 13px body, like the tools this sits next to. */
+/**
+ * The type scale. Dense on purpose: 13px body, like the tools this sits next to. Components set
+ * text through the roles in type.ts, which pair a size with its weight and line height.
+ */
 export const text = stylex.defineVars({
-  xs: "0.6875rem", // 11px: badges, counts
-  sm: "0.75rem", // 12px: secondary text, descriptions
+  xs: "0.6875rem", // 11px: badges, counts, overlines
+  sm: "0.75rem", // 12px: metadata
   base: "0.8125rem", // 13px: body and controls
-  md: "0.875rem", // 14px: emphasised body
-  lg: "1rem", // 16px: dialog titles
-  xl: "1.25rem", // 20px: page titles
-  xxl: "1.5rem", // 24px: rare
+  md: "0.875rem", // 14px: section headings
+  lg: "1rem", // 16px: page and dialog titles
 })
 
 export const leading = stylex.defineVars({
@@ -362,6 +364,7 @@ export const weight = stylex.defineVars({
 
 export const tracking = stylex.defineVars({
   tight: "-0.011em",
+  wide: "0.05em",
 })
 
 /** Spacing on a 4px grid. Keys are multiples of 4px: `s3` is 12px, `s0_5` is 2px. */

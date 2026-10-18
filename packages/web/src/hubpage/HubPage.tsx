@@ -38,8 +38,9 @@ import {
   Spinner,
   toast,
   UpdateIcon,
+  textRole,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   channelChangeText,
@@ -67,12 +68,7 @@ const styles = stylex.create({
     paddingInline: space.s4,
   },
   section: { display: "flex", flexDirection: "column", gap: space.s2 },
-  sectionTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.sm,
-    fontWeight: weight.semibold,
-  },
+  sectionTitle: { margin: 0 },
   card: {
     display: "flex",
     flexDirection: "column",
@@ -107,7 +103,7 @@ const styles = stylex.create({
     gap: space.s3,
   },
   headlineText: { display: "flex", flexDirection: "column", gap: space.s1, minWidth: 0 },
-  headlineTitle: { margin: 0, fontSize: text.md, fontWeight: weight.semibold },
+  headlineTitle: { margin: 0 },
   note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   /** Update, beside the link to GitHub. */
   actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
@@ -118,9 +114,6 @@ const styles = stylex.create({
     color: color.text,
     fontSize: text.sm,
     fontWeight: weight.medium,
-    textDecorationLine: "underline",
-    textUnderlineOffset: "2px",
-    textDecorationColor: color.borderStrong,
     whiteSpace: "nowrap",
   },
   release: {
@@ -138,8 +131,6 @@ const styles = stylex.create({
     alignItems: "baseline",
     gap: space.s2,
     margin: 0,
-    fontSize: text.base,
-    fontWeight: weight.semibold,
   },
   releaseDate: { color: color.textMuted, fontSize: text.sm, fontWeight: weight.normal },
   commits: {
@@ -283,7 +274,7 @@ function Hub({ update }: { update: HubUpdateState }) {
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
           <section aria-labelledby="this-hub" {...stylex.props(styles.section)}>
-            <h2 id="this-hub" {...stylex.props(styles.sectionTitle)}>
+            <h2 id="this-hub" {...stylex.props(textRole.overline, styles.sectionTitle)}>
               This Hub
             </h2>
             <div {...stylex.props(styles.card)}>
@@ -318,7 +309,7 @@ function Hub({ update }: { update: HubUpdateState }) {
           </section>
           {(run !== null || updating) && (
             <section aria-labelledby="latest-update" {...stylex.props(styles.section)}>
-              <h2 id="latest-update" {...stylex.props(styles.sectionTitle)}>
+              <h2 id="latest-update" {...stylex.props(textRole.overline, styles.sectionTitle)}>
                 Latest update
               </h2>
               <div {...stylex.props(styles.card)}>
@@ -332,7 +323,7 @@ function Hub({ update }: { update: HubUpdateState }) {
             </section>
           )}
           <section aria-labelledby="update" {...stylex.props(styles.section)}>
-            <h2 id="update" {...stylex.props(styles.sectionTitle)}>
+            <h2 id="update" {...stylex.props(textRole.overline, styles.sectionTitle)}>
               Update
             </h2>
             <div {...stylex.props(styles.card)}>
@@ -458,7 +449,7 @@ function LatestUpdate({
           : runTitle(run)
     return (
       <div role="status" {...stylex.props(styles.headlineText)}>
-        <p {...stylex.props(styles.loading, styles.headlineTitle)}>
+        <p {...stylex.props(textRole.heading, styles.loading, styles.headlineTitle)}>
           <Spinner size="sm" /> {title}
         </p>
         <p {...stylex.props(styles.note)}>
@@ -478,7 +469,9 @@ function LatestUpdate({
     <>
       <div {...stylex.props(styles.headline)}>
         <div role="status" {...stylex.props(styles.headlineText)}>
-          <p {...stylex.props(styles.headlineTitle, failed && styles.failedTitle)}>
+          <p
+            {...stylex.props(textRole.heading, styles.headlineTitle, failed && styles.failedTitle)}
+          >
             {runTitle(run)}
           </p>
           <p {...stylex.props(styles.note)}>
@@ -741,7 +734,7 @@ function Found({
     case "UpToDate":
       return (
         <div {...stylex.props(styles.headlineText)}>
-          <p {...stylex.props(styles.headlineTitle)}>kndl is up to date</p>
+          <p {...stylex.props(textRole.heading, styles.headlineTitle)}>kndl is up to date</p>
           <p {...stylex.props(styles.note)}>
             {channel === "dev"
               ? "This Hub runs the head of main."
@@ -818,7 +811,7 @@ function Headline({
   return (
     <div {...stylex.props(styles.headline)}>
       <div {...stylex.props(styles.headlineText)}>
-        <p {...stylex.props(styles.headlineTitle)}>{title}</p>
+        <p {...stylex.props(textRole.heading, styles.headlineTitle)}>{title}</p>
         <p {...stylex.props(styles.note)}>{note}</p>
       </div>
       <div {...stylex.props(styles.actions)}>
@@ -832,7 +825,7 @@ function Headline({
 function Release({ release }: { release: ReleaseNotes }) {
   return (
     <article aria-label={release.version} {...stylex.props(styles.release)}>
-      <h3 {...stylex.props(styles.releaseTitle)}>
+      <h3 {...stylex.props(textRole.heading, styles.releaseTitle)}>
         {release.version}
         {release.publishedAt !== undefined && (
           <span {...stylex.props(styles.releaseDate)}>{day(release.publishedAt)}</span>
@@ -864,7 +857,7 @@ function ExternalLink({ href, children }: { href: string; children: string }) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      {...stylex.props(styles.link, focus.ring)}
+      {...stylex.props(textLink.underline, styles.link, focus.ring)}
     >
       {children}
       <ExternalLinkIcon aria-hidden="true" />

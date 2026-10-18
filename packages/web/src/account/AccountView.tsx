@@ -32,6 +32,7 @@ import {
   Spinner,
   toast,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Fact } from "./Fact.tsx"
@@ -61,7 +62,7 @@ const styles = stylex.create({
     backgroundColor: color.surface,
   },
   sectionHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
-  sectionTitle: { margin: 0, fontSize: text.md, fontWeight: weight.semibold },
+  sectionTitle: { margin: 0 },
   note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   steps: {
     display: "flex",
@@ -192,7 +193,7 @@ function ClaudeSection() {
   return (
     <section aria-labelledby="claude-credential" {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h3 id="claude-credential" {...stylex.props(styles.sectionTitle)}>
+        <h3 id="claude-credential" {...stylex.props(textRole.subheading, styles.sectionTitle)}>
           Anthropic
         </h3>
         <p {...stylex.props(styles.note)}>
@@ -478,7 +479,7 @@ function CliTokensSection() {
   return (
     <section aria-labelledby="cli-tokens" {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h2 id="cli-tokens" {...stylex.props(styles.sectionTitle)}>
+        <h2 id="cli-tokens" {...stylex.props(textRole.heading, styles.sectionTitle)}>
           CLI tokens
         </h2>
         <p {...stylex.props(styles.note)}>

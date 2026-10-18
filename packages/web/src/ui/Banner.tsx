@@ -48,8 +48,8 @@ const styles = stylex.create({
     flex: "1 1 14rem",
     minWidth: 0,
   },
-  title: { fontWeight: weight.semibold },
-  description: { color: color.text, opacity: 0.85 },
+  title: { fontWeight: weight.semibold, textWrap: "balance" },
+  description: { color: color.text, opacity: 0.85, textWrap: "pretty" },
   detail: { marginTop: space.s1_5, minWidth: 0 },
   action: {
     display: "flex",

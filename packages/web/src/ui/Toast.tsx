@@ -138,12 +138,14 @@ const styles = stylex.create({
     fontSize: text.base,
     fontWeight: weight.medium,
     lineHeight: leading.snug,
+    textWrap: "balance",
   },
   description: {
     margin: 0,
     color: color.textMuted,
     fontSize: text.sm,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
   actions: {
     display: "flex",

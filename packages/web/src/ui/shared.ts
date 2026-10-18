@@ -120,3 +120,13 @@ export const popup = stylex.create({
     userSelect: "none",
   },
 })
+
+export const textLink = stylex.create({
+  /** A link in running text: underlined, from the font's own metrics, so it never relies on colour. */
+  underline: {
+    textDecorationLine: "underline",
+    textDecorationThickness: "from-font",
+    textUnderlinePosition: "from-font",
+    textDecorationColor: { default: color.borderStrong, ":hover": "currentColor" },
+  },
+})

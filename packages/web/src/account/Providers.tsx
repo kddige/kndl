@@ -32,6 +32,7 @@ import {
   Spinner,
   toast,
   WarningIcon,
+  textRole,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Fact } from "./Fact.tsx"
@@ -39,7 +40,7 @@ import { Fact } from "./Fact.tsx"
 const styles = stylex.create({
   group: { display: "flex", flexDirection: "column", gap: space.s3 },
   groupHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
-  groupTitle: { margin: 0, fontSize: text.lg, fontWeight: weight.semibold },
+  groupTitle: { margin: 0 },
   section: {
     display: "flex",
     flexDirection: "column",
@@ -52,7 +53,7 @@ const styles = stylex.create({
     backgroundColor: color.surface,
   },
   sectionHead: { display: "flex", flexDirection: "column", gap: space.s0_5 },
-  sectionTitle: { margin: 0, fontSize: text.md, fontWeight: weight.semibold },
+  sectionTitle: { margin: 0 },
   note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   mono: { fontFamily: font.mono },
@@ -111,14 +112,7 @@ const styles = stylex.create({
   },
   // The Providers not connected: a titled list of lines each.
   kind: { display: "flex", flexDirection: "column", gap: space.s1 },
-  kindTitle: {
-    margin: 0,
-    color: color.textMuted,
-    fontSize: text.xs,
-    fontWeight: weight.semibold,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-  },
+  kindTitle: { margin: 0 },
   lines: {
     display: "flex",
     flexDirection: "column",
@@ -211,7 +205,7 @@ export function ProvidersSection({ claude }: { claude: ReactNode }) {
   return (
     <section aria-labelledby="providers" {...stylex.props(styles.group)}>
       <div {...stylex.props(styles.groupHead)}>
-        <h2 id="providers" {...stylex.props(styles.groupTitle)}>
+        <h2 id="providers" {...stylex.props(textRole.heading, styles.groupTitle)}>
           Providers
         </h2>
         <p {...stylex.props(styles.note)}>
@@ -284,7 +278,7 @@ function MoreProviders({
   return (
     <section aria-labelledby="connect-provider" {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h3 id="connect-provider" {...stylex.props(styles.sectionTitle)}>
+        <h3 id="connect-provider" {...stylex.props(textRole.subheading, styles.sectionTitle)}>
           {anyConnected ? "Connect another Provider" : "Connect a Provider"}
         </h3>
         <p {...stylex.props(styles.note)}>
@@ -326,7 +320,7 @@ function ProviderLines({
 }) {
   return (
     <div role="group" aria-labelledby={id} {...stylex.props(styles.kind)}>
-      <h4 id={id} {...stylex.props(styles.kindTitle)}>
+      <h4 id={id} {...stylex.props(textRole.overline, styles.kindTitle)}>
         {title}
       </h4>
       <div {...stylex.props(styles.lines)}>{children}</div>
@@ -445,7 +439,7 @@ function ProviderCard({
   return (
     <section ref={ref} aria-labelledby={titleId} {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h3 id={titleId} {...stylex.props(styles.sectionTitle)}>
+        <h3 id={titleId} {...stylex.props(textRole.subheading, styles.sectionTitle)}>
           {name}
         </h3>
         <p {...stylex.props(styles.note)}>{noteFor(connectable)}</p>

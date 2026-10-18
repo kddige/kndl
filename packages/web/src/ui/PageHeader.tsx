@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
-import { chrome, color, leading, space, text, tracking, weight } from "./tokens.stylex.ts"
+import { chrome, color, leading, space, text } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export interface PageHeaderProps {
   /** The page's name, as its h1: a work branch, a Repo, "Shared variables". */
@@ -42,13 +43,9 @@ const styles = stylex.create({
     flex: 1,
     minWidth: 0,
   },
-  // The brand's type in the Sidebar, so the two read as one line across the top.
+  // textRole.title, cut to the row.
   title: {
     minWidth: 0,
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -82,9 +79,11 @@ const styles = stylex.create({
   // some of it, so it reads with the title rather than apart from it.
   description: {
     marginTop: `calc(${space.s2} * -1)`,
+    maxWidth: "60ch",
     color: color.textMuted,
     fontSize: text.sm,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
 })
 
@@ -105,7 +104,10 @@ export function PageHeader({
     <header {...stylex.props(styles.header, description ? styles.withDescription : null, sx)}>
       <div {...stylex.props(styles.row, stackActions && styles.rowStacked)}>
         <div {...stylex.props(styles.heading, stackActions && styles.headingStacked)}>
-          <h1 {...(typeof title === "string" && { title })} {...stylex.props(styles.title)}>
+          <h1
+            {...(typeof title === "string" && { title })}
+            {...stylex.props(textRole.title, styles.title)}
+          >
             {title}
           </h1>
           {badge && <span {...stylex.props(styles.badge)}>{badge}</span>}

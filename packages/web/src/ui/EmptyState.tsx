@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
-import { color, leading, radius, space, text, weight } from "./tokens.stylex.ts"
+import { color, leading, radius, space } from "./tokens.stylex.ts"
+import { textRole } from "./type.ts"
 
 export interface EmptyStateProps {
   /** What's empty, as a statement: "No Sessions yet". */
@@ -43,16 +44,12 @@ const styles = stylex.create({
     backgroundColor: color.surfaceMuted,
     color: color.textMuted,
   },
-  title: {
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    lineHeight: leading.snug,
-    color: color.text,
-  },
+  title: { color: color.text, textWrap: "balance" },
   description: {
     maxWidth: "24rem",
     color: color.textMuted,
     lineHeight: leading.snug,
+    textWrap: "pretty",
   },
   action: {
     marginTop: space.s3,
@@ -75,7 +72,7 @@ export function EmptyState({
           {icon}
         </div>
       )}
-      <p {...stylex.props(styles.title)}>{title}</p>
+      <p {...stylex.props(textRole.heading, styles.title)}>{title}</p>
       {description && <p {...stylex.props(styles.description)}>{description}</p>}
       {action && <div {...stylex.props(styles.action)}>{action}</div>}
     </div>
