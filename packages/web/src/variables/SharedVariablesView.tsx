@@ -45,7 +45,9 @@ import { color, font, leading, radius, space, text, weight } from "../ui/tokens.
 const styles = stylex.create({
   name: { fontFamily: font.mono, fontSize: text.sm, fontWeight: weight.semibold },
   value: {
-    minWidth: 0,
+    display: "inline-block",
+    maxWidth: "100%",
+    verticalAlign: "bottom",
     fontFamily: font.mono,
     overflow: "hidden",
     textOverflow: "ellipsis",

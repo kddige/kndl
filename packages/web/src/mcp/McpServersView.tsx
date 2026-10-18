@@ -103,7 +103,9 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   url: {
-    minWidth: 0,
+    display: "inline-block",
+    maxWidth: "100%",
+    verticalAlign: "bottom",
     fontFamily: font.mono,
     overflow: "hidden",
     textOverflow: "ellipsis",

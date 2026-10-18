@@ -372,6 +372,7 @@ function ArchivedRow({
         <Link
           to="/sessions/$sessionId"
           params={{ sessionId: session.id }}
+          title={title}
           {...stylex.props(styles.branch, focus.ring)}
         >
           <BranchIcon />

@@ -197,6 +197,8 @@ const styles = stylex.create({
     margin: 0,
     minWidth: 0,
   },
+  // A fact may shrink to the row: one that truncates itself, such as a URL, then can.
+  fact: { minWidth: 0, maxWidth: "100%" },
   dot: { color: color.textTertiary },
   badges: {
     display: "flex",
@@ -356,10 +358,8 @@ export interface SettingsPageProps {
   description?: ReactNode
   /** The page's one primary Button, at the end of the title's line. */
   action?: ReactNode
-  /** Its SettingsSections, and Banners above them. */
+  /** Its SettingsSections, Banners above them, and a StickyApplyBar last, on a form. */
   children: ReactNode
-  /** A StickyApplyBar, for a page that edits a draft. */
-  applyBar?: ReactNode
 }
 
 /**
@@ -373,7 +373,6 @@ export function SettingsPage({
   description,
   action,
   children,
-  applyBar,
 }: SettingsPageProps) {
   useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
   return (
@@ -395,7 +394,6 @@ export function SettingsPage({
             )}
           </header>
           {children}
-          {applyBar}
         </div>
       </div>
     </main>
@@ -629,7 +627,7 @@ function joinFacts(facts: ReadonlyArray<ReactNode>): ReactNode {
           ·
         </span>
       )}
-      <span>{fact}</span>
+      <span {...stylex.props(styles.fact)}>{fact}</span>
     </Fragment>
   ))
 }
@@ -779,7 +777,7 @@ export interface StickyApplyBarProps {
 
 /**
  * A form's save, in view wherever the page is scrolled to: shown while the draft differs from
- * what's saved, floating over the foot of the column. Pass it to SettingsPage as `applyBar`.
+ * what's saved, floating over the foot of the column. Render it last in the SettingsPage.
  */
 export function StickyApplyBar({
   title = "Unsaved changes",
