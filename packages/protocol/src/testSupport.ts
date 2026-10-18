@@ -184,6 +184,13 @@ export const turnEvents = [
   },
   { _tag: "TurnEnded", turnId: "t-2", reason: "aborted", durationMs: 800 },
   {
+    _tag: "TurnEnded",
+    turnId: "t-3",
+    reason: "error",
+    durationMs: 300,
+    errorMessage: "OpenAI API error (429): You exceeded your current quota",
+  },
+  {
     _tag: "TurnStarted",
     turnId: "t-3",
     text: "[Report from Child Session ...]",

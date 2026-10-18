@@ -43,6 +43,13 @@ const modToHub = [
   },
   { _tag: "AgentCommandFailed", agentId: "a-1", command: "StopAgent", message: "No task a-1" },
   { _tag: "AnswerFailed", toolCallId: "toolu_ask", senderId: "u-2", message: "already answered" },
+  {
+    _tag: "ModelSwitchFailed",
+    asked: "openai/gpt-6-sol",
+    model: "anthropic/claude-opus-5-5",
+    message: "pi has no Model openai/gpt-6-sol",
+  },
+  { _tag: "ModelSwitchFailed", model: "openai/gpt-6-luna", message: "No default Model" },
 ]
 
 const hubToMod = [

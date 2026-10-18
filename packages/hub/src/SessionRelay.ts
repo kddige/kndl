@@ -3946,6 +3946,19 @@ export class SessionRelay extends Context.Service<
           )
         }
 
+        if (event._tag === "ModelSwitchFailed") {
+          // The Session runs on what it ran on (ADR 0029): its setting says so again, and its
+          // history why.
+          yield* sessions.setModel(sessionId, { model: event.model }, false)
+          yield* logEvent(
+            sessionId,
+            SandboxNoted.make({
+              message: `Couldn't switch to ${event.asked ?? "the default model"}: ${event.message}. It still runs on ${event.model}.`,
+            }),
+          )
+          return yield* sessionUpdated(sessionId)
+        }
+
         if (event._tag === "AnswerFailed") {
           // The question is as it was: closed. Told to whoever sent the answer.
           const known = live.closedQuestion(sessionId)

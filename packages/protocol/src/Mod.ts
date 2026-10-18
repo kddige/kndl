@@ -112,6 +112,20 @@ export const AnswerFailed = Schema.TaggedStruct("AnswerFailed", {
 })
 export type AnswerFailed = typeof AnswerFailed.Type
 
+/**
+ * A {@link SwitchModel} failed (ADR 0029): the Harness has no such model, as when its Provider
+ * was connected after the Session started, or refused it. The Session keeps running on the model
+ * it ran on, which `model` names, and its history says so.
+ */
+export const ModelSwitchFailed = Schema.TaggedStruct("ModelSwitchFailed", {
+  /** The model asked for; absent for the Harness's default. */
+  asked: Schema.optionalKey(ModelName),
+  /** The model it runs on still. */
+  model: ModelName,
+  message: Schema.String,
+})
+export type ModelSwitchFailed = typeof ModelSwitchFailed.Type
+
 /** Every message the mod sends the Hub: its hello, Turn events, and failed commands. */
 export const ModToHub = Schema.Union([
   ModHello,
@@ -120,6 +134,7 @@ export const ModToHub = Schema.Union([
   PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
+  ModelSwitchFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModToHub = typeof ModToHub.Type
 export type ModToHubEncoded = typeof ModToHub.Encoded
@@ -131,6 +146,7 @@ export const ModEvent = Schema.Union([
   PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
+  ModelSwitchFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModEvent = typeof ModEvent.Type
 

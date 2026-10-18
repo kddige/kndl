@@ -159,6 +159,8 @@ export const TurnEnded = Schema.TaggedStruct("TurnEnded", {
   durationMs: Schema.Natural,
   /** Absent when no request counted, such as on an early stop or an API error. */
   usage: Schema.optionalKey(TurnUsage),
+  /** Why it ended in an error, as the Provider or Harness said: shown with its Failed badge. */
+  errorMessage: Schema.optionalKey(Schema.String),
 })
 export type TurnEnded = typeof TurnEnded.Type
 
