@@ -135,7 +135,7 @@ To take a queued prompt out of the Prompt queue and feed it into the running Tur
 _Avoid_: interrupt, inject, push
 
 **Open question**:
-A question the agent asked in a Turn, with its question tool, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one the agent reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep.
+A question the agent asked in a Turn, with its question tool, that no one has answered yet. The Creator answers it, from the web UI or (in pi) at the terminal; the first answer is the one the agent reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
 _Avoid_: prompt, dialog, permission request
 
 **Workspace**:

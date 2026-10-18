@@ -7,105 +7,56 @@
 // the model reads, and one after it comes too late (AnswerFailed), as hub-link-commands has it. A
 // stopped Turn cancels it.
 //
+// A call may be `async`: it returns at once, and the model goes on. Its question stays open past
+// the Turn, and its answer is given to the main loop as a message once it comes (MainLoopDelivery):
+// into the running Turn, or as a Turn of its own. One async question is open at a time.
+//
 // It takes pi's dialogs in a plain shape, so it runs under `bun test` without pi.
 
 import { Type } from "@earendil-works/pi-ai/compat"
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import type { Question, QuestionAnswer, QuestionOutcome } from "@kndl/protocol"
-import { askedQuestions, deliveredPrompt } from "../../src/HubMessages.ts"
-import type { Command, Sender } from "../../src/HubMessages.ts"
+import { askedQuestions } from "../../src/HubMessages.ts"
+import type { Command } from "../../src/HubMessages.ts"
+import {
+  askedAsyncText,
+  asyncDescription,
+  questionDescriptions,
+  questionResultText,
+  questionTool,
+  questionToolDescription,
+  stillOpenText,
+} from "../../src/Questions.ts"
+import type { Closed } from "../../src/Questions.ts"
 
-/** The tool's name, as the model calls it. */
-export const questionTool = "ask_user_question"
-
-/** What the model reads of the tool, whichever model it is. */
-export const questionToolDescription = [
-  "Asks the people in this session one to four questions, and waits for their answer.",
-  "Use it when you need a decision or a fact only they have: to choose between approaches, to settle what an ambiguous request means, or to confirm something hard to undo. Don't ask what you can find out yourself, and don't ask for permission to do what you were asked to do.",
-  "Give each question two to four options, or none for one answered in their own words. They can always answer in their own words instead of picking, or dismiss the questions.",
-  "The result says what they chose, what they said instead, or that they dismissed the questions.",
-].join(" ")
+/** The tool's name, and what the model reads of it, whichever model it is. */
+export { questionTool, questionToolDescription, questionResultText }
+export type { Closed }
 
 /** The tool's parameters: the protocol's Question, which the web shows as it is. */
 export const questionParameters = Type.Object({
   questions: Type.Array(
     Type.Object({
-      question: Type.String({
-        description: "The complete question, ending with a question mark.",
-      }),
-      header: Type.String({
-        description: 'A very short label for it, up to 12 characters, such as "Auth method".',
-      }),
+      question: Type.String({ description: questionDescriptions.question }),
+      header: Type.String({ description: questionDescriptions.header }),
       options: Type.Array(
         Type.Object({
-          label: Type.String({
-            description: "What the option says, in a few words: it is also the answer.",
-          }),
+          label: Type.String({ description: questionDescriptions.label }),
           description: Type.Optional(
-            Type.String({ description: "What choosing it means, or what follows from it." }),
+            Type.String({ description: questionDescriptions.optionDescription }),
           ),
         }),
-        {
-          maxItems: 4,
-          description:
-            'Two to four distinct choices, or none for a free-text answer. Leave out "Other": an answer in their own words is always possible.',
-        },
+        { maxItems: 4, description: questionDescriptions.options },
       ),
-      multiSelect: Type.Boolean({
-        description: "Whether several options may be picked, rather than one.",
-      }),
+      multiSelect: Type.Boolean({ description: questionDescriptions.multiSelect }),
     }),
-    { minItems: 1, maxItems: 4, description: "The questions to ask, one to four." },
+    { minItems: 1, maxItems: 4, description: questionDescriptions.questions },
   ),
+  async: Type.Optional(Type.Boolean({ description: asyncDescription })),
 })
 
 type Outcome = typeof QuestionOutcome.Encoded
 type DeliverAnswer = Command<"DeliverAnswer">
-
-/** How an Open question closed: its outcome, and who answered from the web UI, if anyone did. */
-export interface Closed {
-  readonly outcome: Outcome
-  readonly by?: Sender | undefined
-}
-
-/** What the model reads once its questions closed. */
-export const questionResultText = (
-  questions: ReadonlyArray<Question>,
-  { outcome, by }: Closed,
-): string => {
-  const who = by?.name ?? "The person at the terminal"
-  switch (outcome._tag) {
-    case "Answered": {
-      const asked = new Set(questions.map((question) => question.question))
-      const lines = [
-        ...questions.map(
-          ({ question }) => `- "${question}": ${outcome.answers[question] ?? "(no answer)"}`,
-        ),
-        // An answer keyed by a question the call didn't ask, which the web shouldn't send.
-        ...Object.entries(outcome.answers)
-          .filter(([question]) => !asked.has(question))
-          .map(([question, answer]) => `- "${question}": ${answer}`),
-      ]
-      return [
-        `${who} answered your questions:`,
-        ...lines,
-        "Continue with these answers in mind.",
-      ].join("\n")
-    }
-    case "Replied":
-      return [
-        `${who} didn't pick an answer, and replied instead:`,
-        by === undefined
-          ? outcome.text
-          : deliveredPrompt(by, outcome.text, outcome.attachments ?? []),
-        "Follow what they said.",
-      ].join("\n")
-    case "Dismissed":
-      return `${who} dismissed the questions without answering. Stop what you are doing and wait for them to tell you how to proceed.`
-    case "Cancelled":
-      return "The questions were closed without an answer: the Turn was stopped."
-  }
-}
 
 /** pi's dialogs, as `ctx.ui` has them: each resolves undefined when closed without an answer. */
 export interface DialogUI {
@@ -180,48 +131,103 @@ export interface AskOptions {
     | undefined
 }
 
+/** The answer to an `async` question, once it has come: what the model reads of it. */
+export interface AsyncAnswer {
+  readonly toolCallId: string
+  readonly text: string
+  /** Who answered from the web UI; absent when it was at the terminal. */
+  readonly by?: Closed["by"]
+}
+
 export class Questions {
   /** The questions waiting for an answer, by tool call: each takes one, and says if it was first. */
   private readonly open = new Map<string, (closed: Closed) => boolean>()
+  /** The `async` question waiting for an answer, if one is: one at a time. */
+  private asyncOpen: string | undefined
 
   constructor(
-    private readonly options: { readonly report: (event: Record<string, unknown>) => void },
+    private readonly options: {
+      readonly report: (event: Record<string, unknown>) => void
+      /** An `async` question closed with an answer for the model to read, as a message. */
+      readonly answered: (answer: AsyncAnswer) => void
+    },
   ) {}
 
+  /** Whether an `async` question is still waiting for an answer, so no other can be asked. */
+  get asyncWaiting(): boolean {
+    return this.asyncOpen !== undefined
+  }
+
   /** Asks the questions, as the Session's Open question; how it closed, once it has. */
-  ask({ turnId, toolCallId, questions, signal, terminal }: AskOptions): Promise<Closed> {
-    const { report } = this.options
-    if (turnId !== undefined) report({ _tag: "QuestionAsked", turnId, toolCallId, questions })
-    const dialogs = new AbortController()
-    return new Promise<Closed>((resolve) => {
-      const settle = (closed: Closed) => {
-        if (this.open.get(toolCallId) !== settle) return false
-        this.open.delete(toolCallId)
-        signal?.removeEventListener("abort", cancel)
-        dialogs.abort()
-        if (turnId !== undefined)
-          report({
-            _tag: "QuestionClosed",
-            turnId,
-            toolCallId,
-            outcome: closed.outcome,
-            ...(closed.by === undefined ? {} : { by: closed.by }),
-          })
-        resolve(closed)
-        return true
-      }
-      const cancel = () => settle({ outcome: { _tag: "Cancelled" } })
-      this.open.set(toolCallId, settle)
-      if (signal?.aborted) return void cancel()
-      signal?.addEventListener("abort", cancel, { once: true })
-      terminal?.(questions, dialogs.signal).then(
-        (outcome) => {
-          if (outcome !== undefined) settle({ outcome })
-        },
-        // The terminal can't ask; the web UI still can.
-        () => undefined,
-      )
+  ask(options: AskOptions): Promise<Closed> {
+    return new Promise<Closed>((resolve) => this.start(options, resolve))
+  }
+
+  /**
+   * Asks the questions `async`: the Session's Open question, which its Turn ending doesn't close.
+   * The model has its call back at once; once the question closes with an answer, `answered` gives
+   * it to the model. The Turn's stop doesn't cancel it. Returns false, asking nothing, while
+   * another is open, or when there is no Turn to report it in.
+   */
+  askAsync(options: Omit<AskOptions, "signal">): boolean {
+    if (this.asyncOpen !== undefined || options.turnId === undefined) return false
+    const { toolCallId, questions } = options
+    this.asyncOpen = toolCallId
+    this.start(options, (closed) => {
+      // Cancelled with nobody to read it, as when the Session's Hub stops it.
+      if (closed.outcome._tag === "Cancelled") return
+      this.options.answered({
+        toolCallId,
+        text: questionResultText(questions, closed, true),
+        by: closed.by,
+      })
     })
+    return true
+  }
+
+  private start(
+    { turnId, toolCallId, questions, signal, terminal }: AskOptions,
+    done: (closed: Closed) => void,
+  ) {
+    const { report } = this.options
+    const isAsync = this.asyncOpen === toolCallId
+    if (turnId !== undefined)
+      report({
+        _tag: "QuestionAsked",
+        turnId,
+        toolCallId,
+        questions,
+        ...(isAsync && { async: true }),
+      })
+    const dialogs = new AbortController()
+    const settle = (closed: Closed) => {
+      if (this.open.get(toolCallId) !== settle) return false
+      this.open.delete(toolCallId)
+      if (isAsync) this.asyncOpen = undefined
+      signal?.removeEventListener("abort", cancel)
+      dialogs.abort()
+      if (turnId !== undefined)
+        report({
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: closed.outcome,
+          ...(closed.by === undefined ? {} : { by: closed.by }),
+        })
+      done(closed)
+      return true
+    }
+    const cancel = () => settle({ outcome: { _tag: "Cancelled" } })
+    this.open.set(toolCallId, settle)
+    if (signal?.aborted) return void cancel()
+    signal?.addEventListener("abort", cancel, { once: true })
+    terminal?.(questions, dialogs.signal).then(
+      (outcome) => {
+        if (outcome !== undefined) settle({ outcome })
+      },
+      // The terminal can't ask; the web UI still can.
+      () => undefined,
+    )
   }
 
   /** The Creator's answer from the web UI (DeliverAnswer): too late once the question closed. */
@@ -248,22 +254,33 @@ export const questionToolDefinition = ({
   readonly questions: Questions
   /** The main loop's running Turn. */
   readonly turnId: () => string | undefined
-}): ToolDefinition<typeof questionParameters, Closed> => ({
+}): ToolDefinition<typeof questionParameters, Closed | { readonly async: true }> => ({
   name: questionTool,
   label: "Question",
   description: questionToolDescription,
-  promptSnippet: "Ask the people in this session questions, and wait for their answer",
+  promptSnippet: "Ask the people in this session questions, waiting for the answer or going on",
   parameters: questionParameters,
   // It asks people: never from another tool, and never in a subagent.
   exposure: "model-only",
   execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
     const asked = askedQuestions(params.questions)
+    const terminal = ctx.hasUI
+      ? (each: ReadonlyArray<Question>, dialogs: AbortSignal) =>
+          askAtTerminal(ctx.ui, each, dialogs)
+      : undefined
+    if (questions.asyncWaiting)
+      return { content: [{ type: "text", text: stillOpenText }], details: { async: true } }
+    if (
+      params.async === true &&
+      questions.askAsync({ turnId: turnId(), toolCallId, questions: asked, terminal })
+    )
+      return { content: [{ type: "text", text: askedAsyncText }], details: { async: true } }
     const closed = await questions.ask({
       turnId: turnId(),
       toolCallId,
       questions: asked,
       signal,
-      terminal: ctx.hasUI ? (each, dialogs) => askAtTerminal(ctx.ui, each, dialogs) : undefined,
+      terminal,
     })
     return { content: [{ type: "text", text: questionResultText(asked, closed) }], details: closed }
   },

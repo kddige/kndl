@@ -111,41 +111,24 @@ export function steeringWrites(on: On) {
   return writes
 }
 
+/** The question tool's name in Claude Code, and the id its calls get in the tests. */
+export const questionTool = "mcp__hub-link-commands__ask_user_question"
+export const questionId = "toolu_q1"
+
 /**
- * A session whose Hub answers the first AskUserQuestion call with `webAnswer` from Ada, once
- * Claude Code's dialog for it is open; the dialog answers with `atTerminal`, or stays open.
- * Returns the call's id, the dialog's signal, and the events posted.
+ * A session whose Hub answers the question tool's call (`questionId`) with each of `answers`, from
+ * Ada, once `release` is called. Returns the events posted.
  */
-export const askedSession = (
-  on: On,
-  webAnswer: Record<string, unknown>,
-  atTerminal?: Record<string, unknown>,
-) => {
-  const commands: Array<Record<string, unknown>> = []
-  let opened: ((id: string) => void) | undefined
-  const dialog = { id: "", signal: undefined as AbortSignal | undefined }
-  const { posted } = linkedSession(
-    on,
-    commands,
-    new Promise<void>((resolve) => {
-      opened = (id) => {
-        commands.push({
-          _tag: "DeliverAnswer",
-          sessionId: "s1",
-          toolCallId: id,
-          answer: webAnswer,
-          sender: ada,
-        })
-        resolve()
-      }
-    }),
-  )
+export const answeredSession = (on: On, answers: Array<Record<string, unknown>>) => {
+  let release: (() => void) | undefined
+  const commands = answers.map((each) => ({
+    _tag: "DeliverAnswer",
+    sessionId: "s1",
+    toolCallId: questionId,
+    answer: each,
+    sender: ada,
+  }))
+  const { posted } = linkedSession(on, commands, new Promise((resolve) => (release = resolve)))
   on("turn.start", (_, e) => ({ turnId: e.turnId }))
-  on("tool.call", (_, e, next) => {
-    dialog.id = e.tool_use_id ?? ""
-    dialog.signal = next.signal
-    opened?.(dialog.id)
-    return (atTerminal === undefined ? new Promise(() => undefined) : atTerminal) as never
-  })
-  return { dialog, posted }
+  return { posted, release: () => release?.() }
 }

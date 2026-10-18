@@ -472,6 +472,11 @@ export const OpenQuestion = Schema.Struct({
   toolCallId: ToolCallId,
   questions: Schema.Array(Question),
   askedAt: EpochMillis,
+  /**
+   * Present, true, when the agent asked it `async`: it works on meanwhile, its Turn ending doesn't
+   * close the question, and the answer reaches it as a message.
+   */
+  async: Schema.optionalKey(Schema.Boolean),
 })
 export type OpenQuestion = typeof OpenQuestion.Type
 

@@ -23,8 +23,6 @@ import type {
   ModEventsEncoded,
   Participant,
   Question,
-  QuestionAnswer,
-  QuestionOutcome,
   TurnEndReason,
   TurnUsage,
 } from "@kndl/protocol"
@@ -442,82 +440,6 @@ export const askedQuestions = (questions: unknown): Array<Question> =>
       }),
     multiSelect: question.multiSelect === true,
   }))
-
-/**
- * What Claude reads when Esc closes Claude Code's dialog, as when a permission prompt is refused.
- * A Participant's Dismissed answers with it.
- */
-export const dismissedText =
-  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
-
-/**
- * How Claude Code tells Claude that the user refused a tool call and said something instead, which
- * follows it. A Participant's Replied answers with it, with their name: a refusal reaches Claude
- * whatever the tool's result looks like.
- */
-export const repliedPrefix =
-  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
-
-/** An AskUserQuestion call's result from a hook, as Claude Code's dialog would have it. */
-export type AnswerResult =
-  | { readonly deny: string }
-  | {
-      readonly result: {
-        readonly questions: unknown
-        readonly answers: Readonly<Record<string, string>>
-        readonly annotations?: Readonly<Record<string, never>>
-      }
-    }
-
-/**
- * What an AskUserQuestion call answers with a Participant's answer, as Claude Code's dialog
- * would: the answers keyed by question, with no annotations, as its Submit does; a reply, as the
- * call refused with what the sender said instead; or, dismissed, what Esc does.
- */
-export const answerResult = (
-  questions: unknown,
-  answer: QuestionAnswer,
-  sender: Pick<Participant, "name">,
-): AnswerResult => {
-  switch (answer._tag) {
-    case "Answered":
-      return { result: { questions, answers: answer.answers, annotations: {} } }
-    case "Replied":
-      return {
-        deny: `${repliedPrefix}${deliveredPrompt(sender, answer.text, answer.attachments ?? [])}`,
-      }
-    case "Dismissed":
-      return { deny: dismissedText }
-  }
-}
-
-/**
- * How an AskUserQuestion call answered at the terminal closed its question: with the answers
- * chosen; refused with something said instead, replied; or otherwise refused (Esc, or "Chat about
- * this"), dismissed. A dialog that timed out with nobody at the keyboard, set to, closed it with no
- * answer from anyone: cancelled (#206).
- */
-export const terminalOutcome = (done: {
-  readonly deny?: string | undefined
-  readonly isError?: true | undefined
-  readonly result?: unknown
-}): QuestionOutcome => {
-  if (done.deny?.startsWith(repliedPrefix) === true) {
-    const said = done.deny.slice(repliedPrefix.length)
-    if (said.trim() !== "") return { _tag: "Replied", text: said }
-  }
-  if (done.deny !== undefined || done.isError === true || !isRecord(done.result))
-    return { _tag: "Dismissed" }
-  const given = isRecord(done.result.answers) ? done.result.answers : {}
-  const answers = Object.fromEntries(
-    Object.entries(given).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  )
-  if (Object.keys(answers).length === 0 && done.result.afkTimeoutMs !== undefined)
-    return { _tag: "Cancelled" }
-  return { _tag: "Answered", answers }
-}
 
 const maxQueued = 5_000
 

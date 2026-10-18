@@ -2,8 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { ModCommand, ModEvent } from "@kndl/protocol"
 import type { Question } from "@kndl/protocol"
 import { Schema } from "effect"
-import { askAtTerminal, questionResultText, Questions } from "./Questions.ts"
-import type { DialogUI } from "./Questions.ts"
+import {
+  askAtTerminal,
+  questionResultText,
+  Questions,
+  questionToolDefinition,
+} from "./Questions.ts"
+import type { AsyncAnswer, DialogUI } from "./Questions.ts"
 
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 
@@ -32,7 +37,15 @@ const answerCommand = (toolCallId: string, answer: Record<string, unknown>) => {
 
 const tracker = () => {
   const events: Array<Record<string, unknown>> = []
-  return { questions: new Questions({ report: (event) => events.push(event) }), events }
+  const answers: Array<AsyncAnswer> = []
+  return {
+    questions: new Questions({
+      report: (event) => events.push(event),
+      answered: (answer) => answers.push(answer),
+    }),
+    events,
+    answers,
+  }
 }
 
 /** Every event decodes as the protocol has it. */
@@ -212,6 +225,78 @@ describe("an Open question (#193)", () => {
     })
     expect(await asked).toEqual({ outcome: { _tag: "Dismissed" } })
     expect(events).toEqual([])
+  })
+})
+
+describe("an async question", () => {
+  test("is reported async, its Turn's stop doesn't cancel it, and its answer is given to the model as a message", () => {
+    const { questions: open, events, answers } = tracker()
+    expect(open.askAsync({ turnId: "t1", toolCallId: "call-1", questions })).toBe(true)
+    expect(open.asyncWaiting).toBe(true)
+    expect(events).toEqual([
+      { _tag: "QuestionAsked", turnId: "t1", toolCallId: "call-1", questions, async: true },
+    ])
+    open.answer(answerCommand("call-1", { _tag: "Answered", answers: { "Anything else?": "no" } }))
+    expect(open.asyncWaiting).toBe(false)
+    expect(events.at(-1)).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t1",
+      toolCallId: "call-1",
+      outcome: { _tag: "Answered", answers: { "Anything else?": "no" } },
+      by: ada,
+    })
+    expect(answers).toEqual([
+      {
+        toolCallId: "call-1",
+        by: ada,
+        text: [
+          "Ada Lovelace answered the questions you asked earlier:",
+          '- "Which date library?": (no answer)',
+          '- "Anything else?": no',
+          "Continue with these answers in mind.",
+        ].join("\n"),
+      },
+    ])
+    expect(valid(events)).toBe(true)
+  })
+
+  test("only one is open at a time, and none is asked with no Turn to report it in", () => {
+    const { questions: open, events } = tracker()
+    expect(open.askAsync({ turnId: undefined, toolCallId: "call-0", questions })).toBe(false)
+    expect(open.askAsync({ turnId: "t1", toolCallId: "call-1", questions })).toBe(true)
+    expect(open.askAsync({ turnId: "t1", toolCallId: "call-2", questions })).toBe(false)
+    expect(events).toHaveLength(1)
+  })
+
+  test("one answered at pi's terminal first is read as the person there's, and the Creator's answer then comes too late", async () => {
+    const { questions: open, events, answers } = tracker()
+    open.askAsync({
+      turnId: "t1",
+      toolCallId: "call-1",
+      questions,
+      terminal: async () => ({ _tag: "Dismissed" }),
+    })
+    await Promise.resolve()
+    expect(answers.map((answer) => answer.text)).toEqual([
+      "The person at the terminal dismissed the questions you asked earlier without answering. Carry on without an answer, and don't ask again unless you can't go on.",
+    ])
+    open.answer(answerCommand("call-1", { _tag: "Dismissed" }))
+    expect(events.at(-1)).toMatchObject({ _tag: "AnswerFailed" })
+  })
+
+  test("the tool returns at once, and refuses another question while it is open", async () => {
+    const { questions: open } = tracker()
+    const tool = questionToolDefinition({ questions: open, turnId: () => "t1" })
+    const context = { hasUI: false } as never
+    const input = {
+      questions: [{ ...questions[0], options: [...(questions[0]?.options ?? [])] }],
+      async: true,
+    }
+    const first = await tool.execute("call-1", input as never, undefined, undefined, context)
+    expect(first.content[0]).toMatchObject({ text: expect.stringContaining("Don't wait or poll") })
+    const second = await tool.execute("call-2", input as never, undefined, undefined, context)
+    expect(second.content[0]).toMatchObject({ text: expect.stringContaining("still waiting") })
+    expect(open.asyncWaiting).toBe(true)
   })
 })
 

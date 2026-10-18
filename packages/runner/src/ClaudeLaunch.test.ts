@@ -32,6 +32,8 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
     "--plugin-dir",
     "/opt/kndl/mod/m1/hub-link-commands",
     "--dangerously-skip-permissions",
+    "--disallowedTools",
+    "AskUserQuestion",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")
   // Read back after a Runner restart, as its Harness can change while it runs (ADR 0030).

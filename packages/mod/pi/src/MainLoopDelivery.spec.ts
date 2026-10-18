@@ -8,7 +8,7 @@ import { Schema } from "effect"
 import { idleLooksBeforeGivingUp, lookEvery, MainLoopDelivery } from "./MainLoopDelivery.ts"
 import type { MainLoop } from "./MainLoopDelivery.ts"
 import { Turns } from "./Turns.ts"
-import type { AgentResultMessage } from "./Turns.ts"
+import type { AgentResultMessage, AnswerMessage } from "./Turns.ts"
 
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 
@@ -30,6 +30,7 @@ const harness = (options: { takesAlreadySubmitted?: boolean } = {}) => {
   const events: Array<Record<string, unknown>> = []
   const given: Array<string> = []
   const steered: Array<[string, string]> = []
+  const answered: Array<AnswerMessage> = []
   const recorded: Array<[string, boolean]> = []
   const taken: Array<AgentResultMessage> = []
   const logged: Array<string> = []
@@ -56,6 +57,10 @@ const harness = (options: { takesAlreadySubmitted?: boolean } = {}) => {
     result: (each) => {
       if (pi.refuse !== undefined) throw pi.refuse
       given.push(each.text)
+    },
+    answer: (each) => {
+      if (pi.refuse !== undefined) throw pi.refuse
+      answered.push(each)
     },
     steer: (promptId, text) => {
       if (pi.refuse !== undefined) throw pi.refuse
@@ -89,6 +94,12 @@ const harness = (options: { takesAlreadySubmitted?: boolean } = {}) => {
     pi.idle = false
     delivery.started(turns.agentStart())
   }
+  /** pi runs the answer it was given: starts, and is busy. */
+  const runsAnswer = (each: AnswerMessage) => {
+    turns.beforeAgentStart(undefined, undefined, each)
+    pi.idle = false
+    delivery.started(turns.agentStart())
+  }
   /** pi's run ends: it is idle, and the settling's handling is over. */
   const settles = () => {
     pi.idle = true
@@ -107,6 +118,7 @@ const harness = (options: { takesAlreadySubmitted?: boolean } = {}) => {
     events,
     given,
     steered,
+    answered,
     recorded,
     taken,
     logged,
@@ -114,6 +126,7 @@ const harness = (options: { takesAlreadySubmitted?: boolean } = {}) => {
     takesIn: (text: string) => turns.input(text, "extension"),
     runsPrompt,
     runsResult,
+    runsAnswer,
     settles,
     look,
     attach: (submitted: Array<[string, boolean]> = []) => delivery.attach(loop, submitted),
@@ -382,5 +395,50 @@ describe("a prompt steered into the running Turn (ADR 0018)", () => {
       { _tag: "PromptFailed", promptId: "q4", message: "Error: closing" },
     ])
     expect(h.steered).toEqual([])
+  })
+})
+
+describe("the answer to an async question", () => {
+  const answer: AnswerMessage = { text: "Ada Lovelace answered: date-fns", sender: ada as never }
+
+  test("goes into the running Turn at once", () => {
+    const h = harness()
+    h.attach()
+    h.delivery.prompt(prompt("q1"))
+    h.runsPrompt("[Ada Lovelace] hi")
+    h.delivery.answer(answer)
+    expect(h.answered).toEqual([answer])
+    expect(h.events.filter((event) => event._tag === "TurnStarted")).toHaveLength(1)
+  })
+
+  test("with no Turn running, starts one from whoever answered, once pi is idle", () => {
+    const h = harness()
+    h.attach()
+    h.pi.idle = false
+    h.delivery.answer(answer)
+    expect(h.answered).toEqual([])
+    h.pi.idle = true
+    h.look()
+    expect(h.answered).toEqual([answer])
+    h.runsAnswer(answer)
+    expect(h.events).toEqual([
+      {
+        _tag: "TurnStarted",
+        turnId: "t1",
+        text: answer.text,
+        sender: { _tag: "FromParticipant", participant: ada },
+      },
+    ])
+    expect(valid(h.events)).toBe(true)
+    h.look(10)
+    expect(h.answered).toEqual([answer])
+  })
+
+  test("one answered at pi's terminal starts a Turn from the terminal", () => {
+    const h = harness()
+    h.attach()
+    h.delivery.answer({ text: "dismissed" })
+    h.runsAnswer({ text: "dismissed" })
+    expect(h.events[0]).toMatchObject({ sender: { _tag: "FromTerminal" } })
   })
 })

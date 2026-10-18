@@ -22,7 +22,7 @@ import { atom, read, update } from "claude-code"
 import type { EngineInterface, On } from "claude-code"
 import type { HubLinkBand } from "../types"
 import {
-  answerResult,
+  askedAsyncText,
   askedQuestions,
   attachmentContext,
   attachmentToolName,
@@ -36,8 +36,11 @@ import {
   historyToolSpec,
   HubLink,
   openAttachment,
+  questionResultText,
+  questionToolName,
+  questionToolSpec,
   steeredPrompt,
-  terminalOutcome,
+  stillOpenText,
 } from "./hub-link-lib.js"
 import type {
   Command,
@@ -67,13 +70,13 @@ const state = {
 
   /** The Turn running on the main loop, which StopTurn stops. */
   mainTurn: undefined as string | undefined,
-  /** The Turn StopTurn stopped last. */
-  stoppedTurn: undefined as string | undefined,
   /**
-   * The AskUserQuestion calls waiting for an answer, by id (#193): each takes the Creator's
+   * The question tool's calls waiting for an answer, by id (#193): each takes the Creator's
    * answer, and says whether it came first.
    */
   asking: new Map<string, (answer: QuestionAnswer, sender: Participant) => boolean>(),
+  /** The call of the question asked `async` that is still waiting for an answer, if one is. */
+  asyncOpen: undefined as string | undefined,
   /**
    * A context handoff Claude Code wouldn't append as a note (ADR 0030): it goes, out of sight,
    * with the next prompt instead.
@@ -290,6 +293,40 @@ const stopAgent = async ($: EngineInterface, command: Command<"StopAgent">) => {
   }
 }
 
+/** A tool's result that is text alone. */
+const textResult = (text: string) => ({ result: [{ type: "text" as const, text }] })
+
+/**
+ * The answer to the question Claude asked `async` (#193), as a note in its conversation if a Turn
+ * runs, as a steered prompt is: it reads it at its next step. With none, or once it has ended, a
+ * Turn of its own starts with it, from whoever answered.
+ */
+const giveAnswer = async (
+  $: EngineInterface,
+  toolCallId: string,
+  sender: Participant,
+  text: string,
+) => {
+  const lost = (why: string) =>
+    $.ui.log(`hub-link-commands: couldn't give Claude the answer to a question: ${why}`, {
+      to: "debug",
+    })
+  try {
+    if (state.mainTurn !== undefined) {
+      const appended = await $.session.append({
+        message: { type: "user", content: [{ type: "text", text }] },
+      })
+      if (appended.deny === undefined) return
+    }
+    // Said before it is submitted, so hub-link reports the Turn as the answerer's.
+    await $.state.set(delivered, { promptId: `answer-${toolCallId}`, sender, text })
+    const entered = await $.prompt.submit({ text, asUser: true })
+    if (entered.drop !== undefined) lost(`a hook dropped the prompt: ${entered.drop}`)
+  } catch (error) {
+    lost(String(error))
+  }
+}
+
 const runCommand = async ($: EngineInterface, command: ModCommand) => {
   switch (command._tag) {
     // Neither waits: a prompt waits for the session to be idle, and a resumed agent runs on, while
@@ -313,7 +350,6 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
       return
     case "StopTurn":
       if (state.mainTurn === undefined) return
-      state.stoppedTurn = state.mainTurn
       await $.turn.abort({ turnId: state.mainTurn })
       return
     case "DeliverAnswer":
@@ -380,7 +416,7 @@ export function register(on: On) {
     })
     // In the tool list from the first request on, beside the Hub link they fetch through.
     if (linked)
-      for (const tool of [attachmentToolSpec, historyToolSpec])
+      for (const tool of [attachmentToolSpec, historyToolSpec, questionToolSpec])
         await $.tool
           .register(tool)
           .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
@@ -443,16 +479,30 @@ export function register(on: On) {
     return next(e)
   })
 
-  // Claude's question on the main loop is the Session's Open question (#193): its dialog opens at
-  // the terminal as ever, and the Creator may answer it from the web UI meanwhile. The first
-  // answer is the one Claude reads; one from the web closes the dialog, by settling this call
-  // while it is still open. A subagent's questions are answered at the terminal alone.
-  on("tool.call", { tool: "AskUserQuestion" }, async ($, e, next) => {
+  // Claude's question on the main loop is the Session's Open question (#193). The tool replaces
+  // Claude Code's AskUserQuestion, which the Runner turns off: it takes the same questions, and an
+  // `async` option, with which Claude goes on while they are answered. The Creator answers from the
+  // web UI: Claude Code's own dialog can't be opened with its tool off. A question Claude waits for
+  // holds the call until the answer, or a Stop; one asked `async` returns at once, and its answer
+  // reaches Claude as a note, or as a Turn of its own. A subagent's questions are refused.
+  on("tool.call", { tool: questionToolName }, async ($, e, next) => {
     const turnId = state.mainTurn
     const toolCallId = e.tool_use_id
-    if (e.agentId !== undefined || state.link === undefined || turnId === undefined || !toolCallId)
-      return next(e)
-    report({ _tag: "QuestionAsked", turnId, toolCallId, questions: askedQuestions(e.questions) })
+    if (e.agentId !== undefined)
+      return { deny: "Subagents can't ask the people in this session questions." }
+    const questions = askedQuestions(e.questions)
+    if (questions.length === 0) return { deny: "Ask one to four questions: none came." }
+    if (state.link === undefined || turnId === undefined || !toolCallId)
+      return { deny: "There is no one to ask now: this session isn't linked to a kndl Hub." }
+    if (state.asyncOpen !== undefined) return textResult(stillOpenText)
+    const isAsync = e.async === true
+    report({
+      _tag: "QuestionAsked",
+      turnId,
+      toolCallId,
+      questions,
+      ...(isAsync && { async: true }),
+    })
     const closed = (outcome: Record<string, unknown>, by?: Participant) =>
       report({
         _tag: "QuestionClosed",
@@ -466,32 +516,38 @@ export function register(on: On) {
       if (settled) return false
       settled = true
       state.asking.delete(toolCallId)
+      if (state.asyncOpen === toolCallId) state.asyncOpen = undefined
       return true
     }
-    // Stopped from the web UI: Claude reads no answer, and the Hub hears so now. Esc at the
-    // terminal stops the Turn too, and the call then ends refused, as dismissed (#206). One
-    // stopped otherwise that never ends, the Hub closes as cancelled with its Turn.
-    const isStopped = () => state.stoppedTurn === turnId
-    next.signal.addEventListener("abort", () => {
-      if (isStopped() && settle()) closed({ _tag: "Cancelled" })
-    })
-    return new Promise<Awaited<ReturnType<typeof next>>>((resolve, reject) => {
+    if (isAsync) {
+      state.asyncOpen = toolCallId
       state.asking.set(toolCallId, (answer, sender) => {
         if (!settle()) return false
         closed(answer, sender)
-        resolve(answerResult(e.questions, answer, sender) as never)
+        void giveAnswer(
+          $,
+          toolCallId,
+          sender,
+          questionResultText(questions, { outcome: answer, by: sender }, true),
+        )
         return true
       })
-      next(e).then(
-        (done) => {
-          if (settle()) closed(isStopped() ? { _tag: "Cancelled" } : terminalOutcome(done))
-          resolve(done)
-        },
-        (error: unknown) => {
-          if (settle()) closed({ _tag: "Cancelled" })
-          reject(error)
-        },
-      )
+      return textResult(askedAsyncText)
+    }
+    return new Promise<Awaited<ReturnType<typeof next>>>((resolve) => {
+      // Stopped, from the web UI or with Esc at the terminal: Claude reads no answer, and the Hub
+      // hears so now.
+      next.signal.addEventListener("abort", () => {
+        if (!settle()) return
+        closed({ _tag: "Cancelled" })
+        resolve({ deny: "The questions were closed without an answer: the Turn was stopped." })
+      })
+      state.asking.set(toolCallId, (answer, sender) => {
+        if (!settle()) return false
+        closed(answer, sender)
+        resolve(textResult(questionResultText(questions, { outcome: answer, by: sender })) as never)
+        return true
+      })
     })
   })
 

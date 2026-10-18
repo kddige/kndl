@@ -174,7 +174,7 @@ describe("the history tool (ADR 0030)", () => {
     earlierBefore: 10,
   }
 
-  test("is in the tool list beside the attachment tool once the session is linked", async ($, on) => {
+  test("is in the tool list beside the attachment and question tools once the session is linked", async ($, on) => {
     linkedSession(on)
     const registered: Array<unknown> = []
     on("tool.register", (_, e) => {
@@ -190,6 +190,11 @@ describe("the history tool (ADR 0030)", () => {
         name: "session_history",
         isDeferred: false,
         description: expect.stringContaining("<context-handoff>"),
+      }),
+      expect.objectContaining({
+        name: "ask_user_question",
+        isDeferred: false,
+        description: expect.stringContaining("Set async to true"),
       }),
     ])
   })

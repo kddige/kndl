@@ -114,7 +114,9 @@
 //   refused, by the Hub or by the mod (AnswerFailed), saying who answered first and what. A
 //   question still open when its Turn ends, or its Claude Code stops, or it is archived, is
 //   closed Cancelled. What the Creator picks before answering (PickAnswer) is passed to everyone
-//   in the Session (QuestionPicks), in memory only.
+//   in the Session (QuestionPicks), in memory only. A question the agent asked `async` doesn't hold
+//   the agent up, and stays open past the end of its Turn: the mod gives the agent the answer as a
+//   message, into the Turn if it still runs, else as a Turn of its own.
 // - The terminal mirror: frames from the Runner to the Creator's web clients watching, keystrokes
 //   back.
 // - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
@@ -4064,6 +4066,7 @@ export class SessionRelay extends Context.Service<
               toolCallId: event.toolCallId,
               questions: redactQuestions(yield* needlesForSession(sessionId), event.questions),
               askedAt: yield* Clock.currentTimeMillis,
+              ...(event.async === true && { async: true }),
             }),
           )
           live.questionAsked(sessionId)
@@ -4118,9 +4121,11 @@ export class SessionRelay extends Context.Service<
           if (Option.isSome(steered)) yield* queueChanged(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
-          // Its question can't be answered once it has ended.
+          // Its question can't be answered once it has ended, unless the agent asked it async and
+          // went on without it: the answer starts a Turn of its own.
           const session = yield* sessions.get(sessionId)
-          if (Option.isSome(session)) yield* cancelQuestion(session.value)
+          if (Option.isSome(session) && session.value.openQuestion?.async !== true)
+            yield* cancelQuestion(session.value)
           yield* sessionUpdated(sessionId)
         }
       })

@@ -35,7 +35,7 @@ import type { ModCommand, ModProviders } from "@kndl/protocol"
 import { HubLink } from "../../src/HubLink.ts"
 import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
 import { attachmentContext, isRecord, sharedSessionNoteFor } from "../../src/HubMessages.ts"
-import type { Command } from "../../src/HubMessages.ts"
+import type { Command, Sender } from "../../src/HubMessages.ts"
 import { attachmentTool, attachmentToolDefinition, pdfFileName } from "./Attachments.ts"
 import { registerClaude } from "./claude/Claude.ts"
 import { registerHistory } from "./History.ts"
@@ -86,6 +86,8 @@ const attachmentsMessage = "kndl-attachments"
 const sharedSection = "kndl_shared_session"
 /** The custom message an agent's result is, which starts a Turn from the agent (ADR 0014). */
 const agentMessage = "kndl-agent"
+/** The custom message the answer to an `async` question is (Questions.ts). */
+const answerMessage = "kndl-answer"
 /** The custom message that tells the main loop, with its next prompt, of an interrupted agent. */
 const agentNote = "kndl-agent-note"
 /** The key of the line above the editor. */
@@ -104,6 +106,23 @@ const agentResult = (message: {
   const { agentId } = message.details
   if (typeof agentId !== "string" || typeof message.content !== "string") return undefined
   return { agentId, text: message.content }
+}
+
+/** The answer to an `async` question a custom message is, if it is one, and who gave it. */
+const answerOf = (message: {
+  readonly customType: string
+  readonly content: unknown
+  readonly details?: unknown
+}) => {
+  if (message.customType !== answerMessage || typeof message.content !== "string") return undefined
+  const sender = isRecord(message.details) ? message.details.sender : undefined
+  return {
+    text: message.content,
+    sender:
+      isRecord(sender) && typeof sender.id === "string" && typeof sender.name === "string"
+        ? (sender as unknown as Sender)
+        : undefined,
+  }
 }
 
 /** The prompts from the Hub a session recorded as given to pi, or not (#323), oldest first. */
@@ -221,7 +240,11 @@ export default async function kndl(pi: ExtensionAPI) {
   const secrets = [env.modToken, process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""].filter(Boolean)
   const turns = new Turns({ report, now: () => performance.now(), newId: randomUUID, secrets })
   // Open questions and subagents (ADR 0014, #193): Questions.ts, Subagents.ts.
-  const questions = new Questions({ report })
+  const questions = new Questions({
+    report,
+    // An async question's answer: the model reads it as a message, in the Turn or as a Turn.
+    answered: ({ text, by }) => delivery.answer({ text, sender: by }),
+  })
   /** The context of the last call of one of this extension's tools, which has the parent's tools. */
   let toolContext: ExtensionToolContext | undefined
   /** The parent's tools a subagent runs, as the last tool call's context has them, live. */
@@ -453,6 +476,17 @@ export default async function kndl(pi: ExtensionAPI) {
             },
             { triggerTurn: true },
           ),
+        // With a run going, pi puts it in before the run's next request; else it starts a run.
+        answer: (answer) =>
+          pi.sendMessage(
+            {
+              customType: answerMessage,
+              content: answer.text,
+              display: true,
+              details: { sender: answer.sender },
+            },
+            { deliverAs: "steer", triggerTurn: true },
+          ),
         // A custom message: if the run ends first, pi keeps it for the next prompt, and starts no
         // run of its own with it.
         steer: (promptId, text) =>
@@ -506,7 +540,7 @@ export default async function kndl(pi: ExtensionAPI) {
     const from =
       event.messageType === "user"
         ? turns.beforeAgentStart(event.prompt)
-        : turns.beforeAgentStart(undefined, agentResult(event.message))
+        : turns.beforeAgentStart(undefined, agentResult(event.message), answerOf(event.message))
     const attachments = from?.attachments ?? []
     // What the model is told of a prompt's files, out of sight: to open each before answering.
     if (attachments.length === 0) return

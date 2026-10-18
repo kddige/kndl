@@ -3,7 +3,6 @@ import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@knd
 import { Schema } from "effect"
 import {
   agentWorktree,
-  answerResult,
   askedQuestions,
   attachmentContext,
   attachmentPart,
@@ -15,7 +14,6 @@ import {
   checkEvent,
   clip,
   deliveredPrompt,
-  dismissedText,
   eventsBody,
   helloBody,
   openAttachment,
@@ -23,14 +21,12 @@ import {
   promptFromParticipant,
   readCommands,
   readHelloReply,
-  repliedPrefix,
   resultSummary,
   sharedSessionNote,
   sharedSessionNoteFor,
   startsDelivered,
   steeredPrompt,
   taskNotificationAgent,
-  terminalOutcome,
   toolArguments,
   turnEndReason,
   turnUsage,
@@ -458,7 +454,6 @@ test("toolArguments drops the keys Claude Code adds beside a tool's own", () => 
 })
 
 describe("AskUserQuestion (#193)", () => {
-  const ada = { name: "Ada" }
   const asked = [
     {
       question: "Which library?",
@@ -484,54 +479,6 @@ describe("AskUserQuestion (#193)", () => {
       { question: "Name?", header: "", options: [], multiSelect: false },
     ])
     expect(askedQuestions(undefined)).toEqual([])
-  })
-
-  test("a Participant's answer, as Claude Code's dialog would give it", () => {
-    expect(
-      answerResult(asked, { _tag: "Answered", answers: { "Which library?": "Temporal" } }, ada),
-    ).toEqual({
-      result: { questions: asked, answers: { "Which library?": "Temporal" }, annotations: {} },
-    })
-    expect(answerResult(asked, { _tag: "Replied", text: "Neither, use Intl" }, ada)).toEqual({
-      deny: `${repliedPrefix}[Ada] Neither, use Intl`,
-    })
-    expect(answerResult(asked, { _tag: "Dismissed" }, ada)).toEqual({ deny: dismissedText })
-  })
-
-  test("how one answered at the terminal closed", () => {
-    expect(
-      terminalOutcome({
-        result: { questions: asked, answers: { "Which library?": "date-fns" }, annotations: {} },
-      }),
-    ).toEqual({ _tag: "Answered", answers: { "Which library?": "date-fns" } })
-    expect(terminalOutcome({ result: { questions: asked, answers: {} } })).toEqual({
-      _tag: "Answered",
-      answers: {},
-    })
-    expect(terminalOutcome({ deny: `${repliedPrefix}Ask me later` })).toEqual({
-      _tag: "Replied",
-      text: "Ask me later",
-    })
-    expect(terminalOutcome({ deny: dismissedText })).toEqual({ _tag: "Dismissed" })
-    expect(terminalOutcome({ isError: true, result: "Interrupted" })).toEqual({
-      _tag: "Dismissed",
-    })
-  })
-
-  test("a dialog that timed out on its own was answered by nobody (#206)", () => {
-    expect(
-      terminalOutcome({ result: { questions: asked, answers: {}, afkTimeoutMs: 60_000 } }),
-    ).toEqual({ _tag: "Cancelled" })
-    // What was chosen before it timed out is what Claude reads.
-    expect(
-      terminalOutcome({
-        result: {
-          questions: asked,
-          answers: { "Which library?": "date-fns" },
-          afkTimeoutMs: 60_000,
-        },
-      }),
-    ).toEqual({ _tag: "Answered", answers: { "Which library?": "date-fns" } })
   })
 })
 
@@ -598,18 +545,6 @@ describe("attachments (#276)", () => {
         "</system-reminder>",
       ].join("\n"),
     )
-  })
-
-  test("a reply to a question carries its sender's name and its files' markers (#278)", () => {
-    expect(
-      answerResult(
-        [],
-        { _tag: "Replied", text: "like this", attachments: [shot] } as never,
-        participant,
-      ),
-    ).toEqual({
-      deny: `${repliedPrefix}[Ada Lovelace] like this\n[Image #1: shot.png (attachment att-1)]`,
-    })
   })
 
   test("a PDF is marked and counted as one, numbered apart from the images (#277)", () => {
