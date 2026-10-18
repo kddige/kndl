@@ -211,13 +211,31 @@ const refusedRefresh = (error: unknown) =>
     reasonOf(error),
   )
 
+/** The answer's body as text: its reading cancelled, and the body let go, once interrupted. */
+const textOf = (response: Response) =>
+  Effect.tryPromise(async (signal) => {
+    const reader = response.body?.getReader()
+    if (reader === undefined) return ""
+    const cancel = () => void reader.cancel().catch(() => undefined)
+    signal.addEventListener("abort", cancel, { once: true })
+    try {
+      const chunks: Array<Uint8Array> = []
+      for (let read = await reader.read(); !read.done; read = await reader.read()) {
+        chunks.push(read.value)
+      }
+      return Buffer.concat(chunks).toString("utf8")
+    } finally {
+      signal.removeEventListener("abort", cancel)
+    }
+  })
+
 /** What the Provider's answer to a call for its Models says: those pi-ai knows, or why not. */
 const readListing = (provider: ModelProvider, kind: ConnectionKind, called: Called) => {
   const name = nameOf(provider)
   const unreachable: Listed = { _tag: "Unavailable", message: `${name} couldn't be reached` }
   if (called._tag !== "Answered") return Effect.succeed(unreachable)
   const { response } = called
-  return Effect.tryPromise(() => response.text()).pipe(
+  return textOf(response).pipe(
     Effect.timeout(listTimeout),
     Effect.map((body): Listed => {
       if (rejectsKey(response.status, body)) {

@@ -1093,6 +1093,29 @@ describe("the Models", () => {
     expect(models.every((model) => model.provider === "anthropic")).toBe(true)
   })
 
+  test("a list that doesn't come in time is given up, its answer let go", async () => {
+    const { hub, web, fakes } = await scene()
+    await request(web, { _tag: "ConnectProviderKey", provider: "minimax", apiKey: "minimax-key" })
+    const cancelled = Promise.withResolvers<void>()
+    // MiniMax answers, then never finishes saying its Models.
+    fakes.other = () =>
+      new Response(
+        new ReadableStream({
+          start: (controller) => controller.enqueue(new TextEncoder().encode('{"data":[')),
+          cancel: () => cancelled.resolve(),
+        }),
+      )
+    await hub.run(
+      Effect.flatMap(ConnectedProviders, (providers) =>
+        providers.refreshModels(alice, "minimax"),
+      ).pipe(onClock(0, Duration.seconds(15))),
+    )
+    const state = await request(web, { _tag: "GetProviders" })
+    if (state._tag !== "ProvidersState") throw new Error(JSON.stringify(state))
+    expect(state.connected[0]?.modelsProblem).toMatch(/MiniMax couldn't be reached/)
+    expect(await Promise.race([cancelled.promise.then(() => true), Bun.sleep(500)])).toBe(true)
+  })
+
   test("RefreshProviderModels asks again, and a failure keeps the Models found before", async () => {
     const { web, fakes } = await scene()
     await request(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey: goodKey })
