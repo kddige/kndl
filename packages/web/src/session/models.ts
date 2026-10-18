@@ -1,13 +1,19 @@
-// How the web UI names a Session's model and thinking level (#128), from what the Session's Runner
-// said its Claude Code has.
+// How the web UI names a Session's model and thinking level (#128): a Claude Code Session's from
+// what its Runner said its Claude Code has, and a pi Session's from its Creator's Models, the ones
+// their ProvidersState lists (ADR 0029), which only they are sent.
 
 import {
   findModel,
   type ModelName,
   type ModelOption,
+  type ModelProvider,
   type ModelSwitched,
+  parseProviderModelName,
+  type ProviderModel,
+  providerModelName,
   type RunnerModels,
   sameModel,
+  type SessionLogEntry,
   type ThinkingLevel,
   ThinkingLevels,
 } from "@kndl/protocol"
@@ -139,4 +145,117 @@ export function fitSetting(models: RunnerModels | undefined, setting: ModelSetti
     ...(model !== undefined && { model }),
     ...(thinkingLevel !== undefined && { thinkingLevel }),
   }
+}
+
+// ── pi Sessions (ADR 0029) ─────────────────────────────────────────────────
+
+/** What the pickers call each Provider whose Models they group. */
+export const providerNames: Record<ModelProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  xai: "xAI",
+}
+
+/**
+ * The Model a new pi Session runs when none is picked, as the Hub picks it: Claude's first when
+ * the Creator has Claude's, else the first.
+ */
+export function defaultProviderModel(
+  models: ReadonlyArray<ProviderModel>,
+): ProviderModel | undefined {
+  return models.find((model) => model.provider === "anthropic") ?? models[0]
+}
+
+/**
+ * The Model a pi Session's setting runs, among its Creator's: the Hub's pick without one, and
+ * undefined before they are known, or for a Model they no longer have.
+ */
+export function providerModelOf(
+  models: ReadonlyArray<ProviderModel> | undefined,
+  setting: ModelSetting,
+): ProviderModel | undefined {
+  if (models === undefined) return undefined
+  if (setting.model === undefined) return defaultProviderModel(models)
+  return models.find((model) => providerModelName(model) === setting.model)
+}
+
+/**
+ * A pi Session's Model's name: its label among the Creator's Models; else the label the transcript
+ * last gave it, for someone who isn't sent them; else the Provider's id for it.
+ */
+export function providerModelLabel(
+  models: ReadonlyArray<ProviderModel> | undefined,
+  setting: ModelSetting,
+  knownLabel?: string,
+): string {
+  return (
+    providerModelOf(models, setting)?.label ??
+    knownLabel ??
+    (setting.model === undefined
+      ? "Default model"
+      : (parseProviderModelName(setting.model)?.id ?? setting.model))
+  )
+}
+
+/** Models by Provider, each Provider where its first Model is, its Models in the order given. */
+export function groupByProvider(
+  models: ReadonlyArray<ProviderModel>,
+): ReadonlyArray<{ readonly provider: ModelProvider; readonly models: Array<ProviderModel> }> {
+  const groups = new Map<ModelProvider, Array<ProviderModel>>()
+  for (const model of models) {
+    const group = groups.get(model.provider)
+    if (group) group.push(model)
+    else groups.set(model.provider, [model])
+  }
+  return [...groups].map(([provider, each]) => ({ provider, models: each }))
+}
+
+/**
+ * A pi setting the Creator's Models can run, as for a new Session: a Model they don't have is
+ * their default, named, and a level the Model doesn't take is dropped. Empty without Models.
+ */
+export function fitProviderSetting(
+  models: ReadonlyArray<ProviderModel> | undefined,
+  setting: ModelSetting,
+): ModelSetting {
+  const model = providerModelOf(models, setting) ?? (models && defaultProviderModel(models))
+  if (model === undefined) return {}
+  const thinkingLevel =
+    setting.thinkingLevel !== undefined && model.thinkingLevels.includes(setting.thinkingLevel)
+      ? setting.thinkingLevel
+      : undefined
+  return {
+    model: providerModelName(model),
+    ...(thinkingLevel !== undefined && { thinkingLevel }),
+  }
+}
+
+/**
+ * The label the transcript's latest switch to `model` gave it, which is all someone else in a pi
+ * Session knows of its Creator's Model.
+ */
+export function knownModelLabel(
+  log: ReadonlyArray<SessionLogEntry>,
+  model: ModelName | undefined,
+): string | undefined {
+  if (model === undefined) return undefined
+  for (let index = log.length - 1; index >= 0; index--) {
+    const event = log[index]?.event
+    if (event?._tag === "ModelSwitched" && event.model === model) return event.modelLabel
+  }
+  return undefined
+}
+
+/**
+ * The name of the Model a pi Session's Turn ran, as pi-ai names it, when it isn't the one the
+ * Session is set to: undefined when it is.
+ */
+export function otherProviderTurnModel(
+  models: ReadonlyArray<ProviderModel> | undefined,
+  setting: ModelSetting,
+  turnModel: string,
+): string | undefined {
+  const expected = setting.model === undefined ? undefined : parseProviderModelName(setting.model)
+  if (expected === undefined || expected.id === turnModel) return undefined
+  return models?.find((model) => model.id === turnModel)?.label ?? turnModel
 }

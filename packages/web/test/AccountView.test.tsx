@@ -1,8 +1,10 @@
 // The Account page against the fake Hub: pasting a Claude setup token, which the fake checks as the
 // Hub does, seeing it write-only once saved, and removing it (ADR 0015, ADR 0026); and listing and
-// revoking the CLI tokens `kndl login` made (issue #179). Every secret is made up.
+// revoking the CLI tokens `kndl login` made (issue #179); and connecting Providers, by a sign-in or
+// an API key, and disconnecting them (ADR 0029). Every secret is made up.
 
 import { afterEach, expect, test } from "bun:test"
+import { act } from "react"
 import { installDom } from "./dom.ts"
 import { button, dialog, render, settle, step } from "./render.ts"
 
@@ -46,8 +48,13 @@ const secretField = () => section()?.querySelector('input[type="password"]') as 
 const saved = () => section()?.querySelector('[aria-label="Your Claude credential"]')
 const alert = () => section()?.querySelector('[role="alert"]')?.textContent ?? ""
 
+/** The fake Hub the page last opened on. */
+let opened: InstanceType<typeof FakeHub> | undefined
+const fakeHub = () => opened as InstanceType<typeof FakeHub>
+
 async function openAccount(options: ConstructorParameters<typeof FakeHub>[0] = {}) {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, claudeCredential: null, ...options })
+  opened = hub
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/account"] }))
   const view = await render(
@@ -72,7 +79,7 @@ test("saves a pasted setup token, with no plan to pick, then shows it write-only
   expect(section()?.textContent).not.toContain("plan")
   expect(section()?.textContent).not.toContain("API key")
   await step(() => typeInto(secretField(), fakeToken))
-  await step(() => button("Save").click())
+  await step(() => button("Save", section() as HTMLElement).click())
   await eventually(() => expect(saved()).not.toBeNull())
   const shown = saved()?.textContent ?? ""
   expect(shown).toContain("Setup token")
@@ -85,7 +92,7 @@ test("refuses an API key, asking for a setup token instead (#334)", async () => 
   const { hub } = await openAccount()
   await eventually(() => expect(secretField()).not.toBeNull())
   await step(() => typeInto(secretField(), fakeKey))
-  await step(() => button("Save").click())
+  await step(() => button("Save", section() as HTMLElement).click())
   expect(section()?.textContent).toContain("API keys aren't taken for now")
   expect(saved()).toBeNull()
   // Said before it is sent: the Hub never sees it.
@@ -96,7 +103,7 @@ test("says why the Hub refused a token Anthropic rejected, and keeps the form", 
   await openAccount()
   await eventually(() => expect(secretField()).not.toBeNull())
   await step(() => typeInto(secretField(), "sk-ant-oat01-REJECTED_FAKE_TOKEN_FOR_TESTS"))
-  await step(() => button("Save").click())
+  await step(() => button("Save", section() as HTMLElement).click())
   await eventually(() => expect(alert()).toContain("Anthropic rejected this token"))
   expect(saved()).toBeNull()
 })
@@ -109,14 +116,14 @@ test("shows a saved token, replaces it, and removes it after asking", async () =
   expect(saved()?.textContent).toContain("…c3d4")
 
   // Replace opens the form, and Cancel goes back to what is saved.
-  await step(() => button("Replace").click())
+  await step(() => button("Replace", section() as HTMLElement).click())
   expect(secretField()).not.toBeNull()
   // Replacing it puts the Sessions on it to sleep (ADR 0026): the form says so.
   expect(section()?.textContent).toContain("Your Sessions that are awake go to sleep")
-  await step(() => button("Cancel").click())
+  await step(() => button("Cancel", section() as HTMLElement).click())
   expect(saved()).not.toBeNull()
 
-  await step(() => button("Remove").click())
+  await step(() => button("Remove", section() as HTMLElement).click())
   const confirm = dialog() as HTMLElement
   expect(confirm.textContent).toContain("Remove your Claude credential?")
   expect(confirm.textContent).toContain("none of them can start or wake")
@@ -151,6 +158,143 @@ test("lists the machines the CLI is signed in on, newest first, and revokes a to
   expect(confirm.textContent).toContain("Revoke the CLI token for build-box?")
   await step(() => button("Revoke", confirm).click())
   await eventually(() => expect(listedMachines()).toEqual(["laptop"]))
+})
+
+// Connected providers (ADR 0029): beside Claude, each Provider the Hub can connect, by a sign-in
+// with a subscription or an API key.
+
+const providerSection = (provider: string) =>
+  document.querySelector<HTMLElement>(`section[aria-labelledby="provider-${provider}"]`)
+const connection = (provider: string) =>
+  providerSection(provider)?.querySelector(
+    `[aria-label="Your ${provider === "xai" ? "xAI" : "OpenAI"} connection"]`,
+  )
+const keyField = (provider: string) =>
+  providerSection(provider)?.querySelector('input[type="password"]') as HTMLInputElement | null
+const link = (within: ParentNode, text: string) =>
+  [...within.querySelectorAll("a")].find((each) => each.textContent?.trim() === text)
+
+test("lists the Providers beside Claude: one connected with its Models, one to connect", async () => {
+  await openAccount()
+  await eventually(() => expect(connection("openai")).not.toBeNull())
+  expect(document.querySelector("#providers")?.textContent).toBe("Providers")
+  const openai = providerSection("openai") as HTMLElement
+  expect(connection("openai")?.textContent).toContain("alice@example.com")
+  expect(connection("openai")?.textContent).toContain("Subscription")
+  expect(openai.textContent).toContain("3 Models")
+  expect(openai.textContent).toContain("checked 2h ago")
+  // The Models are listed on asking.
+  expect(openai.textContent).not.toContain("GPT-6-Sol mini")
+  await step(() => button("3 Models · checked 2h ago", openai).click())
+  await settle()
+  expect(openai.textContent).toContain("GPT-6-Sol mini")
+
+  await step(() => button("Refresh models", openai).click())
+  await eventually(() =>
+    expect(fakeHub().received.at(-1)).toMatchObject({
+      _tag: "RefreshProviderModels",
+      provider: "openai",
+    }),
+  )
+
+  // xAI isn't connected: its sign-in and its API key are offered.
+  const xai = providerSection("xai") as HTMLElement
+  expect(xai.querySelector("h3")?.textContent).toBe("xAI")
+  expect(button("Sign in with SuperGrok or X Premium", xai)).toBeDefined()
+  expect(keyField("xai")).not.toBeNull()
+  expect(connection("xai")).toBeNull()
+})
+
+test("connects a Provider with an API key, shown by its last 4 characters, and says why one is refused", async () => {
+  await openAccount()
+  await eventually(() => expect(keyField("xai")).not.toBeNull())
+  const xai = providerSection("xai") as HTMLElement
+  await step(() => typeInto(keyField("xai") as HTMLInputElement, "xai-REJECTED-made-up-key"))
+  await step(() => button("Connect", xai).click())
+  await eventually(() =>
+    expect(xai.querySelector('[role="alert"]')?.textContent).toContain("xAI rejected this key."),
+  )
+  await step(() => typeInto(keyField("xai") as HTMLInputElement, "xai-made-up-key-for-tests-9z8y"))
+  await step(() => button("Connect", xai).click())
+  await eventually(() => expect(connection("xai")?.textContent).toContain("…9z8y"))
+  expect(connection("xai")?.textContent).toContain("API key")
+  expect(document.body.innerHTML).not.toContain("made-up-key-for-tests")
+})
+
+test("signs in with ChatGPT: a page to open, then the address it lands on pasted back", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("openai")).not.toBeNull())
+  const openai = providerSection("openai") as HTMLElement
+  await step(() => button("Sign in with ChatGPT", openai).click())
+  await eventually(() => expect(link(openai, "Open the sign-in page")).toBeDefined())
+  const page = link(openai, "Open the sign-in page")
+  expect(page?.getAttribute("href")).toContain("https://auth.openai.com/")
+  expect(page?.getAttribute("target")).toBe("_blank")
+  expect(openai.textContent).toContain("Sign in with your ChatGPT account, then come back here.")
+
+  const pasteLabel = "Paste the address the page you landed on shows"
+  await eventually(() => expect(openai.textContent).toContain(pasteLabel))
+  const field = openai.querySelector<HTMLInputElement>(
+    'input[placeholder^="http://localhost:1455"]',
+  )
+  await step(() =>
+    typeInto(field as HTMLInputElement, "http://localhost:1455/auth/callback?code=made-up&state=x"),
+  )
+  await step(() => button("Continue", openai).click())
+  await eventually(() => expect(connection("openai")?.textContent).toContain("alice@example.com"))
+  expect(fakeHub().received.find((m) => m._tag === "AnswerSignIn")).toBeDefined()
+  expect(link(openai, "Open the sign-in page")).toBeUndefined()
+})
+
+test("signs in to xAI with a code to enter, and Cancel stops it", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("xai")).not.toBeNull())
+  const xai = providerSection("xai") as HTMLElement
+  // Held, so the code isn't entered before Cancel, however slow the machine: two steps show it.
+  fakeHub().hold()
+  await step(() => button("Sign in with SuperGrok or X Premium", xai).click())
+  for (const _ of [1, 2]) await act(() => fakeHub().step())
+  await eventually(() =>
+    expect(xai.querySelector('[aria-label="Sign-in code"]')?.textContent).toBe("WDJB-MJHT"),
+  )
+  expect(button("Copy code", xai)).toBeDefined()
+  expect(link(xai, "Open the sign-in page")?.getAttribute("href")).toBe(
+    "https://accounts.x.ai/device",
+  )
+  await step(() => button("Cancel", xai).click())
+  await eventually(() => expect(xai.querySelector('[aria-label="Sign-in code"]')).toBeNull())
+  expect(fakeHub().received.some((m) => m._tag === "CancelSignIn")).toBe(true)
+  expect(button("Sign in with SuperGrok or X Premium", xai)).toBeDefined()
+  expect(connection("xai")).toBeNull()
+})
+
+test("a sign-in that fails says why, and can be tried again", async () => {
+  await openAccount({ providers: [] })
+  await eventually(() => expect(providerSection("openai")).not.toBeNull())
+  const openai = providerSection("openai") as HTMLElement
+  await step(() => button("Sign in with ChatGPT", openai).click())
+  await eventually(() =>
+    expect(openai.querySelector('input[placeholder^="http://localhost:1455"]')).not.toBeNull(),
+  )
+  const field = openai.querySelector<HTMLInputElement>(
+    'input[placeholder^="http://localhost:1455"]',
+  )
+  await step(() => typeInto(field as HTMLInputElement, "http://localhost:1455/"))
+  await step(() => button("Continue", openai).click())
+  await eventually(() => expect(openai.textContent).toContain("The sign-in failed"))
+  expect(openai.textContent).toContain("That address has no code in it")
+  expect(button("Sign in with ChatGPT", openai)).toBeDefined()
+})
+
+test("disconnects a Provider after asking", async () => {
+  await openAccount()
+  await eventually(() => expect(connection("openai")).not.toBeNull())
+  await step(() => button("Disconnect", providerSection("openai") as HTMLElement).click())
+  const confirm = dialog() as HTMLElement
+  expect(confirm.textContent).toContain("Disconnect OpenAI?")
+  await step(() => button("Disconnect", confirm).click())
+  await eventually(() => expect(connection("openai")).toBeNull())
+  expect(button("Sign in with ChatGPT", providerSection("openai") as HTMLElement)).toBeDefined()
 })
 
 test("without CLI tokens, shows the command that signs the CLI in", async () => {

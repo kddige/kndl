@@ -113,6 +113,7 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
       // Release 0.4's interrupted agent is under it.
       sessions: [
         "claude/readme-run",
+        "claude/pi-harness",
         "claude/web-client",
         "Release 0.4",
         "Document the protocol",
@@ -140,7 +141,7 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
   expect(links).toContain("/environments")
   expect(links).toContain("/variables")
   expect(links).toContain("/archive")
-  expect(document.body.textContent).toContain("1 of 2 Runners online")
+  expect(document.body.textContent).toContain("2 of 3 Runners online")
   expect(button("Signed in as Alice Kim", document).getAttribute("aria-haspopup")).toBe("menu")
 })
 
@@ -273,7 +274,7 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
   ])
   expect(rows).toEqual([
     ["/repos/kddige/dotfiles/environment", "kddige/dotfiles1 Session"],
-    ["/repos/kddige/kndl/environment", "kddige/kndl4 Sessions"],
+    ["/repos/kddige/kndl/environment", "kddige/kndl5 Sessions"],
   ])
 })
 

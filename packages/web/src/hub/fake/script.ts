@@ -4,7 +4,8 @@
 // of hers that the Hub cancelled. The demo's Turn starts a subagent in the foreground and one in the
 // background that outlives it, and Release 0.4 has subagents that finished, were stopped and were
 // interrupted (ADR 0014). The demo has dev servers listening in its Sandbox: a Docker one, and one
-// on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193).
+// on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193). pi-box runs
+// pi as well as Claude Code (ADR 0029), and Alice's pi Session there runs on her ChatGPT sign-in.
 
 import type {
   AppPermissionsCheckWire,
@@ -29,6 +30,8 @@ export const bob: ParticipantWire = { id: "u-bob", login: "bob", name: "Bob Lee"
 export const demoSessionId = "s-demo"
 /** Bob's Session, which Alice watches (ADR 0026). */
 export const bobsSessionId = "s-landing"
+/** Alice's pi Session (ADR 0029), on one of her Connected providers' Models. */
+export const piSessionId = "s-pi"
 /** A Session whose subagents finished, were stopped and were interrupted. */
 export const releaseSessionId = "s-release"
 
@@ -346,6 +349,20 @@ export function seedRunners(): Array<RunnerSummaryWire> {
         { memoryTotalBytes: 8 * GiB, memoryAvailableBytes: 2.5 * GiB, cpuCores: 4, os: "darwin" },
       ),
     },
+    {
+      // Runs pi as well as Claude Code (ADR 0029): a new Session there is a pi Session.
+      id: "r-pi",
+      name: "pi-box",
+      isOnline: true,
+      version: hubVersion,
+      versionStatus: "Current",
+      lastSeenAt: now,
+      openSessions: 0,
+      updater: { self: true },
+      models: fakeModels,
+      harnesses: ["ClaudeCode", "Pi"],
+      sysinfo: fakeSysinfo(now - 5_000, { freeGiB: 412, totalGiB: 1_000 }),
+    },
   ]
 }
 
@@ -483,6 +500,47 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
           text: "And make the install command copyable",
           message: "Only the Session's Creator prompts it now",
         },
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
+      ],
+    },
+    {
+      // On pi (ADR 0029), on Alice's ChatGPT sign-in.
+      summary: {
+        id: piSessionId,
+        repo: "kddige/kndl",
+        baseBranch: "main",
+        workBranch: "claude/pi-harness",
+        state: "Asleep",
+        runnerId: "r-pi",
+        creator: you,
+        createdAt: now - 3 * hour,
+        currentTurn: null,
+        environment: { version: 2, latestVersion: 2 },
+        harness: "Pi",
+        model: "openai/gpt-6-sol",
+        thinkingLevel: "high",
+      },
+      at: now - 3 * hour,
+      events: [
+        {
+          _tag: "ModelSwitched",
+          by: you,
+          model: "openai/gpt-6-sol",
+          modelLabel: "GPT-6-Sol",
+          thinkingLevel: "high",
+        },
+        ...turn(
+          "t-seed-pi",
+          you,
+          "Explain how a pi Session reaches OpenAI",
+          [
+            {
+              _tag: "TextDelta",
+              text: "pi sends each model call to the Hub's Gateway with the Session token, and the Hub adds your ChatGPT sign-in on the way, so it never enters the Sandbox.",
+            },
+          ],
+          "gpt-6-sol",
+        ),
         { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
       ],
     },
@@ -721,12 +779,14 @@ function turn(
   sender: ParticipantWire,
   prompt: string,
   body: TurnBody,
+  model?: string,
 ): Array<SessionEventWire> {
   return sessionTurn(
     turnId,
     { _tag: "FromParticipant", participant: sender },
     `[${sender.name}] ${prompt}`,
     body,
+    model,
   )
 }
 
@@ -736,6 +796,7 @@ function sessionTurn(
   sender: Extract<SessionEventWire, { _tag: "TurnStarted" }>["sender"],
   text: string,
   body: TurnBody,
+  model = "claude-opus-5-5",
 ): Array<SessionEventWire> {
   const events: Array<SessionEventWire> = [{ _tag: "TurnStarted", turnId, text, sender }]
   let count = 0
@@ -764,7 +825,7 @@ function sessionTurn(
     reason: "stop",
     durationMs: 18_400,
     usage: {
-      model: "claude-opus-5-5",
+      model,
       input: 3_100,
       output: 420,
       cacheRead: 22_000,

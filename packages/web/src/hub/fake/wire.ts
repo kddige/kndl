@@ -18,8 +18,11 @@ import type {
   InstallationFailure,
   Member,
   OpenPort,
+  ConnectedProvider,
   Participant,
   PendingInvite,
+  ProviderModel,
+  SignInStep,
   PendingPairingCode,
   McpServer,
   McpServerLogEntry,
@@ -68,3 +71,6 @@ export type HeaderValueSetWire = (typeof HeaderValueSet)["Encoded"]
 export type McpServerLogEntryWire = (typeof McpServerLogEntry)["Encoded"]
 export type SessionInstallationWire = (typeof SessionInstallation)["Encoded"]
 export type InstallationFailureWire = (typeof InstallationFailure)["Encoded"]
+export type ConnectedProviderWire = (typeof ConnectedProvider)["Encoded"]
+export type ProviderModelWire = (typeof ProviderModel)["Encoded"]
+export type SignInStepWire = (typeof SignInStep)["Encoded"]

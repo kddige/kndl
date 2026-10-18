@@ -1,7 +1,8 @@
-// The signed-in person's own settings: their Claude credential, a setup token (ADR 0015, ADR
-// 0026), which the Sessions they start run on and which only they drive. It is pasted once and
-// checked with Anthropic as it is saved; after that it is write-only, so the page shows only its
-// last 4 characters and when it was added. And their CLI tokens (issue #179): a machine each that
+// The signed-in person's own settings: their Providers (Providers.tsx), first among them their
+// Claude credential, a setup token (ADR 0015, ADR 0026), the Connected provider for Anthropic, which
+// the Sessions they start run Claude on and which only they drive. It is pasted once and checked
+// with Anthropic as it is saved; after that it is write-only, so the page shows only its last 4
+// characters and when it was added. And their CLI tokens (issue #179): a machine each that
 // `kndl login` signed in, to revoke.
 
 import {
@@ -31,6 +32,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { ProvidersSection } from "./Providers.tsx"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -160,7 +162,7 @@ export function AccountView() {
       />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
-          <ClaudeSection />
+          <ProvidersSection claude={<ClaudeSection />} />
           <CliTokensSection />
         </div>
       </div>
@@ -179,13 +181,13 @@ function ClaudeSection() {
   return (
     <section aria-labelledby="claude-credential" {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h2 id="claude-credential" {...stylex.props(styles.sectionTitle)}>
-          Claude
-        </h2>
+        <h3 id="claude-credential" {...stylex.props(styles.sectionTitle)}>
+          Anthropic
+        </h3>
         <p {...stylex.props(styles.note)}>
-          The Sessions you start run on your own Claude account, through a setup token, on whichever
-          Runner they are on. Only you drive them: anyone else in them watches. Without one, you
-          can't start a Session.
+          Claude runs in the Sessions you start on your own Claude account, through a setup token,
+          on whichever Runner they are on. Without one, Claude's Models aren't yours to pick, and a
+          Session on Claude Code can't start.
         </p>
       </div>
       {credential === undefined ? (

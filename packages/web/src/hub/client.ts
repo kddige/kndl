@@ -21,6 +21,7 @@ import {
   type EnvironmentState,
   type EnvironmentVersion,
   type GitHubLogin,
+  type Harness,
   type HeaderValueInput,
   HubToWeb,
   type Channel,
@@ -41,6 +42,8 @@ import {
   type McpServerPackageRead,
   type McpServersState,
   ProtocolVersion,
+  type ProviderId,
+  type ProvidersState,
   type QuestionAnswerFromWeb,
   RequestId,
   type RunnerHistoryPoint,
@@ -52,6 +55,7 @@ import {
   type SessionSummary,
   type SharedVariable,
   type SharedVariableInput,
+  type SignInEnded,
   type TerminalFrame,
   type TerminalSize,
   type TestBuild,
@@ -80,7 +84,15 @@ export interface NewSession {
   /** The branch it works on (ADR 0023); the Hub resolves it to a base branch and a Work branch. */
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
-  /** The model to start it on; Claude Code's default without one (#128). */
+  /**
+   * What runs its agent (ADR 0029): absent, pi when the Runner runs it, else Claude Code. Only a
+   * URL that asks for Claude Code sets it.
+   */
+  readonly harness?: Harness
+  /**
+   * The model to start it on: one of the Runner's Claude Code's, or, for a pi Session, one of the
+   * Creator's Models, as `openai/gpt-6-sol`. Absent, the Harness's default (#128).
+   */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
 }
@@ -445,6 +457,7 @@ export class HubClient {
         repo: input.repo,
         branch: input.branch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
+        ...(input.harness !== undefined && { harness: input.harness }),
         ...(input.model !== undefined && { model: input.model }),
         ...(input.thinkingLevel !== undefined && { thinkingLevel: input.thinkingLevel }),
       },
@@ -789,6 +802,75 @@ export class HubClient {
     await this.#request({ _tag: "RemoveClaudeCredential" }, "ClaudeCredentialState")
   }
 
+  // ── The person's Connected providers (ADR 0029) ──────────────────────────
+
+  /** The signed-in person's Connected providers and Models, which the store then holds. */
+  getProviders(): Promise<ProvidersState> {
+    return this.#request({ _tag: "GetProviders" }, "ProvidersState")
+  }
+
+  /**
+   * Connects a Provider with an API key, in place of any connection to it. The Hub asks the
+   * Provider for its Models with it first, and refuses a key it rejects.
+   */
+  connectProviderKey(provider: ProviderId, apiKey: string): Promise<ProvidersState> {
+    return this.#request(
+      { _tag: "ConnectProviderKey", provider, apiKey: Redacted.make(apiKey) },
+      "ProvidersState",
+    )
+  }
+
+  /**
+   * Starts signing in to a Provider with a subscription, in place of any sign-in before. The store
+   * follows its steps as the Hub sends them; resolves with how it ended, or rejects with the Hub's
+   * reason, which the store holds too.
+   */
+  startSignIn(provider: ProviderId): Promise<SignInEnded> {
+    if (!this.#welcomed) return Promise.reject(new CommandError("Not connected to the Hub."))
+    const requestId = this.#newRequestId()
+    this.#dispatch({ _tag: "SignInStarted", requestId, provider })
+    return this.#request({ _tag: "StartSignIn", provider }, "SignInEnded", requestId)
+  }
+
+  /** Answers the sign-in in progress's Paste or Choose step: the text pasted, or the option's id. */
+  answerSignIn(value: string): boolean {
+    const signIn = this.#state.signIn
+    if (signIn === null || signIn.ended !== null) return false
+    return this.#send({
+      _tag: "AnswerSignIn",
+      requestId: signIn.requestId,
+      value: Redacted.make(value),
+    })
+  }
+
+  /** Cancels the sign-in in progress; it ends as cancelled. */
+  cancelSignIn(): boolean {
+    const signIn = this.#state.signIn
+    if (signIn === null || signIn.ended !== null) return false
+    return this.#send({ _tag: "CancelSignIn", requestId: signIn.requestId })
+  }
+
+  /**
+   * Forgets the last sign-in, once the page is done showing how it ended: with `requestId`, only
+   * if it is still that one.
+   */
+  clearSignIn(requestId?: RequestId): void {
+    this.#dispatch({ _tag: "SignInCleared", ...(requestId !== undefined && { requestId }) })
+  }
+
+  /** Disconnects a Provider: the Hub forgets its tokens, and its Models go from the list. */
+  disconnectProvider(provider: ProviderId): Promise<ProvidersState> {
+    return this.#request({ _tag: "DisconnectProvider", provider }, "ProvidersState")
+  }
+
+  /** Has the Hub ask each Connected provider, or the one named, for its Models again now. */
+  refreshProviderModels(provider?: ProviderId): Promise<ProvidersState> {
+    return this.#request(
+      { _tag: "RefreshProviderModels", ...(provider !== undefined && { provider }) },
+      "ProvidersState",
+    )
+  }
+
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────
 
   /** Revokes one of the signed-in person's CLI tokens: the CLI it was for is refused at once. */
@@ -832,12 +914,15 @@ export class HubClient {
     await this.#request({ _tag: "RemoveMember", participantId }, "MemberList")
   }
 
-  /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
+  /**
+   * Sends `command` with a new request id, or the one given; resolves with the Hub's `answer` to
+   * it.
+   */
   #request<Tag extends AnswerTag>(
     command: Request,
     answer: Tag | ReadonlyArray<Tag>,
+    requestId: RequestId = this.#newRequestId(),
   ): Promise<Extract<Answer, { readonly _tag: Tag }>> {
-    const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)
     return new Promise((resolve, reject) => {
       if (!this.#send({ ...command, requestId } as WebToHub)) {
         reject(new CommandError("Not connected to the Hub."))
@@ -849,6 +934,10 @@ export class HubClient {
         reject,
       })
     })
+  }
+
+  #newRequestId(): RequestId {
+    return RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)
   }
 
   // ── The socket ───────────────────────────────────────────────────────────
@@ -941,6 +1030,8 @@ export class HubClient {
       case "RunnerUpdateRequested":
       case "RunnerHistory":
       case "ClaudeCredentialState":
+      case "ProvidersState":
+      case "SignInEnded":
       case "CliTokenList":
       case "InviteCreated":
       case "InviteList":

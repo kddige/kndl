@@ -51,14 +51,16 @@ async function openRunners(options: { readonly owner?: boolean } = {}) {
     client.stop()
     hub.dispose()
   }
-  await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(2))
+  await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(3))
   return { hub, page: view.container }
 }
 
 test("lists each Runner with its version, last connection and Sessions, and no credential of its own", async () => {
   const { page } = await openRunners()
   expect(page.querySelector("h1")?.textContent).toBe("Runners")
-  const [studio, ci] = [...(runners()?.querySelectorAll("li") ?? [])].map((li) => li.textContent)
+  const rows = [...(runners()?.querySelectorAll("li") ?? [])].map((li) => li.textContent ?? "")
+  const studio = rows.find((row) => row.startsWith("studio"))
+  const ci = rows.find((row) => row.startsWith("ci-box"))
   expect(studio).toContain("studio")
   expect(studio).toContain("online")
   // Sessions run on their Creators' setup tokens, not the Runner's (ADR 0026).
@@ -237,7 +239,7 @@ test("refuses to remove a Runner with open Sessions, and removes one without", a
   )
   await step(() => hub.redeemPairingCode("spare"))
   await step(() => button("Done").click())
-  await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(3))
+  await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(4))
   await settle()
 
   await step(() => button("Remove spare").click())

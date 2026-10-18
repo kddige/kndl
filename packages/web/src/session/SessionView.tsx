@@ -59,7 +59,14 @@ import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
-import { type ModelSetting, modelName, otherTurnModel } from "./models.ts"
+import {
+  knownModelLabel,
+  type ModelSetting,
+  modelName,
+  otherProviderTurnModel,
+  otherTurnModel,
+  providerModelLabel,
+} from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
@@ -251,10 +258,23 @@ function LoadedSession({
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
   }
 
-  // Its model and thinking level, from what its Runner said its Claude Code has (#128).
+  // Its model and thinking level (#128): a Claude Code Session's from what its Runner said its
+  // Claude Code has; a pi Session's from its Creator's Models (ADR 0029), which only they are sent,
+  // so anyone else knows its Model by the name the transcript last gave it.
+  const pi = summary.harness === "Pi"
   const models = useHubState(
     (hubState) => hubState.runners?.find((runner) => runner.id === summary.runnerId)?.models,
   )
+  const yours = useHubState((hubState) => hubState.you?.id === summary.creator.id)
+  const providerModels = useHubState((hubState) =>
+    pi && yours ? hubState.providers?.models : undefined,
+  )
+  const knownLabel = useHubState((hubState) =>
+    pi ? knownModelLabel(hubState.joined[summary.id]?.log ?? [], summary.model) : undefined,
+  )
+  const harnessModels = pi
+    ? ({ harness: "Pi", models: providerModels } as const)
+    : ({ harness: "ClaudeCode", models } as const)
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
@@ -285,16 +305,22 @@ function LoadedSession({
     })
   }
   const nameTurnModel = useCallback(
-    (model: string) => otherTurnModel(models, setting, model),
-    [models, setting],
+    (model: string) =>
+      pi
+        ? otherProviderTurnModel(providerModels, setting, model)
+        : otherTurnModel(models, setting, model),
+    [pi, models, providerModels, setting],
   )
+  const settingName = pi
+    ? providerModelLabel(providerModels, setting, knownLabel)
+    : modelName(models, setting)
 
   const you = useHubState((hubState) => hubState.you)
   // Only its Creator drives it (ADR 0026): anyone else watches.
   const cantDrive = useDriveRefusal(summary)
   const drives = cantDrive === undefined
-  // It runs on its Creator's setup token, and can't wake without one.
-  const noToken = useHubState((hubState) => hubState.claudeCredential === null)
+  // On Claude Code, it runs on its Creator's setup token, and can't wake without one.
+  const noToken = useHubState((hubState) => !pi && hubState.claudeCredential === null)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -305,7 +331,7 @@ function LoadedSession({
     : busy
       ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
       : summary.modelPending === true && running
-        ? `${modelName(models, setting)} takes over when this Turn ends.`
+        ? `${settingName} takes over when this Turn ends.`
         : state === "Asleep"
           ? noToken
             ? "Asleep: add a setup token on your Account page to wake it."
@@ -602,7 +628,7 @@ function LoadedSession({
                   picker={
                     drives ? (
                       <ModelPicker
-                        models={models}
+                        {...harnessModels}
                         value={shownSetting}
                         onChange={pick}
                         disabled={archived}
@@ -610,7 +636,11 @@ function LoadedSession({
                       />
                     ) : (
                       // Someone watching sees what it runs on, but can't change it (ADR 0026).
-                      <ModelSettingLabel models={models} value={setting} />
+                      <ModelSettingLabel
+                        {...harnessModels}
+                        value={setting}
+                        knownLabel={knownLabel}
+                      />
                     )
                   }
                 />

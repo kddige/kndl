@@ -1,6 +1,7 @@
 // A Session's model and thinking level in the whole app (#128), against the fake Hub with its
 // script not playing unless a test asks: the picker in the composer, the transcript's notice and
-// Turn footer, a switch asked about while an agent runs, and New Session.
+// Turn footer, a switch asked about while an agent runs, and New Session; and a pi Session's,
+// among its Creator's Models (ADR 0029).
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -18,7 +19,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId } = await import("../src/hub/fake/script.ts")
+const { bob, demoSessionId, piSessionId } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
@@ -35,8 +36,12 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-async function open(path: string, autoplay = false) {
-  const hub = new FakeHub({ stepMs: 2, autoplay })
+async function open(
+  path: string,
+  autoplay = false,
+  options: ConstructorParameters<typeof FakeHub>[0] = {},
+) {
+  const hub = new FakeHub({ stepMs: 2, autoplay, ...options })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -168,4 +173,33 @@ test("New Session starts on the model picked in its dialog", async () => {
   await eventually(() => expect(picker()?.textContent).toBe("Sonnet 5.5"))
   // Lets the new Session finish starting while React is watching.
   await settle(200)
+})
+
+test("a pi Session's Creator switches among their Models, by Provider; the switch names the Model", async () => {
+  const { hub, conversation, picker } = await open(`/sessions/${piSessionId}`)
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  await step(() => picker()?.click())
+  await settle()
+  const groups = [...document.querySelectorAll('[role="menu"] [role="group"]')].map(
+    (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+  )
+  expect(groups).toEqual(["Anthropic", "OpenAI"])
+  await step(() => radio("Claude Opus 5.5").click())
+
+  await eventually(() =>
+    expect(conversation()).toContain("Alice Kim switched to Claude Opus 5.5, High"),
+  )
+  expect(picker()?.textContent).toBe("Claude Opus 5.5")
+  const sent = hub.received.flatMap((m) =>
+    m._tag === "SetSessionModel" ? [{ model: m.model, thinkingLevel: m.thinkingLevel }] : [],
+  )
+  expect(sent).toEqual([{ model: "anthropic/claude-opus-5-5", thinkingLevel: "high" }])
+})
+
+test("someone watching a pi Session sees its Model as the transcript names it, not their own Models", async () => {
+  const { page, picker } = await open(`/sessions/${piSessionId}`, false, { you: bob })
+  const shown = () =>
+    page.querySelector('[title="The model and thinking level this Session runs on"]')?.textContent
+  await eventually(() => expect(shown()).toBe("GPT-6-Sol·High"))
+  expect(picker()).toBeNull()
 })

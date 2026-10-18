@@ -4,8 +4,9 @@
 // background, which its Creator can message and stop, a second Participant joining to watch, and
 // a terminal to watch and type into; Environments, shared
 // variables and Test builds with a streaming log (environments.ts); MCP servers and their
-// Installations, with each Repo's change log (mcpServers.ts); and, when asked to, a GitHub App
-// short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
+// Installations, with each Repo's change log (mcpServers.ts); Connected providers, their sign-ins
+// and the Models of pi Sessions (providers.ts); and, when asked to, a GitHub App short of
+// permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too. What it refuses of a Session, and how its Prompt
@@ -50,6 +51,9 @@ import {
   unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
+  parseProviderModelName,
+  type ProviderId,
+  providerModelName,
   hubPinnedMessage,
   hubUpdatesOffMessage,
   ownerOnlyMessage,
@@ -77,6 +81,7 @@ import {
   attachmentsNotSent,
   stopAgentRefusal,
   stopTurnRefusal,
+  type Harness,
   type ThinkingLevel,
   UpdateDrainMillis,
   wakeVerdict,
@@ -93,6 +98,13 @@ import type {
 } from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
 import { FakeMcpServers, type McpServerChangeCommand } from "./mcpServers.ts"
+import {
+  FakeProviders,
+  pasteProblem,
+  providerName,
+  seedProviders,
+  signInSteps,
+} from "./providers.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -119,6 +131,7 @@ import type {
   BuildVersionWire,
   ClaudeCredentialInfoWire,
   CliTokenInfoWire,
+  ConnectedProviderWire,
   HubMessage,
   HubUpdateRunWire,
   HubUpdateStateWire,
@@ -136,6 +149,7 @@ import type {
   SessionEventWire,
   SessionInstallationWire,
   SessionSummaryWire,
+  SignInStepWire,
 } from "./wire.ts"
 
 const decodeParticipant = Schema.decodeUnknownSync(Participant)
@@ -184,6 +198,11 @@ export interface FakeHubOptions {
    * commit, or it rolls back, with an error and a log. Default `Succeeded`.
    */
   hubUpdateOutcome?: "Succeeded" | "RolledBack"
+  /**
+   * The signed-in person's Connected providers (ADR 0029). Default their ChatGPT sign-in, with
+   * its Models.
+   */
+  providers?: ReadonlyArray<ConnectedProviderWire>
   /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
@@ -312,6 +331,13 @@ const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 const noCredentialText =
   "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
 
+/** Why a pi Session can't be created without a Model to run on (ADR 0029). */
+const noModelsText =
+  "Connect a Provider on your Account page first: a Session runs on its Creator's own Models."
+
+/** How many steps xAI's sign-in waits, as if for the code to be entered. */
+const codeEnteredSteps = 60
+
 /** What a listing that fails says, as the Hub words it. */
 const notListed = "Could not list your Repos; try again."
 
@@ -342,6 +368,7 @@ export class FakeHub implements HubTransport {
   readonly pairingCodes: Array<PendingPairingCodeWire> = []
   readonly environments = new FakeEnvironments()
   readonly mcpServers = new FakeMcpServers()
+  readonly providers: FakeProviders
   /**
    * What GitHub says of the signed-in person and each Repo (#104); any Repo not here is Allowed.
    * Seeded with one of each refusal for the demo.
@@ -385,6 +412,16 @@ export class FakeHub implements HubTransport {
   /** The Setup link and Invite secrets the /setup and /invite pages handed over, in order. */
   readonly admissions: Array<string> = []
   #scriptStarted = false
+  /**
+   * The signed-in person's sign-in in progress, as the Hub runs one per Member (ADR 0029): with
+   * the connection that started it, and whether it waits for a paste.
+   */
+  #signIn: {
+    readonly requestId: string
+    readonly provider: ProviderId
+    readonly socket: FakeSocket
+    waitsForPaste: boolean
+  } | null = null
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   /** While held, the timed steps that came due, in order, waiting for `step` (#315). */
@@ -421,6 +458,7 @@ export class FakeHub implements HubTransport {
     this.#hubUpdateRun = options.hubUpdateRun ?? null
     this.#hubUpdateOutcome = options.hubUpdateOutcome ?? "Succeeded"
     this.#reply = options.reply ?? replyTo
+    this.providers = new FakeProviders(options.providers ?? seedProviders())
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -974,6 +1012,7 @@ export class FakeHub implements HubTransport {
           sessions: [...this.sessions.values()].map((session) => session.summary),
         })
         socket.deliver({ _tag: "ClaudeCredentialState", credential: this.#claudeCredential })
+        socket.deliver(this.#providersState())
         socket.deliver({ _tag: "CliTokenList", tokens: this.#cliTokens })
         if (this.#appPermissions !== null) {
           socket.deliver({ _tag: "AppPermissionsChecked", check: this.#appPermissions })
@@ -1010,6 +1049,51 @@ export class FakeHub implements HubTransport {
       }
       case "RemoveClaudeCredential":
         this.#setClaudeCredential(socket, message.requestId, null)
+        break
+      case "GetProviders":
+        socket.deliver(this.#providersState(message.requestId))
+        break
+      case "ConnectProviderKey": {
+        const refused = this.providers.connectKey(message.provider, Redacted.value(message.apiKey))
+        if (refused !== undefined) this.#refuse(socket, message._tag, message.requestId, refused)
+        else this.#providersChanged(socket, message.requestId)
+        break
+      }
+      case "DisconnectProvider": {
+        const refused = this.providers.disconnect(message.provider)
+        if (refused !== undefined) this.#refuse(socket, message._tag, message.requestId, refused)
+        else this.#providersChanged(socket, message.requestId)
+        break
+      }
+      case "RefreshProviderModels":
+        this.providers.refresh(message.provider)
+        this.#providersChanged(socket, message.requestId)
+        break
+      case "StartSignIn":
+        this.#startSignIn(socket, message.requestId, message.provider)
+        break
+      case "AnswerSignIn": {
+        const signIn = this.#signIn
+        if (signIn?.requestId !== message.requestId || !signIn.waitsForPaste) {
+          this.#refuse(socket, message._tag, message.requestId, "No sign-in is waiting for that.")
+          break
+        }
+        signIn.waitsForPaste = false
+        const problem = pasteProblem(Redacted.value(message.value))
+        if (problem !== undefined) {
+          this.#endSignIn("Failed", problem)
+          break
+        }
+        this.#signInStep({
+          _tag: "Progress",
+          message: `Checking with ${providerName(signIn.provider)}…`,
+        })
+        this.#after(2, () => this.#signInConnected(signIn.requestId))
+        break
+      }
+      case "CancelSignIn":
+        if (this.#signIn?.requestId === message.requestId) this.#endSignIn("Cancelled")
+        else this.#refuse(socket, message._tag, message.requestId, "No sign-in is in progress.")
         break
       case "RevokeCliToken": {
         const kept = this.#cliTokens.filter((token) => token.id !== message.cliTokenId)
@@ -1127,12 +1211,8 @@ export class FakeHub implements HubTransport {
       }
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
-        // It runs on its Creator's own setup token, with no fallback (ADR 0026).
-        if (this.#claudeCredential === null) {
-          this.#refuse(socket, message._tag, message.requestId, noCredentialText)
-          break
-        }
         this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
+          ...(message.harness !== undefined && { harness: message.harness }),
           ...(message.model !== undefined && { model: message.model }),
           ...(message.thinkingLevel !== undefined && { thinkingLevel: message.thinkingLevel }),
         })
@@ -1148,7 +1228,10 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
-        const checked = this.#checkModel(session.summary.runnerId, message)
+        const checked =
+          session.summary.harness === "Pi"
+            ? this.#checkProviderModel(message)
+            : this.#checkModel(session.summary.runnerId, message)
         if (typeof checked === "string") {
           this.#fail(socket, message._tag, checked, message.sessionId)
           break
@@ -1845,8 +1928,34 @@ export class FakeHub implements HubTransport {
     }
   }
 
+  /**
+   * A pi Session's model setting, as the Hub checks it against its Creator's Models (ADR 0029):
+   * with none asked for, their first, Claude's when they have a credential. Or why it is refused.
+   */
+  #checkProviderModel(asked: {
+    readonly model?: string
+    readonly thinkingLevel?: ThinkingLevel
+  }): { model: string; thinkingLevel?: ThinkingLevel; label: string } | string {
+    const models = this.#providersState().models
+    if (models.length === 0) return noModelsText
+    const found =
+      asked.model === undefined
+        ? models[0]
+        : models.find((each) => providerModelName(each) === asked.model)
+    if (found === undefined) return modelNotFoundText(asked.model ?? "")
+    if (asked.thinkingLevel !== undefined && !found.thinkingLevels.includes(asked.thinkingLevel))
+      return `${found.label} has no thinking level '${asked.thinkingLevel}'.`
+    return {
+      model: providerModelName(found),
+      ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
+      label: found.label,
+    }
+  }
+
   /** The model a Session's Turns run, as its Runner's Claude Code resolves its setting. */
   #modelId(session: FakeSession): string {
+    if (session.summary.harness === "Pi")
+      return parseProviderModelName(session.summary.model ?? "")?.id ?? "gpt-6-sol"
     const models = this.runners.find((runner) => runner.id === session.summary.runnerId)?.models
     const { model } = session.summary
     if (models === undefined) return model ?? "claude-opus-5-5"
@@ -1860,7 +1969,11 @@ export class FakeHub implements HubTransport {
     repo: string,
     branch: BranchChoice,
     runnerId: string | undefined,
-    asked: { readonly model?: string; readonly thinkingLevel?: ThinkingLevel },
+    asked: {
+      readonly harness?: Harness
+      readonly model?: string
+      readonly thinkingLevel?: ThinkingLevel
+    },
   ): void {
     const runner =
       runnerId === undefined
@@ -1871,7 +1984,22 @@ export class FakeHub implements HubTransport {
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
     }
-    const checked = this.#checkModel(runner.id, asked)
+    // pi when its Runner runs it, unless Claude Code is asked for (ADR 0029).
+    const harness: Harness =
+      asked.harness ?? (runner.harnesses?.includes("Pi") === true ? "Pi" : "ClaudeCode")
+    if (harness === "Pi" && runner.harnesses?.includes("Pi") !== true) {
+      const message = `${runner.name} doesn't run pi.`
+      socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
+      return
+    }
+    // A Claude Code Session runs on its Creator's own setup token, with no fallback (ADR 0026).
+    if (harness === "ClaudeCode" && this.#claudeCredential === null) {
+      const message = noCredentialText
+      socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
+      return
+    }
+    const checked =
+      harness === "Pi" ? this.#checkProviderModel(asked) : this.#checkModel(runner.id, asked)
     if (typeof checked === "string") {
       socket.deliver({
         _tag: "CommandFailed",
@@ -1899,6 +2027,7 @@ export class FakeHub implements HubTransport {
       currentTurn: null,
       // Not started on any version until its Runner says so: it is being started on `version`.
       environment: { version: null, latestVersion: version },
+      harness,
       ...(checked.model !== undefined && { model: checked.model }),
       ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
     }
@@ -2816,9 +2945,16 @@ export class FakeHub implements HubTransport {
     return undefined
   }
 
-  /** Whether the Session's Creator has a setup token stored, which it runs on (ADR 0026). */
+  /**
+   * Whether the Session's Creator has a setup token stored, which a Claude Code Session runs on
+   * (ADR 0026). A pi Session runs on their Connected providers too, so it needs none (ADR 0029).
+   */
   #hasCredential(session: FakeSession): boolean {
-    return session.summary.creator.id !== this.#you.id || this.#claudeCredential !== null
+    return (
+      session.summary.harness === "Pi" ||
+      session.summary.creator.id !== this.#you.id ||
+      this.#claudeCredential !== null
+    )
   }
 
   /** Where a prompt is on its way to Claude Code, as the Hub's rules read it (SessionRules). */
@@ -3187,6 +3323,8 @@ export class FakeHub implements HubTransport {
     const state = { _tag: "ClaudeCredentialState" as const, credential }
     socket.deliver({ ...state, requestId, ...(warning !== undefined && { warning }) })
     this.#toOthers(socket, state)
+    // Claude's Models come and go with it.
+    if (had !== (credential !== null)) this.#toAll(this.#providersState())
     if (!had) return
     const why =
       credential === null
@@ -3200,6 +3338,70 @@ export class FakeHub implements HubTransport {
       this.#setState(session, "Asleep", why)
       session.stopTurn?.()
     }
+  }
+
+  /** The signed-in person's Connected providers and Models, as the Hub sends them. */
+  #providersState(requestId?: string) {
+    return this.providers.state(this.#claudeCredential !== null, requestId)
+  }
+
+  /** Answers a change to the Connected providers, and tells the person's other connections. */
+  #providersChanged(socket: FakeSocket, requestId: string): void {
+    socket.deliver(this.#providersState(requestId))
+    this.#toOthers(socket, this.#providersState())
+  }
+
+  /**
+   * Plays a Provider's sign-in, in place of any before, which ends cancelled (ADR 0029): its steps,
+   * then, for ChatGPT's, a wait for the address pasted, and for xAI's, for the code to be entered.
+   */
+  #startSignIn(socket: FakeSocket, requestId: string, provider: ProviderId): void {
+    if (this.#signIn !== null) this.#endSignIn("Cancelled")
+    const signIn = { requestId, provider, socket, waitsForPaste: false }
+    this.#signIn = signIn
+    const steps = signInSteps[provider]
+    steps.forEach((step, index) =>
+      this.#after(index + 1, () => {
+        if (this.#signIn !== signIn) return
+        if (step._tag === "Paste") signIn.waitsForPaste = true
+        this.#signInStep(step)
+      }),
+    )
+    if (!steps.some((step) => step._tag === "Paste"))
+      this.#after(steps.length + codeEnteredSteps, () => this.#signInConnected(requestId))
+  }
+
+  #signInStep(step: SignInStepWire): void {
+    const signIn = this.#signIn
+    if (signIn === null) return
+    signIn.socket.deliver({
+      _tag: "SignInStepped",
+      requestId: signIn.requestId,
+      provider: signIn.provider,
+      step,
+    })
+  }
+
+  /** The sign-in found its account: it's connected, and every connection hears of it. */
+  #signInConnected(requestId: string): void {
+    const signIn = this.#signIn
+    if (signIn?.requestId !== requestId) return
+    this.providers.signedIn(signIn.provider)
+    this.#endSignIn("Connected")
+    this.#toAll(this.#providersState())
+  }
+
+  #endSignIn(outcome: "Connected" | "Failed" | "Cancelled", message?: string): void {
+    const signIn = this.#signIn
+    if (signIn === null) return
+    this.#signIn = null
+    signIn.socket.deliver({
+      _tag: "SignInEnded",
+      requestId: signIn.requestId,
+      provider: signIn.provider,
+      outcome,
+      ...(message !== undefined && { message }),
+    })
   }
 
   #toOthers(socket: FakeSocket, message: HubMessage): void {

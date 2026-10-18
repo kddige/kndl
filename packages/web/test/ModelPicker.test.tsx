@@ -2,7 +2,7 @@
 // model without thinking levels has no thinking picker.
 
 import { afterEach, expect, test } from "bun:test"
-import type { RunnerModels } from "@kndl/protocol"
+import type { ProviderModel, RunnerModels } from "@kndl/protocol"
 import type { ModelSetting } from "../src/session/models.ts"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
@@ -16,8 +16,9 @@ afterEach(async () => {
 })
 
 const { useState } = await import("react")
-const { ModelPicker } = await import("../src/session/ModelPicker.tsx")
+const { ModelPicker, ModelSettingLabel } = await import("../src/session/ModelPicker.tsx")
 const { fakeModels } = await import("../src/hub/fake/script.ts")
+const { claudeModels, providerModels } = await import("../src/hub/fake/providers.ts")
 
 /** Renders the picker, keeping what it is changed to, and records each change. */
 async function picker(initial: ModelSetting = {}, models: RunnerModels = fakeModels) {
@@ -254,4 +255,102 @@ test("Use the default unsets the level", async () => {
   await click(button("Use the default", document))
   expect(changes).toEqual([{ model: "opus" }])
   expect(trigger(container, "Thinking")?.textContent).toBe("Thinking")
+})
+
+// A pi Session's picker (ADR 0029): its Creator's Models, from their ProvidersState.
+
+/** Claude's Models and OpenAI's, as the Hub lists them for someone with both. */
+const piModels: ReadonlyArray<ProviderModel> = [...claudeModels, ...providerModels.openai]
+
+/** Renders a pi Session's picker, as `picker` does a Claude Code one's. */
+async function piPicker(initial: ModelSetting) {
+  const changes: Array<ModelSetting> = []
+  function Harness() {
+    const [value, setValue] = useState<ModelSetting>(initial)
+    return (
+      <ModelPicker
+        harness="Pi"
+        models={piModels}
+        value={value}
+        onChange={(next) => {
+          changes.push(next)
+          setValue(next)
+        }}
+      />
+    )
+  }
+  const view = await render(<Harness />)
+  cleanup = view.unmount
+  return { changes, container: view.container }
+}
+
+/** The open menu's groups: each one's name and its rows. */
+const groups = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="group"]')].map((group) => [
+    document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+    [...group.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
+  ])
+
+test("a pi Session's picker lists its Creator's Models by Provider, and sends the one chosen as provider/id", async () => {
+  const { container, changes } = await piPicker({
+    model: "anthropic/claude-sonnet-5-5",
+    thinkingLevel: "high",
+  })
+  expect(trigger(container, "Model")?.textContent).toBe("Claude Sonnet 5.5")
+  expect(trigger(container, "Thinking")?.textContent).toBe("High")
+
+  await click(trigger(container, "Model"))
+  expect(groups()).toEqual([
+    ["Anthropic", ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Haiku 4.5"]],
+    ["OpenAI", ["GPT-6-Sol", "GPT-6-Sol mini", "GPT-4.1"]],
+  ])
+  // A pi Session always runs a Model of its own: there is no default row.
+  expect(radios().some((row) => row.textContent?.startsWith("Default"))).toBe(false)
+  expect(checked()).toEqual(["Claude Sonnet 5.5"])
+
+  await click(radio("GPT-6-Sol"))
+  expect(changes).toEqual([{ model: "openai/gpt-6-sol", thinkingLevel: "high" }])
+  expect(trigger(container, "Model")?.textContent).toBe("GPT-6-Sol")
+})
+
+test("a pi Session's thinking slider has its Model's own levels, and a Model without drops the level", async () => {
+  const { container, changes } = await piPicker({ model: "openai/gpt-6-sol" })
+  await click(trigger(container, "Thinking"))
+  const names = []
+  for (const _ of [1, 2, 3, 4, 5]) {
+    await press("ArrowRight")
+    names.push(slider()?.getAttribute("aria-valuetext"))
+  }
+  expect(names).toEqual(["Minimal", "Low", "Medium", "High", "Extra"])
+  await press("Enter")
+  expect(changes).toEqual([{ model: "openai/gpt-6-sol", thinkingLevel: "xhigh" }])
+
+  // GPT-6-Sol mini has no Extra: the level goes.
+  await click(trigger(container, "Model"))
+  await click(radio("GPT-6-Sol mini"))
+  expect(changes.at(-1)).toEqual({ model: "openai/gpt-6-sol-mini" })
+  // GPT-4.1 doesn't think: no thinking button.
+  await click(trigger(container, "Model"))
+  await click(radio("GPT-4.1"))
+  expect(trigger(container, "Thinking")).toBeNull()
+})
+
+test("someone watching a pi Session sees its Model's label as it is known", async () => {
+  const known = await render(
+    <ModelSettingLabel
+      harness="Pi"
+      models={undefined}
+      knownLabel="GPT-6-Sol"
+      value={{ model: "openai/gpt-6-sol", thinkingLevel: "high" }}
+    />,
+  )
+  cleanup = known.unmount
+  expect(known.container.textContent).toBe("GPT-6-Sol·High")
+  await cleanup?.()
+
+  const unknown = await render(
+    <ModelSettingLabel harness="Pi" models={undefined} value={{ model: "openai/gpt-6-sol" }} />,
+  )
+  cleanup = unknown.unmount
+  expect(unknown.container.textContent).toBe("gpt-6-sol")
 })
