@@ -1,7 +1,8 @@
 // The Claude bridge against the real Claude, through the pinned Claude Code, in real pi, linked to
-// a fake Hub: a turn that reads a file with pi's tool, a turn aborted while its bash call runs, a
-// turn after it, and then a switch to GPT (on the fake Hub's Gateway), whose request must still
-// carry the aborted turn's tool call with its result (the spike's bug).
+// a fake Hub: a turn that reads a file with pi's tool, one that reads and then runs bash, one that
+// reads two files in one message, a turn aborted while its bash call runs, a turn after it, then a
+// switch to GPT (on the fake Hub's Gateway), whose request must still carry the aborted turn's
+// tool call with its result (the spike's bug), and back on Claude, read then bash again.
 //
 // It spends a few Haiku turns of a real subscription, so it runs only when asked:
 //   KNDL_CLAUDE_IT=1 CLAUDE_CODE_OAUTH_TOKEN=… [KNDL_CLAUDE_CODE=…/claude] bun test pi/test/claude.live.spec.ts
@@ -33,6 +34,12 @@ const modToken = "tok-live"
 const sessionId = "s-live"
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 const word = "periwinkle"
+const noteLines = ["one", "two", "three", "four", "five", "six", "seven"]
+
+/** A prompt that needs a second tool call after the first's result, in one Claude turn. */
+const readThenBash =
+  "Read note.txt with your read tool. Then, as a separate step after reading it, use your bash " +
+  "tool to count the lines of note.txt with `wc -l note.txt`. Then answer with the line count."
 
 /** A log's end, for a failure's message. */
 const read = (path: string) =>
@@ -44,6 +51,14 @@ const said = (events: ReadonlyArray<Record<string, unknown>>) =>
     .filter((event) => event._tag === "TextDelta")
     .map((event) => event.text)
     .join("")
+
+/** That a Turn called `tool`, and it succeeded. */
+const expectToolRan = (events: ReadonlyArray<Record<string, unknown>>, tool: string) => {
+  expect(events).toContainEqual(expect.objectContaining({ _tag: "ToolCallStarted", tool }))
+  expect(events).toContainEqual(
+    expect.objectContaining({ _tag: "ToolCallEnded", tool, outcome: "Succeeded" }),
+  )
+}
 
 describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
   let hub: FakeHub
@@ -74,6 +89,9 @@ describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
     const workspace = join(home, "workspace")
     mkdirSync(workspace)
     writeFileSync(join(workspace, "secret.txt"), `The secret word is ${word}.\n`)
+    writeFileSync(join(workspace, "note.txt"), noteLines.map((line) => `${line}\n`).join(""))
+    writeFileSync(join(workspace, "a.txt"), "The first colour is vermilion.\n")
+    writeFileSync(join(workspace, "b.txt"), "The second colour is cerulean.\n")
     pi = Bun.spawn(
       [
         "node",
@@ -117,6 +135,8 @@ describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
     void (async () => {
       for await (const chunk of pi.stderr) stderr += new TextDecoder().decode(chunk)
     })()
+    // Read, though unused: pi's RPC mode waits for stdout to drain before each agent event, so a
+    // pipe nobody reads stalls pi's turn once it fills.
     void (async () => {
       for await (const _ of pi.stdout);
     })()
@@ -161,6 +181,32 @@ describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
       reason: "stop",
       usage: { model: "anthropic/claude-haiku-5-5" },
     })
+  }, 180_000)
+
+  // A tool call from the held query, once the first one's result is in.
+  test("a Claude turn calls a second tool after the first's result", async () => {
+    const events = await turn("q-two-tools", readThenBash)
+    expectToolRan(events, "read")
+    expectToolRan(events, "bash")
+    expect(said(events)).toContain(String(noteLines.length))
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "stop" })
+  }, 180_000)
+
+  test("a Claude turn calls two tools in one message", async () => {
+    const events = await turn(
+      "q-parallel",
+      "Read a.txt and b.txt with your read tool, calling it for both files in parallel in one " +
+        "message, then tell me both colours.",
+    )
+    const reads = events.filter(
+      (event) => event._tag === "ToolCallStarted" && event.tool === "read",
+    ).length
+    console.log(`q-parallel: ${reads} read calls`)
+    expect(reads).toBeGreaterThanOrEqual(2)
+    const answer = said(events).toLowerCase()
+    expect(answer).toContain("vermilion")
+    expect(answer).toContain("cerulean")
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "stop" })
   }, 180_000)
 
   test("a Claude turn stops while its bash call runs", async () => {
@@ -212,4 +258,14 @@ describe.skipIf(skip !== undefined)("the Claude bridge, live", () => {
     expect(outputs.length).toBeGreaterThanOrEqual(2)
     for (const output of outputs) expect(calls.has(output.call_id)).toBe(true)
   }, 60_000)
+
+  // Back from GPT, the mirror rebuilds, and the query runs on the rebuilt session.
+  test("back on Claude after GPT, a turn calls a second tool after the first's result", async () => {
+    hub.send({ _tag: "SwitchModel", sessionId, model: "anthropic/claude-haiku-5-5" })
+    const events = await turn("q-two-tools-rebuilt", readThenBash)
+    expectToolRan(events, "read")
+    expectToolRan(events, "bash")
+    expect(said(events)).toContain(String(noteLines.length))
+    expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "stop" })
+  }, 180_000)
 })

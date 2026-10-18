@@ -28,7 +28,19 @@ export interface Call {
   readonly options: Options
   /** The text of the prompt the query was opened with. */
   prompt?: string | undefined
+  /** The text of each message written to the query's input after its prompt. */
+  readonly steers: Array<string>
   closed: boolean
+}
+
+/** A prompt message's text. */
+const promptText = (message: SDKUserMessage | undefined): string | undefined => {
+  const content = message?.message.content
+  return typeof content === "string"
+    ? content
+    : (content as Array<{ type: string; text?: string }> | undefined)
+        ?.map((block) => block.text ?? "")
+        .join("")
 }
 
 interface McpInstance {
@@ -87,7 +99,7 @@ export class FakeClaudeCode {
   readonly query: QueryFn = ({ prompt, options }) => {
     const script = this.scripts.shift()
     if (script === undefined) throw new Error("no fake Claude Code script queued")
-    const call: Call = { label: script.label, options, closed: false }
+    const call: Call = { label: script.label, options, closed: false, steers: [] }
     this.calls.push(call)
     let onClose: (() => void) | undefined
     const killed = new Promise<void>((resolve) => {
@@ -96,14 +108,14 @@ export class FakeClaudeCode {
     const generator = (async function* () {
       if (typeof prompt === "string") call.prompt = prompt
       else {
-        const first = await prompt[Symbol.asyncIterator]().next()
-        const content = (first.value as SDKUserMessage | undefined)?.message.content
-        call.prompt =
-          typeof content === "string"
-            ? content
-            : (content as Array<{ type: string; text?: string }> | undefined)
-                ?.map((block) => block.text ?? "")
-                .join("")
+        const input = prompt[Symbol.asyncIterator]()
+        const first = await input.next()
+        call.prompt = promptText(first.value as SDKUserMessage | undefined)
+        // The rest of the input, read as Claude Code reads its stdin: a steer.
+        void (async () => {
+          for (let next = await input.next(); !next.done; next = await input.next())
+            call.steers.push(promptText(next.value) ?? "")
+        })().catch(() => {})
       }
       let callTool: StepContext["callTool"] | undefined
       for (const step of script.steps) {
@@ -181,3 +193,93 @@ export const callTool =
     ])
     if (reply !== undefined) answered?.(reply)
   }
+
+export interface StreamedToolCall {
+  readonly id: string
+  readonly tool: string
+  readonly input?: Record<string, unknown>
+}
+
+/**
+ * A message that calls tools, in the order the real Claude Code yields it: a thinking block first
+ * if given, each block's whole `assistant` message just before its content_block_stop, and each
+ * tool called over MCP as soon as its block is whole (Claude Code's streaming tool execution),
+ * without waiting on the answer. Then message_stop and the rate-limit event, and Claude Code waits
+ * for every answer, or the query's killing, before it goes on.
+ */
+export const streamedToolCalls = (
+  messageId: string,
+  calls: ReadonlyArray<StreamedToolCall>,
+  options: { readonly thinking?: string } = {},
+): Array<Step> => {
+  const replies: Array<Promise<unknown>> = []
+  const whole = (block: Record<string, unknown>) => ({
+    type: "assistant",
+    message: { id: messageId, model: "claude-haiku-5-5", content: [block] },
+  })
+  const steps: Array<Step> = [
+    event({ type: "message_start", message: { id: messageId, usage: { input_tokens: 2 } } }),
+  ]
+  let index = 0
+  if (options.thinking !== undefined) {
+    steps.push(
+      event({ type: "content_block_start", index, content_block: { type: "thinking" } }),
+      { type: "system", subtype: "thinking_tokens" },
+      event({
+        type: "content_block_delta",
+        index,
+        delta: { type: "thinking_delta", thinking: options.thinking },
+      }),
+      event({
+        type: "content_block_delta",
+        index,
+        delta: { type: "signature_delta", signature: "sig" },
+      }),
+      whole({ type: "thinking", thinking: options.thinking, signature: "sig" }),
+      event({ type: "content_block_stop", index }),
+    )
+    index++
+  }
+  for (const call of calls) {
+    const input = call.input ?? {}
+    const name = `mcp__custom-tools__${call.tool}`
+    steps.push(
+      event({
+        type: "content_block_start",
+        index,
+        content_block: { type: "tool_use", id: call.id, name, input: {} },
+      }),
+      event({
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+      }),
+      whole({ type: "tool_use", id: call.id, name, input }),
+      async (context: StepContext) => {
+        replies.push(Promise.race([context.callTool(call.tool, call.id), context.killed]))
+      },
+      event({ type: "content_block_stop", index }),
+    )
+    index++
+  }
+  steps.push(
+    event({
+      type: "message_delta",
+      delta: { stop_reason: "tool_use" },
+      usage: { output_tokens: 255 },
+    }),
+    event({ type: "message_stop" }),
+    {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed", rateLimitType: "five_hour" },
+    },
+    async () => {
+      await Promise.all(replies)
+    },
+    ...calls.map((call) => ({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: call.id }] },
+    })),
+  )
+  return steps
+}
