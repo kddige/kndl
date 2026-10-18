@@ -7,6 +7,7 @@ import {
   type MouseEvent,
   type ReactElement,
   type ReactNode,
+  type Ref,
   useContext,
   useId,
 } from "react"
@@ -108,7 +109,8 @@ const styles = stylex.create({
   note: { margin: 0, maxWidth: "65ch", textWrap: "pretty" },
   sectionAction: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
 
-  group: { display: "flex", flexDirection: "column", gap: space.s2 },
+  // Further from the list above it than from its own: space groups it.
+  group: { display: "flex", flexDirection: "column", gap: space.s2, paddingTop: space.s2 },
   groupLabel: { margin: 0 },
 
   list: {
@@ -242,6 +244,7 @@ const styles = stylex.create({
     paddingInline: space.s3,
   },
   propertyBare: { paddingInline: 0 },
+  propertyNested: { paddingInlineStart: 0 },
   propertyText: {
     display: "flex",
     flexDirection: "column",
@@ -499,6 +502,7 @@ export interface SettingsRowProps {
   rows?: ReactNode
   /** What `rows` lists, for screen readers. */
   rowsLabel?: string
+  ref?: Ref<HTMLLIElement>
   sx?: stylex.StyleXStyles
 }
 
@@ -520,6 +524,7 @@ export function SettingsRow({
   link,
   rows,
   rowsLabel,
+  ref,
   sx,
 }: SettingsRowProps) {
   const place = useContext(PlaceContext)
@@ -572,6 +577,7 @@ export function SettingsRow({
     })
   return (
     <li
+      ref={ref}
       aria-label={label}
       {...stylex.props(place !== "detail" && styles.item, nested && styles.nestedItem, sx)}
     >
@@ -678,7 +684,13 @@ export function PropertyRow({ label, description, children }: PropertyRowProps) 
   const descriptionId = useId()
   const inList = place !== "detail"
   const body = (
-    <div {...stylex.props(styles.propertyInner, !inList && styles.propertyBare)}>
+    <div
+      {...stylex.props(
+        styles.propertyInner,
+        !inList && styles.propertyBare,
+        place === "nested" && styles.propertyNested,
+      )}
+    >
       <div {...stylex.props(styles.propertyText)}>
         <span id={labelId} {...stylex.props(styles.propertyLabel)}>
           {label}
