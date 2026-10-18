@@ -24,7 +24,7 @@
 // - Plain variables, Environments, versions, Sessions, MCP servers, Installations and builds
 //   already on Runners stay.
 import { existsSync } from "node:fs"
-import { headerSecretsOf, McpServerAuth } from "@kndl/protocol"
+import { headerSecretsOf, McpServerAuth, ProviderId } from "@kndl/protocol"
 import { Effect, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
@@ -191,8 +191,23 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
 
 const decodeAuth = Schema.decodeUnknownOption(Schema.fromJsonString(McpServerAuth))
 
-/** What a Connected provider's Provider is called, without loading pi-ai to ask. */
-const providerNames: Record<string, string> = { openai: "OpenAI", xai: "xAI" }
+const isProviderId = Schema.is(ProviderId)
+
+/**
+ * What each Connected provider's Provider is called, as the Account page calls it: pi-ai is loaded
+ * to ask only when there are some to name, so a reset without any, and the CLI's other commands,
+ * never load it. An id kndl no longer knows is itself.
+ */
+const providerNamesOf = (providers: ReadonlyArray<string>) =>
+  providers.length === 0
+    ? Effect.succeed((provider: string) => provider)
+    : Effect.promise(() => import("./PiProviders.ts")).pipe(
+        Effect.map(
+          ({ nameOf }) =>
+            (provider: string) =>
+              isProviderId(provider) ? nameOf(provider) : provider,
+        ),
+      )
 
 /** What the lost key protects in the database. */
 const planOf = Effect.gen(function* () {
@@ -237,6 +252,7 @@ const planOf = Effect.gen(function* () {
     JOIN participants ON participants.id = connected_providers.participant_id
     ORDER BY participants.login, connected_providers.provider
   `
+  const nameOf = yield* providerNamesOf(connectedProviders.map((row) => row.provider))
   const byRepo = new Map<string, Array<string>>()
   for (const row of own) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row.name])
   const installations = new Map<string, { name: string; secrets: Array<string> }>()
@@ -259,9 +275,7 @@ const planOf = Effect.gen(function* () {
     installations: [...installations.values()],
     sessionValues: held?.count ?? 0,
     connections: connections.map((row) => row.name),
-    connectedProviders: connectedProviders.map(
-      (row) => `${row.login}: ${providerNames[row.provider] ?? row.provider}`,
-    ),
+    connectedProviders: connectedProviders.map((row) => `${row.login}: ${nameOf(row.provider)}`),
   } satisfies SecretsResetPlan
 })
 
