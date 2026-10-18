@@ -165,7 +165,11 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     running = startPi(
       home,
       hub,
-      ["--no-session", "--no-skills", "--no-context-files", "--model", "openai/gpt-4.1"],
+      [
+        ...["--no-session", "--no-skills", "--no-context-files", "--model", "openai/gpt-4.1"],
+        // A Repo extension of its own, loaded after kndl's, which handles some prompts itself.
+        ...["-e", join(import.meta.dir, "fixtures", "swallow.js")],
+      ],
       { KNDL_MCP_SERVERS: JSON.stringify([{ installationId: "inst-1", server: "linear" }]) },
     )
     pi = running.process
@@ -278,6 +282,24 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(events).toEqual([{ _tag: "PromptAlreadySubmitted", promptId: "q1" }])
   })
 
+  test("a prompt pi doesn't run, as one another extension handles, is said to have failed, and can be delivered again (#323)", async () => {
+    const swallowed = {
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: "q-swallowed",
+      text: "[swallow] this",
+      sender: ada,
+    }
+    for (const _delivery of [1, 2]) {
+      const from = hub.events.length
+      hub.send(swallowed)
+      const events = await hub.eventsUntil(from, (event) => event._tag === "PromptFailed")
+      expect(events).toEqual([
+        { _tag: "PromptFailed", promptId: "q-swallowed", message: "pi didn't run it" },
+      ])
+    }
+  }, 30_000)
+
   test("the Repo's Claude Code skills load, and the model reaches the Session's MCP servers at the Gateway, with the Session token (ADR 0020, ADR 0029)", async () => {
     // pi connects to it as the session starts.
     await hub.until(() => hub.mcpRequests.find((request) => request.method === "tools/list"))
@@ -360,6 +382,10 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     expect(events.find((event) => event._tag === "ModelSwitchFailed")).toBeUndefined()
     expect(events.at(-1)).toMatchObject({ usage: { model: "meta/muse-spark-1.3" } })
     expect(hub.gatewayRequests[requests]?.path).toBe("/gateway/models/meta/v1/responses")
+    // The agent tool offers the model what it may run an agent on: the Models as listed now.
+    const tools = hub.gatewayRequests[requests]?.body.tools as Array<{ name?: string }> | undefined
+    const agentTool = tools?.find((tool) => tool.name === "agent")
+    expect(JSON.stringify(agentTool)).toContain("meta/muse-spark-1.3")
   }, 30_000)
 
   test("a SwitchModel it can't make is said, and the Session keeps its model", async () => {

@@ -4,13 +4,14 @@
 //
 // It takes pi's events in plain shapes, so it runs under `bun test` without pi.
 
-import type { MarkedFile, Participant, TurnEndReason, TurnUsage } from "@kndl/protocol"
+import type { MarkedFile, TurnEndReason, TurnUsage } from "@kndl/protocol"
+import { clip, isRecord } from "../../src/HubMessages.ts"
+import type { Sender } from "../../src/HubMessages.ts"
 
-/** A Participant as JSON: the Hub's commands carry them, and the events say them back. */
-type Sender = typeof Participant.Encoded
-import { clip } from "../../src/HubMessages.ts"
-
-/** A prompt from the Prompt queue, as given to pi: `text` is what the model reads. */
+/**
+ * A prompt from the Prompt queue: as given to pi, when `text` is what the model reads, or as
+ * steered into the running Turn, when it is as its sender wrote it.
+ */
 export interface DeliveredPrompt {
   readonly promptId: string
   readonly sender: Sender
@@ -18,13 +19,14 @@ export interface DeliveredPrompt {
   readonly attachments?: ReadonlyArray<MarkedFile & { readonly size: number }> | undefined
 }
 
-/** A prompt steered into the running Turn: `text` is as its sender wrote it. */
-export interface SteeredPrompt {
-  readonly promptId: string
-  readonly sender: Sender
-  readonly text: string
-  readonly attachments?: ReadonlyArray<MarkedFile & { readonly size: number }> | undefined
-}
+/**
+ * A pi model's name as kndl names a pi Session's model, everywhere the mod says one (its hello, a
+ * Turn's usage, a subagent's model, a failed switch): `<provider>/<id>`, as the protocol's
+ * `providerModelName` names a Provider's Model, an id's own slashes kept
+ * (`openrouter/anthropic/claude-sonnet-4`).
+ */
+export const modelName = (model: { readonly provider: string; readonly id: string }) =>
+  `${model.provider}/${model.id}`
 
 /**
  * An agent's result, as the main loop is given it (Subagents.ts): a message of its own, which
@@ -129,9 +131,9 @@ export const turnErrorMessage = (
 const tokens = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0)
 
 /**
- * A Turn's usage, summed over its model requests, with the model of the last, as
- * `<provider>/<id>`; undefined when no request counted. The cost is pi-ai's, left out when it
- * reports none.
+ * A Turn's usage, summed over its model requests, with the model of the last, named as the
+ * Session's model is (`<provider>/<id>`, {@link modelName}); undefined when no request counted.
+ * The cost is pi-ai's, left out when it reports none.
  */
 export const turnUsage = (messages: ReadonlyArray<AssistantEnd>): TurnUsage | undefined => {
   const last = messages.at(-1)
@@ -150,14 +152,11 @@ export const turnUsage = (messages: ReadonlyArray<AssistantEnd>): TurnUsage | un
   if (counted.input + counted.output + counted.cacheRead + counted.cacheWrite === 0)
     return undefined
   return {
-    model: `${last.provider}/${last.model}`,
+    model: modelName({ provider: last.provider, id: last.model }),
     ...counted,
     ...(cost > 0 && { cost: Math.round(cost * 1e9) / 1e9 }),
   }
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 /**
  * A tool's result as the web UI shows it: its text blocks, and a note of each image, never its
@@ -180,7 +179,7 @@ export const toolResultSummary = (result: unknown): string => {
 }
 
 /** How the next run starts: its prompt, and who sent it. */
-interface NextRun {
+export interface NextRun {
   readonly text: string
   readonly from?: DeliveredPrompt | undefined
   readonly agentResult?: AgentResultMessage | undefined
@@ -224,6 +223,16 @@ export class Turns {
   deliveryFailed(promptId: string) {
     if (this.pending?.promptId === promptId) this.pending = undefined
     if (this.claimed?.promptId === promptId) this.claimed = undefined
+    if (this.next?.from?.promptId === promptId) this.next = undefined
+  }
+
+  /** Whether the prompt from the Hub given to pi (`deliver`) is yet to start its Turn. */
+  yetToStart(promptId: string): boolean {
+    return (
+      this.pending?.promptId === promptId ||
+      this.claimed?.promptId === promptId ||
+      this.next?.from?.promptId === promptId
+    )
   }
 
   /** pi took in a prompt (its `input` event): the one the Hub's prompt was given as, or another. */
@@ -252,15 +261,18 @@ export class Turns {
     return from
   }
 
-  /** pi's agent loop started (`agent_start`): a Turn starts, unless one runs. */
-  agentStart() {
-    if (this.turn !== undefined) return
+  /**
+   * pi's agent loop started (`agent_start`): a Turn starts, unless one runs. Returns how it
+   * started, when it did.
+   */
+  agentStart(): NextRun | undefined {
+    if (this.turn !== undefined) return undefined
     const next = this.next ?? { text: "" }
     this.next = undefined
     const turnId = this.options.newId()
     const { from, agentResult } = next
     this.turn = { turnId, startedAt: this.options.now(), requests: [] }
-    if (this.options.agentId !== undefined) return
+    if (this.options.agentId !== undefined) return next
     this.options.report({
       _tag: "TurnStarted",
       turnId,
@@ -273,6 +285,7 @@ export class Turns {
             : { _tag: "FromParticipant", participant: from.sender },
       ...(from === undefined ? {} : { promptId: from.promptId }),
     })
+    return next
   }
 
   /** A piece of the text the model is streaming. */
@@ -322,7 +335,7 @@ export class Turns {
   /**
    * A prompt was steered into the running Turn (ADR 0018); false when no Turn runs to take it.
    */
-  steered(prompt: SteeredPrompt): boolean {
+  steered(prompt: DeliveredPrompt): boolean {
     if (this.turn === undefined) return false
     this.unread.add(prompt.promptId)
     this.options.report({

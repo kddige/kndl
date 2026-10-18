@@ -7,8 +7,9 @@
 //   Gateway (Providers.ts); Claude's go to the Claude bridge (`registerClaude`). Adds the
 //   Session's MCP servers, at the Gateway too, and the Repo's Claude Code skills (RepoSetup.ts).
 // - The Hub: says hello once pi's session is known, reports each pi run as a Turn (Turns.ts), and
-//   runs the Hub's commands: prompts, steering, stopping, switching the model (ModelSwitch.ts),
-//   presence, and a context handoff after the Session switched to pi (History.ts).
+//   runs the Hub's commands: prompts and steering (MainLoopDelivery.ts), stopping, switching the
+//   model (ModelSwitch.ts), presence, and a context handoff after the Session switched to pi
+//   (History.ts).
 // - The model: the system prompt says the Session is shared, and a tool opens attachments; others
 //   ask the people questions (Questions.ts), start, message and stop subagents, which run in the
 //   background, kept on disk, and whose results start Turns of their own (Subagents.ts), and read
@@ -22,7 +23,6 @@ import { randomUUID } from "node:crypto"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getModels, Type } from "@earendil-works/pi-ai/compat"
 import { getAgentDir } from "@earendil-works/pi-coding-agent"
 import type {
   ExtensionAPI,
@@ -33,19 +33,15 @@ import { providerModelName } from "@kndl/protocol"
 import type { ModCommand, ModProviders } from "@kndl/protocol"
 import { HubLink } from "../../src/HubLink.ts"
 import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
-import {
-  attachmentContext,
-  attachmentToolSpec,
-  deliveredPrompt,
-  sharedSessionNoteFor,
-  steeredPrompt,
-} from "../../src/HubMessages.ts"
-import { attachmentTool, openAttachment } from "./Attachments.ts"
+import { attachmentContext, isRecord, sharedSessionNoteFor } from "../../src/HubMessages.ts"
+import type { Command } from "../../src/HubMessages.ts"
+import { attachmentTool, attachmentToolDefinition, pdfFileName } from "./Attachments.ts"
 import { registerClaude } from "./claude/Claude.ts"
 import { registerHistory } from "./History.ts"
-import { switchModel as switchToModel, throughKndl } from "./ModelSwitch.ts"
+import { MainLoopDelivery } from "./MainLoopDelivery.ts"
+import { switchModel, throughKndl } from "./ModelSwitch.ts"
 import { presenceLine, watching } from "./Presence.ts"
-import { fetchProviders, gatewayProviders } from "./Providers.ts"
+import { builtinCatalog, fetchProviders, gatewayProviders } from "./Providers.ts"
 import { Questions, questionToolDefinition } from "./Questions.ts"
 import { claudeSkills, installationServers, McpServersVariable } from "./RepoSetup.ts"
 import {
@@ -56,7 +52,7 @@ import {
   createChild,
   Subagents,
 } from "./Subagents.ts"
-import { Turns } from "./Turns.ts"
+import { modelName, Turns } from "./Turns.ts"
 
 /** What the Runner tells the extension (the Runner's pi launch), or undefined outside a Session. */
 interface KndlEnv {
@@ -93,13 +89,8 @@ const agentNote = "kndl-agent-note"
 /** The key of the line above the editor. */
 const widgetKey = "kndl"
 
-type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { _tag: Tag }>
-
 /** The Models the Hub lists, as `<provider>/<id>`. */
 const modelNames = (listed: ModProviders) => listed.models.map(providerModelName)
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** The agent's result a custom message is, if it is one: what starts a Turn from the agent. */
 const agentResult = (message: {
@@ -113,20 +104,23 @@ const agentResult = (message: {
   return { agentId, text: message.content }
 }
 
+/** The prompts from the Hub a session recorded as given to pi, or not (#323), oldest first. */
+const submittedPrompts = (context: ExtensionContext) =>
+  context.sessionManager.getEntries().flatMap((entry): Array<readonly [string, boolean]> => {
+    if (entry.type !== "custom" || entry.customType !== submittedEntry || !isRecord(entry.data))
+      return []
+    const { promptId, submitted } = entry.data
+    return typeof promptId === "string" ? [[promptId, submitted === true]] : []
+  })
+
 export default async function kndl(pi: ExtensionAPI) {
   const env = readEnv(process.env)
   // Not started by a Runner: pi runs as it would without kndl.
   if (env === undefined) return
 
-  const logFile = (() => {
-    try {
-      return join(getAgentDir(), "kndl.log")
-    } catch {
-      return undefined
-    }
-  })()
+  const agentDir = getAgentDir()
+  const logFile = join(agentDir, "kndl.log")
   const log = (text: string) => {
-    if (logFile === undefined) return
     try {
       appendFileSync(logFile, `${new Date().toISOString()} ${text}\n`)
     } catch {
@@ -134,10 +128,18 @@ export default async function kndl(pi: ExtensionAPI) {
     }
   }
 
-  // Every request to the Hub, so the session's end cuts the long poll short.
+  // Every request to the Hub, so the session's end cuts the long poll short; a tool's request is
+  // cut short by its call's signal too, as when the Turn is stopped.
   const inFlight = new Set<AbortController>()
-  const fetchHub: HubFetch = async (url, init) => {
+  const fetchHub = async (
+    url: string,
+    init: Parameters<HubFetch>[1],
+    signal?: AbortSignal,
+  ): ReturnType<HubFetch> => {
     const controller = new AbortController()
+    const abort = () => controller.abort(signal?.reason)
+    if (signal?.aborted) abort()
+    signal?.addEventListener("abort", abort, { once: true })
     inFlight.add(controller)
     try {
       const response = await fetch(url, {
@@ -148,9 +150,17 @@ export default async function kndl(pi: ExtensionAPI) {
       })
       return { status: response.status, text: await response.text() }
     } finally {
+      signal?.removeEventListener("abort", abort)
       inFlight.delete(controller)
     }
   }
+  /** GETs a path on the Hub, with the mod token, for a tool's call. */
+  const getFromHub = (path: string, signal?: AbortSignal) =>
+    fetchHub(
+      `${env.hubUrl}${path}`,
+      { method: "GET", headers: { authorization: `Bearer ${env.modToken}` } },
+      signal,
+    )
 
   const askForProviders = () =>
     fetchProviders({
@@ -169,24 +179,19 @@ export default async function kndl(pi: ExtensionAPI) {
     for (const provider of gatewayProviders(listed, {
       hubUrl: env.hubUrl,
       modToken: env.modToken,
-      catalog: (name) => getModels(name as never) as never,
+      catalog: builtinCatalog,
     })) {
       pi.registerProvider(provider.name, provider.config)
       if (provider.missing.length > 0)
         log(`kndl: pi doesn't know ${provider.name}'s ${provider.missing.join(", ")}`)
     }
   }
-
   // pi waits for this before it picks the model the Runner named.
   let providers: ModProviders = (await askForProviders()) ?? { models: [] }
   registerGateway(providers)
   /** The Models a subagent may run on: the Creator's, as the Hub listed them last. */
-  const agentModels = modelNames(providers)
-  registerClaude(
-    pi,
-    providers.models.filter((model) => model.provider === "anthropic"),
-    { log },
-  )
+  let agentModels = modelNames(providers)
+  registerClaude(pi, providers.models, { log })
 
   // The Session's MCP servers, at the Gateway, and the Repo's Claude Code skills (RepoSetup.ts).
   for (const server of installationServers(process.env[McpServersVariable], env.hubUrl, log)) {
@@ -206,11 +211,6 @@ export default async function kndl(pi: ExtensionAPI) {
   let link: HubLink | undefined
   let status: LinkStatus = { _tag: "Linking" }
   let people: Array<string> = []
-  /** The prompts from the Hub pi was given (true) or failed to take (false), by id (#323). */
-  const submitted = new Map<string, boolean>()
-  /** A prompt from the Hub that came while pi was busy, to give it once pi is idle. */
-  let waiting: Command<"DeliverPrompt"> | undefined
-  let waitTimer: ReturnType<typeof setInterval> | undefined
 
   const report = (event: Record<string, unknown>) => link?.report(event)
   // What a failed Turn's message must never say: a Provider may say back the key pi sent.
@@ -229,15 +229,12 @@ export default async function kndl(pi: ExtensionAPI) {
       return undefined
     }
   }
-  /** Agents' results waiting for the main loop to be idle, oldest first. */
-  const results: Array<{ readonly agentId: string; readonly text: string }> = []
-  let resultTimer: ReturnType<typeof setInterval> | undefined
   const subagents = new Subagents({
     report,
     now: () => performance.now(),
     newId: randomUUID,
     secrets,
-    dir: join(getAgentDir(), "kndl", "agents"),
+    dir: join(agentDir, "kndl", "agents"),
     open: async (file, name) => {
       const current = ctx
       if (current === undefined) throw new Error("pi's session hasn't started.")
@@ -245,7 +242,7 @@ export default async function kndl(pi: ExtensionAPI) {
       const model = childModel(modelRuntime, name, current.model, agentModels)
       const session = await createChild({
         cwd: current.cwd,
-        agentDir: getAgentDir(),
+        agentDir,
         file,
         modelRuntime,
         model,
@@ -253,45 +250,29 @@ export default async function kndl(pi: ExtensionAPI) {
         ...childTools(pi.getActiveTools(), pi.getAllTools(), callableTools),
         settings: pi.getSettings(),
       })
-      return { session, model: `${model.provider}/${model.id}` }
+      return { session, model: modelName(model) }
     },
-    deliver: (result) => {
-      results.push(result)
-      deliverResults()
-    },
+    deliver: (result) => delivery.result(result),
     note: (text) =>
       pi.sendMessage(
         { customType: agentNote, content: text, display: true },
         { deliverAs: "nextTurn" },
       ),
+    log,
   })
-
-  /**
-   * Gives the main loop the agents' results once it is idle, each a message that starts a run of
-   * its own, so a Turn from its agent (ADR 0014). One that comes while pi runs waits for it to
-   * settle: never in the middle of a run, and not in pi's own follow-up queue, which its terminal
-   * empties when the person stops a run there, and which an aborted run leaves waiting.
-   */
-  const deliverResults = () => {
-    while (results.length > 0 && ctx?.isIdle() === true && turns.turnId === undefined) {
-      const result = results.shift()
-      if (result === undefined) break
-      // pi starts the run at once, or right after its run settles: it is busy for the next.
-      pi.sendMessage(
-        {
-          customType: agentMessage,
-          content: result.text,
-          display: true,
-          details: { agentId: result.agentId },
-        },
-        { triggerTurn: true },
-      )
-    }
-    if (results.length === 0) {
-      if (resultTimer !== undefined) clearInterval(resultTimer)
-      resultTimer = undefined
-    } else resultTimer ??= setInterval(deliverResults, 250)
-  }
+  // What the main loop is given from outside it: the Hub's prompts and the agents' results.
+  const delivery = new MainLoopDelivery({
+    turns,
+    report,
+    takesAlreadySubmitted: () => link?.takesAlreadySubmitted === true,
+    resultTaken: (result) => subagents.resultTaken(result.agentId, result.text),
+    every: (ms, fn) => {
+      const timer = setInterval(fn, ms)
+      return () => clearInterval(timer)
+    },
+    soon: (fn) => void setTimeout(fn, 0),
+    log,
+  })
 
   const drawLine = () => {
     try {
@@ -301,93 +282,26 @@ export default async function kndl(pi: ExtensionAPI) {
     }
   }
 
-  const modelName = () => {
+  const currentModelName = () => {
     const model = ctx?.model
-    if (model !== undefined) return `${model.provider}/${model.id}`
+    if (model !== undefined) return modelName(model)
     const first = providers.models[0]
-    return first === undefined ? "none" : `${first.provider}/${first.id}`
+    return first === undefined ? "none" : providerModelName(first)
   }
 
-  const markSubmitted = (promptId: string, isSubmitted: boolean) => {
-    submitted.set(promptId, isSubmitted)
-    try {
-      pi.appendEntry(submittedEntry, { promptId, submitted: isSubmitted })
-    } catch (error) {
-      log(`kndl: couldn't record prompt ${promptId}: ${error}`)
-    }
-  }
-
-  /** Gives pi the prompt from the Hub that waited for it, once it is idle. */
-  const deliverWaiting = () => {
-    if (waiting === undefined || !ctx?.isIdle() || turns.turnId !== undefined) return
-    const next = waiting
-    waiting = undefined
-    if (waitTimer !== undefined) clearInterval(waitTimer)
-    waitTimer = undefined
-    deliverPrompt(next)
-  }
-
-  const deliverPrompt = (command: Command<"DeliverPrompt">) => {
-    const { promptId } = command
-    if (submitted.get(promptId) === true) {
-      // A Hub from before #323 would refuse the event, so it keeps the prompt queued: still run once.
-      if (link?.takesAlreadySubmitted) report({ _tag: "PromptAlreadySubmitted", promptId })
-      return
-    }
-    const failed = (message: string) => {
-      turns.deliveryFailed(promptId)
-      if (submitted.has(promptId)) markSubmitted(promptId, false)
-      report({ _tag: "PromptFailed", promptId, message })
-    }
-    const current = ctx
-    if (current === undefined) return failed("pi's session hasn't started")
-    // Busy with a prompt typed at the terminal, or compacting: it waits, as Claude Code's own
-    // queue would have it.
-    if (!current.isIdle() || turns.turnId !== undefined) {
-      waiting = command
-      waitTimer ??= setInterval(deliverWaiting, 250)
-      return
-    }
-    const model = current.model
-    if (model === undefined) return failed("pi has no model to run the prompt on")
-    if (!current.modelRegistry.hasConfiguredAuth(model))
-      return failed(`pi has no credential for ${model.provider}/${model.id}`)
-    const attachments = command.attachments ?? []
-    const text = deliveredPrompt(command.sender, command.text, attachments)
-    markSubmitted(promptId, true)
-    turns.deliver({ promptId, sender: command.sender, text, attachments })
-    try {
-      pi.sendUserMessage(text)
-    } catch (error) {
-      failed(String(error))
-    }
-  }
-
-  /**
-   * A queued prompt the Creator steered into the running Turn (ADR 0018): a message pi puts into
-   * the conversation before the run's next request, as it does a message typed while it works.
-   */
-  const deliverIntoTurn = (command: Command<"DeliverIntoTurn">) => {
-    const { promptId, sender, text } = command
-    const attachments = command.attachments ?? []
-    if (turns.turnId === undefined || ctx === undefined || ctx.isIdle())
-      return report({ _tag: "PromptFailed", promptId, message: "no Turn is running" })
-    try {
-      // A custom message: if the run ends first, pi keeps it for the next prompt, and starts no
-      // run of its own with it.
-      pi.sendMessage(
-        {
-          customType: steeredMessage,
-          content: steeredPrompt(sender, text, attachments),
-          display: true,
-          details: { promptId },
-        },
-        { deliverAs: "steer" },
-      )
-    } catch (error) {
-      return report({ _tag: "PromptFailed", promptId, message: String(error) })
-    }
-    turns.steered({ promptId, sender, text, attachments })
+  /** The agent, message and stop tools, the agent tool offering the Models the Hub listed last. */
+  const registerAgentTools = () => {
+    const [agentTool, messageAgentTool, stopAgentTool] = agentToolDefinitions({
+      subagents,
+      turnId: () => turns.turnId,
+      models: agentModels,
+      seen: (context) => {
+        toolContext = context
+      },
+    })
+    pi.registerTool(agentTool)
+    pi.registerTool(messageAgentTool)
+    pi.registerTool(stopAgentTool)
   }
 
   /**
@@ -399,7 +313,11 @@ export default async function kndl(pi: ExtensionAPI) {
     if (listed === undefined) return false
     providers = listed
     registerGateway(listed)
-    agentModels.splice(0, agentModels.length, ...modelNames(listed))
+    const names = modelNames(listed)
+    if (names.join("\n") !== agentModels.join("\n")) {
+      agentModels = names
+      registerAgentTools()
+    }
     return true
   }
 
@@ -408,11 +326,11 @@ export default async function kndl(pi: ExtensionAPI) {
    * is said to the Hub, which keeps the Session on the model it runs on (ModelSwitch.ts). The
    * thinking level is set either way, as the Hub keeps it.
    */
-  const switchModel = async (command: Command<"SwitchModel">) => {
+  const switchToModel = async (command: Command<"SwitchModel">) => {
     const current = ctx
     if (current === undefined) return
     const registry = current.modelRegistry
-    const switched = await switchToModel(command.model, {
+    const switched = await switchModel(command.model, {
       providers: () => providers,
       find: (provider, id) => {
         const model = registry.find(provider, id)
@@ -428,7 +346,7 @@ export default async function kndl(pi: ExtensionAPI) {
       report({
         _tag: "ModelSwitchFailed",
         ...(command.model === undefined ? {} : { asked: command.model }),
-        model: modelName(),
+        model: currentModelName(),
         message: switched.message,
       })
     }
@@ -438,16 +356,16 @@ export default async function kndl(pi: ExtensionAPI) {
   const runCommand = async (command: ModCommand) => {
     switch (command._tag) {
       case "DeliverPrompt":
-        deliverPrompt(command)
+        delivery.prompt(command)
         return
       case "DeliverIntoTurn":
-        deliverIntoTurn(command)
+        delivery.steer(command)
         return
       case "StopTurn":
         if (turns.turnId !== undefined) ctx?.abort()
         return
       case "SwitchModel":
-        await switchModel(command)
+        await switchToModel(command)
         return
       case "PresenceChanged":
         people = watching(command.participants)
@@ -471,10 +389,6 @@ export default async function kndl(pi: ExtensionAPI) {
   const stopLink = async () => {
     const stopping = link
     link = undefined
-    if (waitTimer !== undefined) clearInterval(waitTimer)
-    waitTimer = undefined
-    if (resultTimer !== undefined) clearInterval(resultTimer)
-    resultTimer = undefined
     if (stopping === undefined) return
     await stopping.flushNow().catch(() => undefined)
     stopping.stop()
@@ -482,55 +396,25 @@ export default async function kndl(pi: ExtensionAPI) {
   }
 
   // The attachment tool (ADR 0024), in the tool list from the first request on.
-  pi.registerTool({
-    name: attachmentTool,
-    label: "Attachment",
-    description: attachmentToolSpec.description,
-    promptSnippet: "Open a file someone attached to a message, by its marker's id",
-    parameters: Type.Object({
-      id: Type.String({ description: "The attachment id from the marker." }),
+  pi.registerTool(
+    attachmentToolDefinition({
+      fetchPart: getFromHub,
+      savePdf: async (id, name, data) => {
+        const dir = join(tmpdir(), "kndl-attachments", id.replace(/[^A-Za-z0-9_-]/g, "_"))
+        mkdirSync(dir, { recursive: true })
+        const path = join(dir, pdfFileName(name))
+        writeFileSync(path, Buffer.from(data, "base64"))
+        return path
+      },
     }),
-    execute: async (_toolCallId, params) => ({
-      content: await openAttachment(params.id, {
-        fetchPart: (path) =>
-          fetchHub(`${env.hubUrl}${path}`, {
-            method: "GET",
-            headers: { authorization: `Bearer ${env.modToken}` },
-          }),
-        savePdf: async (id, name, data) => {
-          const dir = join(tmpdir(), "kndl-attachments", id.replace(/[^A-Za-z0-9_-]/g, "_"))
-          mkdirSync(dir, { recursive: true })
-          const path = join(dir, name.replace(/[/\\]/g, "_"))
-          writeFileSync(path, Buffer.from(data, "base64"))
-          return path
-        },
-      }),
-      details: undefined,
-    }),
-  })
+  )
 
   // The history tool, and how a handoff is drawn (ADR 0030).
-  const history = registerHistory(pi, {
-    fetchHistory: (path) =>
-      fetchHub(`${env.hubUrl}${path}`, {
-        method: "GET",
-        headers: { authorization: `Bearer ${env.modToken}` },
-      }),
-  })
+  const history = registerHistory(pi, { fetchHistory: getFromHub })
 
   // The question and agent tools (ADR 0029).
   pi.registerTool(questionToolDefinition({ questions, turnId: () => turns.turnId }))
-  const [agentTool, messageAgentTool, stopAgentTool] = agentToolDefinitions({
-    subagents,
-    turnId: () => turns.turnId,
-    models: agentModels,
-    seen: (context) => {
-      toolContext = context
-    },
-  })
-  pi.registerTool(agentTool)
-  pi.registerTool(messageAgentTool)
-  pi.registerTool(stopAgentTool)
+  registerAgentTools()
 
   pi.on("session_start", async (event, context) => {
     await stopLink()
@@ -543,14 +427,41 @@ export default async function kndl(pi: ExtensionAPI) {
       log(`kndl: conversation ${conversationId} isn't the one the Runner launched, so not linked`)
       return
     }
-    submitted.clear()
-    for (const entry of context.sessionManager.getEntries()) {
-      if (entry.type !== "custom" || entry.customType !== submittedEntry || !isRecord(entry.data))
-        continue
-      const { promptId, submitted: isSubmitted } = entry.data
-      if (typeof promptId === "string") submitted.set(promptId, isSubmitted === true)
-    }
-    // The Session's agents, from its volume: those pi's stopping interrupted are said to the model.
+    delivery.attach(
+      {
+        isIdle: () => context.isIdle(),
+        cannotRun: () => {
+          const model = context.model
+          if (model === undefined) return "pi has no model to run the prompt on"
+          return context.modelRegistry.hasConfiguredAuth(model)
+            ? undefined
+            : `pi has no credential for ${modelName(model)}`
+        },
+        prompt: (text) => pi.sendUserMessage(text),
+        // pi starts the run at once.
+        result: (result) =>
+          pi.sendMessage(
+            {
+              customType: agentMessage,
+              content: result.text,
+              display: true,
+              details: { agentId: result.agentId },
+            },
+            { triggerTurn: true },
+          ),
+        // A custom message: if the run ends first, pi keeps it for the next prompt, and starts no
+        // run of its own with it.
+        steer: (promptId, text) =>
+          pi.sendMessage(
+            { customType: steeredMessage, content: text, display: true, details: { promptId } },
+            { deliverAs: "steer" },
+          ),
+        record: (promptId, submitted) => pi.appendEntry(submittedEntry, { promptId, submitted }),
+      },
+      submittedPrompts(context),
+    )
+    // The Session's agents, from its volume: those pi's stopping interrupted are said to the model,
+    // and the results it hadn't taken given it again.
     toolContext = undefined
     subagents.load()
     link = new HubLink({
@@ -559,7 +470,7 @@ export default async function kndl(pi: ExtensionAPI) {
       hello: () => ({
         sessionId: env.sessionId,
         conversationId,
-        model: modelName(),
+        model: currentModelName(),
         switchesModels: true,
       }),
       fetch: fetchHub,
@@ -577,7 +488,7 @@ export default async function kndl(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     // Running agents are Interrupted, said to the Hub before the link stops.
     subagents.dispose()
-    results.length = 0
+    delivery.detach()
     await stopLink()
     ctx = undefined
   })
@@ -604,7 +515,7 @@ export default async function kndl(pi: ExtensionAPI) {
     }
   })
 
-  pi.on("agent_start", () => turns.agentStart())
+  pi.on("agent_start", () => delivery.started(turns.agentStart()))
 
   pi.on("message_start", (event) => {
     const message = event.message
@@ -638,9 +549,7 @@ export default async function kndl(pi: ExtensionAPI) {
 
   pi.on("agent_settled", (event) => {
     turns.settled(event.aborted)
-    // An agent's result, or a prompt, that waited for this run goes now: pi starts each, in turn,
-    // once it has settled.
-    deliverResults()
-    deliverWaiting()
+    // An agent's result, or a prompt, that waited for this run goes once pi has settled.
+    delivery.settled()
   })
 }

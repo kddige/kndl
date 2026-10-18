@@ -8,6 +8,7 @@ import type { ExtensionAPI, MessageRenderer, ToolDefinition } from "@earendil-wo
 import type { DeliverHandoff, Harness } from "@kndl/protocol"
 import {
   handoffNote,
+  harnessName,
   historyAnswer,
   historyInputSchema,
   historyPath,
@@ -26,9 +27,10 @@ export interface HandoffDetails {
 }
 
 export interface HistoryDeps {
-  /** GETs a path on the Hub, with the mod token. */
+  /** GETs a path on the Hub, with the mod token, until `signal` (the call's) aborts. */
   readonly fetchHistory: (
     path: string,
+    signal: AbortSignal | undefined,
   ) => Promise<{ readonly status: number; readonly text: string }>
 }
 
@@ -54,12 +56,12 @@ export const historyToolDefinition = (
   description: historyToolDescription,
   promptSnippet: "Read earlier Turns of this shared session, before a Turn number",
   parameters: historyParameters,
-  execute: async (_toolCallId, params) => {
+  execute: async (_toolCallId, params, signal) => {
     const request = historyRequest(params)
     if ("error" in request) throw new Error(request.error)
     let response: { readonly status: number; readonly text: string }
     try {
-      response = await deps.fetchHistory(historyPath(request))
+      response = await deps.fetchHistory(historyPath(request), signal)
     } catch (error) {
       throw new Error(`Could not read the session's history: ${String(error)}`, { cause: error })
     }
@@ -68,8 +70,6 @@ export const historyToolDefinition = (
     return { content: [{ type: "text", text: answer.text }], details: undefined }
   },
 })
-
-const harnessName: Record<Harness, string> = { ClaudeCode: "Claude Code", Pi: "pi" }
 
 /** `text` cut to `width` characters, with an ellipsis when it was cut. */
 const cut = (text: string, width: number) =>

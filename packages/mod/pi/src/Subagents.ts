@@ -39,11 +39,13 @@ import type {
   ToolDefinition,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent"
-import type { AgentStatus, ModCommand } from "@kndl/protocol"
-import { deliveredPrompt } from "../../src/HubMessages.ts"
+import type { AgentStatus } from "@kndl/protocol"
+import { deliveredPrompt, isRecord } from "../../src/HubMessages.ts"
+import type { Command } from "../../src/HubMessages.ts"
 import { followClaudeSession } from "./claude/Claude.ts"
 import { questionTool } from "./Questions.ts"
-import { Turns } from "./Turns.ts"
+import { modelName, Turns } from "./Turns.ts"
+import type { AgentResultMessage } from "./Turns.ts"
 
 /** The tools' names, as the model calls them. */
 export const agentTool = "agent"
@@ -204,7 +206,7 @@ export const childModel = (
   offered: ReadonlyArray<string>,
 ): Model<Api> => {
   const choose = offered.length === 0 ? "" : ` Use one of: ${offered.join(", ")}.`
-  const wanted = name?.trim() || (parent && `${parent.provider}/${parent.id}`)
+  const wanted = name?.trim() || (parent && modelName(parent))
   if (!wanted) throw new Error(`There is no model to run the agent on.${choose}`)
   const slash = wanted.indexOf("/")
   const model =
@@ -299,8 +301,6 @@ export const agentNotification = (
     "</task-notification>",
   ].join("\n")
 
-type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { _tag: Tag }>
-
 /** An agent's pi session, opened from its file, and the model it runs on, as `<provider>/<id>`. */
 export interface OpenedChild {
   readonly session: ChildSession
@@ -320,12 +320,17 @@ export interface SubagentsOptions {
    * parent's. Throws, for the model to read, when it can't run on it.
    */
   readonly open: (file: string, model: string | undefined) => Promise<OpenedChild>
-  /** Gives the main loop an agent's result: a message that starts a Turn from the agent. */
-  readonly deliver: (message: { readonly agentId: string; readonly text: string }) => void
+  /**
+   * Gives the main loop an agent's result, which it takes ({@link Subagents.resultTaken}) once
+   * the Turn it starts has started.
+   */
+  readonly deliver: (result: AgentResultMessage) => void
   /** Tells the main loop, with its next prompt, of an agent pi's stopping interrupted. */
   readonly note: (text: string) => void
   /** What its runs' error messages must never say (Turns.ts). */
   readonly secrets?: ReadonlyArray<string> | undefined
+  /** The extension's log, for what goes wrong out of anyone's sight. */
+  readonly log?: ((text: string) => void) | undefined
 }
 
 export interface StartOptions {
@@ -359,6 +364,11 @@ interface AgentRecord {
   status: AgentStatus
   /** Whether the Hub knows it: one started outside a Turn never is. */
   readonly reported: boolean
+  /**
+   * Its results given to the main loop whose Turn hasn't started yet, oldest first: pi stopping
+   * meanwhile loses them from the main loop's queue, so the next start gives them again.
+   */
+  readonly undelivered: Array<string>
 }
 
 interface Run {
@@ -369,6 +379,8 @@ interface Run {
   waited: boolean
   /** The model stopped it, and its stop call returns the result: it isn't delivered either. */
   quiet: boolean
+  /** It was asked to stop: it never starts, or stops as it starts, and takes no more messages. */
+  stopRequested: boolean
   /** pi is stopping: the run is Interrupted, and its end goes nowhere. */
   interrupted: boolean
   readonly ended: Promise<RunResult>
@@ -378,7 +390,10 @@ interface Agent {
   readonly record: AgentRecord
   readonly report: (event: Record<string, unknown>) => void
   readonly turns: Turns
-  /** Its pi session, once opened: at its start, or when it is first resumed after pi started. */
+  /**
+   * Its pi session, while it is open: from its start, or from its first message after pi started
+   * or after its last run, until that run ends.
+   */
   session: Promise<ChildSession> | undefined
   unsubscribe: () => void
   /** What the agent said last, from the last model request of its run. */
@@ -398,10 +413,10 @@ const assistantText = (content: unknown): string =>
         .join("")
     : ""
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+const statuses: ReadonlyArray<AgentStatus> = ["Running", "Done", "Stopped", "Interrupted"]
 
-const statuses: ReadonlySet<string> = new Set(["Running", "Done", "Stopped", "Interrupted"])
+const isStatus = (value: unknown): value is AgentStatus =>
+  statuses.some((status) => status === value)
 
 /** The index's agents, or none when there is no index yet, or it can't be read. */
 const readIndex = (file: string): Array<AgentRecord> => {
@@ -411,27 +426,34 @@ const readIndex = (file: string): Array<AgentRecord> => {
   } catch {
     return []
   }
-  const agents = isRecord(parsed) && Array.isArray(parsed.agents) ? parsed.agents : []
-  return agents.flatMap((agent: unknown) =>
+  const agents: ReadonlyArray<unknown> =
+    isRecord(parsed) && Array.isArray(parsed.agents) ? parsed.agents : []
+  return agents.flatMap((agent) =>
     isRecord(agent) &&
     typeof agent.agentId === "string" &&
     /^[A-Za-z0-9_-]+$/.test(agent.agentId) &&
     typeof agent.description === "string" &&
     typeof agent.model === "string" &&
-    typeof agent.status === "string" &&
-    statuses.has(agent.status)
+    isStatus(agent.status)
       ? [
           {
             agentId: agent.agentId,
             description: agent.description,
             model: agent.model,
-            status: agent.status as AgentStatus,
+            status: agent.status,
             reported: agent.reported !== false,
+            undelivered: Array.isArray(agent.undelivered)
+              ? agent.undelivered.filter((text): text is string => typeof text === "string")
+              : [],
           },
         ]
       : [],
   )
 }
+
+/** An agent as the index writes it: its undelivered results only when it has any. */
+const indexEntry = ({ undelivered, ...record }: AgentRecord) =>
+  undelivered.length === 0 ? record : { ...record, undelivered }
 
 export class Subagents {
   private readonly agents = new Map<string, Agent>()
@@ -450,18 +472,22 @@ export class Subagents {
   /**
    * Takes in the agents kept from before pi started (a wake, a restart). One that was running
    * then is Interrupted, and the main loop is told, with its next prompt, that it can resume it.
-   * The Hub marks them Interrupted itself when pi stops, as it does Claude Code's.
+   * The Hub marks them Interrupted itself when pi stops, as it does Claude Code's. A result the
+   * main loop hadn't taken then is given it again.
    */
   load() {
     this.dispose()
+    const undelivered: Array<AgentResultMessage> = []
     for (const record of readIndex(this.indexFile)) {
       if (record.status === "Running") {
         record.status = "Interrupted"
         this.options.note(agentNotification(record.agentId, record.description, "interrupted"))
       }
+      for (const text of record.undelivered) undelivered.push({ agentId: record.agentId, text })
       this.adopt(record)
     }
     this.save()
+    for (const result of undelivered) this.options.deliver(result)
   }
 
   /**
@@ -482,6 +508,7 @@ export class Subagents {
       model: opened.model,
       status: "Running",
       reported: options.turnId !== undefined,
+      undelivered: [],
     })
     this.attach(agent, opened.session)
     agent.report({
@@ -514,14 +541,26 @@ export class Subagents {
   ): Promise<{ readonly steered: true } | { readonly steered: false; result?: RunResult }> {
     const agent = this.agents.get(agentId)
     if (agent === undefined) throw new Error(`This Session has no agent ${agentId}.`)
-    const session = await this.sessionOf(agent)
-    if (agent.run !== undefined || session.isStreaming) {
-      await session.steer(text)
-      return { steered: true }
+    for (;;) {
+      const opening = this.sessionOf(agent)
+      const session = await opening
+      // Let go meanwhile, as its run ended: opened again.
+      if (agent.session !== opening) continue
+      const run = agent.run
+      // A run that is ending, or stopping, reads no more messages: the next run takes it.
+      if (run !== undefined && (run.stopRequested || (run.started && !session.isStreaming))) {
+        await run.ended
+        continue
+      }
+      // Running, or about to: pi reads a message steered in before the run starts at its start.
+      if (run !== undefined) {
+        await session.steer(text)
+        return { steered: true }
+      }
+      const next = this.launch(agent, text, options.wait === true)
+      if (options.wait !== true) return { steered: false }
+      return { steered: false, result: await this.waitFor(agent, next, options.signal) }
     }
-    const run = this.launch(agent, text, options.wait === true)
-    if (options.wait !== true) return { steered: false }
-    return { steered: false, result: await this.waitFor(agent, run, options.signal) }
   }
 
   /**
@@ -534,7 +573,7 @@ export class Subagents {
     const run = agent.run
     if (run === undefined) throw new Error("The agent isn't running.")
     run.quiet = true
-    await (await this.sessionOf(agent)).abort()
+    await this.requestStop(agent, run)
     return run.ended
   }
 
@@ -568,10 +607,21 @@ export class Subagents {
       })
     const agent = this.agents.get(command.agentId)
     if (agent === undefined) return failed(`This Session has no agent ${command.agentId}.`)
-    if (agent.run === undefined) return failed("The agent isn't running.")
-    void this.sessionOf(agent)
-      .then((session) => session.abort())
-      .catch((error: unknown) => failed(String(error)))
+    const run = agent.run
+    if (run === undefined) return failed("The agent isn't running.")
+    this.requestStop(agent, run).catch((error: unknown) => failed(String(error)))
+  }
+
+  /**
+   * The main loop took an agent's result: the Turn it starts has started, so pi keeps it in its
+   * conversation, and it isn't given again.
+   */
+  resultTaken(agentId: string, text: string) {
+    const undelivered = this.agents.get(agentId)?.record.undelivered
+    const at = undelivered?.indexOf(text) ?? -1
+    if (undelivered === undefined || at === -1) return
+    undelivered.splice(at, 1)
+    this.save()
   }
 
   /**
@@ -623,23 +673,48 @@ export class Subagents {
     return agent
   }
 
-  /** The agent's pi session, opened from its file on its model the first time it is wanted. */
+  /** The agent's pi session, opened from its file on its model when it isn't open. */
   private sessionOf(agent: Agent): Promise<ChildSession> {
-    agent.session ??= this.options
+    if (agent.session !== undefined) return agent.session
+    const opening = this.options
       .open(this.file(agent.record.agentId), agent.record.model)
       .then(({ session }) => {
-        if (this.agents.get(agent.record.agentId) !== agent) {
+        if (this.agents.get(agent.record.agentId) !== agent || agent.session !== opening) {
           session.dispose()
           throw new Error("pi's session ended.")
         }
         this.attach(agent, session)
         return session
       })
+    agent.session = opening
     // One that failed to open is tried again next time.
-    agent.session.catch(() => {
-      agent.session = undefined
+    opening.catch(() => {
+      if (agent.session === opening) agent.session = undefined
     })
-    return agent.session
+    return opening
+  }
+
+  /** Lets the agent's session go between runs: it is opened again from its file when needed. */
+  private release(agent: Agent) {
+    const session = agent.session
+    if (session === undefined) return
+    agent.session = undefined
+    agent.unsubscribe()
+    agent.unsubscribe = () => undefined
+    void session.then(
+      (opened) => opened.dispose(),
+      () => undefined,
+    )
+  }
+
+  /**
+   * Stops the run: one that hasn't started never does, or stops as it starts (`attach`), and one
+   * under way is aborted. One that has ended is left as it is.
+   */
+  private async requestStop(agent: Agent, run: Run) {
+    if (agent.run !== run) return
+    run.stopRequested = true
+    await (await this.sessionOf(agent)).abort()
   }
 
   /** Follows the agent's session: its runs' events are the agent's. */
@@ -649,7 +724,11 @@ export class Subagents {
     agent.unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       switch (event.type) {
         case "agent_start":
-          if (agent.run !== undefined) agent.run.started = true
+          if (agent.run !== undefined) {
+            agent.run.started = true
+            // Stopped before it started, as pi took its prompt: it stops before its first request.
+            if (agent.run.stopRequested) void session.abort()
+          }
           turns.agentStart()
           return
         case "message_update":
@@ -686,12 +765,21 @@ export class Subagents {
 
   /**
    * Runs the agent with a prompt, from Running to Done or Stopped. Its result goes to the main
-   * loop, unless a call waits for it, the model stopped it, or pi is stopping.
+   * loop, unless a call waits for it, the model stopped it, or pi is stopping. Its session is let
+   * go once it has ended, unless another run has started.
    */
   private launch(agent: Agent, text: string, waited: boolean): Run {
     const { promise: settled, resolve: settle } = Promise.withResolvers<boolean>()
     const { promise: ended, resolve: end } = Promise.withResolvers<RunResult>()
-    const run: Run = { started: false, settle, waited, quiet: false, interrupted: false, ended }
+    const run: Run = {
+      started: false,
+      settle,
+      waited,
+      quiet: false,
+      stopRequested: false,
+      interrupted: false,
+      ended,
+    }
     agent.run = run
     agent.last = { text: "", error: undefined }
     const { agentId } = agent.record
@@ -701,8 +789,11 @@ export class Subagents {
       let stopped = false
       try {
         const session = await this.sessionOf(agent)
-        await session.prompt(text, { expandPromptTemplates: false })
-        stopped = run.started ? await settled : false
+        if (run.stopRequested) stopped = true
+        else {
+          await session.prompt(text, { expandPromptTemplates: false })
+          stopped = run.started ? await settled : run.stopRequested
+        }
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error)
       } finally {
@@ -711,22 +802,22 @@ export class Subagents {
       const result = this.result(agent, stopped, failure)
       end(result)
       if (run.interrupted) return
+      const notification =
+        run.waited || run.quiet
+          ? undefined
+          : agentNotification(agentId, agent.record.description, result.outcome, result.text)
+      // Kept with its status, so a stop of pi before the main loop takes it loses neither.
+      if (notification !== undefined) agent.record.undelivered.push(notification)
       this.setStatus(agent, stopped ? "Stopped" : "Done")
-      if (run.waited || run.quiet) return
-      this.options.deliver({
-        agentId,
-        text: agentNotification(agentId, agent.record.description, result.outcome, result.text),
-      })
+      if (notification !== undefined) this.options.deliver({ agentId, text: notification })
+      if (agent.run === undefined) this.release(agent)
     })()
     return run
   }
 
   /** Waits for a run a call waits for: the Turn's stop stops it, as a foreground agent's. */
   private async waitFor(agent: Agent, run: Run, signal: AbortSignal | undefined) {
-    const stop = () =>
-      void this.sessionOf(agent)
-        .then((session) => session.abort())
-        .catch(() => undefined)
+    const stop = () => void this.requestStop(agent, run).catch(() => undefined)
     signal?.addEventListener("abort", stop, { once: true })
     try {
       return await run.ended
@@ -744,6 +835,7 @@ export class Subagents {
   /**
    * Writes the index in place of the last, with its agents as they are here, and those another
    * pi on the same directory keeps there, such as one a tool runs in the Session, left as they are.
+   * One it can't write is logged: the agents run on, and only a restart would forget them.
    */
   private save() {
     const here = [...this.agents.values()].map((agent) => agent.record)
@@ -754,10 +846,10 @@ export class Subagents {
     try {
       mkdirSync(this.options.dir, { recursive: true })
       const temporary = `${this.indexFile}.${process.pid}.tmp`
-      writeFileSync(temporary, `${JSON.stringify({ agents: records }, null, 2)}\n`)
+      writeFileSync(temporary, `${JSON.stringify({ agents: records.map(indexEntry) }, null, 2)}\n`)
       renameSync(temporary, this.indexFile)
-    } catch {
-      // The agents run on; only a restart would forget them.
+    } catch (error) {
+      this.options.log?.(`kndl: couldn't save the agents' index: ${String(error)}`)
     }
   }
 

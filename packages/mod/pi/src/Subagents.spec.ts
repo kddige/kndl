@@ -2,7 +2,7 @@
 // under a directory of their own, on pi-ai's faux provider, scripted response by response.
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -14,11 +14,12 @@ import {
 } from "@earendil-works/pi-ai"
 import type { TranscriptContext } from "@earendil-works/pi-ai"
 import { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { ModCommand, ModEvent } from "@kndl/protocol"
 import { Schema } from "effect"
 import { sessionCwdFor } from "./claude/SessionCwd.ts"
 import { childModel, childTools, createChild, Subagents } from "./Subagents.ts"
+import type { ChildSession } from "./Subagents.ts"
 
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 
@@ -61,19 +62,58 @@ const gate = () => {
 
 let stores = 0
 
+/** What a test does to a child session as pi would: hold its prompt, or act as an event comes. */
+interface ChildHooks {
+  /** Its prompt waits for this, as pi's waits on input handlers before the run starts. */
+  promptAfter?: Promise<void>
+  /** Called with each of its events, after Subagents saw it. */
+  onEvent?: (event: AgentSessionEvent) => void
+}
+
+/** `session`, with `hooks`, and its disposal counted in `disposed`. */
+const hooked = (session: ChildSession, hooks: ChildHooks, disposed: { count: number }) => ({
+  prompt: async (...args: Parameters<ChildSession["prompt"]>) => {
+    await hooks.promptAfter
+    return session.prompt(...args)
+  },
+  steer: (...args: Parameters<ChildSession["steer"]>) => session.steer(...args),
+  abort: () => session.abort(),
+  subscribe: (listener: Parameters<ChildSession["subscribe"]>[0]) =>
+    session.subscribe((event) => {
+      listener(event)
+      hooks.onEvent?.(event)
+    }),
+  get isStreaming() {
+    return session.isStreaming
+  },
+  dispose: () => {
+    disposed.count++
+    session.dispose()
+  },
+})
+
 /**
  * Subagents kept in a directory of their own (or `agents`, another's, as after a restart), whose
  * children run on the faux model with `tools`; their ids and their runs' are `<ids>1`, `<ids>2`...
+ * The main loop takes each result it is given at once, unless `untaken`.
  */
 const tracker = (
-  options: { tools?: Array<ToolDefinition>; agents?: string; ids?: string } = {},
+  options: {
+    tools?: Array<ToolDefinition>
+    agents?: string
+    ids?: string
+    untaken?: boolean
+    hooks?: ChildHooks
+  } = {},
 ) => {
   const events: Array<Record<string, unknown>> = []
   const delivered: Array<{ agentId: string; text: string }> = []
   const notes: Array<string> = []
+  const logged: Array<string> = []
+  const sessions = { opened: 0, disposed: { count: 0 } }
   const agentsDir = options.agents ?? join(dir, `agents-${++stores}`)
   let ids = 0
-  const agents = new Subagents({
+  const agents: Subagents = new Subagents({
     report: (event) => events.push(event),
     now: () => 1_000,
     newId: () => `${options.ids ?? "id"}${++ids}`,
@@ -92,13 +132,22 @@ const tracker = (
         customTools: options.tools ?? [],
         settings: { retry: { enabled: false } },
       })
-      return { session, model: `${model.provider}/${model.id}` }
+      sessions.opened++
+      return {
+        session: hooked(session, options.hooks ?? {}, sessions.disposed),
+        model: `${model.provider}/${model.id}`,
+      }
     },
-    deliver: (message) => delivered.push(message),
+    deliver: (message) => {
+      delivered.push(message)
+      if (options.untaken !== true)
+        queueMicrotask(() => agents.resultTaken(message.agentId, message.text))
+    },
     note: (text) => notes.push(text),
+    log: (text) => logged.push(text),
   })
   current.push(agents)
-  return { agents, events, delivered, notes, agentsDir }
+  return { agents, events, delivered, notes, logged, sessions, agentsDir }
 }
 
 const current: Array<Subagents> = []
@@ -383,6 +432,47 @@ describe("messaging and stopping an agent", () => {
     expect(valid(events)).toBe(true)
   })
 
+  test("a stop that comes before its run has started stops it before its first request", async () => {
+    const promptAfter = Promise.withResolvers<void>()
+    const { agents, events, delivered } = tracker({
+      hooks: { promptAfter: promptAfter.promise },
+    })
+    faux.setResponses([fauxAssistantMessage("Ran anyway.")])
+    await agents.start(start)
+    const stopping = agents.stop("id1")
+    promptAfter.resolve()
+    const result = await stopping
+    expect(result.outcome).toBe("stopped")
+    expect(faux.getPendingResponseCount()).toBe(1)
+    expect(events.at(-1)).toEqual({ _tag: "AgentStatusChanged", agentId: "id1", status: "Stopped" })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(delivered).toEqual([])
+    faux.setResponses([])
+  })
+
+  test("a message that comes as a run ends starts the next run, rather than being steered into the one that ended", async () => {
+    const hooks: ChildHooks = {}
+    const { agents, delivered } = tracker({ hooks })
+    let asked = ""
+    faux.setResponses([
+      fauxAssistantMessage("First."),
+      (context) => {
+        asked = said(context)
+        return fauxAssistantMessage("Second.")
+      },
+    ])
+    let sent: Promise<unknown> | undefined
+    hooks.onEvent = (event) => {
+      if (event.type === "agent_settled" && sent === undefined)
+        sent = agents.message("id1", "one more thing")
+    }
+    await agents.start(start)
+    await until(() => delivered.length === 2)
+    expect(await sent).toEqual({ steered: false })
+    expect(asked).toContain("one more thing")
+    expect(delivered[1]?.text).toContain("<result>Second.</result>")
+  })
+
   test("started outside a Turn, it runs unreported", async () => {
     const { agents, events } = tracker()
     faux.setResponses([fauxAssistantMessage("Quietly done.")])
@@ -456,6 +546,67 @@ describe("agents outlive pi (they are kept on disk)", () => {
       status: "Running",
     })
     expect(second.delivered[0]?.text).toContain("<result>The word was kiwi.</result>")
+  })
+
+  test("a result the main loop hadn't taken when pi stopped is given it again when pi starts, until it takes it", async () => {
+    const first = tracker({ untaken: true })
+    faux.setResponses([fauxAssistantMessage("Found it in a.ts.")])
+    await first.agents.start(start)
+    await until(() => first.delivered.length > 0)
+    first.agents.dispose()
+
+    const second = tracker({ agents: first.agentsDir, untaken: true })
+    second.agents.load()
+    expect(second.delivered).toEqual(first.delivered)
+    expect(second.notes).toEqual([])
+    expect(second.events).toEqual([])
+    const [result] = second.delivered
+    if (result === undefined) throw new Error("nothing was given again")
+    second.agents.resultTaken(result.agentId, result.text)
+    second.agents.dispose()
+
+    const third = tracker({ agents: first.agentsDir })
+    third.agents.load()
+    expect(third.delivered).toEqual([])
+    expect(JSON.parse(readFileSync(join(first.agentsDir, "index.json"), "utf8")).agents[0]).toEqual(
+      {
+        agentId: "id1",
+        description: "Find the bug",
+        model: "faux/small",
+        status: "Done",
+        reported: true,
+      },
+    )
+  })
+
+  test("a finished agent's session is let go, and opened again from its file when it is messaged", async () => {
+    const { agents, delivered, sessions } = tracker()
+    let resumedWith = ""
+    faux.setResponses([
+      fauxAssistantMessage("First answer."),
+      (context) => {
+        resumedWith = said(context)
+        return fauxAssistantMessage("Second answer.")
+      },
+    ])
+    await agents.start(start)
+    await until(() => delivered.length === 1)
+    expect(sessions).toEqual({ opened: 1, disposed: { count: 1 } })
+    await agents.message("id1", "again")
+    await until(() => delivered.length === 2)
+    expect(sessions).toEqual({ opened: 2, disposed: { count: 2 } })
+    expect(resumedWith).toContain("First answer.")
+    expect(resumedWith).toContain("again")
+  })
+
+  test("an index it can't write is said in the extension's log, and the agents run on", async () => {
+    const blocked = join(dir, "blocked-agents")
+    mkdirSync(join(blocked, "index.json"), { recursive: true })
+    const { agents, logged } = tracker({ agents: blocked })
+    faux.setResponses([fauxAssistantMessage("Done anyway.")])
+    const started = await agents.start({ ...start, wait: true })
+    expect(started.result?.text).toBe("Done anyway.")
+    expect(logged[0]).toStartWith("kndl: couldn't save the agents' index:")
   })
 
   test("one running when pi stops is Interrupted: said to the Hub then, and to the main loop when pi starts again, and a message resumes it", async () => {

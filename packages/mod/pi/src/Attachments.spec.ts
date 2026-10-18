@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { MaxModAttachmentPartBytes } from "@kndl/protocol"
-import { openAttachment } from "./Attachments.ts"
+import { attachmentToolDefinition, openAttachment, pdfFileName } from "./Attachments.ts"
 
 const part = (overrides: Record<string, unknown>) =>
   JSON.stringify({
@@ -51,6 +51,29 @@ describe("the attachment tool (ADR 0024)", () => {
     const text = content[0]?.type === "text" ? content[0].text : ""
     expect(text).toContain("spec.pdf")
     expect(text).toContain("/tmp/kndl-attachments/att-3/spec.pdf")
+  })
+
+  test("a stopped Turn cuts the tool's fetches short: the call's signal goes with each", async () => {
+    const signals: Array<AbortSignal | undefined> = []
+    const tool = attachmentToolDefinition({
+      fetchPart: async (_path, signal) => {
+        signals.push(signal)
+        return { status: 200, text: part({}) }
+      },
+      savePdf: async () => "/never",
+    })
+    const stop = new AbortController()
+    await tool.execute("call-1", { id: "att-1" }, stop.signal, undefined, undefined as never)
+    expect(signals).toEqual([stop.signal])
+  })
+
+  test("a PDF is saved under its own name, as one path segment, or as an unnamed one's when its own isn't a file's", () => {
+    expect(pdfFileName("spec.pdf")).toBe("spec.pdf")
+    expect(pdfFileName("../etc/passwd")).toBe(".._etc_passwd")
+    expect(pdfFileName("a\\b.pdf")).toBe("a_b.pdf")
+    expect(pdfFileName(".")).toBe("document.pdf")
+    expect(pdfFileName("..")).toBe("document.pdf")
+    expect(pdfFileName("")).toBe("document.pdf")
   })
 
   test("fails with the Hub's reason", async () => {

@@ -19,6 +19,7 @@ import {
 } from "@kndl/protocol"
 import type {
   MarkedFile,
+  ModCommand,
   ModEventsEncoded,
   Participant,
   Question,
@@ -30,6 +31,16 @@ import type {
 import { Exit, Schema } from "effect"
 
 export type ModEventEncoded = typeof ModEvent.Encoded
+
+/** One of the Hub's commands to a mod, by its tag. */
+export type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { readonly _tag: Tag }>
+
+/** A Participant as JSON: the Hub's commands carry them, and the events say them back. */
+export type Sender = typeof Participant.Encoded
+
+/** Whether `value` is a plain object: not null, and not an array. */
+export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const clipNote = (cut: number) => `… (${cut} more chars)`
 
@@ -311,6 +322,32 @@ export const attachmentPart = (
   return { part: part.value }
 }
 
+/** A GET of a path on the Hub, with the mod token, as the attachment tool fetches. */
+export type HubGet = (path: string) => Promise<{ readonly status: number; readonly text: string }>
+
+/**
+ * The attachment tool's answer for the file `id`, its parts fetched from the Hub with `get` in
+ * order, each from where the last says the next starts; or why it couldn't.
+ */
+export const openAttachment = async (id: string, get: HubGet): Promise<AttachmentResult> => {
+  if (id === "") return { deny: "Give the attachment's id, from its marker." }
+  const parts: Array<ModAttachment> = []
+  for (let offset: number | undefined = 0; offset !== undefined;) {
+    if (parts.length === maxAttachmentParts) break
+    let response: { readonly status: number; readonly text: string }
+    try {
+      response = await get(attachmentPartPath(id, offset))
+    } catch (error) {
+      return failed(String(error))
+    }
+    const answer = attachmentPart(response.status, response.text)
+    if ("deny" in answer) return answer
+    parts.push(answer.part)
+    offset = answer.part.next
+  }
+  return attachmentResult(parts)
+}
+
 /**
  * The attachment tool's answer from a file's parts, in order: an image block of the whole, or a
  * document block for a PDF.
@@ -386,9 +423,6 @@ export const agentWorktree = (
 }
 
 // ── AskUserQuestion (#193) ─────────────────────────────────────────────────
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const text = (value: unknown) => (typeof value === "string" ? value : "")
 

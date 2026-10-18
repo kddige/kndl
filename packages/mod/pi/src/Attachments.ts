@@ -5,13 +5,10 @@
 // PDF can't: it is saved outside the Workspace, where `git add` won't find it, and the model is
 // told where, to read it with its own tools.
 
-import type { ModAttachment } from "@kndl/protocol"
-import {
-  attachmentPart,
-  attachmentPartPath,
-  attachmentResult,
-  maxAttachmentParts,
-} from "../../src/HubMessages.ts"
+import { Type } from "@earendil-works/pi-ai/compat"
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import { AttachmentKinds } from "@kndl/protocol"
+import { attachmentToolSpec, openAttachment as openFromHub } from "../../src/HubMessages.ts"
 
 /** The tool's name, as the model calls it. */
 export const attachmentTool = "attachment"
@@ -21,33 +18,52 @@ export type AttachmentContent =
   | { readonly type: "image"; readonly data: string; readonly mimeType: string }
 
 export interface AttachmentDeps {
-  /** GETs a path on the Hub, with the mod token. */
-  readonly fetchPart: (path: string) => Promise<{ readonly status: number; readonly text: string }>
+  /** GETs a path on the Hub, with the mod token, until `signal` (the call's) aborts. */
+  readonly fetchPart: (
+    path: string,
+    signal?: AbortSignal | undefined,
+  ) => Promise<{ readonly status: number; readonly text: string }>
   /** Writes a PDF's base64 `data` to a file of its own; its path. */
   readonly savePdf: (id: string, name: string, data: string) => Promise<string>
+}
+
+const attachmentParameters = Type.Object({
+  id: Type.String({ description: "The attachment id from the marker." }),
+})
+
+/** The attachment tool, in the tool list from the first request on. */
+export const attachmentToolDefinition = (
+  deps: AttachmentDeps,
+): ToolDefinition<typeof attachmentParameters, undefined> => ({
+  name: attachmentTool,
+  label: "Attachment",
+  description: attachmentToolSpec.description,
+  promptSnippet: "Open a file someone attached to a message, by its marker's id",
+  parameters: attachmentParameters,
+  execute: async (_toolCallId, params, signal) => ({
+    content: await openAttachment(params.id, deps, signal),
+    details: undefined,
+  }),
+})
+
+/**
+ * The name a PDF is saved under, in a directory of its own: its own, as one path segment, or the
+ * name an unnamed PDF goes by when its own isn't one (`.`, `..`).
+ */
+export const pdfFileName = (name: string) => {
+  const segment = name.replace(/[/\\]/g, "_")
+  return segment === "" || segment === "." || segment === ".."
+    ? AttachmentKinds.pdf.fallbackName
+    : segment
 }
 
 /** The tool's result for the file `id`; throws, for a failed call, with why it couldn't. */
 export const openAttachment = async (
   id: string,
   deps: AttachmentDeps,
+  signal?: AbortSignal,
 ): Promise<Array<AttachmentContent>> => {
-  if (id === "") throw new Error("Give the attachment's id, from its marker.")
-  const parts: Array<ModAttachment> = []
-  for (let offset: number | undefined = 0; offset !== undefined;) {
-    if (parts.length === maxAttachmentParts) break
-    let response: { readonly status: number; readonly text: string }
-    try {
-      response = await deps.fetchPart(attachmentPartPath(id, offset))
-    } catch (error) {
-      throw new Error(`Could not open the attachment: ${String(error)}`, { cause: error })
-    }
-    const answer = attachmentPart(response.status, response.text)
-    if ("deny" in answer) throw new Error(answer.deny)
-    parts.push(answer.part)
-    offset = answer.part.next
-  }
-  const opened = attachmentResult(parts)
+  const opened = await openFromHub(id, (path) => deps.fetchPart(path, signal))
   if ("deny" in opened) throw new Error(opened.deny)
   const [name, block] = opened.result
   if (block.type === "image")

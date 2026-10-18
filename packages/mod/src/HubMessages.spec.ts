@@ -18,6 +18,7 @@ import {
   dismissedText,
   eventsBody,
   helloBody,
+  openAttachment,
   Outbox,
   promptFromParticipant,
   readCommands,
@@ -661,6 +662,53 @@ describe("attachments (#276)", () => {
     expect(attachmentResult([first.part])).toEqual({
       deny: "Could not open the attachment: the Hub sent only part of it.",
     })
+  })
+
+  test("the tool fetches a file's parts from the Hub in order, each from where the last says the next starts", async () => {
+    const asked: Array<string> = []
+    const parts: Record<string, string> = {
+      "/mod/attachments/att-1?offset=0": JSON.stringify({
+        id: "att-1",
+        name: "shot.png",
+        mediaType: "image/png",
+        data: "iVBO",
+        next: 3,
+      }),
+      "/mod/attachments/att-1?offset=3": JSON.stringify({
+        id: "att-1",
+        name: "shot.png",
+        mediaType: "image/png",
+        data: "Rw0K",
+      }),
+    }
+    const opened = await openAttachment("att-1", async (path) => {
+      asked.push(path)
+      return { status: 200, text: parts[path] ?? "" }
+    })
+    expect(asked).toEqual(["/mod/attachments/att-1?offset=0", "/mod/attachments/att-1?offset=3"])
+    expect(opened).toEqual({
+      result: [
+        { type: "text", text: "shot.png" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
+      ],
+    })
+  })
+
+  test("the tool says why it can't fetch a file: no id, the Hub's reason, or a failed fetch", async () => {
+    expect(await openAttachment("", async () => ({ status: 200, text: "" }))).toEqual({
+      deny: "Give the attachment's id, from its marker.",
+    })
+    expect(
+      await openAttachment("att-9", async () => ({
+        status: 404,
+        text: '{"error":"There is no such attachment."}',
+      })),
+    ).toEqual({ deny: "Could not open the attachment: There is no such attachment." })
+    expect(
+      await openAttachment("att-9", async () => {
+        throw new Error("offline")
+      }),
+    ).toEqual({ deny: "Could not open the attachment: Error: offline" })
   })
 
   test("the transcript shows the tool's image as a note, not its bytes", () => {

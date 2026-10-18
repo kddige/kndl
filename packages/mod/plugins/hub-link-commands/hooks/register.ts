@@ -25,9 +25,6 @@ import {
   answerResult,
   askedQuestions,
   attachmentContext,
-  attachmentPart,
-  attachmentPartPath,
-  attachmentResult,
   attachmentToolName,
   attachmentToolSpec,
   deliveredPrompt,
@@ -38,11 +35,17 @@ import {
   historyToolName,
   historyToolSpec,
   HubLink,
-  maxAttachmentParts,
+  openAttachment,
   steeredPrompt,
   terminalOutcome,
 } from "./hub-link-lib.js"
-import type { LinkStatus, ModCommand, Participant, QuestionAnswer } from "./hub-link-lib.js"
+import type {
+  Command,
+  LinkStatus,
+  ModCommand,
+  Participant,
+  QuestionAnswer,
+} from "./hub-link-lib.js"
 
 const band = atom(
   { plugin: "hub-link-commands", key: "band" } as const,
@@ -138,8 +141,6 @@ const bandStatus = (status: LinkStatus): Partial<HubLinkBand> =>
   status._tag === "Rejected"
     ? { status: "Rejected", detail: status.reason }
     : { status: status._tag, detail: "" }
-
-type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { _tag: Tag }>
 
 const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt">) => {
   if (await submittedBefore($, command.promptId)) {
@@ -408,26 +409,11 @@ export function register(on: On) {
   // Hub, through the Runner's relay, in parts the runtime's fetch can read, and handed to Claude as
   // an image block, or a document block for a PDF (#277).
   on("tool.call", { tool: attachmentToolName }, async ($, e) => {
-    const id = typeof e.id === "string" ? e.id : ""
     const hub = state.hub
     if (hub === undefined) return { deny: "This session is not linked to a kndl Hub." }
-    if (id === "") return { deny: "Give the attachment's id, from its marker." }
-    const parts = []
-    try {
-      for (let offset: number | undefined = 0; offset !== undefined;) {
-        if (parts.length === maxAttachmentParts) break
-        const response = await $.http.fetch(`${hub.url}${attachmentPartPath(id, offset)}`, {
-          headers: { authorization: `Bearer ${hub.modToken}` },
-        })
-        const answer = attachmentPart(response.status, response.text)
-        if ("deny" in answer) return answer
-        parts.push(answer.part)
-        offset = answer.part.next
-      }
-    } catch (error) {
-      return { deny: `Could not open the attachment: ${String(error)}` }
-    }
-    return attachmentResult(parts)
+    return openAttachment(typeof e.id === "string" ? e.id : "", (path) =>
+      $.http.fetch(`${hub.url}${path}`, { headers: { authorization: `Bearer ${hub.modToken}` } }),
+    )
   })
 
   on("session.end", async ($, e, next) => {

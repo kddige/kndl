@@ -9,9 +9,9 @@
 // message pi holds is never changed again (QueryState.ts), which the reference broke after an
 // abort (docs/research/claude-bridge-spike.md).
 
-import { getModels } from "@earendil-works/pi-ai/compat"
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent"
 import type { ProviderModel } from "@kndl/protocol"
+import { builtinCatalog } from "../Providers.ts"
 import {
   capturedPrompts,
   clearRewriteMarks,
@@ -70,8 +70,7 @@ export const registerClaude = (
   if (settings === undefined) return
   const listed = models.filter((model) => model.provider === ClaudeProvider)
   if (listed.length === 0) return
-  const catalogue =
-    options.catalogue ?? (getModels(ClaudeProvider as never) as unknown as Array<CatalogueModel>)
+  const catalogue = options.catalogue ?? builtinCatalog(ClaudeProvider)
   const { models: registered, missing } = claudeModels(listed, catalogue)
   if (missing.length > 0) options.log?.(`kndl: pi doesn't know anthropic's ${missing.join(", ")}`)
   if (registered.length === 0) return
@@ -97,7 +96,8 @@ export const registerClaude = (
     api: ClaudeApi,
     models: registered,
     // pi hands it a transcript, which toBridgeContext reads as a Context.
-    streamSimple: streamClaude as unknown as NonNullable<ProviderConfig["streamSimple"]>,
+    streamSimple: (model, transcript, streamOptions) =>
+      streamClaude(model, transcript, streamOptions),
   }
   pi.registerProvider(ClaudeProvider, config)
 }

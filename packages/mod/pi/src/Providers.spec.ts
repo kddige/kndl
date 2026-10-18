@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { getModels } from "@earendil-works/pi-ai/compat"
 import { type ModProviders, ProviderIds } from "@kndl/protocol"
 import {
+  builtinCatalog,
   defaultModel,
   fetchProviders,
   gatewayProviders,
@@ -19,7 +19,7 @@ const listed: ModProviders = {
   ],
 }
 
-const catalog = (provider: string) => getModels(provider as never)
+const catalog = builtinCatalog
 
 /** A registered model's compat flags, which only a chat model has. */
 const compatOf = (model: unknown) => (model as { readonly compat?: unknown }).compat

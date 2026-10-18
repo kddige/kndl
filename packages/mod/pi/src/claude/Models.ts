@@ -5,6 +5,7 @@
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.
 
+import type { ThinkingLevelMap } from "@earendil-works/pi-ai"
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent"
 import type { ProviderModel } from "@kndl/protocol"
 import { ClaudeApi, ClaudeProvider } from "./Names.ts"
@@ -12,7 +13,7 @@ import { ClaudeApi, ClaudeProvider } from "./Names.ts"
 const TwoHundredK = 200_000
 const OneMillion = 1_000_000
 
-/** A model of pi-ai's `anthropic` catalogue, as `getModels("anthropic")` lists it. */
+/** A model of pi-ai's `anthropic` catalogue, as `builtinCatalog("anthropic")` lists it. */
 export interface CatalogueModel {
   readonly id: string
   readonly name: string
@@ -20,7 +21,7 @@ export interface CatalogueModel {
   readonly input: ReadonlyArray<"text" | "image">
   readonly contextWindow: number
   readonly maxTokens: number
-  readonly thinkingLevelMap?: Readonly<Record<string, string | null>>
+  readonly thinkingLevelMap?: ThinkingLevelMap
 }
 
 /**
@@ -119,7 +120,7 @@ export function claudeModels(
         ? {}
         : { thinkingLevelMap: { ...entry.thinkingLevelMap } }),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    } as ProviderModelConfig)
+    })
   }
   return { models, missing }
 }

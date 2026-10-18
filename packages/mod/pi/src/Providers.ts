@@ -16,23 +16,37 @@
 // the Session token from `Authorization` alone, so that header carries it too, always; the Gateway
 // drops both, and puts the Creator's key where pi put the token.
 
-import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent"
+import type { Api, Model } from "@earendil-works/pi-ai"
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all"
 import { modelGatewayPath, ModProviders } from "@kndl/protocol"
 import type { ModelProvider } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
 import type { HubFetch } from "../../src/HubLink.ts"
 
-/** A model of pi-ai's built-in catalogue, as `getModels(provider)` lists it. */
+/** pi-ai's own catalogue of a Provider's chat models; none for a Provider it doesn't know. */
+export const builtinCatalog = (provider: string): ReadonlyArray<Model<Api>> => {
+  const known = getBuiltinProviders().find((each) => each === provider)
+  return known === undefined ? [] : getBuiltinModels(known)
+}
+
+/** A model of pi-ai's built-in catalogue ({@link builtinCatalog}), as far as kndl reads it. */
 export interface CatalogModel {
   readonly id: string
   /** Where pi-ai sends its calls: `https://api.openai.com/v1`. */
-  readonly baseUrl?: string
+  readonly baseUrl: string
+  readonly compat?: object | undefined
 }
 
 /** A provider for pi to register: its name, as pi-ai has it, and its configuration. */
-export interface GatewayProvider {
+export interface GatewayProvider<M extends CatalogModel> {
   readonly name: ModelProvider
-  readonly config: ProviderConfig
+  /** As `pi.registerProvider` takes it: each model is the catalogue's, at the Gateway. */
+  readonly config: {
+    readonly baseUrl: string
+    readonly apiKey: string
+    readonly headers: Record<string, string>
+    readonly models: Array<M>
+  }
   /** The Models the Hub listed that pi-ai's catalogue doesn't know, so pi can't run. */
   readonly missing: ReadonlyArray<string>
 }
@@ -52,7 +66,7 @@ export const literalConfigValue = (value: string) => {
  * (`isChatGPTSignIn`), never one to the Gateway. pi-ai sends other sign-ins' requests as it sends
  * their keys', keyed on the provider's name, which stays pi's own.
  */
-const signInCompat: Partial<Record<ModelProvider, object>> = {
+const signInCompat: Partial<Record<ModelProvider, Readonly<Record<string, boolean>>>> = {
   openai: {
     supportsMaxOutputTokens: false,
     supportsMidConvoEffort: false,
@@ -76,36 +90,33 @@ const pathOf = (baseUrl: string | undefined) => {
  * through the Claude bridge (see `registerClaude`): the built-in one, at the Gateway, with only
  * the listed Models, in the Hub's order.
  */
-export const gatewayProviders = (
+export const gatewayProviders = <M extends CatalogModel>(
   providers: ModProviders,
   options: {
     readonly hubUrl: string
     readonly modToken: string
-    readonly catalog: (provider: ModelProvider) => ReadonlyArray<CatalogModel>
+    readonly catalog: (provider: ModelProvider) => ReadonlyArray<M>
   },
-): Array<GatewayProvider> => {
+): Array<GatewayProvider<M>> => {
   const hubUrl = options.hubUrl.replace(/\/+$/, "")
   const listed = new Map<ModelProvider, Array<string>>()
   for (const model of providers.models) {
     if (model.provider === "anthropic") continue
     listed.set(model.provider, [...(listed.get(model.provider) ?? []), model.id])
   }
-  return [...listed].flatMap(([name, ids]) => {
+  return [...listed].flatMap(([name, ids]): Array<GatewayProvider<M>> => {
     const gateway = `${hubUrl}${modelGatewayPath(name)}`
     const catalog = options.catalog(name)
     const signedIn = (providers.signedIn ?? []).some((provider) => provider === name)
     const compatForSignIn = signedIn ? signInCompat[name] : undefined
-    const known = ids.flatMap((id) => {
+    const known = ids.flatMap((id): Array<M> => {
       const model = catalog.find((entry) => entry.id === id)
       if (model === undefined) return []
-      const own = (model as { readonly compat?: object }).compat
-      const compat = compatForSignIn === undefined ? own : { ...own, ...compatForSignIn }
+      const atGateway = { ...model, baseUrl: `${gateway}${pathOf(model.baseUrl)}` }
       return [
-        {
-          ...model,
-          baseUrl: `${gateway}${pathOf(model.baseUrl)}`,
-          ...(compat !== undefined && { compat }),
-        } as unknown as ProviderModelConfig,
+        compatForSignIn === undefined
+          ? atGateway
+          : { ...atGateway, compat: { ...model.compat, ...compatForSignIn } },
       ]
     })
     const [first] = known
@@ -114,7 +125,7 @@ export const gatewayProviders = (
       {
         name,
         config: {
-          baseUrl: (first as { readonly baseUrl?: string }).baseUrl ?? gateway,
+          baseUrl: first.baseUrl,
           apiKey: literalConfigValue(options.modToken),
           // The Runner's relay takes the Session token from this header alone.
           headers: { Authorization: literalConfigValue(`Bearer ${options.modToken}`) },

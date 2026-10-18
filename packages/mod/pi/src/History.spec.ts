@@ -39,6 +39,19 @@ describe("the history tool (ADR 0030)", () => {
     ])
   })
 
+  test("a stopped Turn cuts the fetch short: the call's signal goes with it", async () => {
+    const signals: Array<AbortSignal | undefined> = []
+    const tool = historyToolDefinition({
+      fetchHistory: async (_path, signal) => {
+        signals.push(signal)
+        return { status: 200, text: JSON.stringify(turns) }
+      },
+    })
+    const stop = new AbortController()
+    await tool.execute("call-1", {}, stop.signal, undefined, undefined as never)
+    expect(signals).toEqual([stop.signal])
+  })
+
   test("fails the call, saying why, when the Hub can't answer", async () => {
     const tool = historyToolDefinition({
       fetchHistory: async () => ({ status: 403, text: JSON.stringify({ error: "Forbidden." }) }),

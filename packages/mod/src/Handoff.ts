@@ -7,8 +7,8 @@ import { ModHistory } from "@kndl/protocol"
 import type { DeliverHandoff, Harness } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
 
-/** A Harness as the agent reads its name. */
-const harnessName: Record<Harness, string> = { ClaudeCode: "Claude Code", Pi: "pi" }
+/** A Harness as the agent, and the person at pi's terminal, read its name. */
+export const harnessName: Record<Harness, string> = { ClaudeCode: "Claude Code", Pi: "pi" }
 
 /**
  * The handoff as the agent reads it, once, before the next prompt: the Hub's text, said to be

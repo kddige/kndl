@@ -14,21 +14,18 @@ export {
 } from "./Handoff.ts"
 export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
-export type { AnswerResult } from "./HubMessages.ts"
+export type { AnswerResult, Command } from "./HubMessages.ts"
 export {
   agentWorktree,
   answerResult,
   askedQuestions,
   attachmentContext,
-  attachmentPart,
-  attachmentPartPath,
-  attachmentResult,
   attachmentToolName,
   attachmentToolSpec,
   backgroundedByStop,
   clip,
   deliveredPrompt,
-  maxAttachmentParts,
+  openAttachment,
   resultSummary,
   sharedSessionNote,
   startsDelivered,
