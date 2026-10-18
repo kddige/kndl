@@ -14,6 +14,7 @@ import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useS
 import { day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { SignInProgress } from "../hub/store.ts"
+import { messageOf } from "../mcp/shared.ts"
 import { thinkingLevelNames } from "../session/models.ts"
 import {
   Banner,
@@ -33,6 +34,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { Fact } from "./Fact.tsx"
 
 const styles = stylex.create({
   group: { display: "flex", flexDirection: "column", gap: space.s3 },
@@ -59,15 +61,6 @@ const styles = stylex.create({
     gridTemplateColumns: "repeat(auto-fit, minmax(9rem, 1fr))",
     gap: space.s4,
     margin: 0,
-  },
-  fact: { display: "flex", flexDirection: "column", gap: space.s0_5, minWidth: 0 },
-  term: { color: color.textMuted, fontSize: text.sm },
-  detail: {
-    margin: 0,
-    fontSize: text.base,
-    fontWeight: weight.medium,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
   },
   actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
@@ -598,15 +591,6 @@ function levelsText(levels: ReadonlyArray<keyof typeof thinkingLevelNames>): str
     : `Thinking ${thinkingLevelNames[lowest]} to ${thinkingLevelNames[highest]}`
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
-  return (
-    <div {...stylex.props(styles.fact)}>
-      <dt {...stylex.props(styles.term)}>{term}</dt>
-      <dd {...stylex.props(styles.detail)}>{children}</dd>
-    </div>
-  )
-}
-
 /** The Provider's sign-in, and a form to paste an API key, to replace a connection: either does. */
 function Connect({
   connectable,
@@ -1026,5 +1010,3 @@ function useFocusKept(ref: RefObject<HTMLElement | null>) {
     region.querySelector<HTMLElement>("button:not(:disabled), a[href], input")?.focus()
   })
 }
-
-const messageOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))

@@ -12,7 +12,7 @@ import {
   type Harness,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, type ReactNode, useState } from "react"
+import { type FormEvent, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
 import { day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -34,6 +34,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { Fact } from "./Fact.tsx"
 import { ProvidersSection } from "./Providers.tsx"
 
 const styles = stylex.create({
@@ -89,9 +90,6 @@ const styles = stylex.create({
     gap: space.s4,
     margin: 0,
   },
-  fact: { display: "flex", flexDirection: "column", gap: space.s0_5, minWidth: 0 },
-  term: { color: color.textMuted, fontSize: text.sm },
-  detail: { margin: 0, fontSize: text.base, fontWeight: weight.medium },
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
   // Which Harness runs Claude's Models (ADR 0030), set apart from the token above it.
   choice: {
@@ -316,15 +314,6 @@ function ClaudeHarnessChoice() {
         Claude Code: Claude's own tools, on your plan's limits. pi: the same tools and Subagents as
         your other Providers. New Sessions start on it; the Model picker can switch.
       </p>
-    </div>
-  )
-}
-
-function Fact({ term, children }: { term: string; children: ReactNode }) {
-  return (
-    <div {...stylex.props(styles.fact)}>
-      <dt {...stylex.props(styles.term)}>{term}</dt>
-      <dd {...stylex.props(styles.detail)}>{children}</dd>
     </div>
   )
 }
