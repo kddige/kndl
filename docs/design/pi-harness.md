@@ -101,18 +101,21 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
 
 ## The pi extension (`packages/mod/pi/`)
 
-- **Packaging:** TypeScript, bundled by `bun run mod:build` into `packages/mod/pi/dist/kndl.js` (one ESM file for Node, with Effect, the protocol and the Claude bridge's dependencies inside). The Runner copies it with the mod, so it's at `/opt/kndl/mod/pi/kndl.js` in the Sandbox. It reuses `HubLink` and `HubMessages` from `packages/mod/src`.
+- **Packaging:** TypeScript, bundled by `bun run mod:build` into `packages/mod/pi/dist/kndl.js` (one ESM file for Node, with Effect, the protocol and the Claude bridge's dependencies inside). The Runner copies it with the mod, so it's at `/opt/kndl/mod/<copy>/pi/kndl.js` in the Sandbox, given to pi with `-e`. It reuses `HubLink` and `HubMessages` from `packages/mod/src`.
 - **At load:**
   - `GET /mod/providers`, then register the Gateway providers.
   - For Claude's Models, the Claude bridge provider (`anthropic`), when the credential is there.
+  - Register the Session's MCP servers, which the Runner names in `KNDL_MCP_SERVERS` (Installation ids and server names, nothing secret), as `kndl-<server>` at `${KNDL_URL}/gateway/<installationId>`. Their `Authorization` header is `Bearer ${KNDL_MOD_TOKEN}`, which pi fills in from its environment as it connects, so the token is never written down.
+  - Add the Repo's `.claude/skills` to pi's skills (`resources_discover`), beside `.pi/skills` and `.agents/skills`.
   - Say hello: `conversationId` is pi's session id, `model` is `<provider>/<id>`, and the flags are `steers`, `attaches` and `switchesModels`.
 - **Events** (as hub-link reports them for Claude Code):
-  - `TurnStarted` and `TurnEnded`, the latter with pi-ai's stop reason and the Turn's usage summed with its cost.
+  - `TurnStarted` and `TurnEnded`, the latter with pi-ai's stop reason, the Turn's usage summed with its cost, and, for an error, the Provider's reason (`errorMessage`, one line, at most 500 characters, with tokens and key-shaped strings redacted).
   - `TextDelta`, and `ToolCallStarted`/`ToolCallEnded`.
   - Subagents' and questions' events.
 - **Commands:**
   - `DeliverPrompt`: a user message with the sender's name and the attachment markers, as hub-link words it.
-  - `DeliverIntoTurn`: a steer. `StopTurn`: abort. `SwitchModel`: `setModel` and `setThinkingLevel`.
+  - `DeliverIntoTurn`: a steer. `StopTurn`: abort.
+  - `SwitchModel`: `setModel` and `setThinkingLevel`. A model it doesn't have, as one of a Provider connected after pi started, makes it ask `/mod/providers` again and register the Gateway providers again, once. Only Models that go through kndl (the Gateway's or the Claude bridge's) are taken: never pi's built-in ones, which would call a Provider directly. One it still can't run is reported as `ModelSwitchFailed`, and the Hub puts the Session's model back, with a note in its history.
   - `DeliverAgentMessage`, `StopAgent` and `DeliverAnswer`: the subagent and question tools.
   - `PresenceChanged`: a widget line.
 - **Tools:**
