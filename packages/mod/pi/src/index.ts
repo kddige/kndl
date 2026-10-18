@@ -22,7 +22,7 @@ import { getModels, Type } from "@earendil-works/pi-ai/compat"
 import { getAgentDir } from "@earendil-works/pi-coding-agent"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { parseProviderModelName } from "@kndl/protocol"
-import type { ModCommand, ModProviders, ProviderModel } from "@kndl/protocol"
+import type { ModCommand, ModProviders } from "@kndl/protocol"
 import { HubLink } from "../../src/HubLink.ts"
 import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
 import {
@@ -33,6 +33,7 @@ import {
   steeredPrompt,
 } from "../../src/HubMessages.ts"
 import { attachmentTool, openAttachment } from "./Attachments.ts"
+import { registerClaude } from "./claude/Claude.ts"
 import { presenceLine, watching } from "./Presence.ts"
 import { defaultModel, fetchProviders, gatewayProviders } from "./Providers.ts"
 import { Questions, questionToolDefinition } from "./Questions.ts"
@@ -58,13 +59,6 @@ const readEnv = (env: NodeJS.ProcessEnv): KndlEnv | undefined => {
     conversationId: KNDL_CONVERSATION_ID || undefined,
   }
 }
-
-/**
- * Claude's Models, which run through Claude Code on the Creator's Claude credential, in the
- * Sandbox, as provider `anthropic` (ADR 0029). The Claude bridge registers it here; until it does,
- * a Session has no Claude Models.
- */
-export const registerClaude = (_pi: ExtensionAPI, _models: ReadonlyArray<ProviderModel>) => {}
 
 /** The custom entry that records which prompts from the Hub pi was given (#323). */
 const submittedEntry = "kndl-prompt"
@@ -143,6 +137,7 @@ export default async function kndl(pi: ExtensionAPI) {
   registerClaude(
     pi,
     providers.models.filter((model) => model.provider === "anthropic"),
+    { log },
   )
 
   /** The session's context, from its start: commands from the Hub act through it. */

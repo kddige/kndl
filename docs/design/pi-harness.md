@@ -93,6 +93,9 @@ ADR 0029 said the `kndl` provider would send pi-ai's context to the Hub, which w
   - `attachment(id)` returns the image or PDF (ADR 0024).
   - `ask_user_question` has the Question schema, and becomes an Open question.
   - `agent` starts a subagent: a child pi `AgentSession` in-process, on any of the Creator's Models, the parent's by default.
-- **The Claude bridge:** our own provider for `anthropic`, ported from `pi-claude-bridge` 0.9.3 (MIT, credited).
+- **The Claude bridge:** our own provider for `anthropic`, ported from `pi-claude-bridge` 0.9.3 (MIT, credited), in `pi/src/claude/`.
   - It runs the pinned Claude Code through the Agent SDK with `tools: []` and serves pi's tools over in-process MCP.
-  - It never changes a message once pi has it: the spike's bug.
+  - It registers only when pi has `CLAUDE_CODE_OAUTH_TOKEN` and `KNDL_CLAUDE_CODE`, and only the Claude Models `/mod/providers` lists, from pi-ai's `anthropic` catalogue, at a price of 0.
+  - Claude Code runs in the Workspace with `bypassPermissions`, `--strict-mcp-config` and no settings files, so a Repo's Claude Code hooks and plugins don't run. Its sessions, pi's history mirrored for `resume`, live in `CLAUDE_CONFIG_DIR`. `ANTHROPIC_*` and the mod's variables are kept out of its environment.
+  - The plan can't be read from a setup token, so it takes Pro: Opus 4.6 and Sonnet 4.6 run at 200K context, the other measured Models at 1M.
+  - It never changes a message once pi has it: the spike's bug. A turn's end hands pi a copy of its message, and an abort with no turn open ends no message.

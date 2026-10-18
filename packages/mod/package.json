@@ -14,7 +14,10 @@
     "@kndl/hub": "workspace:*"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.302",
     "@kndl/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "cc-session-io": "0.4.0",
     "effect": "4.0.0"
   }
 }
