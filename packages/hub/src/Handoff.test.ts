@@ -96,6 +96,33 @@ describe("a Session's Turns, as its agent reads them", () => {
     ])
   })
 
+  test("keep a gap between what the agent said before a tool call and after it", () => {
+    const id = TurnId.make("t-1")
+    const log = logOf([
+      {
+        _tag: "TurnStarted",
+        turnId: id,
+        text: "Add a health check",
+        sender: { _tag: "FromParticipant", participant: ada },
+      },
+      { _tag: "TextDelta", turnId: id, text: "Let me look " },
+      { _tag: "TextDelta", turnId: id, text: "first." },
+      {
+        _tag: "ToolCallStarted",
+        turnId: id,
+        toolCallId: "t-1-tool" as never,
+        tool: "Read",
+        input: '{"path":"src/main.ts"}',
+      },
+      { _tag: "TextDelta", turnId: id, text: "Added /health." },
+      { _tag: "TurnEnded", turnId: id, reason: "stop", durationMs: 1 },
+    ])
+    expect(historyTurns(log)[0]?.answer).toBe("Let me look first.\n\nAdded /health.")
+    expect(buildHandoff({ entries: log })?.text).toContain(
+      "Answer:\nLet me look first.\n\nAdded /health.",
+    )
+  })
+
   test("are clipped: a long prompt, answer or tool input says how much more there was", () => {
     const long = "x".repeat(10_000)
     const [only] = historyTurns(logOf(turn("t-1", long, long)))

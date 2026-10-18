@@ -1,9 +1,9 @@
 // What a Session's agent is told of the Session's history (ADR 0030), built from its log alone:
 //
 // - Its Turns: each Turn on the main loop, from its TurnStarted, as who prompted it and what, the
-//   tools its agent called (`tool: input`), what it answered (its TextDeltas joined) and the model
-//   it ran on, each clipped. A subagent's work isn't its own. `GET /mod/history` serves them a page
-//   at a time.
+//   tools its agent called (`tool: input`), what it answered (its TextDeltas joined, what it said
+//   either side of a tool call apart) and the model it ran on, each clipped. A subagent's work
+//   isn't its own. `GET /mod/history` serves them a page at a time.
 // - The context handoff: after a switch of Harness, the Turns the new Harness hasn't seen, and the
 //   model switches among them, in kndl's voice, oldest first, kept within a budget: the newest
 //   that fit, and where the earlier ones start, for the agent to read with its history tool.
@@ -58,6 +58,8 @@ interface LoggedTurn {
   prompt: string
   readonly tools: Array<string>
   answer: string
+  /** Whether the agent called a tool since it last said something: what it says next is apart. */
+  calledTool: boolean
   model?: string
   ended?: { readonly reason: TurnEndReason; readonly errorMessage?: string }
 }
@@ -90,6 +92,7 @@ const readLog = (entries: ReadonlyArray<SessionLogEntry>) => {
               : `${event.text}\n(${files === 1 ? "1 attachment" : `${files} attachments`}, not carried over)`,
           tools: [],
           answer: "",
+          calledTool: false,
         }
         turns.push(turn)
         byId.set(event.turnId, turn)
@@ -102,12 +105,20 @@ const readLog = (entries: ReadonlyArray<SessionLogEntry>) => {
         }
         break
       }
-      case "ToolCallStarted":
-        byId.get(event.turnId)?.tools.push(`${event.tool}: ${event.input}`)
+      case "ToolCallStarted": {
+        const turn = byId.get(event.turnId)
+        if (turn === undefined) break
+        turn.tools.push(`${event.tool}: ${event.input}`)
+        turn.calledTool = true
         break
+      }
       case "TextDelta": {
         const turn = byId.get(event.turnId)
-        if (turn !== undefined) turn.answer += event.text
+        if (turn === undefined) break
+        // What it said before a tool call and after it are apart, as the transcript shows them.
+        if (turn.calledTool && turn.answer !== "") turn.answer += "\n\n"
+        turn.calledTool = false
+        turn.answer += event.text
         break
       }
       case "TurnEnded": {
