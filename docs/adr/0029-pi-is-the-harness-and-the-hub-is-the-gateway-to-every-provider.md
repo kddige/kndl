@@ -69,3 +69,7 @@ The first Providers were OpenAI (Sign in with ChatGPT, or an API key) and xAI (S
 - **Disconnecting a Provider doesn't put Sessions to sleep.** A Claude credential removed does, as it sits in the Sandbox (ADR 0026). A Connected provider never enters one, so its Sessions stay awake, and a Turn on its Models fails, saying why, until it is connected again or the Model is switched.
 - **pi's Subagents run in the foreground, without worktrees.** The Turn waits for each, and they're kept in memory: a sleep forgets them. Background agents need the Hub to start a Turn on an agent's behalf, which pi's events can't say yet.
 - **A Hub can turn Claude's Models off** for pi Sessions (`HUB_CLAUDE_MODELS=off`), in case Anthropic bills Claude Code's headless use differently: the bridge's one dependence on terms kndl doesn't set.
+
+## Amendment: a Session can switch Harness (ADR 0030)
+
+A Session's Harness is no longer fixed for life: picking a Model of the other Harness switches it between Turns, with a context handoff.
