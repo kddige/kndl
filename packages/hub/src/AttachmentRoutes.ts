@@ -86,7 +86,7 @@ export const AttachmentRoutes = HttpRouter.use(
         const access = yield* sessionFrom(you)
         if ("refused" in access) return access.refused
         // Whoever may prompt the Session may attach: its Creator alone.
-        const notYours = driveRefusal(you, access.session.creator)
+        const notYours = driveRefusal(you, access.session.creator, access.session.harness)
         if (notYours !== undefined) return errorResponse(403, notYours.refusal)
         const cantSend = sendPromptRefusal(access.session)
         if (cantSend !== undefined) return errorResponse(409, cantSend.refusal)

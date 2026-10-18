@@ -2442,6 +2442,36 @@ describe("pi Sessions (ADR 0029)", () => {
     expect(await mod.next("SwitchModel")).toEqual([])
   })
 
+  test("what it says of its start, exit and driving names pi and what it runs on", async () => {
+    const { hub } = await piHub([gpt])
+    const { runner, web, sessionId } = await sessionScene(hub, piRunner)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const wentToSleep = async () =>
+      (await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    expect(await wentToSleep()).toMatchObject({ message: "pi exited with code 1" })
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Active"))).entry.event,
+    ).toMatchObject({ message: "pi started on mac" })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited" })
+    expect(await wentToSleep()).toMatchObject({ message: "pi exited" })
+
+    web.send({ _tag: "WakeSession", sessionId })
+    await runner.take("StartSession")
+    runner.send({ _tag: "SessionStartFailed", sessionId, message: "tmux is gone" })
+    expect(await wentToSleep()).toMatchObject({
+      message: "pi could not start on mac: tmux is gone",
+    })
+
+    const bobWeb = await openWeb(hub, "bob")
+    bobWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
+    expect((await bobWeb.take("CommandFailed")).message).toBe(
+      "Only alice, who started this Session, can drive it: it runs on their Connected providers.",
+    )
+  })
+
   test("its Creator needs Models to start and wake it, not a Claude credential", async () => {
     const { hub, catalogue } = await piHub([gpt])
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {

@@ -3,6 +3,7 @@
 // the fake can't drift from what the Hub refuses, or why (#263). Each rule takes what the Hub
 // knows of the Session as it is now, and says what is to happen: it changes nothing itself.
 
+import type { Harness } from "./Model.ts"
 import type { AgentStatus, SessionInstallation, SessionState } from "./Session.ts"
 
 /** Why a command is refused, as said to whoever sent it. */
@@ -15,17 +16,19 @@ export interface Refusal {
 /**
  * Why `you` can't drive a Session created by `creator`, or undefined when they can: only its
  * Creator prompts it, steers or cancels its prompts, answers it, stops it or its subagents,
- * controls it, and opens its terminal. Its Claude Code runs on their setup token. Everyone else
- * with Repo access watches.
+ * controls it, and opens its terminal. It runs on what they connected: Claude Code on their setup
+ * token, pi on their Connected providers (ADR 0029); a Session that names no `harness` runs
+ * Claude Code. Everyone else with Repo access watches.
  */
 export const driveRefusal = (
   you: { readonly id: string },
   creator: { readonly id: string; readonly name: string },
+  harness?: Harness,
 ): Refusal | undefined =>
   you.id === creator.id
     ? undefined
     : {
-        refusal: `Only ${creator.name}, who started this Session, can drive it: it runs on their Claude credential.`,
+        refusal: `Only ${creator.name}, who started this Session, can drive it: it runs on their ${harness === "Pi" ? "Connected providers" : "Claude credential"}.`,
       }
 
 // ── The Prompt queue and Steer (ADR 0018) ──

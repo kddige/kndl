@@ -98,6 +98,39 @@ export type ProviderModel = typeof ProviderModel.Type
 export const providerModelName = (model: Pick<ProviderModel, "provider" | "id">): ModelName =>
   `${model.provider}/${model.id}`
 
+// What the Hub and the web both decide of a pi Session's model, so neither drifts from the other.
+
+/**
+ * The Model a pi Session runs when none is chosen (ADR 0029): Claude's first when the Creator has
+ * Claude's, else the first. Undefined without Models.
+ */
+export const defaultProviderModel = <M extends Pick<ProviderModel, "provider">>(
+  models: ReadonlyArray<M>,
+): M | undefined => models.find((model) => model.provider === "anthropic") ?? models[0]
+
+/** The Model a pi Session's model name (`openai/gpt-6-sol`) names among `models`, if any. */
+export const findProviderModel = <M extends Pick<ProviderModel, "provider" | "id">>(
+  models: ReadonlyArray<M>,
+  name: string,
+): M | undefined => models.find((model) => providerModelName(model) === name)
+
+/** Whether a Model takes the thinking level: one it lists. No level always fits. */
+export const takesThinkingLevel = (
+  model: Pick<ProviderModel, "thinkingLevels">,
+  level: ThinkingLevel | undefined,
+): boolean => level === undefined || model.thinkingLevels.includes(level)
+
+/** Why a Model doesn't take the thinking level, as the Hub refuses it; undefined when it does. */
+export const thinkingLevelRefusal = (
+  model: Pick<ProviderModel, "label" | "thinkingLevels">,
+  level: ThinkingLevel | undefined,
+): string | undefined => {
+  if (level === undefined || takesThinkingLevel(model, level)) return undefined
+  return model.thinkingLevels.length === 0
+    ? `${model.label} takes no thinking level.`
+    : `${model.label} has no thinking level '${level}'.`
+}
+
 /** The Provider and id a pi Session's model name says, or undefined for one that isn't one. */
 export function parseProviderModelName(
   name: string,

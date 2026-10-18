@@ -75,13 +75,15 @@
 //   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
 //   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
 //   resuming its conversation, in the same Sandbox. The queued prompts wait for its new mod.
-// - Harnesses (ADR 0029): a Session runs Claude Code or pi, for life. A new one is pi when its
-//   Runner's hello says it runs pi, unless Claude Code is asked for; pi asked for on a Runner
-//   that doesn't run it is refused. A pi Session's model is one of its Creator's Models, as
-//   ModelCatalog has them (`openai/gpt-6-sol`), the first of them, Claude's first, unless one is
-//   chosen; it runs on them, not on a Claude credential, so a Creator with none can't start or
-//   wake one. Its new model goes to a mod that switches models as a SwitchModel once no Turn
-//   runs, in place of the RelaunchSession, and the queued prompts go after it.
+// - Harnesses (ADR 0029, Harnesses.ts): a Session runs Claude Code or pi, for life, and the
+//   relay asks its Harness what differs: its name in what the Session says, its model check, and
+//   what it runs on. A new one is pi when its Runner's hello says it runs pi, unless Claude Code
+//   is asked for; pi asked for on a Runner that doesn't run it is refused. A pi Session's model
+//   is one of its Creator's Models, as ModelCatalog has them (`openai/gpt-6-sol`), the first of
+//   them, Claude's first, unless one is chosen; it runs on them, not on a Claude credential, so a
+//   Creator with none can't start or wake one. Its new model goes to a mod that switches models
+//   as a SwitchModel once no Turn runs, in place of the RelaunchSession, and the queued prompts
+//   go after it.
 // - Subagents (#152, ADR 0014): a Session's Claude Code starts subagents with its Agent tool, and
 //   its mod reports each one. AgentStarted and AgentStatusChanged are logged and kept with the
 //   Session (Sessions.ts), whose summary lists the Running and Interrupted ones; a status for an
@@ -285,11 +287,7 @@ import {
   SandboxNoted,
   MaxLastOutputLength,
   sessionNameFrom,
-  findModel,
-  type Harness,
-  modelNotFoundText,
   ModelSwitched,
-  providerModelName,
   SwitchModel,
   ModTokenReissued,
   loopbackFor,
@@ -339,6 +337,7 @@ import {
 import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
+import { makeHarnesses, type SessionHarness } from "./Harnesses.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
@@ -578,21 +577,6 @@ const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
 })
 
-/**
- * StartSession's and a new Session's `harness` (ADR 0029): said for pi alone, as a Session from
- * before, which runs Claude Code, says none.
- */
-const harnessFlag = (harness: Harness | undefined): { readonly harness?: "Pi" } =>
-  harness === "Pi" ? { harness } : {}
-
-/** What runs the Session's agent, as what it says of its start names it. */
-const harnessName = (session: { readonly harness?: Harness }) =>
-  session.harness === "Pi" ? "pi" : "Claude Code"
-
-/** Why a pi Session can't start for its Creator, told to them (ADR 0029). */
-const noModelsText =
-  "You have no Models to run a pi Session on: connect a Provider on the Account page."
-
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
   session.agents?.some((agent) => agent.status === "Running") === true
@@ -734,6 +718,13 @@ export class SessionRelay extends Context.Service<
       /** Each Session's live state, in memory only (LiveSessions.ts). */
       const live = makeLiveSessions()
 
+      /** Claude Code and pi, as a Session's or a new Session's Harness (ADR 0029). */
+      const harnesses = makeHarnesses({
+        runner: (id) => Effect.map(runners.get(id), Option.getOrUndefined),
+        modelsFor: modelCatalog.modelsFor,
+        hasClaudeCredential: (id) => claudeCredentials.info(id) !== undefined,
+      })
+
       const markBusy = (sessionId: SessionId) =>
         Effect.map(Clock.currentTimeMillis, (now) => live.seenBusy(sessionId, now))
 
@@ -757,7 +748,7 @@ export class SessionRelay extends Context.Service<
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
           runners: (yield* runners.list).map(
-            ({ updater, models, sysinfo, harnesses, ...runner }) => {
+            ({ updater, models, sysinfo, harnesses: runs, ...runner }) => {
               const online = peers.runner(runner.id)
               const isOnline = online !== undefined
               const update = runnerUpdates.stateOf(runner.id)
@@ -768,7 +759,7 @@ export class SessionRelay extends Context.Service<
                 lastSeenAt: isOnline ? now : runner.lastSeenAt,
                 ...(updater !== null && { updater }),
                 ...(models !== null && { models }),
-                ...(harnesses !== null && { harnesses }),
+                ...(runs !== null && { harnesses: runs }),
                 ...(sysinfo !== null && { sysinfo }),
                 ...(update !== undefined && { update }),
               }
@@ -857,45 +848,9 @@ export class SessionRelay extends Context.Service<
       }
 
       /**
-       * Why a Session for `creator` can't start: they have no setup token, which it would run on,
-       * and there is no other (ADR 0026). `you` is who is told, when it is the Creator.
-       */
-      const noClaudeCredential = (creator: Participant, you?: Participant): string | undefined => {
-        if (claudeCredentials.info(creator.id) !== undefined) return undefined
-        return you?.id === creator.id
-          ? "You have no Claude credential: add your setup token on the Account page."
-          : `${creator.login}, who started this Session, has no Claude credential: they can add theirs on the Account page.`
-      }
-
-      /**
-       * Why a pi Session for `creator` can't start (ADR 0029): they have no Models to run it on,
-       * of a Connected provider or Claude's. `you` is who is told, when it is the Creator.
-       */
-      const noModels = Effect.fn("SessionRelay.noModels")(function* (
-        creator: Participant,
-        you?: Participant,
-      ) {
-        if ((yield* modelCatalog.modelsFor(creator.id)).length > 0) return undefined
-        return you?.id === creator.id
-          ? noModelsText
-          : `${creator.login}, who started this Session, has no Models to run it on: they can connect a Provider on the Account page.`
-      })
-
-      /**
-       * Why a Session on `harness` for `creator` can't start: nothing to run it on, a setup token
-       * for Claude Code (ADR 0026), Models for pi (ADR 0029).
-       */
-      const nothingToRunOn = (
-        harness: Harness | undefined,
-        creator: Participant,
-        you?: Participant,
-      ): Effect.Effect<string | undefined> =>
-        harness === "Pi" ? noModels(creator, you) : Effect.succeed(noClaudeCredential(creator, you))
-
-      /**
-       * Why the Session's Claude Code may not run any more (ADR 0026): its Creator has no setup
-       * token now, or isn't a Member, so it is put to sleep, saying so. Undefined while it may. A
-       * pi Session runs on its Creator's Models instead (ADR 0029).
+       * Why the Session's Harness may not run any more: its Creator isn't a Member, or has nothing
+       * it runs on now, a setup token for Claude Code (ADR 0026), Models for pi (ADR 0029), so it
+       * is put to sleep, saying so. Undefined while it may.
        */
       const notRunnable = Effect.fn("SessionRelay.notRunnable")(function* (
         session: SessionSummary,
@@ -906,18 +861,8 @@ export class SessionRelay extends Context.Service<
             message: `Put to sleep: ${creator.login}, who started it, isn't a Member of this Hub any more`,
           }
         }
-        if (session.harness === "Pi") {
-          if ((yield* modelCatalog.modelsFor(creator.id)).length > 0) return undefined
-          return {
-            message: `Put to sleep: it runs on the Models of ${creator.login}, who started it, and they have none`,
-          }
-        }
-        if (claudeCredentials.info(creator.id) === undefined) {
-          return {
-            message: `Put to sleep: it runs on the Claude credential of ${creator.login}, who started it, and they have none`,
-          }
-        }
-        return undefined
+        const not = yield* harnesses.of(session).whyNotRunnable(creator)
+        return not === undefined ? undefined : { message: not.sleep }
       })
 
       /**
@@ -1618,7 +1563,7 @@ export class SessionRelay extends Context.Service<
             const blocking = failures.filter(failureBlocksStart)
             if (blocking.length > 0) {
               return yield* claudeGone(now.value, {
-                message: `Claude Code could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
+                message: `${harnesses.of(now.value).name} could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
                 installationsFailed: blocking,
               })
             }
@@ -1626,7 +1571,7 @@ export class SessionRelay extends Context.Service<
               yield* noteFailure(
                 session.id,
                 failure,
-                "Claude Code started all the same: its tools fail until it answers.",
+                `${harnesses.of(now.value).name} started all the same: its tools fail until it answers.`,
               )
             }
             runner.peer.send(start)
@@ -1735,7 +1680,9 @@ export class SessionRelay extends Context.Service<
         yield* outbox.clear(session.id)
         live.relaunched(session.id)
         yield* sessions.setModelPending(session.id, false)
-        yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
+        yield* Effect.logInfo(
+          `Restarting ${harnesses.of(session).name} of ${session.id} for its new model`,
+        )
         runner.peer.send(
           RelaunchSession.make({
             sessionId: session.id,
@@ -1848,7 +1795,7 @@ export class SessionRelay extends Context.Service<
           ...why,
           message: Option.isSome(resume)
             ? woken
-            : `${woken}, with a new conversation: Claude Code's last one is unknown`,
+            : `${woken}, with a new conversation: ${harnesses.of(session).name}'s last one is unknown`,
         })
         yield* sendStart(
           session,
@@ -1863,7 +1810,7 @@ export class SessionRelay extends Context.Service<
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...harnessFlag(session.harness),
+            ...harnesses.of(session).flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -1880,20 +1827,21 @@ export class SessionRelay extends Context.Service<
         session: SessionSummary,
         you: Participant | undefined,
       ) {
+        const { name } = harnesses.of(session)
         const needed = yield* environments.valuesNeeded(session.repo)
         if (needed.length > 0) {
           return {
-            message: `${harnessName(session)} could not start: ${cantStartText(session.repo, needed)}`,
+            message: `${name} could not start: ${cantStartText(session.repo, needed)}`,
             valuesNeeded: true,
           }
         }
         const { creator } = session
         const nothing = (yield* members.isMember(creator.id))
-          ? yield* nothingToRunOn(session.harness, creator, you)
+          ? (yield* harnesses.of(session).whyNotRunnable(creator, you))?.refusal
           : `${creator.login}, who started this Session, isn't a Member of this Hub any more.`
         if (nothing !== undefined) {
           return {
-            message: `${harnessName(session)} could not start: ${nothing}`,
+            message: `${name} could not start: ${nothing}`,
             valuesNeeded: false,
           }
         }
@@ -2096,87 +2044,10 @@ export class SessionRelay extends Context.Service<
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
         /** What runs its agent (ADR 0029), for life. */
-        readonly harness: Harness
-        /**
-         * Its model and thinking level (#128), checked with `checkModel`, or `checkPiModel` for
-         * pi; Claude Code's default if absent.
-         */
+        readonly harness: SessionHarness
+        /** Its model and thinking level (#128), checked by its Harness; its default if absent. */
         readonly model?: ModelSetting
       }
-
-      /** A model and thinking level checked against what a Runner's Claude Code takes (#128). */
-      interface CheckedModel {
-        readonly setting: ModelSetting
-        /** What the Runner's Claude Code calls the model; for the default, the model it runs. */
-        readonly label: string | undefined
-      }
-
-      /**
-       * A model and thinking level as asked for (#128), checked against what the Runner's Claude
-       * Code takes, as it last said in its hello: the setting, or why it is refused. A model it
-       * doesn't list is refused with Claude Code's own words. With no list, as from a Runner whose
-       * Claude Code couldn't say, only Claude Code's default is taken.
-       */
-      const checkModel = Effect.fn("SessionRelay.checkModel")(function* (
-        runnerId: RunnerId,
-        asked: ModelSetting,
-      ): Effect.fn.Return<CheckedModel | string, SqlError> {
-        const known = Option.getOrUndefined(yield* runners.get(runnerId))
-        const models = known?.models ?? null
-        if (models === null) {
-          if (asked.model === undefined && asked.thinkingLevel === undefined) {
-            return { setting: {}, label: undefined }
-          }
-          return `${known?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
-        }
-        const model = asked.model === undefined ? models.default : findModel(models, asked.model)
-        if (model === undefined) return modelNotFoundText(asked.model ?? "")
-        if (asked.thinkingLevel !== undefined) {
-          if (!model.reasoning) return `${model.label} takes no thinking level.`
-          if (!models.thinkingLevels.includes(asked.thinkingLevel)) {
-            return `Claude Code on ${known?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
-          }
-        }
-        return {
-          setting: {
-            // The `default` alias is no setting: Claude Code's default, whatever it is then.
-            ...(model !== models.default && asked.model !== undefined && { model: asked.model }),
-            ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
-          },
-          label: model.label,
-        }
-      })
-
-      /**
-       * A pi Session's model and thinking level as asked for (ADR 0029), checked against its
-       * Creator's Models, as ModelCatalog has them: the setting, or why it is refused. Without a
-       * model asked for, the first of them, Claude's first: a pi Session always names its model.
-       */
-      const checkPiModel = Effect.fn("SessionRelay.checkPiModel")(function* (
-        creator: ParticipantId,
-        asked: ModelSetting,
-      ): Effect.fn.Return<CheckedModel | string> {
-        const models = yield* modelCatalog.modelsFor(creator)
-        if (models.length === 0) return noModelsText
-        const model =
-          asked.model === undefined
-            ? (models.find((one) => one.provider === "anthropic") ?? models[0])
-            : models.find((one) => providerModelName(one) === asked.model)
-        if (model === undefined) return modelNotFoundText(asked.model ?? "")
-        const level = asked.thinkingLevel
-        if (level !== undefined && !model.thinkingLevels.includes(level)) {
-          return model.thinkingLevels.length === 0
-            ? `${model.label} takes no thinking level.`
-            : `${model.label} has no thinking level '${level}'.`
-        }
-        return {
-          setting: {
-            model: providerModelName(model),
-            ...(level !== undefined && { thinkingLevel: level }),
-          },
-          label: model.label,
-        }
-      })
 
       /**
        * Creates a Session and starts it on the plan's Runner, which must be online and able to
@@ -2187,8 +2058,8 @@ export class SessionRelay extends Context.Service<
         plan: NewSessionPlan,
       ): Effect.fn.Return<SessionSummary | string, SqlError> {
         const { repo, runner } = plan
-        const nothing = yield* nothingToRunOn(plan.harness, plan.creator, plan.why.by)
-        if (nothing !== undefined) return nothing
+        const nothing = yield* plan.harness.whyNotRunnable(plan.creator, plan.why.by)
+        if (nothing !== undefined) return nothing.refusal
         const missing = yield* environmentRelay.missingEnvironment(repo)
         if (missing !== undefined) return missing
         const needed = yield* environments.valuesNeeded(repo)
@@ -2203,7 +2074,7 @@ export class SessionRelay extends Context.Service<
           runnerId: runner.id,
           creatorId: plan.creator.id,
           createdAt: yield* Clock.currentTimeMillis,
-          ...harnessFlag(plan.harness),
+          ...plan.harness.flag,
           ...modelFlags(plan.model ?? {}),
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
@@ -2222,7 +2093,7 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...harnessFlag(session.harness),
+            ...harnesses.of(session).flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -2285,7 +2156,8 @@ export class SessionRelay extends Context.Service<
           if (isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
-          let creator: Participant | undefined
+          /** The Session the command drives, which only its Creator may (ADR 0026). */
+          let driven: SessionSummary | undefined
           switch (message._tag) {
             case "WebHello":
             case "LeaveSession":
@@ -2314,7 +2186,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return {}
               repo = session.value.repo
               refusal = "There is no such Session."
-              if (drivingCommands.has(message._tag)) creator = session.value.creator
+              if (drivingCommands.has(message._tag)) driven = session.value
             }
           }
           const checked = yield* access.check(you, repo).pipe(
@@ -2324,7 +2196,10 @@ export class SessionRelay extends Context.Service<
             ),
           )
           // Only once the person may see the Session: one they can't is no such Session to them.
-          const notYours = creator === undefined ? undefined : driveRefusal(you, creator)?.refusal
+          const notYours =
+            driven === undefined
+              ? undefined
+              : driveRefusal(you, driven.creator, driven.harness)?.refusal
           if ("allowed" in checked) {
             return {
               learned: { repo, allowed: checked.allowed },
@@ -2485,18 +2360,12 @@ export class SessionRelay extends Context.Service<
               const behind = runnerRefusal(runner)
               if (behind !== undefined) return refuse(message, behind, { requestId })
               // pi wherever the Runner runs it, unless Claude Code is asked for (ADR 0029).
-              const harness = message.harness ?? (runner.runsPi ? "Pi" : "ClaudeCode")
-              if (harness === "Pi" && !runner.runsPi) {
-                return refuse(
-                  message,
-                  `${runner.name} doesn't run pi: update it, or start a Claude Code Session there.`,
-                  { requestId },
-                )
-              }
-              const model =
-                harness === "Pi"
-                  ? yield* checkPiModel(you.id, message)
-                  : yield* checkModel(runner.id, message)
+              const harness = harnesses.forNew(message.harness, runner)
+              if (typeof harness === "string") return refuse(message, harness, { requestId })
+              const model = yield* harness.check(message, {
+                runnerId: runner.id,
+                creatorId: you.id,
+              })
               if (typeof model === "string") return refuse(message, model, { requestId })
               // Repo access was checked before the lock was taken. The branches are the form's
               // word (ADR 0023): one that isn't there fails the clone, as it always has.
@@ -2703,10 +2572,10 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
-              const checked =
-                session.value.harness === "Pi"
-                  ? yield* checkPiModel(session.value.creator.id, message)
-                  : yield* checkModel(session.value.runnerId, message)
+              const checked = yield* harnesses.of(session.value).check(message, {
+                runnerId: session.value.runnerId,
+                creatorId: session.value.creator.id,
+              })
               if (typeof checked === "string") return refuse(message, checked, { sessionId })
               const { setting } = checked
               if (
@@ -3557,7 +3426,7 @@ export class SessionRelay extends Context.Service<
                 message.environmentVersion ?? null,
               )
               yield* changeState(session.value, "Active", {
-                message: `Claude Code started on ${runner.name}`,
+                message: `${harnesses.of(session.value).name} started on ${runner.name}`,
               })
               if (session.value.state === "Active") yield* sessionUpdated(message.sessionId)
               yield* deliverNext(message.sessionId)
@@ -3566,7 +3435,7 @@ export class SessionRelay extends Context.Service<
               // Asleep, with why in its history; queued prompts wait for the next wake.
               yield* sessions.setLastOutput(message.sessionId, null)
               return yield* claudeGone(session.value, {
-                message: `Claude Code could not start on ${runner.name}: ${message.message}`,
+                message: `${harnesses.of(session.value).name} could not start on ${runner.name}: ${message.message}`,
               })
             case "SessionStopped": {
               const settled = live.stopped(message.sessionId)
@@ -3594,8 +3463,8 @@ export class SessionRelay extends Context.Service<
                 asked ?? {
                   message:
                     message.reason === "Requested"
-                      ? "Claude Code stopped"
-                      : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
+                      ? `${harnesses.of(session.value).name} stopped`
+                      : `${harnesses.of(session.value).name} exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
                 },
                 restartBy !== undefined,
               )
@@ -3757,7 +3626,7 @@ export class SessionRelay extends Context.Service<
                   revokedWhileAway.delete(session.id)
                   if (session.state !== "Asleep") {
                     yield* claudeGone(session, {
-                      message: `${runner.name} is back; Claude Code is not running there`,
+                      message: `${runner.name} is back; ${harnesses.of(session).name} is not running there`,
                     })
                   }
                   // Prompts queued while it was Frozen wake it.
@@ -3904,11 +3773,12 @@ export class SessionRelay extends Context.Service<
           // again at once, and hold up the rest of the queue.
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
+          const session = Option.getOrUndefined(yield* sessions.get(sessionId))
           toWeb(
             CommandFailed.make({
               command: "SendPrompt",
               sessionId,
-              message: `Your prompt could not be delivered to Claude Code: ${event.message}`,
+              message: `Your prompt could not be delivered to ${harnesses.of(session ?? {}).name}: ${event.message}`,
             }),
             (client) => client.you.id === failed.value.sender.id,
           )
