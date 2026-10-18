@@ -14,8 +14,9 @@
 // - Driving (ADR 0026): a Session runs on its Creator's setup token, and only its Creator drives
 //   it. Every command that prompts it, steers or cancels its prompts, answers its questions,
 //   stops its Turns or subagents, controls it (sleep, wake, Keep awake, restart, archive,
-//   restore, rename, model and effort) or uses its terminal is refused anyone else, once Repo
-//   access lets them see it (`authorize`), as is their forward of it Asleep, which would wake it.
+//   restore, rename, model and thinking level) or uses its terminal is refused anyone else, once
+//   Repo access lets them see it (`authorize`), as is their forward of it Asleep, which would wake
+//   it.
 //   They watch: they join it, read it, and forward its Open ports. Its terminal frames go to its
 //   Creator's connections alone. Purging an Archived Session isn't driving it (ADR 0027).
 // - Steering (#195, ADR 0018): while a Turn runs, the Creator can hand a queued prompt to it
@@ -29,7 +30,7 @@
 //     for `HubConfig.sleepAfter` (or put to sleep by hand with SleepSession) is stopped: the Hub
 //     sends StopSession `Sleep`, and records it Asleep when the Runner reports SessionStopped.
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
-//     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
+//     sends StartSession with `resume`, the conversation id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
 //   - Keep awake (SetKeepAwake, ADR 0016): the Creator can turn it on, and it stays on, recorded
 //     with who turned it on, until they turn it off or press Sleep, or the Session is archived. While it is on the Session is never idle, so never put to sleep
@@ -68,12 +69,31 @@
 // - Session names (#120): the Creator can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
-// - Model and effort (#128): a Session's setting, chosen with CreateSession or changed by its
-//   Creator (SetSessionModel) unless it is Archived, and checked against the models its
+// - Model and thinking level (#128): a Session's setting, chosen with CreateSession or changed by
+//   its Creator (SetSessionModel) unless it is Archived, and checked against the models its
 //   Runner's Claude Code said it has. Each change is logged as a ModelSwitched. Claude Code takes
 //   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
 //   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
 //   resuming its conversation, in the same Sandbox. The queued prompts wait for its new mod.
+// - Harnesses (ADR 0029, Harnesses.ts): a Session runs Claude Code or pi, and the relay asks its
+//   Harness what differs: its name in what the Session says, its model check, and what it runs
+//   on. A model names its Harness (`harnessOfModel`, ADR 0030). A new one without a model is pi
+//   when its Runner's hello says it runs pi, unless Claude Code is asked for, or its Creator's
+//   default Model is Claude's and they run Claude's Models on Claude Code (their `claudeHarness`,
+//   ConnectedProviders.ts); pi asked for on a Runner that doesn't run it is refused. A pi
+//   Session's model is one of its Creator's Models, as ModelCatalog has them
+//   (`openai/gpt-6-sol`), the first of them, Claude's first, unless one is chosen; it runs on
+//   them, not on a Claude credential, so a Creator with none can't start or wake one. Its new
+//   model goes to a mod that switches models as a SwitchModel once no Turn runs, in place of the
+//   RelaunchSession, and the queued prompts go after it.
+// - Switching Harness (ADR 0030): a model of the other Harness, on a Runner that runs both, for
+//   a Creator with what it runs on, is logged as a ModelSwitched saying the Harness. Once no Turn
+//   runs, the Session is relaunched on it (RelaunchSession `harness`), resuming that Harness's own
+//   conversation, or starting one; an Asleep one wakes on it. Each Harness keeps its conversation
+//   and how far into the history it has seen (Sessions.ts): the one switched from has seen it all.
+//   When the new Harness's mod says hello, it is handed, before the next prompt, the Turns it
+//   hasn't seen (DeliverHandoff, Handoff.ts), if it takes handoffs; one that doesn't starts
+//   without, and the Session says so. Its agent reads further back with `GET /mod/history`.
 // - Subagents (#152, ADR 0014): a Session's Claude Code starts subagents with its Agent tool, and
 //   its mod reports each one. AgentStarted and AgentStatusChanged are logged and kept with the
 //   Session (Sessions.ts), whose summary lists the Running and Interrupted ones; a status for an
@@ -123,8 +143,8 @@
 //   409 for a value needed: each is noted in the Session once, until the Installation works again,
 //   and the Session runs on.
 // - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, the Sandbox tokens
-//   of its Sessions (#73), and the Claude credentials, its Creator's among them (ADR 0026), are
-//   masked in every event before it is logged, in terminal frames before they are relayed, and in
+//   of its Sessions (#73), the Claude credentials, its Creator's among them (ADR 0026), and the
+//   Connected providers' keys and tokens (ADR 0029), are masked in every event before it is logged, in terminal frames before they are relayed, and in
 //   the last lines a Claude Code that exited printed. Claude's text (TextDelta) and terminal
 //   Output are streams: text that could start a value is held back until the next event or
 //   frame, or `holdMillis` at most.
@@ -149,8 +169,9 @@
 //   (ClaudeCredentialState) after the welcome and whenever it changes. A Session runs on its
 //   Creator's alone: a Runner asks for it just before it starts Claude Code, and only for a
 //   Session it runs. A Session whose Creator has none, or isn't a Member any more, doesn't start:
-//   CreateSession is refused, a wake leaves it Asleep, and the Runner's fetch is refused. Every
-//   credential is redacted from every Session.
+//   CreateSession is refused, a wake leaves it Asleep, and the Runner's fetch is refused. A pi
+//   Session needs its Creator's Models instead (ADR 0029): its Runner still asks, for Claude's
+//   Models, and a refusal doesn't fail its start. Every credential is redacted from every Session.
 //   - Revoking: when a Creator removes or replaces theirs, or is removed as a Member, their
 //     Active Sessions are put to sleep at once, even mid-Turn, each saying why. A Frozen one is
 //     put to sleep when its Runner is back, as is one whose Creator has no credential then, or
@@ -159,6 +180,10 @@
 //     before only the Creator could prompt, are taken out of the queue, each logged as a
 //     PromptCancelled. Every Session is Frozen then, so one whose Creator has no credential is
 //     put to sleep when its Runner is back, as above.
+// - Connected providers (ADR 0029, ConnectedProviders.ts): each Member's own accounts at
+//   Providers, handled by ProviderRelay.ts. Each Member is sent theirs (ProvidersState) after the
+//   welcome and whenever they change, their Claude credential included, since Claude's Models are
+//   among them. A removed Member's are forgotten, and their sign-in cancelled.
 // - Tunnels (#177, ADR 0016): a connection to one of an Active Session's Open ports. Once
 //   TunnelRoutes.ts has checked the caller's access, `openTunnel` checks the Session can take
 //   one, picks the loopback address in the port's address family, and sends its Runner an
@@ -179,6 +204,7 @@
 // no one else.
 
 import {
+  type AgentId,
   AgentMessaged,
   AgentStatusChanged,
   ArchivedSessionPurged,
@@ -197,6 +223,7 @@ import {
   DeliverPrompt,
   driveRefusal,
   type EnvironmentVersion,
+  type EventSeq,
   ForwardCloseCode,
   ForwardSession,
   GitAnswer,
@@ -204,6 +231,7 @@ import {
   type HubToForward,
   type HubToRunner,
   HubToWeb,
+  type ModCommandSeq,
   type ModEvent,
   type ModHello,
   type OpenPort,
@@ -211,6 +239,12 @@ import {
   type Participant,
   type ParticipantId,
   type McpServerCommand,
+  type ProviderCommand,
+  findProviderModel,
+  defaultProviderModel,
+  DeliverHandoff,
+  type Harness,
+  harnessOfModel,
   PresenceChanged,
   type PresentParticipant,
   PromptCancelled,
@@ -271,9 +305,8 @@ import {
   SandboxNoted,
   MaxLastOutputLength,
   sessionNameFrom,
-  findModel,
-  modelNotFoundText,
   ModelSwitched,
+  SwitchModel,
   ModTokenReissued,
   loopbackFor,
   OpenTunnel,
@@ -313,6 +346,7 @@ import { Attachments } from "./Attachments.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { type CliIdentity, CliTokens } from "./CliTokens.ts"
 import { closeReason } from "./CloseReason.ts"
+import { ConnectedProviders } from "./ConnectedProviders.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -321,6 +355,8 @@ import {
 import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
+import { readHandoff } from "./Handoff.ts"
+import { makeHarnesses, type SessionHarness } from "./Harnesses.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
@@ -336,6 +372,7 @@ import {
   RemovedCloseCode,
 } from "./MemberRelay.ts"
 import { Members } from "./Members.ts"
+import { ModelCatalog } from "./ModelCatalog.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
@@ -348,6 +385,7 @@ import {
 } from "./Peers.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
+import { isProviderCommand, makeProviderRelay } from "./ProviderRelay.ts"
 import {
   everything,
   holdMillis,
@@ -550,11 +588,24 @@ const checkFailures = (
   }
 }
 
-/** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
+/**
+ * StartSession's and RelaunchSession's `model` and `thinkingLevel` (#128): the Session's setting.
+ */
 const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
-  ...(setting.effort !== undefined && { effort: setting.effort }),
+  ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
 })
+
+/** The Harness the Session runs on now (ADR 0029): Claude Code unless it says pi. */
+const harnessNow = (session: { readonly harness?: Harness }): Harness =>
+  session.harness ?? "ClaudeCode"
+
+/**
+ * The Harness the Session's model runs on (ADR 0030): the one it runs on from its next start, which
+ * differs from the one it runs on now (`harnessNow`) until a switch between Harnesses is made. No
+ * model is Claude Code's default: a pi Session always names its model.
+ */
+const harnessSet = (session: SessionSummary): Harness => harnessOfModel(session.model)
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
@@ -617,6 +668,20 @@ export class SessionRelay extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
     /** The Session's mod said hello. */
     readonly modHello: (sessionId: SessionId, hello: ModHello) => Effect.Effect<void, SqlError>
+    /**
+     * The Session's mod said hello in a protocol version the Hub doesn't speak: one from before an
+     * update, in a Claude Code its Runner kept running across it (ADR 0011). It can take nothing,
+     * so an Active Session sleeps, and wakes on the Runner's own mod.
+     */
+    readonly modOutdated: (sessionId: SessionId) => Effect.Effect<void, SqlError>
+    /**
+     * The Session's mod polled for its commands after `after`, so it took those up to it: a
+     * context handoff among them has been handed (ADR 0030).
+     */
+    readonly modPolled: (
+      sessionId: SessionId,
+      after: ModCommandSeq,
+    ) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
     readonly modEvents: (
       sessionId: SessionId,
@@ -683,6 +748,8 @@ export class SessionRelay extends Context.Service<
       const hubUpdateRuns = yield* HubUpdateRuns
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
+      const modelCatalog = yield* ModelCatalog
+      const connectedProviders = yield* ConnectedProviders
       const members = yield* Members
       const tunnels = yield* Tunnels
       const cliTokens = yield* CliTokens
@@ -694,6 +761,13 @@ export class SessionRelay extends Context.Service<
       const peers = makePeers({ serialized })
       /** Each Session's live state, in memory only (LiveSessions.ts). */
       const live = makeLiveSessions()
+
+      /** Claude Code and pi, as a Session's or a new Session's Harness (ADR 0029). */
+      const harnesses = makeHarnesses({
+        runner: (id) => Effect.map(runners.get(id), Option.getOrUndefined),
+        modelsFor: modelCatalog.modelsFor,
+        hasClaudeCredential: (id) => claudeCredentials.info(id) !== undefined,
+      })
 
       const markBusy = (sessionId: SessionId) =>
         Effect.map(Clock.currentTimeMillis, (now) => live.seenBusy(sessionId, now))
@@ -717,21 +791,25 @@ export class SessionRelay extends Context.Service<
       const runnerList: Effect.Effect<RunnerList, SqlError> = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
-          runners: (yield* runners.list).map(({ updater, models, sysinfo, ...runner }) => {
-            const online = peers.runner(runner.id)
-            const isOnline = online !== undefined
-            const update = runnerUpdates.stateOf(runner.id)
-            return {
-              ...runner,
-              isOnline,
-              versionStatus: hubVersion.statusOf(runner.version),
-              lastSeenAt: isOnline ? now : runner.lastSeenAt,
-              ...(updater !== null && { updater }),
-              ...(models !== null && { models }),
-              ...(sysinfo !== null && { sysinfo }),
-              ...(update !== undefined && { update }),
-            }
-          }),
+          runners: (yield* runners.list).map(
+            ({ updater, models, sysinfo, harnesses: runs, ...runner }) => {
+              const online = peers.runner(runner.id)
+              const isOnline = online !== undefined
+              const update = runnerUpdates.stateOf(runner.id)
+              return {
+                ...runner,
+                isOnline,
+                versionStatus: hubVersion.statusOf(runner.version),
+                lastSeenAt: isOnline ? now : runner.lastSeenAt,
+                ...(updater !== null && { updater }),
+                ...(models !== null && { models }),
+                // Absent for one that runs Claude Code alone.
+                ...(runs?.includes("Pi") === true && { harnesses: runs }),
+                ...(sysinfo !== null && { sysinfo }),
+                ...(update !== undefined && { update }),
+              }
+            },
+          ),
         })
       })
 
@@ -744,6 +822,9 @@ export class SessionRelay extends Context.Service<
       // The disk Archived Sessions take, asked of their Runners when the archive list wants it (#352).
       const diskUsage = makeSessionDiskUsage()
 
+      // Each Member's Connected providers (ADR 0029).
+      const providerRelay = yield* makeProviderRelay({ webClients: () => peers.webClients })
+
       const memberRelay = yield* makeMemberRelay({
         toWeb: (message, to) => toWeb(message, to),
         removed: (participantId, by) =>
@@ -755,6 +836,8 @@ export class SessionRelay extends Context.Service<
                 "You were removed from this Hub.",
               )
               for (const [id, present] of before) yield* presenceChanged(id, present)
+              // What they connected goes with them, and any sign-in they had running.
+              yield* providerRelay.forget(participantId)
               // Their Sessions run on their Claude credential, which no Session gets now.
               yield* sleepSessionsOf(participantId, (creator) => ({
                 by,
@@ -810,19 +893,9 @@ export class SessionRelay extends Context.Service<
       }
 
       /**
-       * Why a Session for `creator` can't start: they have no setup token, which it would run on,
-       * and there is no other (ADR 0026). `you` is who is told, when it is the Creator.
-       */
-      const noClaudeCredential = (creator: Participant, you?: Participant): string | undefined => {
-        if (claudeCredentials.info(creator.id) !== undefined) return undefined
-        return you?.id === creator.id
-          ? "You have no Claude credential: add your setup token on the Account page."
-          : `${creator.login}, who started this Session, has no Claude credential: they can add theirs on the Account page.`
-      }
-
-      /**
-       * Why the Session's Claude Code may not run any more (ADR 0026): its Creator has no setup
-       * token now, or isn't a Member, so it is put to sleep, saying so. Undefined while it may.
+       * Why the Session's Harness may not run any more: its Creator isn't a Member, or has nothing
+       * it runs on now, a setup token for Claude Code (ADR 0026), Models for pi (ADR 0029), so it
+       * is put to sleep, saying so. Undefined while it may.
        */
       const notRunnable = Effect.fn("SessionRelay.notRunnable")(function* (
         session: SessionSummary,
@@ -833,12 +906,8 @@ export class SessionRelay extends Context.Service<
             message: `Put to sleep: ${creator.login}, who started it, isn't a Member of this Hub any more`,
           }
         }
-        if (claudeCredentials.info(creator.id) === undefined) {
-          return {
-            message: `Put to sleep: it runs on the Claude credential of ${creator.login}, who started it, and they have none`,
-          }
-        }
-        return undefined
+        const not = yield* harnesses.of(session).whyNotRunnable(creator)
+        return not === undefined ? undefined : { message: not.sleep }
       })
 
       /**
@@ -1007,6 +1076,7 @@ export class SessionRelay extends Context.Service<
           ...values.value.map(Redacted.value),
           ...live.sandboxTokensOf(repo),
           ...claudeCredentials.values(),
+          ...connectedProviders.values(),
         ])
         needlesByRepo.set(repo, needles)
         return needles
@@ -1397,8 +1467,14 @@ export class SessionRelay extends Context.Service<
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
         // A Runner draining for its update takes no prompts: they wait for it to be back.
         if (runnerUpdates.holding(session.value.runnerId)) return
-        // A new model or effort first (#128): the prompt waits for the new mod's hello.
-        if (session.value.modelPending === true && (yield* relaunch(session.value))) return
+        // A new model or thinking level first (#128): switched in place by a mod that switches
+        // models (ADR 0029), the prompt going after it; else the prompt waits for the new mod's
+        // hello. A model of the other Harness relaunches the Session on it (ADR 0030).
+        if (session.value.modelPending === true) {
+          const sameHarness = harnessSet(session.value) === harnessNow(session.value)
+          if (sameHarness && live.modSwitchesModels(sessionId)) yield* switchModel(session.value)
+          else if (yield* relaunch(session.value)) return
+        }
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
         live.delivering(sessionId, head.id)
@@ -1533,7 +1609,7 @@ export class SessionRelay extends Context.Service<
             const blocking = failures.filter(failureBlocksStart)
             if (blocking.length > 0) {
               return yield* claudeGone(now.value, {
-                message: `Claude Code could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
+                message: `${harnesses.of(now.value).name} could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
                 installationsFailed: blocking,
               })
             }
@@ -1541,7 +1617,7 @@ export class SessionRelay extends Context.Service<
               yield* noteFailure(
                 session.id,
                 failure,
-                "Claude Code started all the same: its tools fail until it answers.",
+                `${harnesses.of(now.value).name} started all the same: its tools fail until it answers.`,
               )
             }
             runner.peer.send(start)
@@ -1615,31 +1691,96 @@ export class SessionRelay extends Context.Service<
         )
 
       /**
-       * Starts the Session's Claude Code again with its model and effort as set now (#128), once
-       * they changed while it ran: Claude Code alone, resuming its conversation, its Sandbox left
-       * running. Only between Turns: `deliverNext` asks, when the Session is Active and idle.
-       * Whether it was sent; not to a Runner that doesn't take it, or before Claude Code's
+       * Why a subagent can't be messaged or stopped now (ADR 0030): it ran on the other Harness,
+       * which alone has it. That is the one running the Session, or, for one that isn't running,
+       * the one it wakes on, its model's. Undefined when it ran on that one, or the Session has no
+       * such agent.
+       */
+      const agentElsewhere = Effect.fn("SessionRelay.agentElsewhere")(function* (
+        session: SessionSummary,
+        agentId: AgentId,
+        verb: "message" | "stop",
+      ) {
+        const agent = yield* sessions.agentOf(session.id, agentId)
+        const running = session.state === "Active" || session.state === "Frozen"
+        const reaches = running ? harnessNow(session) : harnessSet(session)
+        if (Option.isNone(agent) || agent.value.harness === reaches) return undefined
+        const name = harnesses.of({ harness: agent.value.harness }).name
+        return `${agent.value.description} ran on ${name}: switch the Session back to a ${name} model to ${verb} it.`
+      })
+
+      /**
+       * Switches the Session's model and thinking level to those set now (ADR 0029), once they
+       * changed while it ran, for a mod that switches models: between Turns, as `relaunch`, but
+       * in place. The mod takes its commands in order, so the next prompt runs on the new model.
+       */
+      const switchModel = Effect.fn("SessionRelay.switchModel")(function* (
+        session: SessionSummary,
+      ) {
+        yield* sessions.setModelPending(session.id, false)
+        yield* Effect.logInfo(`Switching ${session.id} to its new model`)
+        yield* outbox.enqueue(
+          session.id,
+          SwitchModel.make({ sessionId: session.id, ...modelFlags(session) }),
+        )
+        yield* sessionUpdated(session.id)
+      })
+
+      /**
+       * Records the Session on the Harness its model runs on, once that is another (ADR 0030), as
+       * it is relaunched or woken there: the Harness it ran on has seen its history so far, and the
+       * new one is handed what it hasn't when its mod says hello (`handOff`). The Session as it is
+       * now.
+       */
+      const settleHarness = Effect.fn("SessionRelay.settleHarness")(function* (
+        session: SessionSummary,
+      ) {
+        const to = harnessSet(session)
+        if (to === harnessNow(session)) return session
+        yield* sessions.switchHarness(session.id, to, yield* log.lastSeq(session.id))
+        yield* Effect.logInfo(
+          `Session ${session.id} switches from ${harnesses.of(session).name} to ${harnesses.of({ harness: to }).name}`,
+        )
+        return Option.getOrElse(yield* sessions.get(session.id), () => session)
+      })
+
+      /**
+       * Starts the Session's Harness again with its model and thinking level as set now (#128),
+       * once they changed while it ran, resuming its conversation, its Sandbox left running; or the
+       * other Harness, for a model of the other's (ADR 0030), resuming that one's conversation, or
+       * starting one if it never ran the Session. Only between Turns: `deliverNext` asks, when the
+       * Session is Active and idle.
+       * Whether it was sent; not to a Runner that doesn't take it, or before the Harness's
        * conversation is known, when the setting waits for the Session's next wake instead.
        */
-      const relaunch = Effect.fn("SessionRelay.relaunch")(function* (session: SessionSummary) {
-        const runner = peers.runner(session.runnerId)
+      const relaunch = Effect.fn("SessionRelay.relaunch")(function* (before: SessionSummary) {
+        const runner = peers.runner(before.runnerId)
         if (runner === undefined || !runner.relaunches) return false
-        const resume = yield* sessions.claudeSessionId(session.id)
-        if (Option.isNone(resume)) return false
+        const switching = harnessSet(before) !== harnessNow(before)
+        const resume = yield* sessions.conversationId(before.id, harnessSet(before))
+        if (!switching && Option.isNone(resume)) return false
+        const session = yield* settleHarness(before)
         // In place of the old one: the old mod has nothing more to say.
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         // Commands the old mod didn't collect are stale, as when it sleeps.
         yield* outbox.clear(session.id)
         live.relaunched(session.id)
         yield* sessions.setModelPending(session.id, false)
-        yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
+        const { name } = harnesses.of(session)
+        yield* Effect.logInfo(
+          switching
+            ? `Switching ${session.id} from ${harnesses.of(before).name} to ${name}`
+            : `Restarting ${name} of ${session.id} for its new model`,
+        )
         runner.peer.send(
           RelaunchSession.make({
             sessionId: session.id,
             repo: session.repo,
             workBranch: session.workBranch,
-            resume: resume.value,
+            ...(Option.isSome(resume) && { resume: resume.value }),
             modToken,
+            // Absent, the Runner runs Claude Code: said for pi, and for any switch.
+            ...(switching ? { harness: harnessNow(session) } : harnesses.of(session).flag),
             ...modelFlags(session),
             // The same as before: a change to the Repo's waits for its next wake or Restart.
             ...gatewayServers(session.mcpServers ?? []),
@@ -1669,7 +1810,7 @@ export class SessionRelay extends Context.Service<
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
-        // Its next start takes its model and effort as set then.
+        // Its next start takes its model and thinking level as set then.
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         // No one can answer its question now: the next Claude Code doesn't ask it again.
         const cancelled = yield* cancelQuestion(session)
@@ -1700,23 +1841,22 @@ export class SessionRelay extends Context.Service<
        * Wakes an Asleep Session on its online Runner: records it Active and starts its Claude
        * Code again, resuming the conversation its mod last said hello from, on the same
        * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
+       * One whose model is the other Harness's wakes on that one (ADR 0030), resuming its
+       * conversation there, if it has one.
        */
       const wake = Effect.fn("SessionRelay.wake")(function* (
-        session: SessionSummary,
+        asleep: SessionSummary,
         why: Why,
       ): Effect.fn.Return<string | undefined, SqlError> {
-        const runner = peers.runner(session.runnerId)
+        const runner = peers.runner(asleep.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
-        if (
-          runner === undefined ||
-          session.state !== "Asleep" ||
-          live.archiveStopping(session.id)
-        ) {
+        if (runner === undefined || asleep.state !== "Asleep" || live.archiveStopping(asleep.id)) {
           return undefined
         }
         // Its prompts wait in its queue, and wake it once its Runner is updated.
         const refusal = runnerRefusal(runner)
         if (refusal !== undefined) return refusal
+        const session = yield* settleHarness(asleep)
         const cantStart = yield* cantStartOn(session, why.by)
         if (cantStart !== undefined) {
           // Asleep, it has no start under way.
@@ -1733,19 +1873,24 @@ export class SessionRelay extends Context.Service<
           yield* sessionUpdated(session.id)
           return undefined
         }
-        const resume = yield* sessions.claudeSessionId(session.id)
+        const resume = yield* sessions.conversationId(session.id, harnessNow(session))
+        // A Harness it switched to, yet to be handed what it hasn't seen.
+        const switched = Option.isSome(yield* sessions.handoffFrom(session.id))
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         const installations = yield* startMcpServers(session.id, session.repo, runner)
         yield* startSent(session.id, environment)
-        // It starts with its model and effort as set now (#128).
+        // It starts with its model and thinking level as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         const woken = `Woken on ${runner.name}`
+        const { name } = harnesses.of(session)
         yield* changeState(session, "Active", {
           ...why,
           message: Option.isSome(resume)
             ? woken
-            : `${woken}, with a new conversation: Claude Code's last one is unknown`,
+            : switched
+              ? `${woken}: it runs on ${name} now`
+              : `${woken}, with a new conversation: ${name}'s last one is unknown`,
         })
         yield* sendStart(
           session,
@@ -1760,6 +1905,7 @@ export class SessionRelay extends Context.Service<
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
+            ...harnesses.of(session).flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -1769,25 +1915,30 @@ export class SessionRelay extends Context.Service<
 
       /**
        * Why the Session's Claude Code can't start: values its Environment needs are unset, or
-       * there is no Claude credential to run it on, its Creator's (ADR 0026). `you` is who is told.
+       * there is no Claude credential to run it on, its Creator's (ADR 0026), or for pi none of
+       * their Models (ADR 0029). `you` is who is told.
        */
       const cantStartOn = Effect.fn("SessionRelay.cantStartOn")(function* (
         session: SessionSummary,
         you: Participant | undefined,
       ) {
+        const { name } = harnesses.of(session)
         const needed = yield* environments.valuesNeeded(session.repo)
         if (needed.length > 0) {
           return {
-            message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
+            message: `${name} could not start: ${cantStartText(session.repo, needed)}`,
             valuesNeeded: true,
           }
         }
         const { creator } = session
-        const noCredential = (yield* members.isMember(creator.id))
-          ? noClaudeCredential(creator, you)
+        const nothing = (yield* members.isMember(creator.id))
+          ? (yield* harnesses.of(session).whyNotRunnable(creator, you))?.refusal
           : `${creator.login}, who started this Session, isn't a Member of this Hub any more.`
-        if (noCredential !== undefined) {
-          return { message: `Claude Code could not start: ${noCredential}`, valuesNeeded: false }
+        if (nothing !== undefined) {
+          return {
+            message: `${name} could not start: ${nothing}`,
+            valuesNeeded: false,
+          }
         }
         return undefined
       })
@@ -1975,6 +2126,48 @@ export class SessionRelay extends Context.Service<
 
       // ── New Sessions ─────────────────────────────────────────────────────
 
+      /**
+       * A new Session's Harness on the Runner, and the model and thinking level to check with it.
+       * A model names its Harness (ADR 0030), which must be the one asked for, if one is. Without a
+       * model, the one asked for; else, on a Runner that runs pi (ADR 0029), Claude Code when the
+       * Creator's default Model is Claude's and they run Claude's Models there (their
+       * ProvidersState's `claudeHarness`), and pi otherwise, on that default Model.
+       */
+      const newSessionHarness = Effect.fn("SessionRelay.newSessionHarness")(function* (
+        message: Extract<WebToHub, { readonly _tag: "CreateSession" }>,
+        runner: OnlineRunner,
+        creator: Participant,
+      ): Effect.fn.Return<
+        { readonly harness: SessionHarness; readonly asked: ModelSetting } | string,
+        SqlError
+      > {
+        const { model, thinkingLevel } = message
+        const level = thinkingLevel === undefined ? {} : { thinkingLevel }
+        // As its hello said: it is online.
+        const known = yield* runners.get(runner.id)
+        const runsPi = Option.exists(known, ({ harnesses: runs }) => runs?.includes("Pi") === true)
+        const on = (asked: Harness | undefined, setting: ModelSetting) => {
+          const harness = harnesses.forNew(asked, { name: runner.name, runsPi })
+          return typeof harness === "string" ? harness : { harness, asked: setting }
+        }
+        if (model !== undefined) {
+          const of = harnessOfModel(model)
+          if (message.harness !== undefined && message.harness !== of) {
+            return `${model} runs on ${harnesses.of({ harness: of }).name}, not ${harnesses.of({ harness: message.harness }).name}.`
+          }
+          return on(of, { model, ...level })
+        }
+        if (message.harness !== undefined || !runsPi) return on(message.harness, level)
+        const first = defaultProviderModel(yield* modelCatalog.modelsFor(creator.id))
+        if (
+          first?.provider === "anthropic" &&
+          (yield* members.claudeHarness(creator.id)) === "ClaudeCode"
+        ) {
+          return on("ClaudeCode", level)
+        }
+        return on("Pi", level)
+      })
+
       /** A Session to create and start, from New Session. */
       interface NewSessionPlan {
         readonly repo: RepoName
@@ -1987,64 +2180,23 @@ export class SessionRelay extends Context.Service<
         readonly why: Why
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
-        /** Its model and effort (#128), checked with `checkModel`; Claude Code's default if absent. */
+        /** What runs its agent (ADR 0029), until its model is the other's (ADR 0030). */
+        readonly harness: SessionHarness
+        /** Its model and thinking level (#128), checked by its Harness; its default if absent. */
         readonly model?: ModelSetting
       }
-
-      /** A model and effort checked against what a Runner's Claude Code takes (#128). */
-      interface CheckedModel {
-        readonly setting: ModelSetting
-        /** What the Runner's Claude Code calls the model; for the default, the model it runs. */
-        readonly label: string | undefined
-      }
-
-      /**
-       * A model and effort as asked for (#128), checked against what the Runner's Claude Code
-       * takes, as it last said in its hello: the setting, or why it is refused. A model it doesn't
-       * list is refused with Claude Code's own words. With no list, as from a Runner whose Claude
-       * Code couldn't say, only Claude Code's default is taken.
-       */
-      const checkModel = Effect.fn("SessionRelay.checkModel")(function* (
-        runnerId: RunnerId,
-        asked: ModelSetting,
-      ): Effect.fn.Return<CheckedModel | string, SqlError> {
-        const known = Option.getOrUndefined(yield* runners.get(runnerId))
-        const models = known?.models ?? null
-        if (models === null) {
-          if (asked.model === undefined && asked.effort === undefined) {
-            return { setting: {}, label: undefined }
-          }
-          return `${known?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
-        }
-        const model = asked.model === undefined ? models.default : findModel(models, asked.model)
-        if (model === undefined) return modelNotFoundText(asked.model ?? "")
-        if (asked.effort !== undefined) {
-          if (!model.effort) return `${model.label} takes no effort level.`
-          if (!models.efforts.includes(asked.effort)) {
-            return `Claude Code on ${known?.name ?? "the Runner"} has no effort level '${asked.effort}'.`
-          }
-        }
-        return {
-          setting: {
-            // The `default` alias is no setting: Claude Code's default, whatever it is then.
-            ...(model !== models.default && asked.model !== undefined && { model: asked.model }),
-            ...(asked.effort !== undefined && { effort: asked.effort }),
-          },
-          label: model.label,
-        }
-      })
 
       /**
        * Creates a Session and starts it on the plan's Runner, which must be online and able to
        * start Sessions: the Session, or why it can't start, as for a Creator with no Claude
-       * credential, or an Environment that is missing or needs values.
+       * credential (or, for pi, no Models), or an Environment that is missing or needs values.
        */
       const startNew = Effect.fn("SessionRelay.startNew")(function* (
         plan: NewSessionPlan,
       ): Effect.fn.Return<SessionSummary | string, SqlError> {
         const { repo, runner } = plan
-        const noCredential = noClaudeCredential(plan.creator, plan.why.by)
-        if (noCredential !== undefined) return noCredential
+        const nothing = yield* plan.harness.whyNotRunnable(plan.creator, plan.why.by)
+        if (nothing !== undefined) return nothing.refusal
         const missing = yield* environmentRelay.missingEnvironment(repo)
         if (missing !== undefined) return missing
         const needed = yield* environments.valuesNeeded(repo)
@@ -2059,6 +2211,7 @@ export class SessionRelay extends Context.Service<
           runnerId: runner.id,
           creatorId: plan.creator.id,
           createdAt: yield* Clock.currentTimeMillis,
+          ...plan.harness.flag,
           ...modelFlags(plan.model ?? {}),
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
@@ -2077,6 +2230,7 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
+            ...harnesses.of(session).flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -2109,6 +2263,7 @@ export class SessionRelay extends Context.Service<
           }
         | MemberCommand
         | McpServerCommand
+        | ProviderCommand
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -2121,6 +2276,23 @@ export class SessionRelay extends Context.Service<
             ...("requestId" in message ? { requestId: message.requestId } : {}),
           },
         ) => peer.send(CommandFailed.make({ command: message._tag, message: why, ...about }))
+
+        /**
+         * Answers a command the database failed with a refusal to try again, logging the failure
+         * as `what`.
+         */
+        const triedAgain =
+          (message: WebToHub, what: string) =>
+          <A, R>(effect: Effect.Effect<A, SqlError, R>) =>
+            effect.pipe(
+              Effect.catchTag("SqlError", (error) =>
+                Effect.logError(what, error).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                  ),
+                ),
+              ),
+            )
 
         /**
          * What Repo access says of a command (ADR 0003), asked off the lock: what GitHub said, to
@@ -2138,7 +2310,8 @@ export class SessionRelay extends Context.Service<
           if (isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
-          let creator: Participant | undefined
+          /** The Session the command drives, which only its Creator may (ADR 0026). */
+          let driven: SessionSummary | undefined
           switch (message._tag) {
             case "WebHello":
             case "LeaveSession":
@@ -2167,7 +2340,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return {}
               repo = session.value.repo
               refusal = "There is no such Session."
-              if (drivingCommands.has(message._tag)) creator = session.value.creator
+              if (drivingCommands.has(message._tag)) driven = session.value
             }
           }
           const checked = yield* access.check(you, repo).pipe(
@@ -2177,7 +2350,10 @@ export class SessionRelay extends Context.Service<
             ),
           )
           // Only once the person may see the Session: one they can't is no such Session to them.
-          const notYours = creator === undefined ? undefined : driveRefusal(you, creator)?.refusal
+          const notYours =
+            driven === undefined
+              ? undefined
+              : driveRefusal(you, driven.creator, driven.harness)?.refusal
           if ("allowed" in checked) {
             return {
               learned: { repo, allowed: checked.allowed },
@@ -2337,7 +2513,13 @@ export class SessionRelay extends Context.Service<
               }
               const behind = runnerRefusal(runner)
               if (behind !== undefined) return refuse(message, behind, { requestId })
-              const model = yield* checkModel(runner.id, message)
+              const chosen = yield* newSessionHarness(message, runner, you)
+              if (typeof chosen === "string") return refuse(message, chosen, { requestId })
+              const { harness } = chosen
+              const model = yield* harness.check(chosen.asked, {
+                runnerId: runner.id,
+                creatorId: you.id,
+              })
               if (typeof model === "string") return refuse(message, model, { requestId })
               // Repo access was checked before the lock was taken. The branches are the form's
               // word (ADR 0023): one that isn't there fails the clone, as it always has.
@@ -2354,6 +2536,7 @@ export class SessionRelay extends Context.Service<
                       ? `Started on ${runner.name} on ${branch.name}`
                       : `Started on ${runner.name} from ${branch._tag === "Create" ? branch.from : branch.name}`,
                 },
+                harness,
                 model: model.setting,
                 created: (session) =>
                   peer.send(
@@ -2543,17 +2726,33 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
-              const checked = yield* checkModel(session.value.runnerId, message)
+              // The model says its Harness (ADR 0030): Claude Code's default, which names none,
+              // is Claude Code's. A pi Session always names its model.
+              const was = harnessSet(session.value)
+              const to = harnessOfModel(message.model)
+              const harness = harnesses.of({ harness: to })
+              const checked = yield* harness.check(message, {
+                runnerId: session.value.runnerId,
+                creatorId: session.value.creator.id,
+              })
               if (typeof checked === "string") return refuse(message, checked, { sessionId })
+              // The other Harness: its Runner must run both, and its Creator have what it runs on.
+              if (to !== harnessNow(session.value)) {
+                const refused =
+                  (yield* harnesses.switchRefusal(to, session.value.runnerId)) ??
+                  (yield* harness.whyNotRunnable(session.value.creator, you))?.refusal
+                if (refused !== undefined) return refuse(message, refused, { sessionId })
+              }
               const { setting } = checked
               if (
                 session.value.model === setting.model &&
-                session.value.effort === setting.effort
+                session.value.thinkingLevel === setting.thinkingLevel
               ) {
                 return
               }
-              // A running Claude Code is started again with it once no Turn runs (`relaunch`); one
-              // that isn't running starts with it when it wakes.
+              // A running Harness takes it once no Turn runs: in place, from a mod that switches
+              // models (`switchModel`), else started again (`relaunch`), on the other Harness for
+              // its model. One that isn't running starts with it when it wakes, on its Harness.
               const running = session.value.state === "Active" || session.value.state === "Frozen"
               yield* sessions.setModel(sessionId, setting, running)
               yield* logEvent(
@@ -2562,8 +2761,13 @@ export class SessionRelay extends Context.Service<
                   by: you,
                   ...setting,
                   ...(checked.label !== undefined && { modelLabel: checked.label }),
+                  ...(to !== was && { harness: to }),
                 }),
               )
+              if (!running) {
+                const now = yield* sessions.get(sessionId)
+                if (Option.isSome(now)) yield* settleHarness(now.value)
+              }
               yield* sessionUpdated(sessionId)
               return yield* deliverNext(sessionId)
             }
@@ -2669,6 +2873,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
+              const elsewhere = yield* agentElsewhere(session.value, agentId, "message")
+              if (elsewhere !== undefined) return refuse(message, elsewhere, { sessionId })
               const verdict = messageAgentVerdict({
                 state: session.value.state,
                 goingToSleep: live.goingToSleep(sessionId),
@@ -2748,6 +2954,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
+              const elsewhere = yield* agentElsewhere(session.value, agentId, "stop")
+              if (elsewhere !== undefined) return refuse(message, elsewhere, { sessionId })
               const cantStop = stopAgentRefusal({
                 state: session.value.state,
                 agent: Option.getOrUndefined(yield* sessions.agentStatus(sessionId, agentId)),
@@ -2840,6 +3048,8 @@ export class SessionRelay extends Context.Service<
                       : {}),
                   }),
                 )
+                // Claude's Models are among their Models, with a Claude credential.
+                yield* providerRelay.changed(you.id)
                 if ("removed" in changed) {
                   if (!changed.removed) return
                   return yield* sleepSessionsOf(you.id, () => ({
@@ -2856,15 +3066,10 @@ export class SessionRelay extends Context.Service<
               }),
             )
           }).pipe(
-            Effect.catchTags({
-              ClaudeCredentialRefusal: (error) => Effect.sync(() => refuse(message, error.message)),
-              SqlError: (error) =>
-                Effect.logError("A Claude credential command failed", error).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
-                  ),
-                ),
-            }),
+            Effect.catchTag("ClaudeCredentialRefusal", (error) =>
+              Effect.sync(() => refuse(message, error.message)),
+            ),
+            triedAgain(message, "A Claude credential command failed"),
           )
 
         /**
@@ -2887,15 +3092,7 @@ export class SessionRelay extends Context.Service<
                 yield* forwardsSignedOut(you.id, tokens)
               }),
             )
-          }).pipe(
-            Effect.catchTag("SqlError", (error) =>
-              Effect.logError("A CLI token command failed", error).pipe(
-                Effect.andThen(
-                  Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
-                ),
-              ),
-            ),
-          )
+          }).pipe(triedAgain(message, "A CLI token command failed"))
 
         /**
          * Checks the GitHub App's permissions now, off the lock since it waits on GitHub. Anyone
@@ -3104,88 +3301,59 @@ export class SessionRelay extends Context.Service<
           peer.send(BranchesListed.make({ requestId, repo, ...listed.success }))
         })
 
-        return (message) =>
-          isMemberCommand(message)
-            ? memberRelay.receiveWeb(client, message)
-            : isMcpServerCommand(message)
-              ? mcpServerRelay.receiveWeb(client, message)
-              : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
-                ? claudeCredentialCommand(message)
-                : message._tag === "RevokeCliToken"
-                  ? revokeCliToken(message)
-                  : message._tag === "CheckAppPermissions"
-                    ? checkAppPermissions(message.requestId)
-                    : message._tag === "CheckHubUpdate" || message._tag === "UpdateHub"
-                      ? (message._tag === "CheckHubUpdate"
-                          ? checkHubUpdate(message)
-                          : updateHub(message)
-                        ).pipe(
-                          Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("A Hub update command failed", error).pipe(
-                              Effect.andThen(
-                                Effect.sync(() =>
-                                  refuse(message, "The Hub could not do that; try again."),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                      : message._tag === "GetSessionDiskUsage"
-                        ? getSessionDiskUsage(message).pipe(
-                            Effect.catchTag("SqlError", (error) =>
-                              Effect.logError("A disk usage request failed", error).pipe(
-                                Effect.andThen(
-                                  Effect.sync(() =>
-                                    refuse(message, "The Hub could not do that; try again."),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        : message._tag === "ListRepos"
-                          ? listRepos(message)
-                          : message._tag === "ListBranches"
-                            ? listBranches(message)
-                            : message._tag === "CheckRepo"
-                              ? checkRepo(message).pipe(
-                                  Effect.catchTag("SqlError", (error) =>
-                                    Effect.logError("A Repo check failed", error).pipe(
-                                      Effect.andThen(
-                                        Effect.sync(() =>
-                                          refuse(message, "The Hub could not do that; try again."),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              : authorize(message).pipe(
-                                  Effect.flatMap((verdict) =>
-                                    Effect.gen(function* () {
-                                      const command =
-                                        verdict.refusal === undefined
-                                          ? yield* respelled(message)
-                                          : message
-                                      return yield* serialized(
-                                        Effect.gen(function* () {
-                                          const { learned, refusal } = verdict
-                                          if (learned !== undefined)
-                                            yield* accessKnown(you, learned.repo, learned.allowed)
-                                          if (refusal !== undefined) return refuse(message, refusal)
-                                          return yield* handle(command)
-                                        }),
-                                      )
-                                    }),
-                                  ),
-                                  Effect.catchTag("SqlError", (error) =>
-                                    Effect.logError("A web command failed", error).pipe(
-                                      Effect.andThen(
-                                        Effect.sync(() =>
-                                          refuse(message, "The Hub could not do that; try again."),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                )
+        /** A command about a Session, or that changes what the Hub holds: under the lock. */
+        const sessionCommand = (message: RelayedCommand) =>
+          authorize(message).pipe(
+            Effect.flatMap((verdict) =>
+              Effect.gen(function* () {
+                const command = verdict.refusal === undefined ? yield* respelled(message) : message
+                return yield* serialized(
+                  Effect.gen(function* () {
+                    const { learned, refusal } = verdict
+                    if (learned !== undefined) {
+                      yield* accessKnown(you, learned.repo, learned.allowed)
+                    }
+                    if (refusal !== undefined) return refuse(message, refusal)
+                    return yield* handle(command)
+                  }),
+                )
+              }),
+            ),
+            triedAgain(message, "A web command failed"),
+          )
+
+        return (message) => {
+          if (isMemberCommand(message)) return memberRelay.receiveWeb(client, message)
+          if (isMcpServerCommand(message)) return mcpServerRelay.receiveWeb(client, message)
+          if (isProviderCommand(message)) return providerRelay.receiveWeb(client, message)
+          switch (message._tag) {
+            case "SetClaudeCredential":
+            case "RemoveClaudeCredential":
+              return claudeCredentialCommand(message)
+            case "RevokeCliToken":
+              return revokeCliToken(message)
+            case "CheckAppPermissions":
+              return checkAppPermissions(message.requestId)
+            case "CheckHubUpdate":
+              return checkHubUpdate(message).pipe(
+                triedAgain(message, "A Hub update command failed"),
+              )
+            case "UpdateHub":
+              return updateHub(message).pipe(triedAgain(message, "A Hub update command failed"))
+            case "GetSessionDiskUsage":
+              return getSessionDiskUsage(message).pipe(
+                triedAgain(message, "A disk usage request failed"),
+              )
+            case "ListRepos":
+              return listRepos(message)
+            case "ListBranches":
+              return listBranches(message)
+            case "CheckRepo":
+              return checkRepo(message).pipe(triedAgain(message, "A Repo check failed"))
+            default:
+              return sessionCommand(message)
+          }
+        }
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -3198,6 +3366,8 @@ export class SessionRelay extends Context.Service<
             terminals: new Set(),
             repos: new RepoMap(),
           }
+          // A sign-in it started ends with it.
+          yield* providerRelay.attach(client)
           yield* Effect.gen(function* () {
             // Off the lock, since it may wait on GitHub. A Repo GitHub can't say about now is
             // asked about again at the next recheck.
@@ -3238,6 +3408,7 @@ export class SessionRelay extends Context.Service<
                     credential: claudeCredentials.info(you.id) ?? null,
                   }),
                 )
+                peer.send(yield* providerRelay.stateOf(you.id))
                 peer.send(CliTokenList.make({ tokens: yield* cliTokens.list(you.id) }))
                 const checked = yield* drift.latest
                 if (Option.isSome(checked)) {
@@ -3379,7 +3550,7 @@ export class SessionRelay extends Context.Service<
                 message.environmentVersion ?? null,
               )
               yield* changeState(session.value, "Active", {
-                message: `Claude Code started on ${runner.name}`,
+                message: `${harnesses.of(session.value).name} started on ${runner.name}`,
               })
               if (session.value.state === "Active") yield* sessionUpdated(message.sessionId)
               yield* deliverNext(message.sessionId)
@@ -3388,7 +3559,7 @@ export class SessionRelay extends Context.Service<
               // Asleep, with why in its history; queued prompts wait for the next wake.
               yield* sessions.setLastOutput(message.sessionId, null)
               return yield* claudeGone(session.value, {
-                message: `Claude Code could not start on ${runner.name}: ${message.message}`,
+                message: `${harnesses.of(session.value).name} could not start on ${runner.name}: ${message.message}`,
               })
             case "SessionStopped": {
               const settled = live.stopped(message.sessionId)
@@ -3416,8 +3587,8 @@ export class SessionRelay extends Context.Service<
                 asked ?? {
                   message:
                     message.reason === "Requested"
-                      ? "Claude Code stopped"
-                      : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
+                      ? `${harnesses.of(session.value).name} stopped`
+                      : `${harnesses.of(session.value).name} exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
                 },
                 restartBy !== undefined,
               )
@@ -3532,7 +3703,12 @@ export class SessionRelay extends Context.Service<
               }
               yield* runners.recordHello(
                 runner.id,
-                { version: hello.version, updater: hello.updater, models: hello.models },
+                {
+                  version: hello.version,
+                  updater: hello.updater,
+                  models: hello.models,
+                  harnesses: hello.harnesses,
+                },
                 yield* Clock.currentTimeMillis,
               )
               // Settles an update it restarted for, before its Sessions wake.
@@ -3573,7 +3749,7 @@ export class SessionRelay extends Context.Service<
                   revokedWhileAway.delete(session.id)
                   if (session.state !== "Asleep") {
                     yield* claudeGone(session, {
-                      message: `${runner.name} is back; Claude Code is not running there`,
+                      message: `${runner.name} is back; ${harnesses.of(session).name} is not running there`,
                     })
                   }
                   // Prompts queued while it was Frozen wake it.
@@ -3621,26 +3797,90 @@ export class SessionRelay extends Context.Service<
 
       // ── The mod channel ──────────────────────────────────────────────────
 
+      /**
+       * Hands the Session's agent what its Harness hasn't seen, once the Session switched to it
+       * (ADR 0030): a DeliverHandoff of its history after where that Harness last saw it, all of it
+       * for one new to the Session, queued before the next prompt. The Harness has been handed it
+       * once its mod polls past it (`handedOff`): until then, the mod's next hello hands it again,
+       * after its outbox was dropped or the Hub restarted, and a second hello hands nothing more.
+       */
+      const handOff = Effect.fn("SessionRelay.handOff")(function* (session: SessionSummary) {
+        const from = yield* sessions.handoffFrom(session.id)
+        if (Option.isNone(from) || live.handingOff(session.id)) return
+        const to = harnessNow(session)
+        const { name } = harnesses.of(session)
+        const was = harnesses.of({ harness: from.value }).name
+        const seen = Option.getOrUndefined(yield* sessions.seenSeq(session.id, to))
+        const { handoff, through } = yield* readHandoff((range) =>
+          log.lastTurns(session.id, { ...range, ...(seen !== undefined && { after: seen }) }),
+        )
+        if (handoff === undefined) return yield* handedOff(session.id, to, through)
+        yield* Effect.logInfo(
+          `Handing ${session.id}'s ${name} what happened on ${was}: ${handoff.text.length} characters`,
+        )
+        const seq = yield* outbox.enqueue(
+          session.id,
+          DeliverHandoff.make({ sessionId: session.id, from: from.value, ...handoff }),
+        )
+        live.handoffSent(session.id, { seq, harness: to, through })
+      })
+
+      /** The Harness was handed the Session's history `through` that entry: it has seen it. */
+      const handedOff = Effect.fn("SessionRelay.handedOff")(function* (
+        sessionId: SessionId,
+        harness: Harness,
+        through: EventSeq | undefined,
+      ) {
+        yield* sessions.handoffDone(sessionId)
+        if (through !== undefined) yield* sessions.setSeenSeq(sessionId, harness, through)
+      })
+
+      /** The mod polled for its commands after `after`: a handoff among those it took is handed. */
+      const modPolled = (sessionId: SessionId, after: ModCommandSeq) =>
+        // Off the lock unless one is on its way, as most polls find none.
+        live.handingOff(sessionId)
+          ? serialized(
+              Effect.suspend(() => {
+                const collected = live.handoffCollected(sessionId, after)
+                return collected === undefined
+                  ? Effect.void
+                  : handedOff(sessionId, collected.harness, collected.through)
+              }),
+            )
+          : Effect.void
+
       const modHello = Effect.fn("SessionRelay.modHello")(function* (
         sessionId: SessionId,
         hello: ModHello,
       ) {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
-        // The Session wakes into the conversation its mod last said hello as. One the Runner didn't
-        // launch, a `claude` run inside it, would leave its own conversation behind (#321).
-        const was = yield* sessions.claudeSessionId(sessionId)
-        if (Option.isSome(was) && was.value !== hello.claudeSessionId)
+        // The Session wakes into the conversation its mod last said hello as, its Harness's own
+        // (ADR 0030). One the Runner didn't launch, a `claude` run inside it, would leave its own
+        // conversation behind (#321).
+        const harness = harnessNow(session.value)
+        const was = yield* sessions.conversationId(sessionId, harness)
+        if (Option.isSome(was) && was.value !== hello.conversationId)
           yield* Effect.logWarning(
-            `Session ${sessionId}: its mod says hello as conversation ${hello.claudeSessionId}, not ${was.value}; the Session now resumes that one`,
+            `Session ${sessionId}: its mod says hello as conversation ${hello.conversationId}, not ${was.value}; the Session now resumes that one`,
           )
-        yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
+        yield* sessions.setConversationId(sessionId, harness, hello.conversationId)
         live.modHello(sessionId, {
           steers: hello.steers === true,
           attaches: hello.attaches === true,
+          switchesModels: hello.switchesModels === true,
         })
+        yield* handOff(session.value)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
+      }, serialized)
+
+      const modOutdated = Effect.fn("SessionRelay.modOutdated")(function* (sessionId: SessionId) {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session) || session.value.state !== "Active") return
+        yield* putToSleep(session.value, {
+          message: "Its mod is from before the Hub's update, so it sleeps, to wake on the new one",
+        })
       }, serialized)
 
       /**
@@ -3719,11 +3959,12 @@ export class SessionRelay extends Context.Service<
           // again at once, and hold up the rest of the queue.
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
+          const session = Option.getOrUndefined(yield* sessions.get(sessionId))
           toWeb(
             CommandFailed.make({
               command: "SendPrompt",
               sessionId,
-              message: `Your prompt could not be delivered to Claude Code: ${event.message}`,
+              message: `Your prompt could not be delivered to ${harnesses.of(session ?? {}).name}: ${event.message}`,
             }),
             (client) => client.you.id === failed.value.sender.id,
           )
@@ -3759,6 +4000,36 @@ export class SessionRelay extends Context.Service<
                 ? client.you.id === event.senderId
                 : client.joined.has(sessionId),
           )
+        }
+
+        if (event._tag === "ModelSwitchFailed") {
+          // The Session runs on what it ran on (ADR 0029): its setting says so again, at the
+          // thinking level set, which pi kept, and its history why. Only a Model of its Creator's
+          // is taken as the one it runs on: the Sandbox says it. Not over a model set since, which
+          // its own switch follows.
+          const session = yield* sessions.get(sessionId)
+          if (
+            Option.isSome(session) &&
+            session.value.model === event.asked &&
+            session.value.modelPending !== true
+          ) {
+            const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
+            if (findProviderModel(creatorModels, event.model) !== undefined) {
+              const { thinkingLevel } = session.value
+              yield* sessions.setModel(
+                sessionId,
+                { model: event.model, ...(thinkingLevel !== undefined && { thinkingLevel }) },
+                false,
+              )
+            }
+          }
+          yield* logEvent(
+            sessionId,
+            SandboxNoted.make({
+              message: `Couldn't switch to ${event.asked ?? "the default model"}: ${event.message}. It still runs on ${event.model}.`,
+            }),
+          )
+          return yield* sessionUpdated(sessionId)
         }
 
         if (event._tag === "AnswerFailed") {
@@ -3824,10 +4095,12 @@ export class SessionRelay extends Context.Service<
         if (logged !== undefined) yield* logEvent(sessionId, logged)
         if (event._tag === "AgentStarted") {
           // Its summary shows the description too, redacted as the log has it.
+          const now = yield* sessions.get(sessionId)
           yield* sessions.agentStarted(sessionId, {
             id: event.agentId,
             description: redactText(yield* needlesForSession(sessionId), event.description),
             startedAt: yield* Clock.currentTimeMillis,
+            harness: Option.isSome(now) ? harnessNow(now.value) : "ClaudeCode",
           })
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnStarted") {
@@ -3986,6 +4259,22 @@ export class SessionRelay extends Context.Service<
         }),
         Effect.catchCause((cause) =>
           Effect.logError("Could not send an OAuth Installation's lost connection", cause),
+        ),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // A Member's Connected providers changed (ADR 0029): what Sessions print is redacted of
+      // their keys and tokens as they are now, and their web clients are told, unless a command's
+      // answer told them.
+      const providerChanges = yield* connectedProviders.changes
+      yield* PubSub.take(providerChanges).pipe(
+        Effect.flatMap((change) => {
+          needlesByRepo.clear()
+          return change.answered ? Effect.void : providerRelay.changed(change.participantId)
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logError("Could not send a Member their Connected providers", cause),
         ),
         Effect.forever,
         Effect.forkIn(layerScope),
@@ -4233,6 +4522,8 @@ export class SessionRelay extends Context.Service<
         cliTokensChanged,
         membersChanged: memberRelay.membersChanged,
         modHello,
+        modOutdated,
+        modPolled,
         modEvents,
         openTunnel,
         installationFailed,

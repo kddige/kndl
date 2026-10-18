@@ -13,7 +13,7 @@ import {
   ToolCallId,
   TurnId,
 } from "./Ids.ts"
-import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
+import { Harness, ModelName, RunnerModels, ThinkingLevel } from "./Model.ts"
 import { SysinfoSample } from "./Sysinfo.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
@@ -232,10 +232,15 @@ export const RunnerSummary = Schema.Struct({
   /** Its update under way, or the last one's refusal or failure (#87). */
   update: Schema.optionalKey(RunnerUpdateState),
   /**
-   * The models and effort levels its Claude Code takes, as its last hello said (#128); absent
+   * The models and thinking levels its Claude Code takes, as its last hello said (#128); absent
    * from a Runner too old to say, or that couldn't find out.
    */
   models: Schema.optionalKey(RunnerModels),
+  /**
+   * The Harnesses it runs Sessions on, as its last hello said (ADR 0029); absent for one that runs
+   * Claude Code alone.
+   */
+  harnesses: Schema.optionalKey(Schema.Array(Harness)),
   /**
    * What its host looked like when it last sampled it (#350), kept after it disconnects, for the
    * page to show greyed out; absent from a Runner too old to sample, and before its first sample.
@@ -520,15 +525,23 @@ export const SessionSummary = Schema.Struct({
    */
   lastOutput: Schema.optionalKey(Schema.String),
   /**
-   * The model its Claude Code runs, as `--model` takes it (#128): absent for Claude Code's
-   * default. Shared: anyone with access may change it, from the next Turn on.
+   * The model it is set to (#128), which names its Harness (`harnessOfModel`, ADR 0030): Claude
+   * Code's as `--model` takes it, absent for Claude Code's default; or pi's, `<provider>/<id>`. Its
+   * Creator may change it, from the next Turn on. While a switch of Harness waits, it is the new
+   * Harness's, and `harness` still the one running.
    */
   model: Schema.optionalKey(ModelName),
-  /** Its effort level (#128): absent for Claude Code's default. */
-  effort: Schema.optionalKey(EffortLevel),
   /**
-   * Present while its Claude Code still runs on the model and effort from before it was changed:
-   * they apply once no Turn runs, when the Hub restarts Claude Code with them.
+   * What runs its agent now (ADR 0029, 0030); absent for a Session from before, which runs Claude
+   * Code.
+   */
+  harness: Schema.optionalKey(Harness),
+  /** Its thinking level (#128): absent for the model's usual level. */
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
+  /**
+   * Present while its Harness still runs on the model and thinking level from before they were
+   * changed: they apply once no Turn runs, when pi switches to them, or Claude Code, or the other
+   * Harness, starts again with them.
    */
   modelPending: Schema.optionalKey(Schema.Literal(true)),
   /**

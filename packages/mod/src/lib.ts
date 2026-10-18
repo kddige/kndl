@@ -4,23 +4,28 @@
 // glue stays hand-written beside this bundle (spike #4).
 
 export type { ModCommand, Participant, QuestionAnswer, ToolCallOutcome } from "@kndl/protocol"
+export {
+  handoffNote,
+  historyAnswer,
+  historyPath,
+  historyRequest,
+  historyToolName,
+  historyToolSpec,
+} from "./Handoff.ts"
 export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
-export type { AnswerResult } from "./HubMessages.ts"
+export type { AnswerResult, Command } from "./HubMessages.ts"
 export {
   agentWorktree,
   answerResult,
   askedQuestions,
   attachmentContext,
-  attachmentPart,
-  attachmentPartPath,
-  attachmentResult,
   attachmentToolName,
   attachmentToolSpec,
   backgroundedByStop,
   clip,
   deliveredPrompt,
-  maxAttachmentParts,
+  openAttachment,
   resultSummary,
   sharedSessionNote,
   startsDelivered,

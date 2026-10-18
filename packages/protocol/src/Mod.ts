@@ -3,13 +3,14 @@ import { AttachmentMediaType, PromptAttachments, textOrAttachments } from "./Att
 import {
   AgentId,
   AttachmentId,
-  ClaudeSessionId,
+  ConversationId,
   ModCommandSeq,
   ParticipantId,
   PromptId,
   SessionId,
   ToolCallId,
 } from "./Ids.ts"
+import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { Participant, PresenceChanged, QuestionAnswer, StopAgent, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -38,15 +39,18 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 // ── mod to Hub ─────────────────────────────────────────────────────────────
 
 /**
- * The mod's first message, once Claude Code's session has started, and again whenever the Hub
+ * The mod's first message, once its Harness's session has started, and again whenever the Hub
  * answers 409.
  */
 export const ModHello = Schema.TaggedStruct("ModHello", {
   protocolVersion: CurrentProtocolVersion,
   sessionId: SessionId,
-  /** Claude Code's own session id, for `claude --resume` when the Session wakes. */
-  claudeSessionId: ClaudeSessionId,
-  /** The model Claude Code runs, as it names it. */
+  /**
+   * Its Harness's conversation, to resume when the Session wakes on it: `claude --resume` and pi's
+   * `--session-id` take it.
+   */
+  conversationId: ConversationId,
+  /** The model the Harness runs, as it names it: Claude Code's id, or pi's `<provider>/<id>`. */
   model: Schema.NonEmptyString,
   /**
    * It takes a {@link DeliverIntoTurn} (#195). A mod from before doesn't say so, and the Hub
@@ -59,6 +63,18 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    * send it files those ways.
    */
   attaches: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It takes a {@link SwitchModel} (ADR 0029): a pi Session's. The Hub then switches its model
+   * between Turns that way, instead of restarting its Harness with a RelaunchSession.
+   */
+  switchesModels: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It takes a {@link DeliverHandoff} (ADR 0030), and serves its agent `GET /mod/history`.
+   *
+   * @deprecated Every mod of this protocol version takes one, so the Hub need not ask. Kept, still
+   * optional, until the Hub no longer reads it and the mods no longer send it; then it goes.
+   */
+  takesHandoffs: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
@@ -106,6 +122,20 @@ export const AnswerFailed = Schema.TaggedStruct("AnswerFailed", {
 })
 export type AnswerFailed = typeof AnswerFailed.Type
 
+/**
+ * A {@link SwitchModel} failed (ADR 0029): the Harness has no such model, as when its Provider
+ * was connected after the Session started, or refused it. The Session keeps running on the model
+ * it ran on, which `model` names, and its history says so.
+ */
+export const ModelSwitchFailed = Schema.TaggedStruct("ModelSwitchFailed", {
+  /** The model asked for; absent for the Harness's default. */
+  asked: Schema.optionalKey(ModelName),
+  /** The model it runs on still. */
+  model: ModelName,
+  message: Schema.String,
+})
+export type ModelSwitchFailed = typeof ModelSwitchFailed.Type
+
 /** Every message the mod sends the Hub: its hello, Turn events, and failed commands. */
 export const ModToHub = Schema.Union([
   ModHello,
@@ -114,6 +144,7 @@ export const ModToHub = Schema.Union([
   PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
+  ModelSwitchFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModToHub = typeof ModToHub.Type
 export type ModToHubEncoded = typeof ModToHub.Encoded
@@ -125,6 +156,7 @@ export const ModEvent = Schema.Union([
   PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
+  ModelSwitchFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModEvent = typeof ModEvent.Type
 
@@ -231,6 +263,35 @@ export const ModAttachment = Schema.Struct({
 export type ModAttachment = typeof ModAttachment.Type
 export type ModAttachmentEncoded = typeof ModAttachment.Encoded
 
+/**
+ * What happened in the Session while its agent's Harness wasn't running it (ADR 0030): the Turns
+ * since this Harness last saw the Session, or all of them for a Harness that never ran it,
+ * budgeted, oldest first. Sent once, after a switch of Harness, before the next prompt; the mod
+ * gives it to its agent as context for that prompt, not as a prompt of its own.
+ */
+export const DeliverHandoff = Schema.TaggedStruct("DeliverHandoff", {
+  sessionId: SessionId,
+  /** The Harness the Session ran on before. */
+  from: Harness,
+  /** The handoff, as the agent reads it. */
+  text: Schema.String,
+  /** The earliest Turn it leaves out, which the agent can read with `GET /mod/history`. */
+  earlierBefore: Schema.optionalKey(Schema.Natural),
+})
+export type DeliverHandoff = typeof DeliverHandoff.Type
+
+/**
+ * Run the Session's next Turns on this model and thinking level (ADR 0029), sent only while no
+ * Turn runs, and only to a mod whose hello says it `switchesModels`. Absent, each is the
+ * Harness's default.
+ */
+export const SwitchModel = Schema.TaggedStruct("SwitchModel", {
+  sessionId: SessionId,
+  model: Schema.optionalKey(ModelName),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
+})
+export type SwitchModel = typeof SwitchModel.Type
+
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([
   ModWelcome,
@@ -242,6 +303,8 @@ export const HubToMod = Schema.Union([
   StopAgent,
   PresenceChanged,
   DeliverAnswer,
+  SwitchModel,
+  DeliverHandoff,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
 export type HubToModEncoded = typeof HubToMod.Encoded
@@ -262,8 +325,38 @@ export const ModCommand = Schema.Union([
   StopAgent,
   PresenceChanged,
   DeliverAnswer,
+  SwitchModel,
+  DeliverHandoff,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
+
+/**
+ * One Turn of the Session's history as `GET /mod/history` gives it to its agent (ADR 0030): who
+ * prompted, what, which tools the agent called, and what it answered, each clipped.
+ */
+export const HistoryTurn = Schema.Struct({
+  /** Its place in the Session's history: `GET /mod/history?before=<seq>` reads what came before. */
+  seq: Schema.Natural,
+  /** Who prompted it: a Participant's name, an agent's, or the terminal. */
+  by: Schema.String,
+  prompt: Schema.String,
+  /** Each tool call, as `<tool>: <input>`, clipped. */
+  tools: Schema.Array(Schema.String),
+  answer: Schema.String,
+  /** The model it ran on, `<provider>/<id>` or a Claude Code model, when known. */
+  model: Schema.optionalKey(Schema.String),
+})
+export type HistoryTurn = typeof HistoryTurn.Type
+
+/**
+ * The answer to `GET /mod/history?before=<seq>&limit=<n>` (ADR 0030): the Turns before `before`
+ * (the latest without it), oldest first, and where the earlier ones start, if any are left.
+ */
+export const ModHistory = Schema.Struct({
+  turns: Schema.Array(HistoryTurn),
+  earlierBefore: Schema.optionalKey(Schema.Natural),
+})
+export type ModHistory = typeof ModHistory.Type
 
 /** The longest the Hub holds `GET /mod/commands` open before answering with no commands. */
 export const MaxCommandWaitMs = 25_000

@@ -225,6 +225,23 @@ describe("the People page", () => {
       }),
     )
     await owner.take("MemberList")
+    // A Connected provider of theirs (ADR 0029), as the Hub keeps one.
+    const connectedProviders = () =>
+      hub.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql`SELECT provider FROM connected_providers WHERE participant_id = 'github:2'`
+        }),
+      )
+    await hub.run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO connected_providers
+          (participant_id, provider, kind, credential, label, connected_at)
+          VALUES ('github:2', 'openai', 'ApiKey', 'sealed', 'abcd', 1)`
+      }),
+    )
+    expect(await connectedProviders()).toHaveLength(1)
 
     owner.send({ _tag: "RemoveMember", requestId: "remove", participantId: "github:2" })
 
@@ -235,8 +252,9 @@ describe("the People page", () => {
     expect(
       await hub.run(Effect.flatMap(CliTokens, (cliTokens) => cliTokens.authenticate(cli.token))),
     ).toEqual(Option.none())
-    // Their record stays, for the Sessions they were in.
+    // Their record stays, for the Sessions they were in; what they connected doesn't.
     expect(await participantIds(hub)).toEqual(["github:1", "github:2"])
+    expect(await connectedProviders()).toEqual([])
 
     expectTurnedAway(await githubSignIn(hub, { code: "friend-code" }))
     await expectSignedIn(

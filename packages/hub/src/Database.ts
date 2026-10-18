@@ -749,6 +749,127 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // pi-ai's vocabulary (ADR 0029): a Session's effort is its thinking level, its Claude session id
+  // the conversation id, and its history speaks pi-ai's names. A Turn's end reason becomes pi-ai's
+  // stop reason, a refusal being an error, and its usage takes pi-ai's keys, without a cost: none
+  // was counted then. A Runner's models are forgotten, its next hello says them again in the new
+  // names.
+  "0040_neutral_vocabulary": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions RENAME COLUMN effort TO thinking_level`
+    yield* sql`ALTER TABLE sessions RENAME COLUMN claude_session_id TO conversation_id`
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(event, '$.reason', CASE json_extract(event, '$.reason')
+        WHEN 'Answered' THEN 'stop'
+        WHEN 'Stopped' THEN 'aborted'
+        ELSE 'error'
+      END)
+      WHERE json_extract(event, '$._tag') = 'TurnEnded'
+        AND json_extract(event, '$.reason') IN ('Answered', 'Stopped', 'Refused', 'Failed')
+    `
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(event, '$.usage', json_object(
+        'model', json_extract(event, '$.usage.model'),
+        'input', json_extract(event, '$.usage.inputTokens'),
+        'output', json_extract(event, '$.usage.outputTokens'),
+        'cacheRead', json_extract(event, '$.usage.cacheReadInputTokens'),
+        'cacheWrite', json_extract(event, '$.usage.cacheCreationInputTokens')
+      ))
+      WHERE json_extract(event, '$._tag') = 'TurnEnded'
+        AND json_type(event, '$.usage.inputTokens') IS NOT NULL
+    `
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(
+        json_remove(event, '$.effort'), '$.thinkingLevel', json_extract(event, '$.effort')
+      )
+      WHERE json_extract(event, '$._tag') = 'ModelSwitched'
+        AND json_type(event, '$.effort') IS NOT NULL
+    `
+    yield* sql`UPDATE runners SET models = NULL`
+  }),
+  // Each Member's Connected providers (ADR 0029): one row per person and Provider, its pi-ai
+  // credential JSON encrypted as a Claude credential is, and the Models last found under it, as
+  // JSON, when, and why the last ask failed. `problem` says why the connection no longer works.
+  // `hub_device` holds the one UUID the Hub gives a sign-in as its device id, once one needs it.
+  "0041_connected_providers": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE connected_providers (
+        participant_id TEXT NOT NULL REFERENCES participants (id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        credential TEXT NOT NULL,
+        label TEXT NOT NULL,
+        connected_at INTEGER NOT NULL,
+        models TEXT NOT NULL DEFAULT '[]',
+        models_checked_at INTEGER,
+        models_problem TEXT,
+        problem TEXT,
+        PRIMARY KEY (participant_id, provider)
+      ) WITHOUT ROWID
+    `
+    yield* sql`CREATE TABLE hub_device (id TEXT NOT NULL)`
+  }),
+  // What runs a Session's agent (ADR 0029): null for a Session from before, which runs Claude Code.
+  "0042_session_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN harness TEXT`
+  }),
+  // A Session switches Harness (ADR 0030): each Harness it ran on keeps its own conversation, from
+  // its mod's last hello, and how far into the Session's history it has seen (`seen_seq`, the last
+  // entry, null for none), so a switch back resumes it and hands it only what came after. A
+  // Session's conversation from before is its Harness's. `handoff_from` is the Harness it switched
+  // from while the one it runs now is yet to be handed what it hasn't seen.
+  "0043_session_conversations": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE session_conversations (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        harness TEXT NOT NULL,
+        conversation_id TEXT,
+        seen_seq INTEGER,
+        PRIMARY KEY (session_id, harness)
+      ) WITHOUT ROWID
+    `
+    yield* sql`
+      INSERT INTO session_conversations (session_id, harness, conversation_id)
+      SELECT id, COALESCE(harness, 'ClaudeCode'), conversation_id FROM sessions
+      WHERE conversation_id IS NOT NULL
+    `
+    yield* sql`ALTER TABLE sessions DROP COLUMN conversation_id`
+    yield* sql`ALTER TABLE sessions ADD COLUMN handoff_from TEXT`
+  }),
+  // Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030): null for Claude Code,
+  // on their setup token, until they choose pi.
+  "0044_claude_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN claude_harness TEXT`
+  }),
+  // The Harness each subagent ran on (ADR 0030): only that Harness can message or stop it. Null for
+  // Claude Code, as for every agent from before.
+  "0045_agent_harness": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE agents ADD COLUMN harness TEXT`
+  }),
+  // The Hub has one device id (0041): `hub_device` holds one row at most, keyed by `one`, always
+  // 1, as `secrets_check` does. A Hub that made two kept the first it made.
+  "0046_one_hub_device": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE hub_device_one (
+        one INTEGER PRIMARY KEY CHECK (one = 1),
+        id TEXT NOT NULL
+      )
+    `
+    yield* sql`
+      INSERT INTO hub_device_one (one, id) SELECT 1, id FROM hub_device ORDER BY rowid LIMIT 1
+    `
+    yield* sql`DROP TABLE hub_device`
+    yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

@@ -42,7 +42,11 @@ const signingSecret = "sig_SIGNING_SECRET_31d8"
 const claudeSecret = "sk-ant-oat01-FAKE_CLAUDE_TOKEN_0000c1a7"
 const mcpServerSecret = "lin_MCP_SERVER_SECRET_2c9d"
 const oauthSecret = "oat_OAUTH_TOKEN_SECRET_8e3a"
+const providerSecret = "sk-proj-FAKE_PROVIDER_KEY_5b7e"
+const minimaxSecret = "mm-FAKE_PROVIDER_KEY_7c21"
 const secrets = [
+  providerSecret,
+  minimaxSecret,
   oauthSecret,
   buildSecret,
   runtimeSecret,
@@ -128,6 +132,13 @@ async function seededDatabase() {
     _tag: "ClaudeCredentialState",
     credential: { kind: "OAuthToken" },
   })
+  // Connected providers (ADR 0029): kept even though the fake Providers can't list their Models.
+  expect(
+    await env.request({ _tag: "ConnectProviderKey", provider: "openai", apiKey: providerSecret }),
+  ).toMatchObject({ _tag: "ProvidersState", connected: [{ provider: "openai" }] })
+  expect(
+    await env.request({ _tag: "ConnectProviderKey", provider: "minimax", apiKey: minimaxSecret }),
+  ).toMatchObject({ _tag: "ProvidersState", connected: [{ provider: "openai" }, {}] })
   const draft = { ...recipe, variables: variables({ build: buildSecret, runtime: runtimeSecret }) }
   expect((await env.testBuild(draft))._tag).toBe("TestBuildEnded")
   expect((await env.apply(draft, null))._tag).toBe("EnvironmentState")
@@ -207,6 +218,8 @@ const expectedPlan: SecretsResetPlan = {
   installations: [{ name: "Team Linear", secrets: ["API key"] }],
   sessionValues: 1,
   connections: ["Team Linear"],
+  // Named as the Account page names them.
+  connectedProviders: ["alice: minimax", "alice: openai"],
 }
 
 /** Every row of every table in the database, as text. */
@@ -290,6 +303,9 @@ describe("secrets-reset", () => {
       "It disconnects 1 OAuth Installation, dropping its tokens and its client, the one the Hub registered or the one entered by hand: Team Linear.",
     )
     expect(done).toContain("Connect each OAuth Installation again on the MCP page;")
+    expect(plan).toContain("It disconnects 2 Connected providers")
+    expect(plan).toContain("alice: openai")
+    expect(done).toContain("Disconnected 2 Connected providers")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
     expect((await reset(file, true)).outcome._tag).toBe("NothingToReset")

@@ -1,16 +1,18 @@
-// The signed-in person's own settings: their Claude credential, a setup token (ADR 0015, ADR
-// 0026), which the Sessions they start run on and which only they drive. It is pasted once and
-// checked with Anthropic as it is saved; after that it is write-only, so the page shows only its
-// last 4 characters and when it was added. And their CLI tokens (issue #179): a machine each that
+// The signed-in person's own settings: their Providers (Providers.tsx), first among them their
+// Claude credential, a setup token (ADR 0015, ADR 0026), the Connected provider for Anthropic, which
+// the Sessions they start run Claude on and which only they drive. It is pasted once and checked
+// with Anthropic as it is saved; after that it is write-only, so the page shows only its last 4
+// characters and when it was added. And their CLI tokens (issue #179): a machine each that
 // `kndl login` signed in, to revoke.
 
 import {
   type ClaudeCredentialInfo,
   claudeCredentialProblem,
   type CliTokenInfo,
+  type Harness,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, type ReactNode, useState } from "react"
+import { type FormEvent, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
 import { day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -25,12 +27,15 @@ import {
   Input,
   KeyIcon,
   PageHeader,
+  SegmentedControl,
   ServerIcon,
   Spinner,
   toast,
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { Fact } from "./Fact.tsx"
+import { ProvidersSection } from "./Providers.tsx"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -85,10 +90,18 @@ const styles = stylex.create({
     gap: space.s4,
     margin: 0,
   },
-  fact: { display: "flex", flexDirection: "column", gap: space.s0_5, minWidth: 0 },
-  term: { color: color.textMuted, fontSize: text.sm },
-  detail: { margin: 0, fontSize: text.base, fontWeight: weight.medium },
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
+  // Which Harness runs Claude's Models (ADR 0030), set apart from the token above it.
+  choice: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s2,
+    paddingTop: space.s4,
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
+  choiceLabel: { fontSize: text.base, fontWeight: weight.medium },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
   tokens: {
@@ -160,7 +173,7 @@ export function AccountView() {
       />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
-          <ClaudeSection />
+          <ProvidersSection claude={<ClaudeSection />} />
           <CliTokensSection />
         </div>
       </div>
@@ -179,13 +192,13 @@ function ClaudeSection() {
   return (
     <section aria-labelledby="claude-credential" {...stylex.props(styles.section)}>
       <div {...stylex.props(styles.sectionHead)}>
-        <h2 id="claude-credential" {...stylex.props(styles.sectionTitle)}>
-          Claude
-        </h2>
+        <h3 id="claude-credential" {...stylex.props(styles.sectionTitle)}>
+          Anthropic
+        </h3>
         <p {...stylex.props(styles.note)}>
-          The Sessions you start run on your own Claude account, through a setup token, on whichever
-          Runner they are on. Only you drive them: anyone else in them watches. Without one, you
-          can't start a Session.
+          Your Claude subscription, through a setup token. The Sessions you start run Claude's
+          Models on it, on any Runner. Without one, Claude's Models aren't yours to pick, and Claude
+          Code Sessions can't start.
         </p>
       </div>
       {credential === undefined ? (
@@ -202,12 +215,15 @@ function ClaudeSection() {
           }}
         />
       ) : (
-        <SavedCredential
-          credential={credential}
-          warning={warning}
-          onReplace={() => setReplacing(true)}
-          onRemove={() => setRemoving(true)}
-        />
+        <>
+          <SavedCredential
+            credential={credential}
+            warning={warning}
+            onReplace={() => setReplacing(true)}
+            onRemove={() => setRemoving(true)}
+          />
+          <ClaudeHarnessChoice />
+        </>
       )}
       <RemoveDialog
         open={removing}
@@ -241,7 +257,7 @@ function SavedCredential({
         <Fact term="Ends in">
           <span {...stylex.props(styles.mono)}>…{credential.last4}</span>
         </Fact>
-        <Fact term="Added">{new Date(credential.addedAt).toLocaleDateString()}</Fact>
+        <Fact term="Connected">{day(credential.addedAt)}</Fact>
       </dl>
       <div {...stylex.props(styles.actions)}>
         <Button size="sm" onClick={onReplace}>
@@ -255,11 +271,49 @@ function SavedCredential({
   )
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
+/**
+ * Which Harness runs Claude's Models in the person's new Sessions (ADR 0030): Claude Code, the
+ * default, or pi. Set as it is chosen; the Model picker can still choose the other.
+ */
+function ClaudeHarnessChoice() {
+  const hub = useHub()
+  const saved = useHubState((state) => state.providers?.claudeHarness)
+  // Shown as chosen until the Hub answers; a refusal shows what is saved again.
+  const [choosing, setChoosing] = useState<Harness | null>(null)
+  if (saved === undefined) return null
+  const choose = (harness: Harness) => {
+    setChoosing(harness)
+    hub.setClaudeHarness(harness).then(
+      () => setChoosing(null),
+      (cause: unknown) => {
+        setChoosing(null)
+        toast.show({
+          title: "Couldn't change what runs Claude's Models",
+          description: cause instanceof Error ? cause.message : String(cause),
+          intent: "warning",
+        })
+      },
+    )
+  }
   return (
-    <div {...stylex.props(styles.fact)}>
-      <dt {...stylex.props(styles.term)}>{term}</dt>
-      <dd {...stylex.props(styles.detail)}>{children}</dd>
+    <div {...stylex.props(styles.choice)}>
+      {/* Shown, and the control's own name. */}
+      <span aria-hidden="true" {...stylex.props(styles.choiceLabel)}>
+        Run Claude's Models with
+      </span>
+      <SegmentedControl
+        label="Run Claude's Models with"
+        options={[
+          { value: "ClaudeCode", label: "Claude Code" },
+          { value: "Pi", label: "pi" },
+        ]}
+        value={choosing ?? saved}
+        onValueChange={choose}
+      />
+      <p {...stylex.props(styles.note)}>
+        Claude Code: Claude's own tools, on your plan's limits. pi: the same tools and Subagents as
+        your other Providers. New Sessions start on it; the Model picker can switch.
+      </p>
     </div>
   )
 }

@@ -33,7 +33,7 @@ Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Cl
 - `--session-id` for a new Session, or `--resume` to wake one.
 - `--plugin-dir /opt/kndl/mod/<copy>/hub-link` and `--plugin-dir /opt/kndl/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- `--model` and `--effort` when the Session's [model and effort](/guides/manage-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
+- `--model` and `--effort` when the Session's [model and thinking level](/guides/manage-a-session/#choose-the-model-and-thinking-level) are set. Neither is written to its settings. `--effort` takes `low` to `max`, the levels a Claude Code Runner offers.
 
 Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/contributing/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
 
@@ -78,7 +78,7 @@ The Hub keeps the latest list in memory only and sends it to the web UI ([Forwar
 
 **Exiting on its own.** A Claude Code that exits on its own leaves Keep awake on, but the Session stays Asleep, so a crashing Claude Code isn't restarted over and over; it wakes when its Runner next connects, or on the next prompt.
 
-**A conversation never written down.** A conversation Claude Code never wrote down, because it exited too early, can't be resumed. Waking such a Session starts a fresh conversation, with the same id, on the same Workspace, and a note in the Session's history says so: the history still shows the earlier conversation, which Claude Code doesn't remember.
+**A conversation never written down.** A conversation Claude Code never wrote down, because it exited too early, can't be resumed. Waking such a Session starts a fresh conversation, with the same id, on the same Workspace, and a note in the Session's history says so: the history still shows the earlier conversation, which Claude Code doesn't remember. A conversation id that isn't a Claude Code session id, a lowercase UUID, is treated the same, but the fresh conversation gets an id of its own.
 
 **Frozen.** When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting, with its running subagents Interrupted. Claude Code runs in the Sandbox, not in the Runner, so it keeps running when the Runner's connection drops and when the Runner restarts. A restarted Runner reads each Session token back from its Claude Code, and the Hub gives the Session a fresh mod token; until then the mod relay asks the mod to retry, and a running Turn carries on meanwhile, since Claude Code reaches Anthropic directly.
 

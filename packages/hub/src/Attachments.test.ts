@@ -104,7 +104,7 @@ function modOf(hub: TestHub, token: string) {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
         sessionId,
-        claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+        conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
         steers: true,
         ...(attaches && { attaches: true }),
@@ -659,7 +659,7 @@ describe("a message to a subagent with attachments (#278)", () => {
     let logged: ReadonlyArray<string> = []
     const statuses = await aDayLater(async (at) => {
       await agentRuns(at)
-      await at.mod.post({ _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 })
+      await at.mod.post({ _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 })
       at.web.send({ _tag: "SleepSession", sessionId: at.sessionId })
       await at.runner.take("StopSession")
       at.runner.send({

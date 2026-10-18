@@ -36,6 +36,24 @@ export function credentialFromSecret(secret: string): ClaudeCredential | undefin
   return ClaudeCredential.cases.OAuthToken.make({ token: Redacted.make(value) })
 }
 
+/**
+ * The variables that would sign Claude Code in some other way than its Creator's setup token, or
+ * send its requests somewhere else: kept out of every Claude Code kndl runs, from wherever they
+ * came, as from a Variable or the Login environment. The Runner keeps them out of a Session's
+ * Harness's own process, pi's too, as pi passes its environment on to the Claude Code its Claude
+ * bridge runs (ADR 0029), and the bridge keeps them out of that Claude Code. Other processes in the
+ * Sandbox still get them.
+ */
+export const ClaudeCodeSignInVariables: ReadonlyArray<string> = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+]
+
 // ── A person's own credential, stored on the Hub (ADR 0015) ────────────────
 
 /** The kinds of Claude credential, by their `_tag`: a subscription token alone for now (#334). */

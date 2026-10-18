@@ -1,6 +1,7 @@
-// A Session's model and effort in the whole app (#128), against the fake Hub with its script not
-// playing unless a test asks: the picker in the composer, the transcript's notice and Turn
-// footer, a switch asked about while an agent runs, and New Session.
+// A Session's model and thinking level in the whole app (#128), against the fake Hub with its
+// script not playing unless a test asks: the picker in the composer, the transcript's notice and
+// Turn footer, a switch asked about while an agent runs, and New Session; and a pi Session's,
+// among its Creator's Models (ADR 0029); and a switch of Harness (ADR 0030).
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -18,7 +19,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId } = await import("../src/hub/fake/script.ts")
+const { bob, demoSessionId, piSessionId } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
@@ -35,8 +36,12 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-async function open(path: string, autoplay = false) {
-  const hub = new FakeHub({ stepMs: 2, autoplay })
+async function open(
+  path: string,
+  autoplay = false,
+  options: ConstructorParameters<typeof FakeHub>[0] = {},
+) {
+  const hub = new FakeHub({ stepMs: 2, autoplay, ...options })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -63,11 +68,12 @@ async function open(path: string, autoplay = false) {
   }
 }
 
-const radio = (start: string) => {
-  const found = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((row) =>
-    row.textContent?.startsWith(start),
+/** A row of the picker, which is a list to search (ADR 0030). */
+const option = (label: string) => {
+  const found = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (row) => row.textContent === label,
   )
-  if (!found) throw new Error(`no "${start}" row`)
+  if (!found) throw new Error(`no "${label}" option`)
   return found
 }
 
@@ -80,7 +86,7 @@ test("a switch shows in the transcript, and a Turn run before it names its model
   const { page, conversation, picker } = await open(`/sessions/${demoSessionId}`)
   await eventually(() => expect(conversation()).toContain("Alice Kim switched to Sonnet 5.5, High"))
   expect(picker()?.textContent).toBe("Sonnet 5.5")
-  expect(button("Effort: High", page).textContent).toBe("High")
+  expect(button("Thinking: High", page).textContent).toBe("High")
   // The first Turn ran on Claude Code's default, before Alice's switch.
   const turnModels = [...page.querySelectorAll('[title="The model this Turn ran on"]')]
   expect(turnModels.map((el) => el.textContent)).toEqual(["Opus 5.5"])
@@ -93,14 +99,14 @@ test("its Creator switches the model from the composer; everyone sees who did", 
   expect(page.querySelector('[title="The model this Turn ran on"]')).toBeNull()
   await step(() => picker()?.click())
   await settle()
-  await step(() => radio("Haiku 4.5").click())
+  await step(() => option("Haiku 4.5").click())
 
   await eventually(() => expect(conversation()).toContain("Alice Kim switched to Haiku 4.5"))
   expect(picker()?.textContent).toBe("Haiku 4.5")
   const sent = hub.received.flatMap((m) =>
-    m._tag === "SetSessionModel" ? [{ model: m.model, effort: m.effort }] : [],
+    m._tag === "SetSessionModel" ? [{ model: m.model, thinkingLevel: m.thinkingLevel }] : [],
   )
-  expect(sent).toEqual([{ model: "haiku", effort: undefined }])
+  expect(sent).toEqual([{ model: "haiku", thinkingLevel: undefined }])
 })
 
 test("while a switch is asked about, the picker shows it; Cancel goes back, Switch sends it", async () => {
@@ -119,7 +125,7 @@ test("while a switch is asked about, the picker shows it; Cancel goes back, Swit
   const pickFable = async () => {
     await step(() => picker()?.click())
     await settle()
-    await step(() => radio("Fable 5.1").click())
+    await step(() => option("Fable 5.1").click())
     await eventually(() => expect(dialog()?.textContent).toContain("Switch the model?"))
   }
 
@@ -156,7 +162,7 @@ test("New Session starts on the model picked in its dialog", async () => {
   })
   await step(() => choose.click())
   await settle()
-  await step(() => radio("Sonnet 5.5").click())
+  await step(() => option("Sonnet 5.5").click())
   await settle()
   expect(button("Model: Sonnet 5.5", newSession)).toBeDefined()
 
@@ -168,4 +174,166 @@ test("New Session starts on the model picked in its dialog", async () => {
   await eventually(() => expect(picker()?.textContent).toBe("Sonnet 5.5"))
   // Lets the new Session finish starting while React is watching.
   await settle(200)
+})
+
+test("a pi Session's Creator switches among their Models, by Provider; the switch names the Model", async () => {
+  const { hub, conversation, picker } = await open(`/sessions/${piSessionId}`)
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  await step(() => picker()?.click())
+  await settle()
+  const groups = [...document.querySelectorAll('[role="listbox"] [role="group"]')].map(
+    (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+  )
+  expect(groups).toEqual(["Anthropic · Claude Code", "Anthropic · pi", "OpenAI"])
+  // Nothing restarts for a switch: it isn't asked about, even with agents running.
+  await step(() => option("Claude Opus 5.5").click())
+  expect(document.querySelector('[role="dialog"]:not([data-type])')).toBeNull()
+
+  await eventually(() =>
+    expect(conversation()).toContain("Alice Kim switched to Claude Opus 5.5, High"),
+  )
+  expect(picker()?.textContent).toBe("Claude Opus 5.5")
+  const sent = hub.received.flatMap((m) =>
+    m._tag === "SetSessionModel" ? [{ model: m.model, thinkingLevel: m.thinkingLevel }] : [],
+  )
+  expect(sent).toEqual([{ model: "anthropic/claude-opus-5-5", thinkingLevel: "high" }])
+})
+
+// A Session switches Harness (ADR 0030): its Creator picks any Model the Session's Runner can
+// run, and a pick of the other Harness's is said once, plainly, before it is sent.
+
+/** The open list's group names. */
+const groupNames = () =>
+  [...document.querySelectorAll('[role="listbox"] [role="group"]')].map(
+    (group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+  )
+
+const switches = (hub: InstanceType<typeof FakeHub>) =>
+  hub.received.flatMap((m) =>
+    m._tag === "SetSessionModel" ? [{ model: m.model, thinkingLevel: m.thinkingLevel }] : [],
+  )
+
+test("a Claude Code Session on a Runner that runs pi switches to a pi Model, after saying what that does", async () => {
+  const { hub, page, conversation, picker } = await open("/sessions/s-readme")
+  hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
+  await eventually(() => expect(picker()?.textContent).toBe("Opus 5.5"))
+  const pickGpt = async () => {
+    await step(() => picker()?.click())
+    await settle()
+    expect(groupNames()).toEqual(["Anthropic · Claude Code", "Anthropic · pi", "OpenAI"])
+    await step(() => option("GPT-6-Sol").click())
+    await eventually(() => expect(dialog()?.textContent).toContain("Switch to pi?"))
+  }
+
+  await pickGpt()
+  expect(dialog()?.textContent).toContain(
+    "Switching to pi continues in its own conversation, with a handoff of this one. The next prompt waits until it's up.",
+  )
+  expect(picker()?.textContent).toBe("GPT-6-Sol")
+  await step(() => button("Cancel", dialog() ?? document).click())
+  await eventually(() => expect(dialog()).toBeNull())
+  expect(picker()?.textContent).toBe("Opus 5.5")
+  expect(switches(hub)).toEqual([])
+
+  await pickGpt()
+  await step(() => button("Switch", dialog() ?? document).click())
+  expect(switches(hub)).toEqual([{ model: "openai/gpt-6-sol", thinkingLevel: undefined }])
+  await eventually(() => expect(conversation()).toContain("Alice Kim switched to GPT-6-Sol on pi"))
+  expect(picker()?.textContent).toBe("GPT-6-Sol")
+  // It's a pi Session now: its prompt box asks for a prompt, not for Claude.
+  expect(page.querySelector("textarea")?.getAttribute("placeholder")).toBe("Send a prompt")
+})
+
+/** A reply whose Turn runs until it is stopped. */
+const working = () => [{ kind: "pause", steps: 1e6 }] as const
+
+test("a switch of Harness waiting for the Turn to end names the model it switches to", async () => {
+  const { hub, page, picker } = await open(`/sessions/${piSessionId}`, false, { reply: working })
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  hub.creatorPrompts(piSessionId, "Keep going")
+  await eventually(() => expect(hub.sessions.get(piSessionId)?.summary.currentTurn).not.toBeNull())
+
+  await step(() => picker()?.click())
+  await settle()
+  await step(() => option("Default · Opus 5.5").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Switch to Claude Code?"))
+  await step(() => button("Switch", dialog() ?? document).click())
+  expect(switches(hub)).toEqual([{ model: undefined, thinkingLevel: "high" }])
+
+  // pi runs the Turn on, but the Session is set to Claude Code's default, by its own name.
+  await eventually(() => expect(hub.sessions.get(piSessionId)?.summary.modelPending).toBe(true))
+  expect(hub.sessions.get(piSessionId)?.summary.harness).toBe("Pi")
+  await settle(100)
+  expect(picker()?.textContent).toBe("Opus 5.5")
+  expect(page.textContent).toContain("Opus 5.5 takes over when this Turn ends.")
+})
+
+test("a switch to pi waiting for Claude Code's Turn to end names the Model it switches to", async () => {
+  const { hub, page, picker } = await open("/sessions/s-readme", false, { reply: working })
+  hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
+  await eventually(() => expect(picker()?.textContent).toBe("Opus 5.5"))
+  hub.creatorPrompts("s-readme", "Keep going")
+  await eventually(() => expect(hub.sessions.get("s-readme")?.summary.currentTurn).not.toBeNull())
+
+  await step(() => picker()?.click())
+  await settle()
+  await step(() => option("GPT-6-Sol").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Switch to pi?"))
+  await step(() => button("Switch", dialog() ?? document).click())
+
+  await eventually(() => expect(hub.sessions.get("s-readme")?.summary.modelPending).toBe(true))
+  expect(hub.sessions.get("s-readme")?.summary.harness).toBe("ClaudeCode")
+  await settle(100)
+  expect(picker()?.textContent).toBe("GPT-6-Sol")
+  expect(page.textContent).toContain("GPT-6-Sol takes over when this Turn ends.")
+})
+
+test("a pi Session switches to Claude Code's model, keeping a level it takes, after saying so", async () => {
+  const { hub, conversation, picker } = await open(`/sessions/${piSessionId}`)
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  await step(() => picker()?.click())
+  await settle()
+  await step(() => option("Sonnet 5.5").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Switch to Claude Code?"))
+  expect(dialog()?.textContent).toContain(
+    "Switching to Claude Code continues in its own conversation, with a handoff of this one.",
+  )
+  await step(() => button("Switch", dialog() ?? document).click())
+  expect(switches(hub)).toEqual([{ model: "sonnet", thinkingLevel: "high" }])
+  await eventually(() =>
+    expect(conversation()).toContain("Alice Kim switched to Sonnet 5.5 on Claude Code, High"),
+  )
+  expect(picker()?.textContent).toBe("Sonnet 5.5")
+})
+
+test("a Creator without a Claude credential isn't offered Claude Code's models in a pi Session", async () => {
+  const { picker } = await open(`/sessions/${piSessionId}`, false, { claudeCredential: null })
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  await step(() => picker()?.click())
+  await settle()
+  expect(groupNames()).toEqual(["OpenAI"])
+})
+
+test("someone watching a pi Session sees its Model as the transcript names it, not their own Models", async () => {
+  const { page, picker } = await open(`/sessions/${piSessionId}`, false, { you: bob })
+  const shown = () =>
+    page.querySelector('[title="The model and thinking level this Session runs on"]')?.textContent
+  await eventually(() => expect(shown()).toBe("GPT-6-Sol·High"))
+  expect(picker()).toBeNull()
+})
+
+test("a pi Session names its Model, not Claude or Claude Code, and wakes without a setup token", async () => {
+  const { page, conversation } = await open(`/sessions/${piSessionId}`, false, {
+    claudeCredential: null,
+  })
+  await eventually(() => expect(conversation()).toContain("pi sends each model call"))
+  // Its reply is the Model's, by the name its Creator's Models give it.
+  const speakers = [...page.querySelectorAll("article span")].map((span) => span.textContent)
+  expect(speakers).toContain("GPT-6-Sol")
+  expect(speakers).not.toContain("Claude")
+  expect(page.querySelector("textarea")?.getAttribute("placeholder")).toBe("Send a prompt")
+  // It runs on the Creator's Connected providers, so it wakes as any Asleep Session does.
+  expect(page.textContent).toContain("This Session is Asleep")
+  expect(page.textContent).not.toContain("can't wake")
+  expect(page.textContent).not.toContain("Claude Code")
 })

@@ -15,12 +15,13 @@ describe("the Hub link", () => {
     expect(requests[0]?.url).toBe(`${hubUrl}/mod/hello`)
     expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
       _tag: "ModHello",
-      protocolVersion: 3,
+      protocolVersion: 4,
       sessionId: "s1",
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
       steers: true,
       attaches: true,
+      takesHandoffs: true,
     })
     expect(requests[1]?.url).toBe(`${hubUrl}/mod/commands?after=0&waitMs=25000`)
   })
@@ -316,7 +317,9 @@ describe("attachments (#276)", () => {
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
 
-    expect(registered).toEqual([expect.objectContaining({ name: "attachment", isDeferred: false })])
+    expect(registered).toContainEqual(
+      expect.objectContaining({ name: "attachment", isDeferred: false }),
+    )
   })
 
   test("a prompt with attachments marks each, and says what Claude is to be told of them", async ($, on) => {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
-import { InstallationId, type SessionId } from "@kndl/protocol"
-import { claudeLaunch, gatewayMcpServers, ModEnvironment } from "./ClaudeLaunch.ts"
+import { ConversationId, InstallationId, type SessionId } from "@kndl/protocol"
+import { claudeLaunch, gatewayMcpServers } from "./ClaudeLaunch.ts"
+import { HarnessVariable, ModEnvironment } from "./HarnessEnvironment.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 test("the mod's plugins read every variable the Runner sets for them, by the same name", async () => {
@@ -33,6 +34,8 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")
+  // Read back after a Runner restart, as its Harness can change while it runs (ADR 0030).
+  expect(env[HarnessVariable]).toBe("ClaudeCode")
   // The Hub's URL and the mod token are the mod relay's to give.
   expect(env).not.toHaveProperty(ModEnvironment.hubUrl)
   expect(env).not.toHaveProperty(ModEnvironment.modToken)
@@ -49,10 +52,30 @@ test("Claude Code is told which conversation it was launched as, new or resumed 
   })
 })
 
-test("the Session's model and effort go as flags, so they never reach settings.json", () => {
-  const { argv } = claudeLaunch({ ...options, model: "opus[1m]", effort: "xhigh" })
+test("waking resumes the conversation by its id", () => {
+  const resumed = {
+    _tag: "Resume",
+    id: ConversationId.make("9c528fab-0d1e-4f2a-8b3c-4d5e6f7a8b9c"),
+  } as const
+  expect(claudeLaunch({ ...options, conversation: resumed }).argv.slice(1, 3)).toEqual([
+    "--resume",
+    "9c528fab-0d1e-4f2a-8b3c-4d5e6f7a8b9c",
+  ])
+})
+
+test("the Session's model and thinking level go as flags, so they never reach settings.json", () => {
+  const { argv } = claudeLaunch({ ...options, model: "opus[1m]", thinkingLevel: "xhigh" })
   expect(argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "xhigh"])
-  expect(claudeLaunch({ ...options, effort: "low" }).argv.slice(-2)).toEqual(["--effort", "low"])
+  expect(claudeLaunch({ ...options, thinkingLevel: "low" }).argv.slice(-2)).toEqual([
+    "--effort",
+    "low",
+  ])
+})
+
+test("a thinking level Claude Code doesn't take leaves its effort at its default", () => {
+  // A Claude Code Runner never offers them, so the Hub refuses them first.
+  for (const thinkingLevel of ["off", "minimal"] as const)
+    expect(claudeLaunch({ ...options, thinkingLevel }).argv).not.toContain("--effort")
 })
 
 const servers = [

@@ -98,7 +98,7 @@ const linkTo = (current: { hub: TestHub }, modToken: string) => {
     modToken,
     hello: {
       sessionId,
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
     },
     fetch,
@@ -160,7 +160,7 @@ test("links to a real Hub: hello, a delivered prompt, and the Turn's events in t
       outcome: "Succeeded",
       output: "README.md",
     })
-    link.report({ _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 900 })
+    link.report({ _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 900 })
 
     await eventually(async () => (await history(current.hub)).length >= 5)
     expect((await history(current.hub)).map((entry) => entry.event)).toEqual([
@@ -189,7 +189,7 @@ test("links to a real Hub: hello, a delivered prompt, and the Turn's events in t
         outcome: "Succeeded",
         output: "README.md",
       },
-      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 900 },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 900 },
     ] as never)
     // The Turn took the prompt off the queue.
     const queue = await current.hub.run(

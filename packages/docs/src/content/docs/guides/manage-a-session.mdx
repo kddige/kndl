@@ -1,6 +1,6 @@
 ---
 title: Manage a Session
-description: Rename a Session, change its model and effort, put it to sleep or keep it awake, and delete and restore it.
+description: Rename a Session, change its model and thinking level, put it to sleep or keep it awake, and delete and restore it.
 sidebar:
   order: 2
 ---
@@ -21,28 +21,46 @@ Rename a Session, choose its model, control when it sleeps, and delete or restor
 
 A Session without a name shows its Work branch. Clear the name to go back to it.
 
-## Choose the model and effort
+## Choose the model and thinking level
 
-Two buttons under the prompt box show the Session's model and effort, such as **Sonnet 5.5** and **High**. The effort button says **Effort** while no level is set, and Claude Code picks one. It's one setting for the Session.
+Two buttons under the prompt box show the Session's Model and [Thinking level](/reference/glossary/#thinking-level), such as **GPT-5.5** and **High**. The thinking button says **Thinking** while no level is set, and the Model uses its usual level. It's one setting for the Session.
 
 <Steps>
 
-1. Press the model button and pick a model. **Default** is Claude Code's own default.
+1. Press the model button and pick a Model. Type to search. The list is yours, grouped by what runs each Model:
+   - **Anthropic · Claude Code**: Claude Code's models, on your [Claude credential](/guides/add-your-claude-credential/). **Default · …** is Claude Code's own default.
+   - **Anthropic · pi**: Claude's Models, run by pi.
+   - Each of your [Connected providers](/guides/connect-your-providers/), such as **OpenAI**, run by pi.
 
-2. Press the effort button and slide to **Low**, **Medium**, **High**, **Extra** or **Max**. With the keyboard, use the arrow keys and press Enter. **Use the default** goes back to no level.
+2. Press the thinking button and slide to a level: **Off**, **Minimal**, **Low**, **Medium**, **High**, **Extra** or **Max**, as far as the Model takes them. With the keyboard, use the arrow keys and press Enter. **Use the default** goes back to no level.
 
 </Steps>
 
-A model that takes no effort level has no effort button.
+A Model that takes no thinking level has no thinking button. Picking a Model that doesn't take the level set drops the level.
 
-The change applies from the next Turn. The Runner restarts Claude Code in the same conversation, and the next prompt waits until it's back. Restarting interrupts running subagents, so the web UI asks first while any run.
+The change applies from the next Turn, and the transcript says who switched to what. Others in the Session see the Model's name, not your list.
+
+- **Between pi's Models**, the switch happens between Turns, with nothing restarted, so the web UI doesn't ask first. The conversation carries over, tool calls and all. If pi can't run the Model, as when its Provider stopped working, the Session stays on the Model it ran on, and the transcript says why.
+- **Between Claude Code's models**, the Runner restarts Claude Code in the same conversation, and the next prompt waits until it's back. Restarting interrupts running subagents, so the web UI asks first while any run.
+
+### Switch between Claude Code and pi
+
+A Model in the other group switches the Session's [Harness](/reference/glossary/#harness), the program that runs its agent. The web UI asks first, **Switch to pi?** or **Switch to Claude Code?**: press **Switch**.
+
+- Once no Turn runs, the Runner stops one Harness and starts the other in the same Sandbox. The next prompt waits until it's up. Running subagents are interrupted.
+- The other Harness continues in a conversation of its own. Before your next prompt, it's handed a [Handoff](/reference/glossary/#handoff): each Turn it hasn't seen, with the prompt, the tools the agent called and what it answered, shortened. If they don't all fit, the oldest are left out.
+- The agent's reasoning, tool results, Attachments and subagents' own work don't carry over. The agent reads earlier Turns itself when your prompt needs them.
+- Switching back resumes that Harness's earlier conversation, with a Handoff of only what happened since.
+- An Asleep Session switches as it wakes.
+
+The transcript names the Harness, such as "Alice switched to GPT-5.5 on pi".
 
 ## Sleep and wake
 
-A Session goes to sleep after 15 minutes, by default, when nothing is happening: no Turn or subagent running, no prompt queued, no open question, and nobody in it. Sleeping stops Claude Code and the Sandbox. The Workspace, the conversation and the Sandbox's disks are kept.
+A Session goes to sleep after 15 minutes, by default, when nothing is happening: no Turn or subagent running, no prompt queued, no open question, and nobody in it. Sleeping stops the agent and the Sandbox. The Workspace, the conversation and the Sandbox's disks are kept.
 
 - **Sleep now**, in the header, puts it to sleep at once.
-- **Your next prompt** wakes it, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
+- **Your next prompt** wakes it, as does **Wake now** on its banner. The agent resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
 
 ## Keep it awake
 

@@ -15,7 +15,7 @@ export interface PopoverProps {
   title?: ReactNode
   /**
    * Names it for screen readers instead of the title, which is then only shown: for a title that
-   * is a value, such as the level an effort slider is on.
+   * is a value, such as the level a thinking slider is on.
    */
   label?: string
   description?: ReactNode

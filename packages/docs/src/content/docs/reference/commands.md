@@ -318,7 +318,7 @@ For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. It 
 It clears everything the key encrypted, and keeps the things that held it:
 
 - every Sensitive value, own and shared, keeping each Variable, which then needs a value;
-- people's Claude credentials;
+- people's Claude credentials, and their Connected providers, which each connects again;
 - Installations' header secret values, keeping each Installation;
 - OAuth Installations' tokens and clients, so each needs connecting again;
 - the record of Test builds, and replaced values kept for redaction.

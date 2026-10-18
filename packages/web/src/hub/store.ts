@@ -7,9 +7,10 @@
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
 // its Members and pending Invites, for the People page (#209), and the Hub's update check and its
 // latest update, for the Hub page (ADR 0028); and the MCP servers and their
-// Installations, and the MCP server change logs of the Repos the client asked about (#221). The
-// terminal's output itself goes straight to the view that draws it (HubClient.openTerminal), not
-// through here.
+// Installations, and the MCP server change logs of the Repos the client asked about (#221); and
+// the signed-in person's Connected providers, the Models their pi Sessions can run, and the sign-in
+// they have in progress (ADR 0029). The terminal's output itself goes straight to the view that
+// draws it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
@@ -31,6 +32,11 @@ import type {
   Participant,
   PresentParticipant,
   PendingInvite,
+  ProviderId,
+  ProvidersState,
+  RequestId,
+  SignInEnded,
+  SignInStep,
   PendingPairingCode,
   McpServer,
   McpServerLogEntry,
@@ -126,6 +132,29 @@ export interface RepoEnvironment {
   readonly versions: ReadonlyArray<EnvironmentVersionInfo>
 }
 
+/**
+ * The signed-in person's Connected providers, as the Hub last sent them (ADR 0029), and which
+ * Harness runs Claude's Models in their new Sessions (ADR 0030).
+ */
+export type Providers = Pick<
+  ProvidersState,
+  "connected" | "connectable" | "models" | "claudeHarness"
+>
+
+/**
+ * A sign-in to a Provider this client started (ADR 0029): the steps the Hub sent for it so far, and
+ * how it ended, once it has.
+ */
+export interface SignInProgress {
+  /** The StartSignIn's, which its steps, its end and an answer to it carry. */
+  readonly requestId: RequestId
+  readonly provider: ProviderId
+  /** Oldest first. */
+  readonly steps: ReadonlyArray<SignInStep>
+  /** Null while it runs. */
+  readonly ended: Pick<SignInEnded, "outcome" | "message"> | null
+}
+
 /** A Test build this client started, with its log so far and, once over, how it ended. */
 export interface TestBuildRun {
   readonly testBuild: TestBuild
@@ -209,6 +238,13 @@ export interface HubState {
    * {@link repoKey}.
    */
   readonly mcpServerLogs: Readonly<Record<string, ReadonlyArray<McpServerLogEntry>>>
+  /**
+   * The signed-in person's Connected providers, what they can connect, and the Models their pi
+   * Sessions can run (ADR 0029): null until the Hub says, which it does to them alone.
+   */
+  readonly providers: Providers | null
+  /** The sign-in this client last started, until another replaces it or it is cleared. */
+  readonly signIn: SignInProgress | null
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -221,6 +257,10 @@ export type ClientEvent =
   /** The client sent OpenTerminal, first or again after reconnecting: wait for a Snapshot. */
   | { readonly _tag: "TerminalOpened"; readonly sessionId: SessionId }
   | { readonly _tag: "TerminalClosed"; readonly sessionId: SessionId }
+  /** The client sent StartSignIn: follow its steps, in place of any sign-in before. */
+  | { readonly _tag: "SignInStarted"; readonly requestId: RequestId; readonly provider: ProviderId }
+  /** The page is done with the last sign-in's outcome; with `requestId`, if it is still that one. */
+  | { readonly _tag: "SignInCleared"; readonly requestId?: RequestId }
 
 export type HubAction = HubToWeb | ClientEvent
 
@@ -248,6 +288,8 @@ export const initialState: HubState = {
   hubUpdateRun: null,
   mcpServers: null,
   mcpServerLogs: {},
+  providers: null,
+  signIn: null,
 }
 
 const emptyJoined: JoinedSession = {
@@ -269,6 +311,11 @@ export function reduce(state: HubState, action: HubAction): HubState {
         connection: action.connection,
         terminals:
           action.connection.status === "online" ? state.terminals : waitAll(state.terminals),
+        // The Hub's sign-in was the connection's: it ends with it.
+        signIn:
+          action.connection.status === "online" || state.signIn?.ended !== null
+            ? state.signIn
+            : endSignIn(state.signIn, "Lost the connection to the Hub. Sign in again."),
       }
     case "Joined":
       if (state.joined[action.sessionId]) return state
@@ -395,7 +442,16 @@ export function reduce(state: HubState, action: HubAction): HubState {
       }
     }
     case "CommandFailed":
-      // Refusals are the client's to report.
+      // A refused sign-in is over. A refused answer to one, or cancel of it, which carries its
+      // requestId, isn't: the Hub's flow goes on, and says how it ended. Other refusals are the
+      // client's to report.
+      if (
+        state.signIn !== null &&
+        state.signIn.ended === null &&
+        action.command === "StartSignIn" &&
+        action.requestId === state.signIn.requestId
+      )
+        return { ...state, signIn: endSignIn(state.signIn, action.message) }
       return state
     case "EnvironmentState": {
       const key = repoKey(action.repo)
@@ -447,6 +503,40 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return forgetRepo(state, action.repo)
     case "ClaudeCredentialState":
       return { ...state, claudeCredential: action.credential }
+    case "ProvidersState":
+      return {
+        ...state,
+        providers: {
+          connected: action.connected,
+          connectable: action.connectable,
+          models: action.models,
+          claudeHarness: action.claudeHarness,
+        },
+      }
+    case "SignInStarted":
+      return {
+        ...state,
+        signIn: { requestId: action.requestId, provider: action.provider, steps: [], ended: null },
+      }
+    case "SignInStepped": {
+      const signIn = state.signIn
+      if (signIn?.requestId !== action.requestId || signIn.ended !== null) return state
+      return { ...state, signIn: { ...signIn, steps: [...signIn.steps, action.step] } }
+    }
+    case "SignInEnded": {
+      const signIn = state.signIn
+      if (signIn?.requestId !== action.requestId || signIn.ended !== null) return state
+      const ended = {
+        outcome: action.outcome,
+        ...(action.message !== undefined && { message: action.message }),
+      }
+      return { ...state, signIn: { ...signIn, ended } }
+    }
+    case "SignInCleared":
+      return state.signIn === null ||
+        (action.requestId !== undefined && action.requestId !== state.signIn.requestId)
+        ? state
+        : { ...state, signIn: null }
     case "CliTokenList":
       return { ...state, cliTokens: action.tokens }
     case "InviteCreated":
@@ -500,6 +590,11 @@ function forgetRepo(state: HubState, repo: string): HubState {
         ? state.testBuilds
         : (Object.fromEntries(kept) as Record<TestBuildId, TestBuildRun>),
   }
+}
+
+/** A sign-in in progress, failed for `message`. */
+function endSignIn(signIn: SignInProgress, message: string): SignInProgress {
+  return { ...signIn, ended: { outcome: "Failed", message } }
 }
 
 /** Whether an open terminal draws a frame: a Snapshot always, Output only once live. */

@@ -11,6 +11,7 @@ import { Socket } from "effect/socket"
 import { ClaudeModels } from "./ClaudeModels.ts"
 import { reportSysinfo } from "./HostSysinfo.ts"
 import { HubLink } from "./HubLink.ts"
+import { PiBundle } from "./PiBundle.ts"
 import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
 import { Tunnels } from "./Tunnels.ts"
@@ -139,6 +140,9 @@ const connectOnce = Effect.scoped(
     const tunnels = yield* Tunnels
     const hub = yield* HubLink
     const makeWebSocket = yield* Socket.WebSocketConstructor
+    // Whether it runs pi Sessions, for the hello: the first connection waits, before it opens,
+    // for the pi bundle the Runner prepares as it starts (PiBundle.ts).
+    const pi = yield* (yield* PiBundle).ready
     const url = runnerSocketUrl(config.hubUrl)
     let welcomed = false
     const lost = (message: string) => new ConnectionLost({ message, welcomed })
@@ -175,6 +179,7 @@ const connectOnce = Effect.scoped(
         updater: hello.updater,
         ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
         ...(models !== undefined && { models }),
+        ...(pi !== undefined && { harnesses: ["ClaudeCode", "Pi"] }),
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,

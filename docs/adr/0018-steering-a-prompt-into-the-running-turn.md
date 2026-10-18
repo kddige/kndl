@@ -33,3 +33,7 @@ So a steered prompt is appended:
 ## Amendment: only the Creator drives a Session (ADR 0026)
 
 Only a Session's Creator prompts it, so only they queue, steer or cancel its prompts. The Steer button shows only to them.
+
+## Amendment: a pi Session steers through pi's own steering (ADR 0029)
+
+In a pi Session, kndl's pi extension steers a prompt in with pi's own steering: pi reads it right before its next request, which the extension reports as SteeredPromptRead. One that arrives as the Turn ends stays in the conversation for the next prompt and starts no Turn of its own, as with Claude Code.

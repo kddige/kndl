@@ -1,11 +1,6 @@
 import { Schema } from "effect"
 import { AttachmentIds, PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion } from "./Build.ts"
-import {
-  ClaudeCredentialState,
-  RemoveClaudeCredential,
-  SetClaudeCredential,
-} from "./ClaudeCredential.ts"
 import { CliTokenId, CliTokenInfo } from "./Cli.ts"
 import {
   ApplyEnvironment,
@@ -44,8 +39,9 @@ import {
   McpServersState,
 } from "./McpServer.ts"
 import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
-import { EffortLevel, ModelName } from "./Model.ts"
+import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
+import { ProviderCommand, ProviderMessage } from "./Provider.ts"
 import {
   BranchChoice,
   BranchName,
@@ -128,18 +124,24 @@ export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
 export type SandboxNoted = typeof SandboxNoted.Type
 
 /**
- * A Participant changed the Session's model or effort (#128): what it is set to now, which its
- * Claude Code runs from the next Turn on. An absent `model` or `effort` is Claude Code's default.
+ * A Participant changed the Session's model or thinking level (#128): what it is set to now, which
+ * its Harness runs from the next Turn on. An absent `model` is Claude Code's default, and an absent
+ * `thinkingLevel` the model's usual level.
  */
 export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
   by: Participant,
   model: Schema.optionalKey(ModelName),
   /**
-   * What the Runner's Claude Code called the model then, such as `Sonnet 5.5`; for the default,
-   * the model it runs.
+   * What the model was called then, such as `Sonnet 5.5`: as the Runner's Claude Code named it,
+   * for its default the model it runs; or a pi Session's Model's label among its Creator's.
    */
   modelLabel: Schema.optionalKey(Schema.NonEmptyString),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
+  /**
+   * The Harness it runs on, when the switch changed it (ADR 0030): the next Turn runs there, with
+   * a handoff of what that Harness hasn't seen.
+   */
+  harness: Schema.optionalKey(Harness),
 })
 export type ModelSwitched = typeof ModelSwitched.Type
 
@@ -190,17 +192,25 @@ export type WebHello = typeof WebHello.Type
 
 /**
  * Start a new Session on a Repo, on a branch (ADR 0023): an existing one, directly or on a new
- * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is named. A
- * `model` or `effort` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
- * default is used (#128).
+ * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is
+ * named. A `model` or `thinkingLevel` its Harness doesn't take is refused (#128): Claude Code's as
+ * the Runner's Claude Code has them, absent for its default; pi's among its Creator's Models
+ * (ADR 0029), absent for their default Model (`defaultProviderModel`).
  */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
   requestId: RequestId,
   repo: RepoName,
   branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
+  /**
+   * What runs its agent (ADR 0029, 0030). Absent, the model says (`harnessOfModel`); without a
+   * model, Claude's Models run on the Creator's `claudeHarness`, and others on pi when the Runner
+   * runs it. Given, it must agree with the model. A pi Session's `model` is one of its Creator's
+   * ProvidersState Models, `openai/gpt-6-sol`.
+   */
+  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type CreateSession = typeof CreateSession.Type
 
@@ -353,17 +363,20 @@ export const RenameSession = Schema.TaggedStruct("RenameSession", {
 export type RenameSession = typeof RenameSession.Type
 
 /**
- * Set the Session's model and effort (#128), both at once; an absent one is Claude Code's default.
- * Anyone with access to its Repo may, in any state but Archived. A model or effort the Runner's
- * Claude Code doesn't take is refused, a model as Claude Code refuses it (`Model 'x' not found`).
- * Every client that can see the Session gets a SessionUpdated, and its log a ModelSwitched. A
- * running Turn goes on as it is: Claude Code is restarted with the new setting once no Turn runs,
- * or starts with it when the Session next wakes.
+ * Set the Session's model and thinking level (#128), both at once: an absent model is Claude Code's
+ * default, and an absent level the model's usual one. Its Creator may (ADR 0026), in any state but
+ * Archived. The model says its Harness (`harnessOfModel`, ADR 0030), and a model or level that
+ * Harness doesn't take is refused, a model as Claude Code refuses it (`Model 'x' not found`):
+ * Claude Code's as the Runner's Claude Code has them, pi's among its Creator's Models. Every client
+ * that can see the Session gets a SessionUpdated, and its log a ModelSwitched. A running Turn goes
+ * on as it is: once no Turn runs, pi switches in place, Claude Code is restarted with the new
+ * setting, and a model of the other Harness switches the Session to it; or the Session starts with
+ * it when it next wakes.
  */
 export const SetSessionModel = Schema.TaggedStruct("SetSessionModel", {
   sessionId: SessionId,
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type SetSessionModel = typeof SetSessionModel.Type
 
@@ -616,8 +629,7 @@ export const WebToHub = Schema.Union([
   SetSharedVariable,
   DeleteSharedVariable,
   McpServerCommand,
-  SetClaudeCredential,
-  RemoveClaudeCredential,
+  ProviderCommand,
   CheckAppPermissions,
   HubUpdateCommand,
   RepoLookup,
@@ -977,7 +989,7 @@ export const HubToWeb = Schema.Union([
   McpServerPackageRead,
   InstallationAuthorizing,
   InstallationNeedsClient,
-  ClaudeCredentialState,
+  ProviderMessage,
   AppPermissionsChecked,
   HubUpdateMessage,
   RepoChecked,

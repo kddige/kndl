@@ -82,3 +82,7 @@ All of ADR 0012's Child Sessions:
 ## Amendment: only the Creator messages or stops an agent (ADR 0026)
 
 Every Participant still watches a Session's agents. Only its Creator messages or stops one, since a message runs on the Creator's setup token like a prompt.
+
+## Amendment: a pi Session's Subagents are kndl's own (ADR 0029)
+
+pi has no subagents. In a pi Session, kndl's pi extension starts each one as a child pi session in the same process, on any of the Creator's Models, and reports it in the same events. They run in the background, and a finished run's result starts a main-loop Turn from the agent, in a task notification of the same shape as Claude Code's. The model has `message_agent` and `stop_agent`, as Claude Code's SendMessage and TaskStop. Each agent's conversation is a file on the Session's volume, so it survives sleep and a restart: the extension marks a running one Interrupted when pi stops, tells the main loop about it when pi starts again, and a message resumes it. A Claude Code Session keeps Claude Code's Agent tool until Claude Code is retired.

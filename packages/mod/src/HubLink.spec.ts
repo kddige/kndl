@@ -82,7 +82,7 @@ const harness = (
     modToken: "secret",
     hello: {
       sessionId: "s1",
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
     },
     fetch,
@@ -151,6 +151,48 @@ describe("HubLink", () => {
     link.stop()
     expect(paths(requests)).toEqual(["POST /mod/hello", "POST /mod/events"])
     expect(statuses).toEqual(["Linking", "Linked"])
+  })
+
+  test("reads a hello given as a function each time it says hello, as a pi Session's model changes", async () => {
+    let model = "openai/gpt-a"
+    const requests: Array<Request> = []
+    const link = new HubLink({
+      hubUrl: "http://hub.test",
+      modToken: "secret",
+      hello: () => ({
+        sessionId: "s1",
+        conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+        model,
+        switchesModels: true,
+      }),
+      fetch: async (url, init) => {
+        const request = {
+          method: init.method,
+          path: new URL(url).pathname,
+          ...(init.body === undefined ? {} : { body: init.body }),
+        }
+        requests.push(request)
+        if (request.path === "/mod/hello") return welcome
+        // The model switches, then the Hub restarts and forgets the mod.
+        if (requests.length === 2) {
+          model = "xai/grok-b"
+          return { status: 409, text: "" }
+        }
+        return new Promise(() => undefined)
+      },
+      after: (_ms, fn) => queueMicrotask(fn),
+      onCommand: async () => undefined,
+      onStatus: () => undefined,
+      log: () => undefined,
+    })
+    link.start()
+    await settle()
+    link.stop()
+    const said = requests
+      .filter((r) => r.path === "/mod/hello")
+      .map((r) => JSON.parse(r.body ?? "") as { model: string; switchesModels?: true })
+    expect(said.map((hello) => hello.model)).toEqual(["openai/gpt-a", "xai/grok-b"])
+    expect(said.every((hello) => hello.switchesModels === true)).toBe(true)
   })
 
   test("on 409 says hello again and polls from after=0", async () => {

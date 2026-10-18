@@ -41,7 +41,7 @@ export const runnerModels = {
     id: "claude-opus-5-5",
     label: "Opus 5.5",
     description: "Best for everyday, complex tasks",
-    effort: true,
+    reasoning: true,
   },
   models: [
     {
@@ -49,25 +49,30 @@ export const runnerModels = {
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       description: "Best for everyday, complex tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "sonnet",
       id: "claude-sonnet-5-5",
       label: "Sonnet 5.5",
       description: "Efficient for routine tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "haiku",
       id: "claude-haiku-4-5-20251001",
       label: "Haiku 4.5",
       description: "Fastest for quick answers",
-      effort: false,
+      reasoning: false,
     },
-    { alias: "opus[1m]", id: "claude-opus-5-5[1m]", label: "Opus 5.5 (1M context)", effort: true },
+    {
+      alias: "opus[1m]",
+      id: "claude-opus-5-5[1m]",
+      label: "Opus 5.5 (1M context)",
+      reasoning: true,
+    },
   ],
-  efforts: ["low", "medium", "high", "xhigh", "max"],
+  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
 }
 
 export const sessionSummary = {
@@ -166,17 +171,25 @@ export const turnEvents = [
   {
     _tag: "TurnEnded",
     turnId: "t-1",
-    reason: "Answered",
+    reason: "stop",
     durationMs: 5_200,
     usage: {
       model: "claude-opus-5-5",
-      inputTokens: 1_200,
-      outputTokens: 300,
-      cacheReadInputTokens: 40_000,
-      cacheCreationInputTokens: 0,
+      input: 1_200,
+      output: 300,
+      cacheRead: 40_000,
+      cacheWrite: 0,
+      cost: 0.0372,
     },
   },
-  { _tag: "TurnEnded", turnId: "t-2", reason: "Stopped", durationMs: 800 },
+  { _tag: "TurnEnded", turnId: "t-2", reason: "aborted", durationMs: 800 },
+  {
+    _tag: "TurnEnded",
+    turnId: "t-3",
+    reason: "error",
+    durationMs: 300,
+    errorMessage: "OpenAI API error (429): You exceeded your current quota",
+  },
   {
     _tag: "TurnStarted",
     turnId: "t-3",

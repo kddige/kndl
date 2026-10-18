@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { ProtocolVersion, type SessionId, type TerminalFrame } from "@kndl/protocol"
+import {
+  ProtocolVersion,
+  RequestId,
+  type SessionId,
+  type SignInStep,
+  type TerminalFrame,
+} from "@kndl/protocol"
 import {
   acceptsFrame,
   appendEntries,
@@ -25,6 +31,8 @@ import {
   sessionSummary,
   welcome,
 } from "./fixtures.ts"
+
+type SignInStepEncoded = (typeof SignInStep)["Encoded"]
 
 const s1 = "s-1" as SessionId
 const s2 = "s-2" as SessionId
@@ -304,7 +312,7 @@ describe("the transcript", () => {
       history([
         turnStart,
         delta("Hi"),
-        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 1 },
         turnTwo,
       ]),
     )
@@ -733,5 +741,165 @@ describe("People (#209)", () => {
     })
     expect(reduce(state, created)).toBe(state)
     expect(reduce(state, hub({ _tag: "InviteList", invites: [] })).invites).toEqual([])
+  })
+})
+
+/** A step of the OpenAI sign-in `requestId` started, as the Hub sends it. */
+const stepped = (step: SignInStepEncoded, requestId = "q-sign") =>
+  hub({ _tag: "SignInStepped", requestId, provider: "openai", step })
+
+/** The end of the OpenAI sign-in `requestId` started, as the Hub sends it. */
+const ended = (
+  outcome: "Connected" | "Failed" | "Cancelled",
+  message?: string,
+  requestId = "q-sign",
+) =>
+  hub({
+    _tag: "SignInEnded",
+    requestId,
+    provider: "openai",
+    outcome,
+    ...(message !== undefined && { message }),
+  })
+
+describe("Connected providers (ADR 0029)", () => {
+  const gpt = {
+    provider: "openai",
+    id: "gpt-6-sol",
+    label: "GPT-6-Sol",
+    thinkingLevels: ["low", "medium", "high"],
+  } as const
+  const providers = hub({
+    _tag: "ProvidersState",
+    claudeHarness: "ClaudeCode",
+    connected: [
+      {
+        provider: "openai",
+        kind: "SignIn",
+        label: "alice@example.com",
+        connectedAt: 1,
+        models: [gpt],
+        modelsCheckedAt: 2,
+      },
+    ],
+    connectable: [
+      { provider: "openai", name: "OpenAI", signIn: "Sign in with ChatGPT", apiKey: true },
+      { provider: "xai", name: "xAI", signIn: "Sign in with SuperGrok or X Premium", apiKey: true },
+    ],
+    models: [gpt],
+  })
+  const started: HubAction = {
+    _tag: "SignInStarted",
+    requestId: RequestId.make("q-sign"),
+    provider: "openai",
+  }
+  const openUrl = { _tag: "OpenUrl", url: "https://auth.openai.com/authorize?x=1" } as const
+  const paste = { _tag: "Paste", message: "Paste the redirect URL" } as const
+  const lost: HubAction = {
+    _tag: "ConnectionChanged",
+    connection: { status: "reconnecting", attempt: 1 },
+  }
+
+  test("ProvidersState is kept whole, answered or broadcast, in place of the last", () => {
+    expect(initialState.providers).toBeNull()
+    const state = run(providers)
+    expect(state.providers?.connected.map((each) => each.label)).toEqual(["alice@example.com"])
+    expect(state.providers?.connectable.map((each) => each.name)).toEqual(["OpenAI", "xAI"])
+    expect(state.providers?.models.map((model) => model.id)).toEqual(["gpt-6-sol"])
+    const none = reduce(
+      state,
+      hub({
+        _tag: "ProvidersState",
+        requestId: "q-1",
+        connected: [],
+        connectable: [],
+        models: [],
+        claudeHarness: "Pi",
+      }),
+    )
+    // With which Harness runs Claude's Models in new Sessions (ADR 0030).
+    expect(state.providers?.claudeHarness).toBe("ClaudeCode")
+    expect(none.providers).toEqual({
+      connected: [],
+      connectable: [],
+      models: [],
+      claudeHarness: "Pi",
+    })
+  })
+
+  test("a sign-in's steps go to the sign-in in progress, in order; another's are dropped", () => {
+    expect(initialState.signIn).toBeNull()
+    // Before any sign-in, a step is no one's.
+    expect(reduce(initialState, stepped(openUrl))).toBe(initialState)
+    const state = run(started, stepped(openUrl), stepped(paste), stepped(openUrl, "q-other"))
+    expect(state.signIn?.provider).toBe("openai")
+    expect(state.signIn?.steps.map((step) => step._tag)).toEqual(["OpenUrl", "Paste"])
+    expect(state.signIn?.ended).toBeNull()
+  })
+
+  test("a sign-in ends connected, failed or cancelled, and a new one replaces it", () => {
+    const failed = run(started, stepped(openUrl), ended("Failed", "The code expired."))
+    expect(failed.signIn?.ended).toEqual({ outcome: "Failed", message: "The code expired." })
+    // Its steps stay, so the page can say where it got to.
+    expect(failed.signIn?.steps).toHaveLength(1)
+    expect(reduce(failed, ended("Connected", undefined, "q-other"))).toBe(failed)
+    expect(run(started, ended("Cancelled")).signIn?.ended).toEqual({ outcome: "Cancelled" })
+
+    const again = reduce(failed, {
+      _tag: "SignInStarted",
+      requestId: RequestId.make("q-again"),
+      provider: "xai",
+    })
+    expect(again.signIn).toEqual({
+      requestId: RequestId.make("q-again"),
+      provider: "xai",
+      steps: [],
+      ended: null,
+    })
+    expect(reduce(again, { _tag: "SignInCleared" }).signIn).toBeNull()
+    // Clearing an older one leaves this one.
+    expect(reduce(again, { _tag: "SignInCleared", requestId: RequestId.make("q-sign") })).toBe(
+      again,
+    )
+  })
+
+  test("a refusal of the sign-in, or a lost connection, ends it as failed", () => {
+    const refused = run(
+      started,
+      hub({
+        _tag: "CommandFailed",
+        command: "StartSignIn",
+        requestId: "q-sign",
+        message: "OpenAI's sign-in isn't available.",
+      }),
+    )
+    expect(refused.signIn?.ended).toEqual({
+      outcome: "Failed",
+      message: "OpenAI's sign-in isn't available.",
+    })
+    expect(run(started, stepped(openUrl), lost).signIn?.ended).toEqual({
+      outcome: "Failed",
+      message: "Lost the connection to the Hub. Sign in again.",
+    })
+    // One that already ended stays as it ended.
+    const done = run(started, ended("Cancelled"))
+    expect(reduce(done, lost).signIn).toBe(done.signIn)
+  })
+
+  test("a refused answer to the sign-in, or cancel of it, leaves it running, as the Hub does", () => {
+    for (const command of ["AnswerSignIn", "CancelSignIn"]) {
+      const refused = run(
+        started,
+        stepped(openUrl),
+        hub({
+          _tag: "CommandFailed",
+          command,
+          requestId: "q-sign",
+          message: "This sign-in isn't waiting for an answer.",
+        }),
+      )
+      expect(refused.signIn?.ended).toBeNull()
+      expect(refused.signIn?.steps).toHaveLength(1)
+    }
   })
 })

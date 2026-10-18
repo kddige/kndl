@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { AgentId, AttachmentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
+import {
+  AgentId,
+  AttachmentId,
+  ConversationId,
+  EnvironmentVersion,
+  ParticipantId,
+  RunnerId,
+  SessionId,
+} from "@kndl/protocol"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { Attachments } from "./Attachments.ts"
@@ -37,12 +45,94 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0039, the Hub's last update check (ADR 0028): the
+ * Takes the database back to before migration 0046, the Hub's one device id: the migrator runs only
+ * the migrations after the last it ran, so a test of an earlier one undoes this first. The device
+ * id is kept.
+ */
+const beforeOneHubDevice = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`CREATE TABLE hub_device_any (id TEXT NOT NULL)`
+  yield* sql`INSERT INTO hub_device_any (id) SELECT id FROM hub_device`
+  yield* sql`DROP TABLE hub_device`
+  yield* sql`ALTER TABLE hub_device_any RENAME TO hub_device`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'one_hub_device'`
+})
+
+/** Takes the database back to before migration 0045, each subagent's Harness (ADR 0030), and 0046. */
+const beforeAgentHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeOneHubDevice
+  yield* sql`ALTER TABLE agents DROP COLUMN harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'agent_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0044, a Member's Harness for Claude (ADR 0030), and
+ * 0045.
+ */
+const beforeClaudeHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeAgentHarness
+  yield* sql`ALTER TABLE participants DROP COLUMN claude_harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'claude_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0043, each Harness's conversation (ADR 0030), and
+ * 0044. A conversation recorded since is lost.
+ */
+const beforeSessionConversations = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeClaudeHarness
+  yield* sql`DROP TABLE session_conversations`
+  yield* sql`ALTER TABLE sessions DROP COLUMN handoff_from`
+  yield* sql`ALTER TABLE sessions ADD COLUMN conversation_id TEXT`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_conversations'`
+})
+
+/**
+ * Takes the database back to before migration 0042, a Session's Harness (ADR 0029), and the ones
+ * after it.
+ */
+const beforeSessionHarness = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeSessionConversations
+  yield* sql`ALTER TABLE sessions DROP COLUMN harness`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_harness'`
+})
+
+/**
+ * Takes the database back to before migration 0041, Connected providers (ADR 0029), and 0042: the
  * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
  * first.
  */
+const beforeConnectedProviders = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeSessionHarness
+  yield* sql`DROP TABLE connected_providers`
+  yield* sql`DROP TABLE hub_device`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'connected_providers'`
+})
+
+/**
+ * Takes the database back to before migration 0040, pi-ai's vocabulary (ADR 0029), and the ones
+ * after it. The JSON it rewrote is left as it is: a test inserts what it needs after this.
+ */
+const beforeNeutralVocabulary = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* beforeConnectedProviders
+  yield* sql`ALTER TABLE sessions RENAME COLUMN thinking_level TO effort`
+  yield* sql`ALTER TABLE sessions RENAME COLUMN conversation_id TO claude_session_id`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'neutral_vocabulary'`
+})
+
+/**
+ * Takes the database back to before migration 0039, the Hub's last update check (ADR 0028), and
+ * 0040.
+ */
 const beforeHubUpdateCheck = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeNeutralVocabulary
   yield* sql`DROP TABLE hub_update_check`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'hub_update_check'`
 })
@@ -284,6 +374,336 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0046, the Hub's one device id", () => {
+  test("keeps the first a Hub made, and takes no second", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeOneHubDevice
+        yield* sql`INSERT INTO hub_device (id) VALUES ('device-1'), ('device-2')`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const kept = yield* sql`SELECT id FROM hub_device`
+        const second = yield* Effect.result(
+          sql`INSERT INTO hub_device (one, id) VALUES (1, 'device-3')`,
+        )
+        return { kept, second: second._tag }
+      }),
+    )
+    expect(after).toEqual({ kept: [{ id: "device-1" }], second: "Failure" })
+  })
+})
+
+describe("migration 0041, Connected providers", () => {
+  test("keeps every Member, and a person's Connected providers go with them", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeConnectedProviders
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`PRAGMA foreign_keys = ON`
+        yield* sql`INSERT INTO connected_providers
+          (participant_id, provider, kind, credential, label, connected_at)
+          VALUES ('p-1', 'openai', 'ApiKey', 'sealed', 'abcd', 2)`
+        const kept = yield* sql`
+          SELECT participant_id AS participantId, provider, kind, label, models,
+            models_checked_at AS modelsCheckedAt, models_problem AS modelsProblem, problem
+          FROM connected_providers
+        `
+        const people = yield* sql`SELECT id FROM participants`
+        yield* sql`DELETE FROM participants WHERE id = 'p-1'`
+        return {
+          kept,
+          people,
+          left: yield* sql`SELECT * FROM connected_providers`,
+          device: yield* sql`SELECT * FROM hub_device`,
+        }
+      }),
+    )
+    expect(after.people).toEqual([{ id: "p-1" }])
+    expect(after.kept).toEqual([
+      {
+        participantId: "p-1",
+        provider: "openai",
+        kind: "ApiKey",
+        label: "abcd",
+        models: "[]",
+        modelsCheckedAt: null,
+        modelsProblem: null,
+        problem: null,
+      },
+    ])
+    expect(after.left).toEqual([])
+    // The Hub's device id is made when a sign-in first needs it.
+    expect(after.device).toEqual([])
+  })
+})
+
+describe("migration 0044, a Member's Harness for Claude", () => {
+  test("keeps every Member, on Claude Code until they choose pi", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeClaudeHarness
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1), ('p-2', 'bob', 'Bob', 1, 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE participants SET claude_harness = 'Pi' WHERE id = 'p-2'`
+        return yield* sql<{ readonly id: string; readonly claudeHarness: string | null }>`
+          SELECT id, claude_harness AS claudeHarness FROM participants ORDER BY id
+        `
+      }),
+    )
+    expect(after).toEqual([
+      { id: "p-1", claudeHarness: null },
+      { id: "p-2", claudeHarness: "Pi" },
+    ])
+  })
+})
+
+describe("migration 0043, each Harness's conversation", () => {
+  test("keeps each Session's conversation as its Harness's, and a purge forgets them", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const conversation = ConversationId.make("0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeSessionConversations
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, harness,
+            conversation_id
+          ) VALUES
+            ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, NULL, ${conversation}),
+            ('s-2', 'o/r', 'main', 'claude/s-2', 'Asleep', 'r-1', 'p-1', 1, 'Pi', ${conversation}),
+            ('s-3', 'o/r', 'main', 'claude/s-3', 'Asleep', 'r-1', 'p-1', 1, NULL, NULL)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const sql = yield* SqlClient.SqlClient
+        const of = (id: string, harness: "ClaudeCode" | "Pi") =>
+          Effect.map(sessions.conversationId(SessionId.make(id), harness), Option.getOrUndefined)
+        const found = {
+          claudeCode: yield* of("s-1", "ClaudeCode"),
+          notPi: yield* of("s-1", "Pi"),
+          pi: yield* of("s-2", "Pi"),
+          notClaudeCode: yield* of("s-2", "ClaudeCode"),
+          none: yield* of("s-3", "ClaudeCode"),
+        }
+        const s1 = Option.getOrThrow(yield* sessions.get(SessionId.make("s-1")))
+        yield* sessions.purge(s1, 2)
+        const left = yield* sql<{ readonly id: string }>`
+          SELECT session_id AS id FROM session_conversations ORDER BY session_id
+        `
+        return { found, left: left.map((row) => row.id) }
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(after.found).toEqual({
+      claudeCode: conversation,
+      notPi: undefined,
+      pi: conversation,
+      notClaudeCode: undefined,
+      none: undefined,
+    })
+    expect(after.left).toEqual(["s-2"])
+  })
+})
+
+describe("migration 0042, a Session's Harness", () => {
+  test("a Session from before runs Claude Code, and a new one keeps its Harness", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeSessionHarness
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, 'sonnet')
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const pi = yield* sessions.create({
+          id: SessionId.make("s-2"),
+          repo: "o/r",
+          baseBranch: "main",
+          workBranch: "claude/s-2",
+          state: "Active",
+          runnerId: RunnerId.make("r-1"),
+          creatorId: ParticipantId.make("p-1"),
+          createdAt: 2,
+          harness: "Pi",
+          model: "openai/gpt-6-sol",
+        })
+        const before = Option.getOrThrow(yield* sessions.get(SessionId.make("s-1")))
+        return { before, pi }
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(after.before).not.toHaveProperty("harness")
+    expect(after.before.model).toBe("sonnet")
+    expect(after.pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol" })
+  })
+})
+
+describe("migration 0040, pi-ai's vocabulary", () => {
+  test("keeps each Session's history, thinking level and conversation, in pi-ai's names", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const alice = { id: ParticipantId.make("p-1"), login: "alice", name: "Alice" }
+    const conversation = ConversationId.make("0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeNeutralVocabulary
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        // Its models as a Runner from before said them.
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at, models)
+          VALUES ('r-1', 'build-box', 'hash', 1, ${JSON.stringify({
+            default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", effort: true },
+            models: [],
+            efforts: ["low", "high"],
+          })})`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model,
+            effort, claude_session_id
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, 'sonnet',
+            'high', ${conversation})
+        `
+        // A Turn ended for each reason there was, the first with its usage, and two switches.
+        for (const [seq, event] of [
+          [
+            0,
+            {
+              _tag: "TurnEnded",
+              turnId: "t-0",
+              reason: "Answered",
+              durationMs: 5200,
+              usage: {
+                model: "claude-opus-5-5",
+                inputTokens: 1200,
+                outputTokens: 300,
+                cacheReadInputTokens: 40000,
+                cacheCreationInputTokens: 7,
+              },
+            },
+          ],
+          [1, { _tag: "TurnEnded", turnId: "t-1", reason: "Stopped", durationMs: 800 }],
+          [
+            2,
+            { _tag: "TurnEnded", turnId: "t-2", agentId: "a-1", reason: "Refused", durationMs: 1 },
+          ],
+          [3, { _tag: "TurnEnded", turnId: "t-3", reason: "Failed", durationMs: 2 }],
+          [4, { _tag: "ModelSwitched", by: alice, model: "sonnet", effort: "high" }],
+          [5, { _tag: "ModelSwitched", by: alice }],
+          [6, { _tag: "SandboxNoted", message: "Capped at 4 CPUs" }],
+        ] as const) {
+          yield* sql`
+            INSERT INTO session_events (session_id, seq, at, event)
+            VALUES ('s-1', ${seq}, 2, ${JSON.stringify(event)})
+          `
+        }
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const sessions = yield* Sessions
+        const log = yield* SessionLog
+        const id = SessionId.make("s-1")
+        const session = Option.getOrThrow(yield* sessions.get(id))
+        return {
+          history: (yield* log.history(id)).map((entry): unknown => entry.event),
+          setting: { model: session.model, thinkingLevel: session.thinkingLevel },
+          conversation: yield* sessions.conversationId(id, "ClaudeCode"),
+          runnerModels: yield* sql`SELECT models FROM runners`,
+        }
+      }).pipe(Effect.provide([SessionsTest, SessionLog.layer])),
+    )
+    expect(after).toEqual({
+      history: [
+        {
+          _tag: "TurnEnded",
+          turnId: "t-0",
+          reason: "stop",
+          durationMs: 5200,
+          usage: {
+            model: "claude-opus-5-5",
+            input: 1200,
+            output: 300,
+            cacheRead: 40000,
+            cacheWrite: 7,
+          },
+        },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "aborted", durationMs: 800 },
+        { _tag: "TurnEnded", turnId: "t-2", agentId: "a-1", reason: "error", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-3", reason: "error", durationMs: 2 },
+        { _tag: "ModelSwitched", by: alice, model: "sonnet", thinkingLevel: "high" },
+        { _tag: "ModelSwitched", by: alice },
+        { _tag: "SandboxNoted", message: "Capped at 4 CPUs" },
+      ],
+      setting: { model: "sonnet", thinkingLevel: "high" },
+      conversation: Option.some(conversation),
+      // Its next hello says them again, in the new names.
+      runnerModels: [{ models: null }],
+    })
+  })
+})
 
 describe("migration 0038, a Runner's memory and load history", () => {
   test("keeps each disk-free point, without memory or load", async () => {
@@ -633,6 +1053,7 @@ const agent = (n: number) => ({
   id: AgentId.make(`a-${n}`),
   description: `Task ${n}`,
   startedAt: n,
+  harness: "ClaudeCode" as const,
 })
 
 describe("migration 0017, subagents", () => {

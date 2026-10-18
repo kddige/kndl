@@ -408,7 +408,7 @@ function AnsweredQuestion({
     <div
       ref={card}
       role="group"
-      aria-label="Claude's question"
+      aria-label="Question"
       onKeyDown={keyDown}
       {...stylex.props(styles.card)}
     >
@@ -550,8 +550,8 @@ function AnsweredQuestion({
           {sent
             ? "Sending your answer…"
             : question.multiSelect
-              ? "Pick any number, then confirm. Claude waits for an answer here or at the terminal."
-              : "Pick one, or press its number. Claude waits for an answer here or at the terminal."}
+              ? "Pick any number, then confirm. It waits for an answer here or at the terminal."
+              : "Pick one, or press its number. It waits for an answer here or at the terminal."}
         </span>
         {question.multiSelect && (
           <Button
@@ -589,7 +589,7 @@ function WatchedQuestion({
   if (!question) return null
   const others = othersPicks(picks, question, you)
   return (
-    <div role="group" aria-label="Claude's question" {...stylex.props(styles.card)}>
+    <div role="group" aria-label="Question" {...stylex.props(styles.card)}>
       <div {...stylex.props(styles.header)}>
         <WaitingDot sx={styles.dot} />
         <h2 {...stylex.props(styles.heading)}>

@@ -33,12 +33,44 @@
 //   `/.well-known/oauth-protected-resource`, reaches a server: it is answered `404`.
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
+//
+// A pi Session's model calls (ADR 0029) come through it too, to its Creator's Connected providers:
+//
+// - `/gateway/models/<provider>/<the Provider's API path>`, any method, by the mod token as above.
+//   An Installation's id is 24 random hex characters (Tokens.ts's randomId), so it is never
+//   `models`: the two never meet.
+// - Each refusal is in the Providers' own error shape, `{"error":{"message":…}}`, which pi shows:
+//   - `403`: a Claude Code Session's call (only pi Sessions spend Connected providers); a call that
+//     isn't one pi makes to the Provider's API, its inference or model-listing endpoints, so not
+//     its files, batches or fine-tuning (PiProviders.ts); a Provider its Creator hasn't
+//     connected, or must connect again. Claude's Models don't come through it: they run through
+//     Claude Code in the Sandbox.
+//   - `404`: a Provider kndl doesn't know. `400`: a path that could leave the Provider's API.
+//   - `429`: more calls at once than a Session may run. `503`: the Hub holds as many sign-ins'
+//     bodies as it may, or a sign-in couldn't be refreshed just now. `413`: a body larger than
+//     the Gateway takes. All three are in ModelCallLimits (Gateway.ts).
+//   - `502`: the Provider couldn't be reached, or redirected, which isn't followed.
+// - The call goes to the origin of the Provider's API (`https://api.openai.com`, or the one a
+//   sign-in names, as GitHub Copilot's does) with the path and query below the Provider's, so
+//   `/gateway/models/openai/v1/responses` goes to `https://api.openai.com/v1/responses`. Its
+//   `authorization`, `x-api-key` and `x-goog-api-key` are dropped, and the Creator's key or sign-in
+//   takes the place of the Session token in the one pi sent its key in: `x-goog-api-key` for
+//   Google's API, `x-api-key` for Anthropic's Messages API, else `Authorization: Bearer`. A
+//   sign-in's own headers are added (PiProviders.ts). A sign-in's body is held, to send it once
+//   more after a sign-in refused is refreshed; an API key's streams on (Gateway.ts). The answer
+//   streams back as it comes, with no idle timeout at the Hub or upstream, and the call is logged
+//   once it has.
 
-import { InstallationId as InstallationIdSchema } from "@kndl/protocol"
-import { Clock, Effect } from "effect"
+import {
+  InstallationId as InstallationIdSchema,
+  ModelProvider,
+  modelGatewayPath,
+} from "@kndl/protocol"
+import { Clock, Effect, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
-import { Gateway, MaxOAuthRequestBytes, type Refusal } from "./Gateway.ts"
+import { Gateway, MaxOAuthRequestBytes, type ModelCallEnded, type Refusal } from "./Gateway.ts"
+import { keyHeaderOf, nameOf } from "./PiProviders.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 
 const errorResponse = (status: number, error: string) =>
@@ -73,6 +105,32 @@ const heldRequestHeaders = new Set([
   "upgrade",
   "content-length",
 ])
+
+/** What a model call is answered with when the Gateway refuses it: a Provider's error shape. */
+const providerError = (status: number, message: string) =>
+  HttpServerResponse.jsonUnsafe({ error: { message } }, { status })
+
+/** A model call's headers that stay at the Gateway: those above, and Gemini's key header. */
+const heldModelHeaders = new Set([...heldRequestHeaders, "x-goog-api-key"])
+
+const isModelProvider = Schema.is(ModelProvider)
+
+/**
+ * Turns off the Hub server's idle timeout for the request, which is sized for the mod's long poll
+ * (Hub.ts): a Model may think for longer before it says anything. Bun's server has
+ * `timeout(request, seconds)` for that; Effect's Bun server keeps the server, and Bun's request,
+ * on its request, which is the only way to them from a route. Whether it could: elsewhere, or
+ * once Effect keeps them otherwise, it can't.
+ */
+const keepOpen = (request: HttpServerRequest.HttpServerRequest) => {
+  const { source, bunServer } = request as unknown as {
+    readonly source?: unknown
+    readonly bunServer?: { readonly timeout?: (request: Request, seconds: number) => void }
+  }
+  if (!(source instanceof Request) || typeof bunServer?.timeout !== "function") return false
+  bunServer.timeout(source, 0)
+  return true
+}
 
 /** Answer headers that stay at the Gateway: the server's cookies, and the connection's. */
 const heldResponseHeaders = new Set([
@@ -233,6 +291,117 @@ export const GatewayRoutes = HttpRouter.use(
         )
       }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.request")),
     )
+
+    /** Whether the Hub said it can't keep a model call open past its idle timeout. */
+    let saidNotKeptOpen = false
+
+    // A pi Session's model calls (ADR 0029), at the static `models`, which the router prefers to
+    // an Installation's id.
+    const modelCall = Effect.gen(function* () {
+      const grant = yield* authenticateMod
+      const request = yield* HttpServerRequest.HttpServerRequest
+      // A Model may think for longer than the Hub's idle timeout before it says anything.
+      if (!keepOpen(request) && !saidNotKeptOpen) {
+        saidNotKeptOpen = true
+        yield* Effect.logWarning(
+          "The Gateway can't turn off the Hub server's idle timeout for model calls: one whose Model thinks for longer before it answers is cut off",
+        )
+      }
+      const provider = (yield* HttpRouter.params).provider ?? ""
+      const started = yield* Clock.currentTimeMillis
+      const done = (status: number, bytes?: number, outcome?: ModelCallEnded["outcome"]) =>
+        Effect.gen(function* () {
+          const took = (yield* Clock.currentTimeMillis) - started
+          const answered =
+            bytes === undefined
+              ? ""
+              : `, ${bytes} bytes${outcome === "Ended" ? "" : `, ${outcome}`}`
+          yield* Effect.logInfo(`Gateway ${request.method} ${status} in ${took}ms${answered}`).pipe(
+            Effect.annotateLogs({ sessionId: grant.sessionId, provider }),
+          )
+        })
+      const refused = Effect.fnUntraced(function* (status: number, message: string) {
+        yield* done(status)
+        return providerError(status, message)
+      })
+      if (!isModelProvider(provider)) {
+        return yield* refused(404, `kndl has no Provider called ${provider}.`)
+      }
+      // As the Hub's server has it: its dot segments resolved, any encoding as sent.
+      const url = new URL(request.url, "http://gateway")
+      const path = url.pathname.slice(modelGatewayPath(provider).length) + url.search
+      const incoming = yield* HttpServerRequest.toWeb(request)
+      const length = incoming.headers.get("content-length")
+      const sent = yield* gateway.model(grant.sessionId, provider, {
+        method: request.method,
+        path,
+        headers: kept(incoming.headers, heldModelHeaders),
+        keyHeader: keyHeaderOf(incoming.headers),
+        body: incoming.body,
+        ...(length !== null && { length: Number(length) }),
+        signal: incoming.signal,
+      })
+      switch (sent._tag) {
+        case "NotActive":
+          return yield* refused(401, "Expected the mod token of an Active Session")
+        case "NotPi":
+          return yield* refused(
+            403,
+            "Only a pi Session's model calls go through the Gateway: this Session runs Claude Code, on its Creator's Claude credential.",
+          )
+        case "NotAllowed":
+          return yield* refused(
+            403,
+            `The Gateway sends only model calls to ${nameOf(provider)}: ${request.method} ${url.pathname.slice(modelGatewayPath(provider).length)} isn't one pi makes.`,
+          )
+        case "BadAddress":
+          return yield* refused(400, "The Gateway doesn't send a path like that on.")
+        case "Busy":
+          return yield* refused(
+            429,
+            `This Session is running ${sent.limit} model calls already, the most the Gateway runs for one at once: try again once one ends.`,
+          )
+        case "Full":
+          return yield* refused(
+            503,
+            "The Hub is holding as many model calls as it can just now: try again shortly.",
+          )
+        case "TooLarge":
+          return yield* refused(
+            413,
+            `The request is larger than the Gateway takes: ${sent.limit / 1024 / 1024} MiB.`,
+          )
+        case "BodyUnreadable":
+          return yield* refused(400, "The request's body could not be read.")
+        case "NotConnected":
+          return yield* refused(403, sent.message)
+        case "Unavailable":
+          return yield* refused(503, sent.message)
+        case "Unreachable":
+          return yield* refused(502, "The Provider could not be reached.")
+        case "Redirected":
+          return yield* refused(
+            502,
+            `${nameOf(provider)} redirected the call, which the Gateway doesn't follow.`,
+          )
+        case "Answered": {
+          const response = sent.response
+          // Logged once the answer has streamed back, or stopped.
+          const services = yield* Effect.context<never>()
+          void sent.ended.then((end) =>
+            Effect.runForkWith(services)(done(response.status, end.bytes, end.outcome)),
+          )
+          return HttpServerResponse.raw(
+            new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: kept(response.headers, heldResponseHeaders),
+            }),
+          )
+        }
+      }
+    }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.modelCall"))
+    yield* router.add("*", "/gateway/models/:provider/*", modelCall)
 
     // Nothing lies under an Installation's path: not least OAuth's `/.well-known` documents, which
     // Claude Code would look for to begin OAuth itself (#217). Not the web UI either.

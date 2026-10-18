@@ -1,24 +1,38 @@
-import { type EffortLevel, findModel, type RunnerModels } from "@kndl/protocol"
+import {
+  type ConnectableProvider,
+  findModel,
+  findProviderModel,
+  harnessOfModel,
+  type ProviderModel,
+  providerModelName,
+  type RunnerModels,
+  takesThinkingLevel,
+  type ThinkingLevel,
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import {
   Button,
   ChevronDownIcon,
-  Menu,
-  MenuRadioGroup,
-  MenuRadioItem,
   type MenuSide,
   Popover,
+  SearchSelect,
+  type SearchSelectGroup,
   Slider,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
-  effortNames,
-  effortNotes,
-  effortsOf,
+  groupByProvider,
+  harnessNames,
   type ModelSetting,
   modelName,
   modelOf,
+  providerGroupLabel,
+  providerModelLabel,
+  providerModelOf,
+  thinkingLevelNames,
+  thinkingLevelNotes,
+  thinkingLevelsOf,
 } from "./models.ts"
 
 const styles = stylex.create({
@@ -49,7 +63,7 @@ const styles = stylex.create({
     maxWidth: "100%",
     gap: space.s1,
   },
-  effortTrigger: {
+  thinkingTrigger: {
     flexShrink: 0,
   },
   // The setting as someone watching sees it: the pickers' labels, as text.
@@ -65,8 +79,11 @@ const styles = stylex.create({
   },
 })
 
-/** The radio value of the `default` row: no model set, Claude Code's default. */
-const defaultRow = "default"
+/**
+ * The value of Claude Code's `Default` row: no model set, Claude Code's default. Parentheses are
+ * in no model name, so it is no alias's.
+ */
+const defaultRow = "(default)"
 
 /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
 type Appearance = "bar" | "field"
@@ -78,87 +95,159 @@ const look = (appearance: Appearance) =>
     : ({ size: "md", intent: "secondary" } as const)
 
 export interface ModelPickerProps {
-  /** What the Session's Runner said its Claude Code has; undefined before it has said. */
-  models: RunnerModels | undefined
+  /**
+   * Claude Code's models, when the Session can run on it: its Runner runs Claude Code, and its
+   * Creator has a Claude credential. `models` is undefined until the Runner has said them, when
+   * only Claude Code's default is offered.
+   */
+  readonly claudeCode?: { readonly models: RunnerModels | undefined }
+  /**
+   * The Creator's Models through pi, when its Runner runs pi (ADR 0029), from their
+   * ProvidersState: undefined until the Hub has sent it. Each Provider's group is headed by the
+   * name the Hub gives it in `connectable`.
+   */
+  readonly pi?: {
+    readonly models: ReadonlyArray<ProviderModel> | undefined
+    readonly connectable?: ReadonlyArray<ConnectableProvider> | undefined
+  }
+  /** The setting: a `provider/id` model is pi's, anything else Claude Code's (ADR 0030). */
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
   disabled?: boolean
-  /** Which way the menus open: up, from the composer at the bottom of the page. */
+  /** Which way the lists open: up, from the composer at the bottom of the page. */
   side?: MenuSide
   appearance?: Appearance
 }
 
 /**
- * The model a Session runs and its effort level, as two small buttons side by side, as claude.ai
- * and ChatGPT pick them (#128): one named by the model opens the Runner's models, the other named
- * by the level opens a slider over the levels its Claude Code takes. The effort button is left
- * out for a model that takes no level.
+ * The model a Session runs and its thinking level, as two small buttons side by side, as claude.ai
+ * and ChatGPT pick them (#128): one named by the model opens the models, the other named by the
+ * level opens a slider over the levels it takes, and is left out for a model that takes none.
+ *
+ * One list for every Session (ADR 0030), grouped by what runs each model: Claude Code's, from its
+ * Runner, then Claude's through pi, then each other Provider's, valued as `openai/gpt-6-sol`. A
+ * Provider can list hundreds (OpenRouter), so it opens with a search. Picking another Harness's
+ * model is allowed: the Session switches Harness with a handoff, which its caller says first.
  */
 export function ModelPicker({
-  models,
+  claudeCode,
+  pi,
   value,
   onChange,
   disabled = false,
   side = "bottom",
   appearance = "bar",
 }: ModelPickerProps) {
-  const current = modelOf(models, value)
-  const efforts = effortsOf(models)
-  // A model the Runner doesn't list takes no level here: the Hub would refuse one for it.
-  const takesEffort = current?.effort === true && efforts.length > 0
-  const name = modelName(models, value)
+  const runnerModels = claudeCode?.models
+  const providerModels = pi?.models
+  const harness = harnessOfModel(value.model)
+  const onPi = harness === "Pi"
+  const runnerModel = onPi ? undefined : modelOf(runnerModels, value)
+  const providerModel = onPi ? providerModelOf(providerModels, value) : undefined
+  // A model that isn't listed takes no level here: the Hub would refuse one for it.
+  const levels = onPi
+    ? (providerModel?.thinkingLevels ?? [])
+    : runnerModel?.reasoning === true
+      ? thinkingLevelsOf(runnerModels)
+      : []
+  const name = onPi ? providerModelLabel(providerModels, value) : modelName(runnerModels, value)
 
+  const groups: Array<SearchSelectGroup> = [
+    ...(claudeCode === undefined
+      ? []
+      : [
+          {
+            label: providerGroupLabel("anthropic", "ClaudeCode"),
+            options: [
+              {
+                value: defaultRow,
+                label:
+                  runnerModels === undefined
+                    ? "Default"
+                    : `Default · ${runnerModels.default.label}`,
+              },
+              ...(runnerModels?.models ?? []).map((option) => ({
+                value: option.alias,
+                label: option.label,
+                keywords: `${option.alias} ${option.id}`,
+              })),
+            ],
+          },
+        ]),
+    ...groupByProvider(providerModels ?? []).map((group) => ({
+      label: providerGroupLabel(group.provider, "Pi", pi?.connectable),
+      options: group.models.map((model) => ({
+        value: providerModelName(model),
+        label: model.label,
+        keywords: model.id,
+      })),
+    })),
+  ]
+  const picked = onPi
+    ? providerModel && providerModelName(providerModel)
+    : value.model === undefined
+      ? defaultRow
+      : (runnerModel?.alias ?? value.model)
+
+  // A level the model picked doesn't take is dropped: the Hub refuses it with one.
   const chooseModel = (row: string) => {
-    const model = row === defaultRow ? models?.default : models && findModel(models, row)
+    const level = value.thinkingLevel
+    let takesLevel: boolean
+    if (row !== defaultRow && harnessOfModel(row) === "Pi") {
+      const model = providerModels && findProviderModel(providerModels, row)
+      takesLevel = level !== undefined && model !== undefined && takesThinkingLevel(model, level)
+    } else {
+      const model =
+        row === defaultRow ? runnerModels?.default : runnerModels && findModel(runnerModels, row)
+      takesLevel =
+        level !== undefined &&
+        model?.reasoning === true &&
+        thinkingLevelsOf(runnerModels).includes(level)
+    }
     onChange({
       ...(row !== defaultRow && { model: row }),
-      // A model that takes no level drops the one set; the Hub refuses it with one.
-      ...(value.effort !== undefined && model?.effort === true && { effort: value.effort }),
+      ...(takesLevel && level !== undefined && { thinkingLevel: level }),
     })
   }
-  const chooseEffort = (effort: EffortLevel | undefined) =>
+  const chooseLevel = (thinkingLevel: ThinkingLevel | undefined) =>
     onChange({
       ...(value.model !== undefined && { model: value.model }),
-      ...(effort !== undefined && { effort }),
+      ...(thinkingLevel !== undefined && { thinkingLevel }),
     })
 
   return (
     <div {...stylex.props(styles.pickers, appearance === "field" && styles.fieldPickers)}>
-      <Menu
+      <SearchSelect
         side={side}
         align="start"
-        sx={styles.popup}
         trigger={
           <Button
             {...look(appearance)}
             disabled={disabled}
             aria-label={`Model: ${name}`}
+            title={`${name}, on ${harnessNames[harness]}`}
             sx={styles.trigger}
           >
             <span {...stylex.props(styles.label)}>{name}</span>
             <ChevronDownIcon />
           </Button>
         }
-      >
-        <MenuRadioGroup
-          value={value.model === undefined ? defaultRow : (current?.alias ?? value.model)}
-          onValueChange={chooseModel}
-          label="Model"
-        >
-          <MenuRadioItem
-            value={defaultRow}
-            label={models === undefined ? "Default" : `Default · ${models.default.label}`}
-          />
-          {models?.models.map((option) => (
-            <MenuRadioItem key={option.alias} value={option.alias} label={option.label} />
-          ))}
-        </MenuRadioGroup>
-      </Menu>
-      {takesEffort && (
-        <EffortPicker
-          efforts={efforts}
-          value={value.effort}
-          onChange={chooseEffort}
+        groups={groups}
+        value={picked}
+        onValueChange={chooseModel}
+        searchLabel="Search Models"
+        noMatch={(query) => `No Models match "${query}".`}
+        empty={
+          pi !== undefined && providerModels === undefined
+            ? "Loading your Models…"
+            : "No Models yet. Connect a Provider on your Account page."
+        }
+      />
+      {levels.length > 0 && (
+        <ThinkingPicker
+          levels={levels}
+          value={value.thinkingLevel}
+          onChange={chooseLevel}
           disabled={disabled}
           side={side}
           appearance={appearance}
@@ -169,31 +258,41 @@ export function ModelPicker({
 }
 
 /**
- * The model a Session runs and its effort level, named as the picker names them, for someone who
- * can't change them: watching a Session they didn't start (ADR 0026).
+ * The model a Session runs and its thinking level, named as the picker names them, from the same
+ * models, for someone who can't change them: watching a Session they didn't start (ADR 0026). For a
+ * pi Model, whose Creator's Models only they are sent, `knownLabel` is its name as the transcript
+ * last gave it.
  */
 export function ModelSettingLabel({
-  models,
+  claudeCode,
+  pi,
   value,
-}: {
-  models: RunnerModels | undefined
-  value: ModelSetting
-}) {
-  const name = modelName(models, value)
-  // As the picker: a level only for a model that takes one.
-  const effort =
-    modelOf(models, value)?.effort === true &&
-    effortsOf(models).length > 0 &&
-    value.effort !== undefined
-      ? effortNames[value.effort]
+  knownLabel,
+}: Pick<ModelPickerProps, "claudeCode" | "pi" | "value"> & { knownLabel?: string | undefined }) {
+  let name: string
+  let takesLevel: boolean
+  if (harnessOfModel(value.model) === "Pi") {
+    const current = providerModelOf(pi?.models, value)
+    name = providerModelLabel(pi?.models, value, knownLabel)
+    // A Model not known here is shown with the level set: the Hub checked it.
+    takesLevel = current === undefined || current.thinkingLevels.length > 0
+  } else {
+    const models = claudeCode?.models
+    name = modelName(models, value)
+    // As the picker: a level only for a model that takes one.
+    takesLevel = modelOf(models, value)?.reasoning === true && thinkingLevelsOf(models).length > 0
+  }
+  const level =
+    takesLevel && value.thinkingLevel !== undefined
+      ? thinkingLevelNames[value.thinkingLevel]
       : undefined
   return (
-    <span title="The model and effort this Session runs on" {...stylex.props(styles.shown)}>
+    <span title="The model and thinking level this Session runs on" {...stylex.props(styles.shown)}>
       <span {...stylex.props(styles.label)}>{name}</span>
-      {effort !== undefined && (
+      {level !== undefined && (
         <>
           <span aria-hidden="true">·</span>
-          <span>{effort}</span>
+          <span>{level}</span>
         </>
       )}
     </span>
@@ -201,31 +300,32 @@ export function ModelSettingLabel({
 }
 
 /**
- * The effort button and its slider. The slider shows where it is dragged or stepped to, and sets
+ * The thinking button and its slider. The slider shows where it is dragged or stepped to, and sets
  * the level where it is let go or clicked, on Enter, or when it closes other than by Escape on a
- * level other than the one set; Escape takes it back. A change between Turns restarts Claude Code, and while agents run asks first, so
- * stepping through the levels doesn't set each.
+ * level other than the one set; Escape takes it back. Each change goes to the Hub, and between
+ * Turns pi switches to it and Claude Code restarts, which asks first while agents run, so stepping
+ * through the levels doesn't set each.
  */
-function EffortPicker({
-  efforts,
+function ThinkingPicker({
+  levels,
   value,
   onChange,
   disabled,
   side,
   appearance,
 }: {
-  efforts: ReadonlyArray<EffortLevel>
-  /** The level set; undefined when none is, and Claude Code picks. */
-  value: EffortLevel | undefined
-  onChange: (effort: EffortLevel | undefined) => void
+  levels: ReadonlyArray<ThinkingLevel>
+  /** The level set; undefined when none is, and the Model thinks at its usual level. */
+  value: ThinkingLevel | undefined
+  onChange: (level: ThinkingLevel | undefined) => void
   disabled: boolean
   side: MenuSide
   appearance: Appearance
 }) {
-  const [moved, setMoved] = useState<EffortLevel | undefined>(undefined)
+  const [moved, setMoved] = useState<ThinkingLevel | undefined>(undefined)
   const shown = moved ?? value
-  const setName = value === undefined ? "Default" : effortNames[value]
-  const commit = (level: EffortLevel) => {
+  const setName = value === undefined ? "Default" : thinkingLevelNames[value]
+  const commit = (level: ThinkingLevel) => {
     setMoved(undefined)
     if (level !== value) onChange(level)
   }
@@ -234,9 +334,9 @@ function EffortPicker({
     <Popover
       side={side}
       align="start"
-      label="Effort"
-      title={shown === undefined ? "Default" : effortNames[shown]}
-      description={shown === undefined ? "Claude Code picks the level." : effortNotes[shown]}
+      label="Thinking"
+      title={shown === undefined ? "Default" : thinkingLevelNames[shown]}
+      description={shown === undefined ? "The Model's usual level." : thinkingLevelNotes[shown]}
       onOpenChange={(open, reason) => {
         if (open || moved === undefined) return
         // Escape takes back what was moved; any other way out sets it.
@@ -248,18 +348,18 @@ function EffortPicker({
         <Button
           {...look(appearance)}
           disabled={disabled}
-          aria-label={`Effort: ${setName}`}
-          sx={[styles.trigger, styles.effortTrigger]}
+          aria-label={`Thinking: ${setName}`}
+          sx={[styles.trigger, styles.thinkingTrigger]}
         >
-          <span {...stylex.props(styles.label)}>{value === undefined ? "Effort" : setName}</span>
+          <span {...stylex.props(styles.label)}>{value === undefined ? "Thinking" : setName}</span>
           <ChevronDownIcon />
         </Button>
       }
     >
       <Slider
-        label="Effort"
+        label="Thinking"
         unsetLabel="Default"
-        steps={efforts.map((level) => ({ value: level, label: effortNames[level] }))}
+        steps={levels.map((level) => ({ value: level, label: thinkingLevelNames[level] }))}
         value={shown}
         onValueChange={setMoved}
         onValueCommitted={commit}

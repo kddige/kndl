@@ -75,7 +75,7 @@ HubConfigError: The Hub stores 3 secret values (…), encrypted, but HUB_SECRETS
 HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (…) saved with. …
 ```
 
-**Why.** The Hub encrypts Sensitive values, Claude credentials and Installations' secrets with `HUB_SECRETS_KEY`. Once any are saved, it won't start without the same key.
+**Why.** The Hub encrypts Sensitive values, Claude credentials, Connected providers and Installations' secrets with `HUB_SECRETS_KEY`. Once any are saved, it won't start without the same key.
 
 **Fix.**
 
@@ -111,7 +111,7 @@ HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (�
 
 3. Enter the cleared values again:
    - each Sensitive variable, on its Repo's **Environment** and on **Shared variables**;
-   - each Claude credential, by its owner on their **Account** page;
+   - each Claude credential and Connected provider, by its owner on their **Account** page;
    - each Installation's header secrets, on **MCP**, where they show **needs a value**;
    - each OAuth Installation, with **Connect** on **MCP**.
 

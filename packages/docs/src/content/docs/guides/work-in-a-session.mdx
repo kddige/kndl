@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start a Session, prompt it while others watch, steer and stop a Turn, answer Claude's questions, use the terminal, and get the work out.
+description: Start a Session on one of your Models, prompt it while others watch, steer and stop a Turn, answer the agent's questions, use the terminal, and get the work out.
 sidebar:
   order: 1
 ---
@@ -12,7 +12,7 @@ Start a Session on a Repo, drive it while your team watches, and get its work on
 ## What you need
 
 - An account on a Hub with at least one online Runner.
-- Your [Claude credential](/guides/add-your-claude-credential/) on your **Account** page. The Sessions you start run on it.
+- At least one Model of your own: a [Connected provider](/guides/connect-your-providers/), or your [Claude credential](/guides/add-your-claude-credential/) for Claude's Models, on your **Account** page. The Sessions you start run on them.
 - A Repo with an [Environment](/guides/set-up-an-environment/). Starting the first Session on a Repo takes you there.
 
 ## Start a Session
@@ -23,30 +23,48 @@ Start a Session on a Repo, drive it while your team watches, and get its work on
 
 2. Pick the **Repo**, or type it as `owner/name`. **Branch** fills in with the Repo's default branch.
 
-3. Choose where Claude commits:
+3. Choose where the agent commits:
    - Leave **Work on a new branch** on to commit to a new branch, `claude/<session id>`.
    - Turn it off to commit to the branch itself.
    - Type a new name and pick **Create branch '…'** to start a branch of your own.
 
-4. Leave **Runner** on **Any online Runner**, and press **Start Session**.
+4. Leave **Runner** on **Any online Runner**.
+
+5. In **Model**, pick one of your Models, grouped by what runs it. With a Claude credential, it starts on Claude: Claude Code's default, or Claude's first Model on pi if your Account page [runs Claude's Models with pi](/guides/add-your-claude-credential/#choose-what-runs-claudes-models). Without one, it starts on your first Model. Press the thinking button beside it to set a [Thinking level](/guides/manage-a-session/#choose-the-model-and-thinking-level).
+
+6. Press **Start Session**.
 
    The Session opens with a **Starting…** banner. **Show log** follows the Runner as it clones the Repo and boots the Sandbox.
 
 </Steps>
 
+The Session's agent is run by its [Harness](/reference/glossary/#harness): Claude Code for a model under **Anthropic · Claude Code**, and [pi](https://pi.dev), an open-source coding agent, for any other. You can [switch the Model](/guides/manage-a-session/#choose-the-model-and-thinking-level) at any time, to any of yours, and the Session [switches Harness](/guides/manage-a-session/#switch-between-claude-code-and-pi) with it.
+
+### Start a Claude Code Session
+
+To run Claude Code itself, such as for a Repo's Claude Code hooks and plugins, pick a model under **Anthropic · Claude Code**. It runs on your Claude credential.
+
+To have **New Session** start on Claude Code's default whatever your Account page says, add `?harness=claude-code` to the web UI's address, such as `https://hub.example.com/?harness=claude-code`.
+
+A Runner that can't run pi starts Claude Code Sessions only: see [New Sessions run Claude Code](/troubleshooting/sessions/#new-sessions-run-claude-code).
+
 ## Prompt it while others watch
 
 You started the Session, so you drive it. Everyone else with access to the Repo can open it and follow along live, but can't prompt it: their prompt box says who drives.
 
-- **While Claude works**, new prompts wait in the [Prompt queue](/reference/glossary/) and run in order.
-- **To get a queued prompt in now**, press **Steer** on it. Claude reads it at its next step, usually after the current tool call, and the transcript marks it **Steered in**.
-- **To stop the Turn**, press **Stop** in the prompt box. A running Bash command moves to the background instead of being killed.
+- **While the agent works**, new prompts wait in the [Prompt queue](/reference/glossary/) and run in order.
+- **To get a queued prompt in now**, press **Steer** on it. The agent reads it at its next step, usually after the current tool call, and the transcript marks it **Steered in**.
+- **To stop the Turn**, press **Stop** in the prompt box. In a Claude Code Session, a running Bash command moves to the background instead of being killed.
 
-Claude never asks for permission to run a tool. Everything it runs stays in the Session's Sandbox: see [Security model](/concepts/security-model/).
+The agent never asks for permission to run a tool. Everything it runs stays in the Session's Sandbox: see [Security model](/concepts/security-model/).
 
-## Answer Claude's questions
+### Read a Turn's footer
 
-When Claude asks a question, the Session's row gets an amber dot and its header says **Waiting on you**. A card above the prompt box asks the questions one at a time.
+Each Turn ends with a footer: how long it took, the tokens in and out, and, for most Models, what it cost in US dollars at the Model's API price, even on a subscription. Claude's Models and Claude Code Sessions show no cost. A Turn that ran on another Model than the Session's current one names it.
+
+## Answer the agent's questions
+
+When the agent asks a question, the Session's row gets an amber dot and its header says **Waiting on you**. A card above the prompt box asks the questions one at a time.
 
 ![A question card: "Which date library should the web UI use?", with three options, Bob's pick on Luxon, and a Something else field.](../../../assets/screenshots/question.png)
 
@@ -54,29 +72,30 @@ When Claude asks a question, the Session's row gets an amber dot and its header 
 - Type your own answer in **Something else** and press Enter.
 - Press **Skip** to leave a question unanswered.
 
-You answer, and everyone in the Session sees your picks. The answers go to Claude after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
+You answer, and everyone in the Session sees your picks. The answers go to the agent after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
 
 ## Use the terminal
 
-The **Terminal** tab shows Claude Code's screen, live, and you can type into it. Use it for what the chat doesn't cover: Claude Code's other dialogs, a subagent's questions, Esc and Ctrl-C.
+The **Terminal** tab shows the agent's own screen, pi's or Claude Code's, live, and you can type into it. Use it for what the chat doesn't cover: their own commands and dialogs, Esc and Ctrl-C.
 
 Only you see it. Others in the Session don't, since the terminal is where your Claude token is easiest to see. **Fit to my window** sets its size to yours.
 
-## What Claude can use
+## What the agent can use
 
-Claude Code runs in `/workspace`, the Repo's checkout. The Repo's own `CLAUDE.md`, `.claude/` skills, agents, commands, hooks and settings, and `.mcp.json` apply as they would on your machine. Settings on the Runner's machine never apply.
+The agent runs in `/workspace`, the Repo's checkout. Settings on the Runner's machine never apply.
 
-The Hub can add more MCP servers to every Session on a Repo: see [Add a remote MCP server](/guides/add-a-remote-mcp-server/).
+- **pi** loads the Repo's `AGENTS.md`, or its `CLAUDE.md` where there's none, its `.pi/` directory, with pi's settings, skills, prompts and extensions, and the skills in `.agents/skills` and `.claude/skills`, with the MCP servers the Hub adds to its Sessions. Claude Code's hooks, plugins and settings don't apply.
+- **Claude Code** loads the Repo's own `CLAUDE.md`, `.claude/` skills, agents, commands, hooks and settings, and `.mcp.json`, as it would on your machine. The Hub can add more MCP servers to its Sessions: see [Add a remote MCP server](/guides/add-a-remote-mcp-server/).
 
 ## Get the work out
 
-Ask Claude to commit, push and open a pull request:
+Ask the agent to commit, push and open a pull request:
 
 ```text
 Commit this, push the branch and open a pull request.
 ```
 
-Claude uses `git` and `gh` once the Hub has its GitHub App: see [Git from Sessions](/concepts/git-from-sessions/).
+The agent uses `git` and `gh` once the Hub has its GitHub App: see [Git from Sessions](/concepts/git-from-sessions/).
 
 :::caution
 Until it's pushed, the work exists only in the Session's Workspace on the Runner. If that machine's disk is lost, so is the work.

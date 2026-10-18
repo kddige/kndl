@@ -128,19 +128,29 @@ export const ToolCallEnded = Schema.TaggedStruct("ToolCallEnded", {
 export type ToolCallEnded = typeof ToolCallEnded.Type
 
 /**
- * Why a Turn ended (Claude Code's `turn.complete` reason): the model answered, someone stopped
- * it, the model refused, or an API error ended it.
+ * Why a Turn ended, as pi-ai names a stop: the model answered, it hit its output limit, someone
+ * stopped it, or an error ended it. A refusal is an error.
  */
-export const TurnEndReason = Schema.Literals(["Answered", "Stopped", "Refused", "Failed"])
+export const TurnEndReason = Schema.Literals(["stop", "length", "aborted", "error"])
 export type TurnEndReason = typeof TurnEndReason.Type
 
-/** The tokens a Turn's model requests used, summed, and the model of the last. */
+/**
+ * The tokens a Turn's model requests used, summed, and the model of the last, as pi-ai names
+ * them. `cost` is what the Harness reports it cost, in US dollars, when it reports one.
+ */
 export const TurnUsage = Schema.Struct({
+  /**
+   * The model of the Turn's last request, as its Harness names it: on Claude Code, the API's id,
+   * `claude-opus-5-5`, without the `[1m]` of an alias's (`sameModel`); on pi, a pi Session's model
+   * name, `<provider>/<id>` (`providerModelName`), `openai/gpt-6-sol` or
+   * `anthropic/claude-opus-5-5`.
+   */
   model: Schema.NonEmptyString,
-  inputTokens: Schema.Natural,
-  outputTokens: Schema.Natural,
-  cacheReadInputTokens: Schema.Natural,
-  cacheCreationInputTokens: Schema.Natural,
+  input: Schema.Natural,
+  output: Schema.Natural,
+  cacheRead: Schema.Natural,
+  cacheWrite: Schema.Natural,
+  cost: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 export type TurnUsage = typeof TurnUsage.Type
 
@@ -155,6 +165,8 @@ export const TurnEnded = Schema.TaggedStruct("TurnEnded", {
   durationMs: Schema.Natural,
   /** Absent when no request counted, such as on an early stop or an API error. */
   usage: Schema.optionalKey(TurnUsage),
+  /** Why it ended in an error, as the Provider or Harness said: shown with its Failed badge. */
+  errorMessage: Schema.optionalKey(Schema.String),
 })
 export type TurnEnded = typeof TurnEnded.Type
 

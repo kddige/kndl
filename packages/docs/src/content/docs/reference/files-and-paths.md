@@ -19,6 +19,7 @@ An install keeps everything in its home, `~/.kndl`, or `KNDL_HOME`. Back up `hub
 | `hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. |
 | `sessions/` | The Runner's Sessions, one directory each. See [One Session's directory](#one-sessions-directory). |
 | `claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox. |
+| `pi/` | The Node.js builds and the pi install that pi Sessions run, mounted read-only into every Sandbox. |
 | `runner-update.json` | The Runner's update under way, or its last failed one, so it can go back. |
 | `update/lock` | Held while `kndl update` runs: `{"pid":…,"startedAt":…,"source":"cli"}`. A lock whose process is gone is taken over by the next update. |
 | `update/status.json` | The latest `kndl update`: where it started, where it moves to, the step it's at, and its `state`, `Running`, `Succeeded`, `Failed` or `RolledBack`, with the `error`. |
@@ -52,7 +53,7 @@ A checkout keeps the Runner's files in the dev home, `~/.kndl-dev`, with the sam
 | `packages/hub/.env.local` | The Hub's settings. git ignores it. |
 | `packages/hub/hub.db`, `hub.db.lock` | The Hub's database, and the lock the running Hub holds. `HUB_DATABASE` moves it. |
 | `packages/web/dist/` | The web UI's build, which the Hub serves. `HUB_WEB_DIR` moves it. |
-| `packages/mod/` | The mod, which each Session's Claude Code loads. `RUNNER_MOD_DIR` moves it. |
+| `packages/mod/` | The mod, which each Session's pi or Claude Code loads. `RUNNER_MOD_DIR` moves it. |
 
 ## One Session's directory
 
@@ -61,9 +62,9 @@ Under `sessions/`, each `<session id>/` holds:
 | Path | What it is |
 |---|---|
 | `workspace/` | The Workspace: the Repo's checkout on the Session's Work branch, mounted at `/workspace` in the Sandbox. |
-| `mod/` | The copy of the mod the Session's Claude Code runs with, made each time it starts. |
+| `mod/` | The copy of the mod the Session's agent runs with, made each time it starts. |
 
-Archiving a Session keeps its directory and the volume with Claude Code's state. Purging deletes both.
+Archiving a Session keeps its directory and the volume with the agent's state. Purging deletes both.
 
 ## Inside a Sandbox
 
@@ -73,7 +74,9 @@ Archiving a Session keeps its directory and the volume with Claude Code's state.
 | `/var/lib/kndl/deps` | The disk holding the Environment's dependency folders, bound over each match in `/workspace`, such as `node_modules`. |
 | `/var/cache/kndl` | Package caches, on a disk. `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` point into it. |
 | `/var/lib/kndl/claude` | Claude Code's state and the Session's transcripts, its `CLAUDE_CONFIG_DIR`, on a disk kept when the Session is archived. |
+| `/var/lib/kndl/claude/pi` | pi's state and the Session's conversation, its `PI_CODING_AGENT_DIR`, on the same disk. |
 | `/opt/kndl/claude-code` | The Runner's Linux builds of Claude Code, read-only. |
+| `/opt/kndl/pi` | The Runner's Node.js builds and pi install, read-only. |
 | `/opt/kndl/mod` | The Session's copy of the mod, read-only. |
 | `/run/kndl/github-token` | The [Sandbox token](/concepts/git-from-sessions/), in memory only. |
 

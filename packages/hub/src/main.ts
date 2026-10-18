@@ -21,6 +21,7 @@ import {
 } from "./Admin.ts"
 import { ClaudeCheck } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
+import { ProviderApis } from "./ConnectedProviders.ts"
 import { DatabaseFile, DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
@@ -111,6 +112,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(McpServerSources.layer),
   Layer.provide(McpServerIcons.layer),
   Layer.provide(ClaudeCheck.layer),
+  Layer.provide(ProviderApis.layer),
   Layer.provide(GitHubApp.layer),
   Layer.provide(CliBuilds.layer),
   Layer.provide(HubVersion.layer),

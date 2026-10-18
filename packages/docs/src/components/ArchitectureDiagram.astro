@@ -1,6 +1,6 @@
 ---
 // The parts of kndl and what connects to what, for Concepts > How kndl works: browsers and the
-// Hub, a Runner's machine with its mod relay and a Session's Sandbox, and Anthropic. Inline
+// Hub, a Runner's machine with its mod relay and a Session's Sandbox, and the Providers. Inline
 // SVG in the theme's colours, so it follows light and dark (docs/design/docs-style.md, "Components").
 ---
 
@@ -9,9 +9,10 @@
     <title id="arch-title">How kndl's parts connect</title>
     <desc id="arch-desc">
       Browsers connect to the Hub. A Runner connects out to the Hub over a WebSocket. On the Runner's
-      machine, each Session's Claude Code and mod run in a Sandbox. Claude Code talks to Anthropic
-      directly, on its Creator's setup token, and the mod reaches the Hub through the Runner's mod
-      relay.
+      machine, each Session's pi and mod run in a Sandbox, and reach the Hub through the Runner's
+      mod relay. The Hub sends pi's model calls on to the Providers, with the Creator's credentials.
+      For Claude's Models, Claude Code in the Sandbox talks to Anthropic directly, on the Creator's
+      setup token.
     </desc>
     <defs>
       <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -43,11 +44,15 @@
       <text class="small on-hub" x="75" y="90" text-anchor="middle">Prompt queues · SQLite</text>
     </g>
 
-    <!-- Anthropic -->
+    <!-- The Providers -->
     <g transform="translate(200 312)">
       <rect class="box" width="150" height="56" rx="10" />
-      <text class="label" x="75" y="34" text-anchor="middle">Anthropic API</text>
+      <text class="label" x="75" y="34" text-anchor="middle">Providers' APIs</text>
     </g>
+
+    <!-- The Hub to the Providers, with the Creator's credentials -->
+    <line class="wire" x1="275" y1="252" x2="275" y2="308" marker-end="url(#arch-arrow)" />
+    <text class="small muted" x="267" y="285" text-anchor="end">model calls</text>
 
     <!-- A Runner's machine -->
     <rect class="machine" x="420" y="20" width="320" height="350" rx="14" />
@@ -64,7 +69,7 @@
       <text class="label" x="16" y="28">Sandbox</text>
       <text class="small muted" x="86" y="28">one microVM per Session</text>
       <rect class="box" x="16" y="42" width="248" height="52" rx="8" />
-      <text class="small strong" x="140" y="64" text-anchor="middle">Claude Code + mod</text>
+      <text class="small strong" x="140" y="64" text-anchor="middle">pi + mod</text>
       <text class="small" x="140" y="83" text-anchor="middle">in tmux</text>
       <text class="small" x="16" y="124">/workspace, from the Runner</text>
       <text class="small" x="16" y="146">your Repo's builds, tests, servers</text>
@@ -78,14 +83,15 @@
     <line class="wire" x1="440" y1="90" x2="354" y2="172" marker-end="url(#arch-arrow)" />
     <text class="small muted" x="392" y="104" text-anchor="end">connects out</text>
 
-    <!-- Claude Code to Anthropic, on the Creator's setup token -->
+    <!-- Claude Code to Anthropic, for Claude's Models, on the Creator's setup token -->
     <line class="wire" x1="456" y1="240" x2="354" y2="334" marker-end="url(#arch-arrow)" />
     <text class="small muted" x="384" y="292" text-anchor="end">setup token</text>
   </svg>
   <figcaption>
-    Claude Code talks to Anthropic directly, on its Creator's setup token. Everything else goes
-    through the Hub, and the Runner connects to it, never the other way. The mod holds only a
-    Session token, which the Runner's mod relay swaps for its mod token.
+    pi's model calls go through the Hub, which adds the Creator's credentials on the way to each
+    Provider. For Claude's Models, Claude Code talks to Anthropic directly, on the Creator's setup
+    token. The Runner connects to the Hub, never the other way. The mod holds only a Session token,
+    which the Runner's mod relay swaps for its mod token.
   </figcaption>
 </figure>
 

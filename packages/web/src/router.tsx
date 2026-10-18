@@ -1,7 +1,5 @@
 import {
   type AgentId,
-  type EffortLevel,
-  EffortLevels,
   branchNameProblem,
   InviteOnlyPath,
   InvitePath,
@@ -9,6 +7,8 @@ import {
   type RunnerId,
   type SessionId,
   SetupPath,
+  type ThinkingLevel,
+  ThinkingLevels,
 } from "@kndl/protocol"
 import {
   createRootRoute,
@@ -130,16 +130,18 @@ interface SetupSearch {
   from?: string
   direct?: true
   runner?: string
-  /** Its model and effort (#128); the Hub checks them when it starts it. */
+  /** `claude-code` where New Session was asked for Claude Code on a Runner that runs pi (ADR 0029). */
+  harness?: "claude-code"
+  /** Its model and thinking level (#128); the Hub checks them when it starts it. */
   model?: string
-  effort?: EffortLevel
+  thinking?: ThinkingLevel
 }
 
 /**
  * The setup's search, read: a branch git would refuse is left out, as if the search had none.
  */
 function readSetupSearch(search: Record<string, unknown>): SetupSearch {
-  const { branch, from, direct, runner, model, effort } = search
+  const { branch, from, direct, runner, harness, model, thinking } = search
   const refused = nonEmpty(from)
     ? newBranchProblem(String(branch), from) !== undefined || branchNameProblem(from) !== undefined
     : branchNameProblem(String(branch)) !== undefined
@@ -149,16 +151,19 @@ function readSetupSearch(search: Record<string, unknown>): SetupSearch {
         ...(nonEmpty(from) && { from }),
         ...((direct === true || direct === "true") && !nonEmpty(from) && { direct: true as const }),
         ...(nonEmpty(runner) && { runner }),
+        ...(harness === "claude-code" && { harness }),
         ...(nonEmpty(model) && { model }),
-        ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
+        ...(ThinkingLevels.some((level) => level === thinking) && {
+          thinking: thinking as ThinkingLevel,
+        }),
       }
     : {}
 }
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the
- * Environment is applied.
+ * which starts on that branch (and ?from=, ?direct=, ?runner=, ?harness=, ?model=, ?thinking=)
+ * once the Environment is applied.
  */
 const environmentRoute = createRoute({
   getParentRoute: () => hubRoute,
@@ -167,7 +172,7 @@ const environmentRoute = createRoute({
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
     // Read again: the router merges in its parents' search as the URL had it, whatever this refused.
-    const { branch, from, direct, runner, model, effort } = readSetupSearch(
+    const { branch, from, direct, runner, harness, model, thinking } = readSetupSearch(
       environmentRoute.useSearch(),
     )
     return (
@@ -184,8 +189,9 @@ const environmentRoute = createRoute({
                   ...(direct !== undefined && { direct }),
                 }),
                 ...(runner !== undefined && { runnerId: runner as RunnerId }),
+                ...(harness !== undefined && { harness: "ClaudeCode" as const }),
                 ...(model !== undefined && { model }),
-                ...(effort !== undefined && { effort }),
+                ...(thinking !== undefined && { thinkingLevel: thinking }),
               }
         }
       />

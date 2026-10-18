@@ -37,7 +37,7 @@ const modHello = (sessionId: string) => ({
   _tag: "ModHello",
   protocolVersion: ProtocolVersion,
   sessionId,
-  claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+  conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
   model: "claude-opus",
 })
 
@@ -420,7 +420,7 @@ describe("mod channel", () => {
 })
 
 describe("web channel", () => {
-  test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions, their Claude credential and CLI tokens", async () => {
+  test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions, their Claude credential, Connected providers and CLI tokens", async () => {
     const hubVersion = { commit: "c".repeat(40), branch: "main", release: "2026.10.1" }
     const hub = await startHub({
       config: { devLogin: true },
@@ -443,6 +443,21 @@ describe("web channel", () => {
       { _tag: "PairingCodeList", codes: [] },
       { _tag: "SessionList", sessions: [] },
       { _tag: "ClaudeCredentialState", credential: null },
+      {
+        _tag: "ProvidersState",
+        claudeHarness: "ClaudeCode",
+        connected: [],
+        connectable: expect.arrayContaining([
+          {
+            provider: "openai",
+            name: "OpenAI",
+            signIn: "Sign in with ChatGPT",
+            apiKey: true,
+            keyName: "OpenAI API key",
+          },
+        ]),
+        models: [],
+      },
       { _tag: "CliTokenList", tokens: [] },
     ])
   })

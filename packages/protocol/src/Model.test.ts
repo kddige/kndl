@@ -26,9 +26,12 @@ describe("ModelName", () => {
 })
 
 describe("RunnerModels", () => {
-  test("round-trips, and refuses an effort level Claude Code doesn't have", () => {
-    expectRoundTrips(RunnerModels, [runnerModels, { ...runnerModels, models: [], efforts: [] }])
-    expectRejected(RunnerModels, { ...runnerModels, efforts: ["low", "auto"] })
+  test("round-trips, and refuses a thinking level pi-ai doesn't have", () => {
+    expectRoundTrips(RunnerModels, [
+      runnerModels,
+      { ...runnerModels, models: [], thinkingLevels: [] },
+    ])
+    expectRejected(RunnerModels, { ...runnerModels, thinkingLevels: ["low", "auto"] })
   })
 })
 

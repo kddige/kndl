@@ -1,6 +1,8 @@
 import {
   type AgentId,
   type AttachmentId,
+  type Harness,
+  harnessOfModel,
   MaxSessionNameLength,
   type PromptId,
   type SessionId,
@@ -59,7 +61,16 @@ import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
-import { type ModelSetting, modelName, otherTurnModel } from "./models.ts"
+import {
+  harnessNames,
+  isClaudeModel,
+  knownModelLabel,
+  type ModelSetting,
+  modelName,
+  otherProviderTurnModel,
+  otherTurnModel,
+  providerModelLabel,
+} from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
@@ -238,7 +249,7 @@ function LoadedSession({
   const title = sessionTitle(summary)
 
   // Stopping its Claude Code interrupts its running agents (ADR 0014): sleep, a restart and a
-  // change of model or effort ask first, with what they'd interrupt.
+  // change of model or thinking level ask first, with what they'd interrupt.
   const runningAgents = summary.agents?.filter((agent) => agent.status === "Running").length ?? 0
   const [confirming, setConfirming] = useState<Interruption | null>(null)
   const interrupting = (interruption: Interruption) => {
@@ -251,16 +262,46 @@ function LoadedSession({
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
   }
 
-  // Its model and effort, from what its Runner said its Claude Code has (#128).
-  const models = useHubState(
-    (hubState) => hubState.runners?.find((runner) => runner.id === summary.runnerId)?.models,
+  // Its model and thinking level (#128): Claude Code's from what its Runner said its Claude Code
+  // has; pi's from its Creator's Models (ADR 0029), which only they are sent, so anyone else knows
+  // a pi Session's Model by the name the transcript last gave it. Its Creator may pick any Model its
+  // Runner can run, on either Harness (ADR 0030). While a switch of Harness waits for a Turn to end,
+  // the Session still runs on its Harness, but its model is the other's already: the model is named
+  // and found by the Harness it names.
+  const harness = summary.harness ?? "ClaudeCode"
+  const pi = harness === "Pi"
+  const modelOnPi = harnessOfModel(summary.model) === "Pi"
+  const runner = useHubState((hubState) =>
+    hubState.runners?.find((candidate) => candidate.id === summary.runnerId),
   )
+  const models = runner?.models
+  // A Runner from before pi runs Claude Code alone.
+  const runnerHarnesses = runner?.harnesses ?? ["ClaudeCode"]
+  const yours = useHubState((hubState) => hubState.you?.id === summary.creator.id)
+  const providerModels = useHubState((hubState) => (yours ? hubState.providers?.models : undefined))
+  const connectable = useHubState((hubState) =>
+    yours ? hubState.providers?.connectable : undefined,
+  )
+  // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
+  const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
+  // Looked for only when the log or the model changes, not on every change the Hub sends.
+  const log = useHubState((hubState) => hubState.joined[summary.id]?.log)
+  const knownLabel = useMemo(
+    () => (modelOnPi ? knownModelLabel(log ?? [], summary.model) : undefined),
+    [modelOnPi, log, summary.model],
+  )
+  const offered = {
+    ...(((runnerHarnesses.includes("ClaudeCode") && hasClaudeCredential) || !pi) && {
+      claudeCode: { models },
+    }),
+    ...((runnerHarnesses.includes("Pi") || pi) && { pi: { models: providerModels, connectable } }),
+  }
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
-      ...(summary.effort !== undefined && { effort: summary.effort }),
+      ...(summary.thinkingLevel !== undefined && { thinkingLevel: summary.thinkingLevel }),
     }),
-    [summary.model, summary.effort],
+    [summary.model, summary.thinkingLevel],
   )
   // A switch shows in the picker from the pick, while it is asked about and then sent, until the
   // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
@@ -271,30 +312,61 @@ function LoadedSession({
     const timer = setTimeout(() => setPicked(null), switchSentMs)
     return () => clearTimeout(timer)
   }, [picked])
+  // The other Harness's Model switches the Session to it (ADR 0030), which is said first, once. A
+  // pi Session switches between Turns without stopping anything (ADR 0029), so it doesn't ask;
+  // Claude Code restarts, which asks while agents run.
   const pick = (next: ModelSetting) => {
     const from = setting
     setPicked({ from, to: next, sent: false })
-    interrupting({
-      title: "Switch the model?",
-      action: "Switch",
-      go: () =>
-        setPicked(
-          command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
-        ),
-      cancel: () => setPicked(null),
-    })
+    const go = () =>
+      setPicked(
+        command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
+      )
+    const cancel = () => setPicked(null)
+    const to = harnessOfModel(next.model)
+    if (to !== harness)
+      setConfirming({
+        title: `Switch to ${harnessNames[to]}?`,
+        description: harnessSwitchText(to, runningAgents),
+        action: "Switch",
+        go,
+        cancel,
+      })
+    else if (pi) go()
+    else interrupting({ title: "Switch the model?", action: "Switch", go, cancel })
   }
+  // A Turn that ran on another Model than the Session's is named, as one from before a switch,
+  // of Harness too: by its Runner's name for it, or its Creator's Model's.
   const nameTurnModel = useCallback(
-    (model: string) => otherTurnModel(models, setting, model),
-    [models, setting],
+    (model: string) =>
+      modelOnPi
+        ? otherProviderTurnModel(providerModels, setting, model)
+        : otherTurnModel(models, setting, model, providerModels),
+    [modelOnPi, models, providerModels, setting],
+  )
+  const settingName = modelOnPi
+    ? providerModelLabel(providerModels, setting, knownLabel)
+    : modelName(models, setting)
+  // Who answers: Claude, on Claude Code, unless a Turn from before a switch ran another Provider's
+  // Model; on pi, the Model a Turn ran, by name, or the Session's.
+  const nameReplier = useCallback(
+    (turnModel: string | undefined) =>
+      !modelOnPi
+        ? turnModel === undefined || isClaudeModel(turnModel)
+          ? "Claude"
+          : (otherTurnModel(models, setting, turnModel, providerModels) ?? "Claude")
+        : turnModel === undefined
+          ? settingName
+          : (otherProviderTurnModel(providerModels, setting, turnModel) ?? settingName),
+    [modelOnPi, models, providerModels, setting, settingName],
   )
 
   const you = useHubState((hubState) => hubState.you)
   // Only its Creator drives it (ADR 0026): anyone else watches.
   const cantDrive = useDriveRefusal(summary)
   const drives = cantDrive === undefined
-  // It runs on its Creator's setup token, and can't wake without one.
-  const noToken = useHubState((hubState) => hubState.claudeCredential === null)
+  // On Claude Code, it runs on its Creator's setup token, and can't wake without one.
+  const noToken = useHubState((hubState) => !pi && hubState.claudeCredential === null)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -303,9 +375,9 @@ function LoadedSession({
   const hint = !drives
     ? undefined
     : busy
-      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
+      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`
       : summary.modelPending === true && running
-        ? `${modelName(models, setting)} takes over when this Turn ends.`
+        ? `${settingName} takes over when this Turn ends.`
         : state === "Asleep"
           ? noToken
             ? "Asleep: add a setup token on your Account page to wake it."
@@ -483,9 +555,12 @@ function LoadedSession({
           setConfirming(null)
         }}
         title={confirming?.title}
-        description={`${
-          runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
-        }; stopping Claude Code interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`}
+        description={
+          confirming?.description ??
+          `${
+            runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
+          }; stopping ${pi ? "the Session" : "Claude Code"} interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`
+        }
         footer={
           <>
             <DialogClose>Cancel</DialogClose>
@@ -545,8 +620,8 @@ function LoadedSession({
                       title="Nothing here yet"
                       description={
                         drives
-                          ? "Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
-                          : `Once ${summary.creator.name} sends the first prompt, you see Claude's answer here as it streams.`
+                          ? `Send the first prompt. Everyone in the Session sees ${pi ? "the" : "Claude's"} answer as it streams.`
+                          : `Once ${summary.creator.name} sends the first prompt, you see ${pi ? "the" : "Claude's"} answer here as it streams.`
                       }
                     />
                   ) : (
@@ -554,6 +629,7 @@ function LoadedSession({
                       sessionId={summary.id}
                       items={items}
                       nameTurnModel={nameTurnModel}
+                      nameReplier={nameReplier}
                     />
                   )}
                 </div>
@@ -594,15 +670,16 @@ function LoadedSession({
                   disabledReason={disabledReason}
                   hint={
                     drives && asking
-                      ? "Claude is waiting on an answer: a reply here declines its question."
+                      ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
                       : hint
                   }
                   attach={drives ? attach : undefined}
+                  {...(pi && { placeholder: "Send a prompt" })}
                   {...(drives && asking && { copy: replyCopy, needsText: true })}
                   picker={
                     drives ? (
                       <ModelPicker
-                        models={models}
+                        {...offered}
                         value={shownSetting}
                         onChange={pick}
                         disabled={archived}
@@ -610,7 +687,12 @@ function LoadedSession({
                       />
                     ) : (
                       // Someone watching sees what it runs on, but can't change it (ADR 0026).
-                      <ModelSettingLabel models={models} value={setting} />
+                      <ModelSettingLabel
+                        claudeCode={{ models }}
+                        pi={{ models: providerModels }}
+                        value={setting}
+                        knownLabel={knownLabel}
+                      />
                     )
                   }
                 />
@@ -650,9 +732,26 @@ function command(sent: boolean): boolean {
   return sent
 }
 
-/** Something that stops the Session's Claude Code, confirmed first while agents run. */
+/**
+ * What a switch to the other Harness does (ADR 0030), said once before it is sent: its own
+ * conversation, a handoff, a relaunch the next prompt waits for, and the agents it interrupts.
+ */
+function harnessSwitchText(to: Harness, runningAgents: number): string {
+  const agents =
+    runningAgents === 0
+      ? ""
+      : ` It interrupts ${runningAgents === 1 ? "the running agent" : `${runningAgents} running agents`}.`
+  return `Switching to ${harnessNames[to]} continues in its own conversation, with a handoff of this one. The next prompt waits until it's up.${agents}`
+}
+
+/**
+ * Something that stops the Session's Claude Code, confirmed first while agents run; or a switch of
+ * Harness, always confirmed.
+ */
 interface Interruption {
   readonly title: string
+  /** What the dialog says; absent, which running agents it interrupts. */
+  readonly description?: string
   /** Its button's label. */
   readonly action: string
   readonly go: () => void
@@ -660,7 +759,7 @@ interface Interruption {
   readonly cancel?: () => void
 }
 
-/** A model and effort picked, from the setting it was picked on, and whether it was sent. */
+/** A model and thinking level picked, from the setting it was picked on, and whether it was sent. */
 interface PickedSetting {
   readonly from: ModelSetting
   readonly to: ModelSetting
@@ -720,6 +819,7 @@ function StartingBanner({
   const output = starting && startLog?.since === starting.since ? startLog.text : ""
   const plain = useMemo(() => terminalText(output), [output])
   const version = starting?.environmentVersion
+  const pi = summary.harness === "Pi"
   return (
     <Banner
       intent="accent"
@@ -736,11 +836,13 @@ function StartingBanner({
       }
     >
       {starting === undefined
-        ? `${asker ? `${asker} asked for a restart. ` : ""}Stopping Claude Code and its Sandbox, to start them again on ${summary.repo}'s latest Environment. `
+        ? `${asker ? `${asker} asked for a restart. ` : ""}${pi ? "Stopping its Sandbox, to start it" : "Stopping Claude Code and its Sandbox, to start them"} again on ${summary.repo}'s latest Environment. `
         : version === undefined
-          ? "Starting Claude Code in a fresh Sandbox. "
+          ? pi
+            ? "Starting a fresh Sandbox. "
+            : "Starting Claude Code in a fresh Sandbox. "
           : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its start script. `}
-      {drives && "Prompts sent now wait in the queue until Claude Code is up."}
+      {drives && `Prompts sent now wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`}
     </Banner>
   )
 }
@@ -776,6 +878,8 @@ function StateBanner({
   const navigate = useNavigate()
   // Its Creator's setup token, which it can't wake without (ADR 0026); undefined while loading.
   const credential = useHubState((state) => state.claudeCredential)
+  // A pi Session runs on its Creator's Connected providers, and wakes without one (ADR 0029).
+  const pi = summary.harness === "Pi"
   const why = change?.state === summary.state ? change.message : undefined
   const busy = summary.starting !== undefined || summary.restarting !== undefined
   if (busy && (summary.state === "Active" || summary.state === "Asleep")) {
@@ -824,9 +928,9 @@ function StateBanner({
           title="MCP servers changed"
           action={restartButton}
         >
-          {summary.repo}'s Installations changed since this Session started, and Claude Code gets
-          its MCP servers as it starts. A Restart applies the change, with the Workspace and
-          conversation as they are.
+          {summary.repo}'s Installations changed since this Session started, and{" "}
+          {pi ? "the Session gets" : "Claude Code gets"} its MCP servers as it starts. A Restart
+          applies the change, with the Workspace and conversation as they are.
           {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
         </Banner>
       )
@@ -868,7 +972,7 @@ function StateBanner({
         )
       }
       // It runs on its Creator's setup token, and can't wake without one (ADR 0026).
-      if (drives && credential === null) {
+      if (drives && !pi && credential === null) {
         return (
           <Banner
             intent="danger"
@@ -901,8 +1005,13 @@ function StateBanner({
           detail={
             // What Claude Code printed before it exited on its own, as why it did (#105).
             summary.lastOutput !== undefined && (
-              <Disclosure variant="plain" summary="Show Claude Code's last output">
-                <LogView label="Claude Code's last output">{summary.lastOutput}</LogView>
+              <Disclosure
+                variant="plain"
+                summary={pi ? "Show its last output" : "Show Claude Code's last output"}
+              >
+                <LogView label={pi ? "Its last output" : "Claude Code's last output"}>
+                  {summary.lastOutput}
+                </LogView>
               </Disclosure>
             )
           }

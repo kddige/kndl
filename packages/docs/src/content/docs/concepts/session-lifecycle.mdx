@@ -12,12 +12,12 @@ A Session is always in one of four states. Asleep Sessions cost nothing but disk
 
 <LifecycleDiagram />
 
-| State        | Sandbox                                           | Claude Code           | Prompts                                |
-| ------------ | ------------------------------------------------- | --------------------- | -------------------------------------- |
-| **Active**   | Running                                           | Running               | Delivered in order, one Turn at a time |
-| **Asleep**   | Stopped, disks kept                               | Stopped               | The Creator's next one wakes it        |
-| **Frozen**   | As the Runner left it                             | As the Runner left it | Wait until the Runner is back          |
-| **Archived** | Destroyed; Workspace and Claude Code's state kept | Stopped               | Refused                                |
+| State        | Sandbox                                         | Agent                 | Prompts                                |
+| ------------ | ----------------------------------------------- | --------------------- | -------------------------------------- |
+| **Active**   | Running                                         | Running               | Delivered in order, one Turn at a time |
+| **Asleep**   | Stopped, disks kept                             | Stopped               | The Creator's next one wakes it        |
+| **Frozen**   | As the Runner left it                           | As the Runner left it | Wait until the Runner is back          |
+| **Archived** | Destroyed; Workspace and the agent's state kept | Stopped               | Refused                                |
 
 ## Going to sleep
 
@@ -34,13 +34,13 @@ Asleep, the Sandbox is stopped and its disks are kept. Docker's containers are s
 
 ### Put to sleep, saying why
 
-The Hub also puts a Session to sleep, even mid-Turn, when the token it runs on goes away. The Session's history says why:
+The Hub also puts a Session to sleep, even mid-Turn, when what it runs on goes away. The Session's history says why:
 
 - its Creator removed or replaced their Claude credential;
 - its Creator was removed as a Member;
-- its Creator has no Claude credential, as the Hub starts.
+- as the Hub starts, its Creator has nothing to run it on: no Claude credential for a Claude Code Session, no Models for a pi Session.
 
-It can't wake until its Creator has a Claude credential again. A removed Member's Sessions stay readable until they're purged.
+It can't wake until its Creator has something to run it on again. Disconnecting a Provider doesn't put a Session to sleep: its Turns on that Provider's Models fail until the Creator connects it again or switches Model. A removed Member's Sessions stay readable until they're purged.
 
 ### Keep awake
 
@@ -53,32 +53,33 @@ It can't wake until its Creator has a Claude credential again. A removed Member'
 
 ## Waking
 
-The Creator wakes an Asleep Session with a prompt, **Wake now** or a `kndl forward` of it. Anyone else's forward of an Asleep Session is told it's Asleep and that only its Creator can wake it. The Runner fetches the Creator's setup token from the Hub and starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
+The Creator wakes an Asleep Session with a prompt, **Wake now** or a `kndl forward` of it. Anyone else's forward of an Asleep Session is told it's Asleep and that only its Creator can wake it. The Runner fetches the Creator's setup token from the Hub, when they have one, and starts the same Sandbox, with its dependencies, caches and Docker data as they were. The agent resumes the conversation.
 
-A Session whose Creator has no Claude credential doesn't wake. A replaced token reaches the Session at its next wake.
+A Claude Code Session whose Creator has no Claude credential doesn't wake, and neither does a pi Session whose Creator has no Models. A replaced token reaches the Session at its next wake.
 
 - **A newer Environment version** makes the Sandbox afresh from its Build at the next wake, on the same Workspace and disks. **Restart** on the **Environment changed** banner does that at once.
 - **A Runner behind the Hub** wakes no Session. Prompts wait until the Runner runs the Hub's commit.
 - **Subagents** stop with their Session and are marked Interrupted. A message to one resumes it.
+- **A Model of the other Harness**, picked while the Session was Asleep, wakes it on that Harness, which resumes its own conversation, or starts one, and is handed what it hasn't seen ([Switching Harness](/concepts/architecture/#switching-harness)).
 
 ## When a start fails
 
-If Claude Code can't start, the Session is Asleep, with the reason in its history. Queued prompts stay queued, and nothing retries on its own: the next prompt or **Wake now** tries again. See [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited).
+If the agent can't start, the Session is Asleep, with the reason in its history. Queued prompts stay queued, and nothing retries on its own: the next prompt or **Wake now** tries again. See [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited).
 
 ## Frozen
 
 While its Runner is offline, a Session is Frozen. You can still read it, and prompts wait in its queue. Its Sandbox and Workspace are on that Runner, so it waits for it rather than moving.
 
-Claude Code runs in the Sandbox, not in the Runner, so it keeps running while the Runner's connection is down or the Runner restarts. When the Runner is back, the Session is Active if Claude Code is still running, and Asleep otherwise.
+The agent runs in the Sandbox, not in the Runner, so it keeps running while the Runner's connection is down or the Runner restarts. When the Runner is back, the Session is Active if the agent is still running, and Asleep otherwise.
 
 ## Deleting and restoring
 
-The Session's Creator can delete it with the bin in its header. Deleting archives it at once: the Sandbox and its disks are destroyed, and the Workspace and Claude Code's state are kept. Everyone with access to the Repo can still read it.
+The Session's Creator can delete it with the bin in its header. Deleting archives it at once: the Sandbox and its disks are destroyed, and the Workspace and the agent's state are kept. Everyone with access to the Repo can still read it.
 
 - **Undo** on the toast restores it.
 - **Archived Sessions** in the sidebar lists each Repo's Archived Sessions, with who deleted each and when. The Creator restores one with **Restore**.
 
-A restored Session is Asleep, and the Creator's next prompt wakes it in a new Sandbox. The conversation carries on. Dependencies and Docker's data went with the old disks, so the Start script or Claude reinstalls them.
+A restored Session is Asleep, and the Creator's next prompt wakes it in a new Sandbox. The conversation carries on. Dependencies and Docker's data went with the old disks, so the Start script or the agent reinstalls them.
 
 ## Purging
 

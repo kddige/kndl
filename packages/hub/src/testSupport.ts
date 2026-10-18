@@ -19,11 +19,13 @@ import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { ClaudeCheck, ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
+import { ProviderApis } from "./ConnectedProviders.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
+import { ModelCallLimits } from "./Gateway.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
+import { HubRoutes, HubServices, hubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
 import {
   DefaultArchiveRetention,
   DefaultRepoAccessTtl,
@@ -40,6 +42,7 @@ import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
+import type { ModelCatalog } from "./ModelCatalog.ts"
 import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
 
@@ -121,6 +124,7 @@ export type Services =
   | HubVersion
   | HubUpdates
   | HubUpdateRuns
+  | ModelCatalog
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
@@ -181,6 +185,10 @@ export async function startHub(
     readonly hubUpdateRuns?: Layer.Layer<HubUpdateRuns, unknown, HubUpdates>
     /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
+    /**
+     * The Providers' APIs and sign-ins (ADR 0029); by default ProviderApis.layerTest, asking no one.
+     */
+    readonly providerApis?: Layer.Layer<ProviderApis>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
     readonly cliBuilds?: Layer.Layer<CliBuilds>
     /** Where MCP server packages are read from; by default git over https:// and uploads. */
@@ -191,6 +199,15 @@ export async function startHub(
     readonly mcpServerIcons?: Layer.Layer<McpServerIcons>
     /** How far ahead of the time it is the Hub's clock reads, as after a long time down. */
     readonly clockAhead?: Duration.Duration
+    /**
+     * The Models each Member's pi Sessions can run (ADR 0029); by default the Hub's own, their
+     * Connected providers' (ConnectedProviders.modelCatalog).
+     */
+    readonly modelCatalog?: Layer.Layer<ModelCatalog>
+    /** How much of the Hub model calls may take (ModelCallLimits); by default the Hub's own. */
+    readonly modelCallLimits?: Partial<ModelCallLimits>
+    /** How long Bun keeps a quiet connection open, in seconds; by default the Hub's. */
+    readonly idleTimeout?: number
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -200,17 +217,20 @@ export async function startHub(
       BunHttpServer.layer({
         hostname: "127.0.0.1",
         port: 0,
-        idleTimeout: idleTimeoutSeconds,
+        idleTimeout: options.idleTimeout ?? idleTimeoutSeconds,
         websocket: websocketOptions,
       }),
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
-    Layer.provideMerge(HubServices),
+    Layer.provideMerge(
+      options.modelCatalog === undefined ? HubServices : hubServices(options.modelCatalog),
+    ),
     Layer.provideMerge(options.hubUpdateRuns ?? HubUpdateRuns.off),
     Layer.provideMerge(options.hubUpdates ?? HubUpdates.off),
     Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),
     Layer.provideMerge(options.mcpServerIcons ?? McpServerIcons.none),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
+    Layer.provideMerge(options.providerApis ?? ProviderApis.layerTest()),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
@@ -220,6 +240,14 @@ export async function startHub(
     ),
     Layer.provideMerge(
       options.clockAhead === undefined ? Layer.empty : clockAhead(options.clockAhead),
+    ),
+    Layer.provideMerge(
+      options.modelCallLimits === undefined
+        ? Layer.empty
+        : Layer.succeed(ModelCallLimits, {
+            ...ModelCallLimits.defaultValue(),
+            ...options.modelCallLimits,
+          }),
     ),
   )
   const scope = Scope.makeUnsafe()

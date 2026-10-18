@@ -1,10 +1,11 @@
-import type { EffortLevel, ModelOption, RunnerModels } from "@kndl/protocol"
-import { EffortLevels } from "@kndl/protocol"
+import type { ModelOption, RunnerModels, ThinkingLevel } from "@kndl/protocol"
+import { ThinkingLevels } from "@kndl/protocol"
 import { Config, Context, Data, Effect, Layer } from "effect"
+import { ClaudeEfforts } from "./ClaudeLaunch.ts"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
-// Which models and effort levels a Session's Claude Code takes (#128), for the Runner's hello: the
-// Hub offers its Sessions those, and refuses others.
+// Which models and thinking levels a Session's Claude Code takes (#128), for the Runner's hello:
+// the Hub offers its Sessions those, and refuses others.
 //
 // Sessions run the pinned build of Claude Code in their Sandboxes (ADR 0013), so what they take
 // is known with the build: PinnedClaudeModels says it, and the Runner's host needs no Claude Code
@@ -14,7 +15,7 @@ import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 //
 // Claude Code has no command that lists its models with their names. What it does have, without
 // an API call or a conversation saved, is `claude -p /model`: its init event says which model it
-// runs and whether that model takes an effort level, and its answer names the model and lists
+// runs and whether that model takes a thinking level, and its answer names the model and lists
 // the aliases `--model` takes. So the smoke test runs it once bare, for the default and the
 // aliases, then once per alias with `--model`, and `claude -p /effort` for the levels.
 //
@@ -23,7 +24,7 @@ import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
 /**
  * What Claude Code {@link PinnedClaudeVersion} takes: its default, its aliases most capable first,
- * as its picker lists them, without ones that are another's double, and its effort levels.
+ * as its picker lists them, without ones that are another's double, and its thinking levels.
  */
 export const PinnedClaudeModels: RunnerModels = {
   default: {
@@ -31,7 +32,7 @@ export const PinnedClaudeModels: RunnerModels = {
     id: "claude-opus-5-5",
     label: "Opus 5.5",
     description: "Best for everyday, complex tasks",
-    effort: true,
+    reasoning: true,
   },
   models: [
     {
@@ -39,52 +40,52 @@ export const PinnedClaudeModels: RunnerModels = {
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       description: "Best for everyday, complex tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "fable",
       id: "claude-fable-5-1",
       label: "Fable 5.1",
       description: "Most capable for your hardest and longest-running tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "sonnet",
       id: "claude-sonnet-5-5",
       label: "Sonnet 5.5",
       description: "Efficient for routine tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "haiku",
       id: "claude-haiku-5-5",
       label: "Haiku 5.5",
       description: "Fastest for quick answers",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "opus[1m]",
       id: "claude-opus-5-5[1m]",
       label: "Opus 5.5 (1M context)",
       description: "Opus with a 1M-token context, for long sessions",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "sonnet[1m]",
       id: "claude-sonnet-5-5[1m]",
       label: "Sonnet 5.5 (1M context)",
       description: "Sonnet with a 1M-token context, for long sessions",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "opusplan",
       id: "claude-sonnet-5-5",
       label: "Opus in plan mode, else Sonnet",
       description: "Plans with Opus, then carries the plan out with Sonnet",
-      effort: true,
+      reasoning: true,
     },
   ],
-  efforts: ["low", "medium", "high", "xhigh", "max"],
+  thinkingLevels: ClaudeEfforts,
 }
 
 /** The flags every probe runs Claude Code with: no settings, no conversation kept, events out. */
@@ -103,8 +104,8 @@ export interface ModelProbe {
   readonly id: string
   /** What it called it: `Opus 5.5`, without the ` (default)` it adds when no model is given. */
   readonly label: string
-  /** Whether the model takes an effort level; Claude Code ignores `--effort` for one that doesn't. */
-  readonly effort: boolean
+  /** Whether the model takes a thinking level; Claude Code ignores `--effort` for one that doesn't. */
+  readonly reasoning: boolean
   /** The aliases `--model` takes, as it listed them. */
   readonly aliases: ReadonlyArray<string>
 }
@@ -143,8 +144,8 @@ export function parseModelProbe(stdout: string): ModelProbe | undefined {
   return {
     id,
     label,
-    // Older builds don't say: they take an effort level for any model.
-    effort: init?.["per_turn_effort_active"] !== false,
+    // Older builds don't say: they take a thinking level for any model.
+    reasoning: init?.["per_turn_effort_active"] !== false,
     aliases: available
       .split(",")
       .map((alias) => alias.trim())
@@ -153,11 +154,11 @@ export function parseModelProbe(stdout: string): ModelProbe | undefined {
 }
 
 /** Reads a `claude -p /effort` run's output: the levels its usage lists that the Hub knows. */
-export function parseEfforts(stdout: string): ReadonlyArray<EffortLevel> {
+export function parseThinkingLevels(stdout: string): ReadonlyArray<ThinkingLevel> {
   const usage = /\/effort <([^>]+)>/.exec(resultText(stdout) ?? "")?.[1]
   if (usage === undefined) return []
   const listed = new Set(usage.split("|").map((level) => level.trim()))
-  return EffortLevels.filter((level) => listed.has(level))
+  return ThinkingLevels.filter((level) => listed.has(level))
 }
 
 const descriptionOf = new Map(
@@ -174,7 +175,7 @@ const tableOrder = new Map(PinnedClaudeModels.models.map((model, index) => [mode
 export function runnerModels(
   bare: ModelProbe,
   probes: ReadonlyMap<string, ModelProbe>,
-  efforts: ReadonlyArray<EffortLevel>,
+  thinkingLevels: ReadonlyArray<ThinkingLevel>,
 ): RunnerModels {
   const ordered = [...probes.keys()]
     .filter((alias) => alias !== "default")
@@ -195,7 +196,7 @@ export function runnerModels(
       id: probe.id,
       label,
       ...(description === undefined ? {} : { description }),
-      effort: probe.effort,
+      reasoning: probe.reasoning,
     })
   }
   const same = models.find((model) => model.id === bare.id)
@@ -205,10 +206,10 @@ export function runnerModels(
       id: bare.id,
       label: bare.label,
       ...(same?.description === undefined ? {} : { description: same.description }),
-      effort: bare.effort,
+      reasoning: bare.reasoning,
     },
     models,
-    efforts,
+    thinkingLevels,
   }
 }
 
@@ -234,14 +235,14 @@ export const probeModels = <E, R>(
           : Effect.succeed(found)
       })
     const bare = yield* said(["-p", "/model"])
-    const efforts = parseEfforts(yield* probe(["-p", "/effort"]))
+    const thinkingLevels = parseThinkingLevels(yield* probe(["-p", "/effort"]))
     const probes = yield* Effect.forEach(
       bare.aliases,
       (alias) =>
         Effect.map(said(["--model", alias, "-p", "/model"]), (found) => [alias, found] as const),
       { concurrency: 4 },
     )
-    return runnerModels(bare, new Map(probes), efforts)
+    return runnerModels(bare, new Map(probes), thinkingLevels)
   })
 
 /** What a Session's Claude Code takes. */
@@ -249,7 +250,7 @@ export class ClaudeModels extends Context.Service<
   ClaudeModels,
   {
     /**
-     * The models and effort levels, or undefined when they aren't known: the hello then leaves
+     * The models and thinking levels, or undefined when they aren't known: the hello then leaves
      * them out. Never fails.
      */
     readonly current: Effect.Effect<RunnerModels | undefined>

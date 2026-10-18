@@ -30,7 +30,7 @@ export default defineConfig({
     starlight({
       title: "kndl",
       description:
-        "Multiplayer agentic sessions, self-hosted: run Claude Code Sessions in Sandboxes on your own machines, and watch and drive them together from the web.",
+        "Multiplayer agentic sessions, self-hosted: run coding-agent Sessions in Sandboxes on your own machines, on any Provider's Models, and watch and drive them together from the web.",
       logo: {
         light: "../../brand/lockup-light.svg",
         dark: "../../brand/lockup-dark.svg",
@@ -91,6 +91,7 @@ export default defineConfig({
             { slug: "guides/forward-a-sessions-ports" },
             { slug: "guides/set-up-an-environment" },
             { slug: "guides/use-variables-and-secrets" },
+            { slug: "guides/connect-your-providers" },
             { slug: "guides/add-your-claude-credential" },
             { slug: "guides/add-a-remote-mcp-server" },
             { slug: "guides/connect-an-mcp-server-with-oauth" },

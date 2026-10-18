@@ -18,6 +18,7 @@ import {
   dismissedText,
   eventsBody,
   helloBody,
+  openAttachment,
   Outbox,
   promptFromParticipant,
   readCommands,
@@ -25,12 +26,14 @@ import {
   repliedPrefix,
   resultSummary,
   sharedSessionNote,
+  sharedSessionNoteFor,
   startsDelivered,
   steeredPrompt,
   taskNotificationAgent,
   terminalOutcome,
   toolArguments,
   turnEndReason,
+  turnUsage,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
 
@@ -75,17 +78,11 @@ const events: Array<Record<string, unknown>> = [
   {
     _tag: "TurnEnded",
     turnId: "t1",
-    reason: "Answered",
+    reason: "stop",
     durationMs: 1200,
-    usage: {
-      model: "claude-test",
-      inputTokens: 10,
-      outputTokens: 20,
-      cacheReadInputTokens: 0,
-      cacheCreationInputTokens: 0,
-    },
+    usage: { model: "claude-test", input: 10, output: 20, cacheRead: 0, cacheWrite: 0 },
   },
-  { _tag: "TurnEnded", turnId: "t1", agentId: "a1", reason: "Stopped", durationMs: 5 },
+  { _tag: "TurnEnded", turnId: "t1", agentId: "a1", reason: "aborted", durationMs: 5 },
   {
     _tag: "TurnStarted",
     turnId: "t3",
@@ -190,20 +187,41 @@ describe("checkEvent", () => {
   })
 })
 
-test("helloBody says hello in the protocol's shape: this mod steers (#195), and marks files (#278)", () => {
+test("helloBody says hello in the protocol's shape: this mod steers (#195), marks files (#278), and takes handoffs (ADR 0030)", () => {
   const body = helloBody({
     sessionId: "s1",
-    claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-test",
   })
   expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
     _tag: "ModHello",
     protocolVersion: ProtocolVersion,
     sessionId: "s1",
-    claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-test",
     steers: true,
     attaches: true,
+    takesHandoffs: true,
+  } as never)
+})
+
+test("helloBody says a mod that switches models so (ADR 0029): a pi Session's", () => {
+  const body = helloBody({
+    sessionId: "s1",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    model: "openai/gpt-test",
+    switchesModels: true,
+  })
+  expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
+    _tag: "ModHello",
+    protocolVersion: ProtocolVersion,
+    sessionId: "s1",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    model: "openai/gpt-test",
+    steers: true,
+    attaches: true,
+    switchesModels: true,
+    takesHandoffs: true,
   } as never)
 })
 
@@ -330,13 +348,31 @@ test("backgroundedByStop is a command a Stop moved to the background, still runn
   expect(backgroundedByStop(null)).toBe(false)
 })
 
-test("turnEndReason names every way a Turn ends", () => {
+test("turnEndReason names every way a Turn ends as pi-ai's stop reasons: a refusal is an error", () => {
   expect(["answer", "aborted", "refusal", "error"].map((r) => turnEndReason(r as never))).toEqual([
-    "Answered",
-    "Stopped",
-    "Refused",
-    "Failed",
+    "stop",
+    "aborted",
+    "error",
+    "error",
   ])
+})
+
+test("turnUsage names Claude Code's usage as pi-ai does, without a cost Claude Code doesn't report", () => {
+  expect(
+    turnUsage({
+      model: "claude-sonnet-5-5",
+      input_tokens: 12,
+      output_tokens: 345,
+      cache_read_input_tokens: 6789,
+      cache_creation_input_tokens: 101,
+    }),
+  ).toEqual({
+    model: "claude-sonnet-5-5",
+    input: 12,
+    output: 345,
+    cacheRead: 6789,
+    cacheWrite: 101,
+  })
 })
 
 test("a prompt from a Participant is led by their name", () => {
@@ -542,6 +578,14 @@ describe("attachments (#276)", () => {
     expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
   })
 
+  test("another Harness names its own attachment tool in what Claude is told (ADR 0029)", () => {
+    const context = attachmentContext([shot], "attachment")
+    expect(context).toContain("by calling attachment once per file")
+    expect(context).not.toContain(attachmentToolName)
+    expect(sharedSessionNoteFor("attachment")).toContain("call attachment with its id")
+    expect(sharedSessionNoteFor(attachmentToolName)).toBe(sharedSessionNote)
+  })
+
   test("a steered prompt marks its files inside the frame, for Claude to open by marker alone (#278)", () => {
     expect(steeredPrompt(participant, "and this", [shot])).toBe(
       [
@@ -618,6 +662,53 @@ describe("attachments (#276)", () => {
     expect(attachmentResult([first.part])).toEqual({
       deny: "Could not open the attachment: the Hub sent only part of it.",
     })
+  })
+
+  test("the tool fetches a file's parts from the Hub in order, each from where the last says the next starts", async () => {
+    const asked: Array<string> = []
+    const parts: Record<string, string> = {
+      "/mod/attachments/att-1?offset=0": JSON.stringify({
+        id: "att-1",
+        name: "shot.png",
+        mediaType: "image/png",
+        data: "iVBO",
+        next: 3,
+      }),
+      "/mod/attachments/att-1?offset=3": JSON.stringify({
+        id: "att-1",
+        name: "shot.png",
+        mediaType: "image/png",
+        data: "Rw0K",
+      }),
+    }
+    const opened = await openAttachment("att-1", async (path) => {
+      asked.push(path)
+      return { status: 200, text: parts[path] ?? "" }
+    })
+    expect(asked).toEqual(["/mod/attachments/att-1?offset=0", "/mod/attachments/att-1?offset=3"])
+    expect(opened).toEqual({
+      result: [
+        { type: "text", text: "shot.png" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
+      ],
+    })
+  })
+
+  test("the tool says why it can't fetch a file: no id, the Hub's reason, or a failed fetch", async () => {
+    expect(await openAttachment("", async () => ({ status: 200, text: "" }))).toEqual({
+      deny: "Give the attachment's id, from its marker.",
+    })
+    expect(
+      await openAttachment("att-9", async () => ({
+        status: 404,
+        text: '{"error":"There is no such attachment."}',
+      })),
+    ).toEqual({ deny: "Could not open the attachment: There is no such attachment." })
+    expect(
+      await openAttachment("att-9", async () => {
+        throw new Error("offline")
+      }),
+    ).toEqual({ deny: "Could not open the attachment: Error: offline" })
   })
 
   test("the transcript shows the tool's image as a note, not its bytes", () => {

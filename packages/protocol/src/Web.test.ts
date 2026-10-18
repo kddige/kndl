@@ -37,8 +37,21 @@ const sessionEvents = [
     attachments: [{ id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }],
   },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
-  { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
+  {
+    _tag: "ModelSwitched",
+    by: alice,
+    model: "sonnet",
+    modelLabel: "Sonnet 5.5",
+    thinkingLevel: "high",
+  },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
+  {
+    _tag: "ModelSwitched",
+    by: alice,
+    model: "openai/gpt-6-sol",
+    modelLabel: "GPT-6-Sol",
+    harness: "Pi",
+  },
   { _tag: "ModelSwitched", by: bob },
   {
     _tag: "PromptCancelled",
@@ -186,9 +199,9 @@ const webToHub = [
     repo: "kddige/kndl",
     branch: { _tag: "Create", name: "feature/health-check", from: "main" },
     model: "opus[1m]",
-    effort: "low",
+    thinkingLevel: "low",
   },
-  { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", effort: "xhigh" },
+  { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", thinkingLevel: "xhigh" },
   { _tag: "SetSessionModel", sessionId: "s-1", model: "claude-sonnet-4-5" },
   {
     _tag: "SetClaudeCredential",
@@ -201,6 +214,24 @@ const webToHub = [
     secret: "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY",
   },
   { _tag: "RemoveClaudeCredential", requestId: "q-21" },
+  { _tag: "GetProviders", requestId: "q-40" },
+  { _tag: "ConnectProviderKey", requestId: "q-41", provider: "xai", apiKey: "xai-FAKE_KEY" },
+  { _tag: "StartSignIn", requestId: "q-42", provider: "openai" },
+  { _tag: "AnswerSignIn", requestId: "q-42", value: "http://127.0.0.1:1455/auth/callback?code=c" },
+  { _tag: "CancelSignIn", requestId: "q-42" },
+  { _tag: "DisconnectProvider", requestId: "q-43", provider: "openai" },
+  { _tag: "RefreshProviderModels", requestId: "q-44" },
+  { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
+  { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
+  {
+    _tag: "CreateSession",
+    requestId: "q-46",
+    repo: "kddige/kndl",
+    branch: { _tag: "Create", name: "feature/pi", from: "main" },
+    harness: "Pi",
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "minimal",
+  },
   { _tag: "SetSessionModel", sessionId: "s-1" },
   { _tag: "RevokeCliToken", requestId: "q-22", cliTokenId: "ct-1" },
   { _tag: "CreateInvite", requestId: "q-23" },
@@ -499,7 +530,7 @@ const hubToWeb = [
   },
   {
     _tag: "SessionUpdated",
-    session: { ...sessionSummary, model: "sonnet", effort: "high", modelPending: true },
+    session: { ...sessionSummary, model: "sonnet", thinkingLevel: "high", modelPending: true },
   },
   {
     _tag: "SessionUpdated",
@@ -684,6 +715,92 @@ const hubToWeb = [
   },
   { _tag: "SharedVariables", variables: [] },
   { _tag: "ClaudeCredentialState", credential: null },
+  {
+    _tag: "ProvidersState",
+    requestId: "q-40",
+    connected: [
+      {
+        provider: "openai",
+        kind: "SignIn",
+        label: "ada@example.com",
+        connectedAt: 1_700_000_000_000,
+        models: [
+          {
+            provider: "openai",
+            id: "gpt-6-sol",
+            label: "GPT-6-Sol",
+            thinkingLevels: ["low", "high"],
+            contextWindow: 272_000,
+          },
+        ],
+        modelsCheckedAt: 1_700_000_000_500,
+      },
+      {
+        provider: "xai",
+        kind: "ApiKey",
+        label: "9f3b",
+        connectedAt: 1_700_000_000_000,
+        models: [],
+        modelsProblem: "xAI answered 503",
+        problem: "Connect it again: xAI refused to refresh the sign-in.",
+      },
+    ],
+    connectable: [
+      { provider: "openai", name: "OpenAI", signIn: "Sign in with ChatGPT", apiKey: true },
+      { provider: "xai", name: "xAI", apiKey: true },
+    ],
+    models: [
+      {
+        provider: "anthropic",
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5",
+        thinkingLevels: [],
+      },
+    ],
+    claudeHarness: "ClaudeCode",
+  },
+  {
+    _tag: "SignInStepped",
+    requestId: "q-42",
+    provider: "openai",
+    step: { _tag: "OpenUrl", url: "https://auth.openai.com/x", instructions: "Paste the URL" },
+  },
+  {
+    _tag: "SignInStepped",
+    requestId: "q-42",
+    provider: "xai",
+    step: { _tag: "EnterCode", url: "https://accounts.x.ai/device", code: "ABCD-EFGH" },
+  },
+  {
+    _tag: "SignInStepped",
+    requestId: "q-42",
+    provider: "openai",
+    step: {
+      _tag: "Paste",
+      message: "Paste the URL",
+      placeholder: "http://127.0.0.1:1455/auth/callback",
+    },
+  },
+  {
+    _tag: "SignInStepped",
+    requestId: "q-42",
+    provider: "openai",
+    step: { _tag: "Choose", message: "How?", options: [{ id: "browser", label: "Browser" }] },
+  },
+  {
+    _tag: "SignInStepped",
+    requestId: "q-42",
+    provider: "openai",
+    step: { _tag: "Progress", message: "Exchanging the code" },
+  },
+  { _tag: "SignInEnded", requestId: "q-42", provider: "openai", outcome: "Connected" },
+  {
+    _tag: "SignInEnded",
+    requestId: "q-42",
+    provider: "xai",
+    outcome: "Failed",
+    message: "Expired",
+  },
   {
     _tag: "ClaudeCredentialState",
     requestId: "q-19",
@@ -1076,8 +1193,8 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "-p" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "x".repeat(201) })
-    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "extra" })
-    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "auto" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", thinkingLevel: "extra" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", thinkingLevel: "auto" })
     expectRejected(WebToHub, { ...webToHub[1], model: "son net" })
     // An Invite's login is a GitHub login, or none at all.
     for (const login of ["", "-octocat", "octo--cat", "octo cat", "x".repeat(40)]) {

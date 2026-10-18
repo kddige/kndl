@@ -152,8 +152,11 @@ test("a draft made before someone else applied is refused, with a way to reload"
 })
 
 test("a Repo without an Environment is set up before its first Session", async () => {
-  // Slow enough to see the new Session's start.
-  const { page, router, status } = await open("/repos/acme/new/environment?branch=main", 15)
+  // Slow enough to see the new Session's start. It carries the model and thinking level picked.
+  const { hub, page, router, status } = await open(
+    "/repos/acme/new/environment?branch=main&model=sonnet&thinking=high",
+    15,
+  )
   await eventually(() =>
     expect(page.textContent).toContain("Set up acme/new to start your Session"),
   )
@@ -163,6 +166,10 @@ test("a Repo without an Environment is set up before its first Session", async (
   await eventually(() => expect(status()).toContain("Test build passed"))
   await step(() => button("Apply and start Session").click())
   await eventually(() => expect(router.state.location.pathname).toStartWith("/sessions/"))
+  expect(hub.received.find((message) => message._tag === "CreateSession")).toMatchObject({
+    model: "sonnet",
+    thinkingLevel: "high",
+  })
 
   // The new Session shows it is starting, with its build's log, not a changed Environment (#70).
   await eventually(() => expect(page.textContent).toContain("Starting…"))

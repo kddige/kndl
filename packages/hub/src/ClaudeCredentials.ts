@@ -40,7 +40,7 @@ const countTokensUrl = "https://api.anthropic.com/v1/messages/count_tokens"
 /** Any model takes a count; counting is free and spends no rate limit worth noting. */
 const checkModel = "claude-opus-5-5"
 /** What Anthropic needs to take a subscription token on its API, as Claude Code sends. */
-const oauthBeta = "oauth-2025-04-20"
+export const oauthBeta = "oauth-2025-04-20"
 const checkTimeout = Duration.seconds(10)
 
 /** A check Anthropic gave no clear answer to, and why, for the credential's owner. */

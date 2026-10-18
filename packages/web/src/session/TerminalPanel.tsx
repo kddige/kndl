@@ -72,12 +72,14 @@ const styles = stylex.create({
 })
 
 /** What the panel says over the terminal when it can't show it. */
-function overlayFor(state: SessionSummary["state"]): string | null {
-  switch (state) {
+function overlayFor(session: SessionSummary): string | null {
+  switch (session.state) {
     case "Active":
       return null
     case "Asleep":
-      return "The Session is Asleep, so Claude Code isn't running. Wake it, or send a prompt, to start its terminal again."
+      return session.harness === "Pi"
+        ? "The Session is Asleep. Wake it, or send a prompt, to start its terminal again."
+        : "The Session is Asleep, so Claude Code isn't running. Wake it, or send a prompt, to start its terminal again."
     case "Frozen":
       return "The Session is Frozen: its Runner is offline. The terminal comes back with it."
     case "Archived":
@@ -112,14 +114,15 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
     mirror.current?.setRunning(running)
   }, [running])
 
-  const overlay = overlayFor(session.state)
+  const overlay = overlayFor(session)
+  const pi = session.harness === "Pi"
   return (
     <div {...stylex.props(styles.panel)}>
       <div {...stylex.props(styles.toolbar)}>
         <span {...stylex.props(styles.note)}>
           {scaled
             ? "Sized for another viewer's window, so it's scaled down. Type into it, or fit it, to size it for yours."
-            : "Claude Code's own terminal, shared with everyone here. Type into it for anything the chat can't do."}
+            : `${pi ? "The Session's" : "Claude Code's"} own terminal, shared with everyone here. Type into it for anything the chat can't do.`}
         </span>
         {size && (
           <span {...stylex.props(styles.size)} aria-label="Terminal size">
@@ -143,7 +146,7 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
         <div
           ref={hostRef}
           role="group"
-          aria-label="Claude Code terminal"
+          aria-label={pi ? "Session terminal" : "Claude Code terminal"}
           {...stylex.props(styles.host)}
         />
         {overlay !== null ? (

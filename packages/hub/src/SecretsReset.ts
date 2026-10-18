@@ -19,6 +19,8 @@
 // - So do OAuth Installations' tokens and the clients the Hub registered for them (#217): each
 //   stays, disconnected, and is connected again on the MCP page; until then its Sessions
 //   don't start.
+// - So does each Member's Connected providers (ADR 0029): they connect them again on the Account
+//   page, and until then their pi Sessions can't run those Providers' Models.
 // - Plain variables, Environments, versions, Sessions, MCP servers, Installations and builds
 //   already on Runners stay.
 import { existsSync } from "node:fs"
@@ -57,6 +59,8 @@ export interface SecretsResetPlan {
   readonly sessionValues: number
   /** Each Installation with OAuth tokens or a registered client (#217), by name, in order. */
   readonly connections: ReadonlyArray<string>
+  /** Each Connected provider (ADR 0029), as `login: Provider`, in order. */
+  readonly connectedProviders: ReadonlyArray<string>
 }
 
 /** How many Sensitive values the reset clears. */
@@ -71,7 +75,8 @@ export const resetNeeded = (plan: SecretsResetPlan) =>
   plan.claudeCredentials.length > 0 ||
   plan.installations.length > 0 ||
   plan.sessionValues > 0 ||
-  plan.connections.length > 0
+  plan.connections.length > 0 ||
+  plan.connectedProviders.length > 0
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`
@@ -109,6 +114,7 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
       ? [`It also drops ${also.join(" and ")}: the lost key protects them.`]
       : []),
     ...claudeCredentialLines(plan),
+    ...connectedProviderLines(plan, "It disconnects"),
     ...installationLines(plan, "It clears"),
     ...(plan.installations.length > 0
       ? [
@@ -154,6 +160,15 @@ function claudeCredentialLines(plan: SecretsResetPlan): ReadonlyArray<string> {
   ]
 }
 
+/** The Connected providers it disconnects, or did. */
+function connectedProviderLines(plan: SecretsResetPlan, verb: string): ReadonlyArray<string> {
+  const connected = plan.connectedProviders
+  if (connected.length === 0) return []
+  return [
+    `${verb} ${plural(connected.length, "Connected provider")}, which each Member connects again on the Account page: ${connected.join(", ")}.`,
+  ]
+}
+
 /**
  * What a reset did, and what's next: a new key, made as `newKey` says (such as
  * "`bun run secrets-key`"), then the values entered again.
@@ -166,6 +181,7 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
       : "Cleared what the lost key protected.",
     ...clearedLines(plan),
     ...claudeCredentialLines(plan),
+    ...connectedProviderLines(plan, "Disconnected"),
     ...installationLines(plan, "Cleared"),
     ...connectionLines(plan, "Disconnected"),
     "",
@@ -213,6 +229,11 @@ const planOf = Effect.gen(function* () {
     WHERE o.client IS NOT NULL OR o.tokens IS NOT NULL
     ORDER BY i.name, i.id
   `
+  const connectedProviders = yield* sql<{ readonly login: string; readonly provider: string }>`
+    SELECT participants.login, connected_providers.provider FROM connected_providers
+    JOIN participants ON participants.id = connected_providers.participant_id
+    ORDER BY participants.login, connected_providers.provider
+  `
   const byRepo = new Map<string, Array<string>>()
   for (const row of own) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row.name])
   const installations = new Map<string, { name: string; secrets: Array<string> }>()
@@ -235,6 +256,8 @@ const planOf = Effect.gen(function* () {
     installations: [...installations.values()],
     sessionValues: held?.count ?? 0,
     connections: connections.map((row) => row.name),
+    // By the Provider's id, as pi-ai names it, so the CLI never loads pi-ai to say more.
+    connectedProviders: connectedProviders.map((row) => `${row.login}: ${row.provider}`),
   } satisfies SecretsResetPlan
 })
 
@@ -252,6 +275,7 @@ const clear = Effect.gen(function* () {
       yield* sql`DELETE FROM installation_values`
       yield* sql`DELETE FROM session_installation_values`
       yield* sql`DELETE FROM installation_oauth`
+      yield* sql`DELETE FROM connected_providers`
     }),
   )
 })

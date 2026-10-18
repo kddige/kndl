@@ -68,7 +68,7 @@ async function asked() {
   await step(() => typeInto(field("Prompt"), "Add relative times, but ask me first"))
   await step(() => button("Send prompt", page).click())
 
-  const card = () => page.querySelector<HTMLElement>('[aria-label="Claude\'s question"]')
+  const card = () => page.querySelector<HTMLElement>('[aria-label="Question"]')
   await eventually(() => expect(card()).not.toBeNull())
   return {
     hub,
@@ -252,7 +252,7 @@ test("someone watching sees Claude's questions and the Creator's picks, with not
   const page = view.container
   await eventually(() => expect(page.querySelector("h1")).not.toBeNull())
   hub.creatorPrompts(demoSessionId, "Add relative times, but ask me first")
-  const card = () => page.querySelector<HTMLElement>('[aria-label="Claude\'s question"]')
+  const card = () => page.querySelector<HTMLElement>('[aria-label="Question"]')
   await eventually(() => expect(card()).not.toBeNull())
 
   // It waits on Alice, who drives it: on its page and in the sidebar.

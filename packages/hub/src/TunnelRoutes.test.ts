@@ -240,7 +240,7 @@ async function tunnelScene(
       _tag: "ModHello",
       protocolVersion: ProtocolVersion,
       sessionId,
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-opus",
     }),
   })
@@ -543,7 +543,7 @@ describe("backpressure", () => {
         sender: { _tag: "FromTerminal" },
       })
       await web.take("SessionUpdated", (m) => m.session.currentTurn === `t-${i}`)
-      await modPost({ _tag: "TurnEnded", turnId: `t-${i}`, reason: "Answered", durationMs: 1 })
+      await modPost({ _tag: "TurnEnded", turnId: `t-${i}`, reason: "stop", durationMs: 1 })
       latencies.push(performance.now() - sent)
     }
     await pumped

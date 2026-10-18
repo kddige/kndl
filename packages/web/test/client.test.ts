@@ -66,7 +66,7 @@ describe("connecting", () => {
     // The Runners and Sessions come after the welcome, each list a message of its own.
     await eventually(() => {
       const state = client.getState()
-      expect(state.runners?.map((runner) => runner.name)).toEqual(["studio", "ci-box"])
+      expect(state.runners?.map((runner) => runner.name)).toEqual(["studio", "ci-box", "pi-box"])
       expect(state.sessions?.map((session) => session.id)).toContain(demo)
     })
   })
@@ -239,7 +239,7 @@ describe("a joined Session", () => {
     await eventually(() => {
       const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
       expect(events.some((event) => event._tag === "TurnStopRequested")).toBe(true)
-      expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "Stopped" })
+      expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
     })
   })
 
@@ -719,6 +719,26 @@ describe("who drives a Session (ADR 0026)", () => {
     expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
   })
 
+  test("without Models, a pi Session can't be woken, as on the Hub", async () => {
+    const { hub, client } = setUp({ claudeCredential: null, autoplay: false })
+    hub.providers.connected.length = 0
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    const pi = SessionId.make("s-pi")
+    client.join(pi)
+    await eventually(() => expect(client.getState().joined[pi]?.historyLoaded).toBe(true))
+    client.wakeSession(pi)
+    const log = () => client.getState().joined[pi]?.log.map((entry) => entry.event) ?? []
+    await eventually(() =>
+      expect(log().at(-1)).toMatchObject({
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message:
+          "pi could not start: You have no Models to run a pi Session on: connect a Provider on the Account page.",
+      }),
+    )
+  })
+
   test("removing or replacing your setup token puts your awake Sessions to sleep, saying why", async () => {
     const { client } = setUp({ autoplay: false })
     client.start()
@@ -1124,5 +1144,154 @@ describe("MCP servers (ADR 0020)", () => {
       expect(session?.mcpServers?.map((one) => one.server)).toEqual(["docs", "sentry", "linear"])
     })
     expect(find(client, demoSessionId)?.mcpServersChanged).toBeUndefined()
+  })
+})
+
+/** A client's Connected providers, as `openai SignIn alice@example.com`. */
+const connected = (client: HubClient) =>
+  client
+    .getState()
+    .providers?.connected.map((each) => `${each.provider} ${each.kind} ${each.label}`)
+/** A client's Models, as their Session model names. */
+const modelNames = (client: HubClient) =>
+  client.getState().providers?.models.map((model) => `${model.provider}/${model.id}`) ?? []
+/** The steps of the client's sign-in so far. */
+const steps = (client: HubClient) => client.getState().signIn?.steps.map((step) => step._tag)
+
+describe("Connected providers (ADR 0029)", () => {
+  test("the welcome brings the Connected providers and the Models, Claude's first", async () => {
+    const { client } = await online()
+    await eventually(() => expect(connected(client)).toEqual(["openai SignIn alice@example.com"]))
+    expect(client.getState().providers?.connectable.flatMap((each) => each.signIn ?? [])).toEqual([
+      "Sign in with ChatGPT",
+      "Sign in with SuperGrok or X Premium",
+      "Sign in with GitHub Copilot",
+      "Sign in with OpenRouter",
+      "Sign in with Kimi Code",
+      "Sign in with Meta",
+    ])
+    expect(modelNames(client)[0]).toBe("anthropic/claude-opus-5-5")
+    expect(modelNames(client)).toContain("openai/gpt-6-sol")
+    const asked = await client.getProviders()
+    expect(asked.connected).toHaveLength(1)
+  })
+
+  test("an API key connects a Provider, and one the Provider rejects is refused", async () => {
+    const { client } = await online()
+    await expect(client.connectProviderKey("xai", "xai-REJECTED-made-up-key")).rejects.toThrow(
+      "xAI rejected this key",
+    )
+    await client.connectProviderKey("xai", "xai-made-up-key-for-tests-9z8y")
+    await eventually(() => expect(connected(client)).toContain("xai ApiKey 9z8y"))
+    expect(modelNames(client)).toContain("xai/grok-5")
+  })
+
+  test("the ChatGPT sign-in opens a page, then takes the address pasted, and connects", async () => {
+    const { client } = await online()
+    await client.disconnectProvider("openai")
+    expect(modelNames(client).some((name) => name.startsWith("openai/"))).toBe(false)
+    const ended = client.startSignIn("openai")
+    await eventually(() => expect(steps(client)).toEqual(["OpenUrl", "Paste"]))
+    const opened = client.getState().signIn?.steps[0]
+    expect(opened?._tag === "OpenUrl" && opened.url).toContain("https://auth.openai.com/")
+    expect(client.answerSignIn("http://localhost:1455/auth/callback?code=made-up&state=x")).toBe(
+      true,
+    )
+    expect(await ended).toMatchObject({ outcome: "Connected", provider: "openai" })
+    await eventually(() => expect(connected(client)).toEqual(["openai SignIn alice@example.com"]))
+    expect(client.getState().signIn?.ended).toEqual({ outcome: "Connected" })
+    client.clearSignIn()
+    expect(client.getState().signIn).toBeNull()
+  })
+
+  test("xAI's sign-in shows a code to enter, and connects once it's entered", async () => {
+    const { client } = await online()
+    const ended = client.startSignIn("xai")
+    await eventually(() => expect(steps(client)).toContain("EnterCode"))
+    const code = client.getState().signIn?.steps.find((step) => step._tag === "EnterCode")
+    expect(code?._tag === "EnterCode" && code.code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+    expect((await ended).outcome).toBe("Connected")
+    await eventually(() => expect(connected(client)).toContain("xai SignIn @alice_kim"))
+  })
+
+  test("Cancel ends a sign-in as cancelled, and a paste without a code fails it", async () => {
+    const { client } = await online()
+    const cancelled = client.startSignIn("openai")
+    await eventually(() => expect(steps(client)).toContain("Paste"))
+    expect(client.cancelSignIn()).toBe(true)
+    expect((await cancelled).outcome).toBe("Cancelled")
+    expect(client.getState().signIn?.ended).toEqual({ outcome: "Cancelled" })
+
+    const failed = client.startSignIn("openai")
+    await eventually(() => expect(steps(client)).toContain("Paste"))
+    client.answerSignIn("http://localhost:1455/")
+    expect(await failed).toMatchObject({ outcome: "Failed" })
+    expect(client.getState().signIn?.ended?.message).toContain("no code")
+  })
+
+  test("a refused answer leaves the sign-in running, as on the Hub, to end as the Hub says", async () => {
+    const { client } = await online()
+    const refused: Array<string> = []
+    cleanups.push(client.onCommandFailed((failure) => refused.push(failure.command)))
+    const ended = client.startSignIn("openai")
+    await eventually(() => expect(steps(client)).toContain("Paste"))
+    client.answerSignIn("http://localhost:1455/auth/callback?code=made-up&state=x")
+    // Sent before the Hub took the first: it isn't waiting for another.
+    client.answerSignIn("http://localhost:1455/auth/callback?code=again&state=x")
+
+    expect((await ended).outcome).toBe("Connected")
+    expect(client.getState().signIn?.ended).toEqual({ outcome: "Connected" })
+    expect(refused).toEqual(["AnswerSignIn"])
+  })
+
+  test("refreshing asks for the Models again; disconnecting forgets the Provider", async () => {
+    const { client } = await online()
+    await eventually(() => expect(connected(client)).toHaveLength(1))
+    const before = client.getState().providers?.connected[0]?.modelsCheckedAt ?? 0
+    await Bun.sleep(5)
+    await client.refreshProviderModels("openai")
+    expect(client.getState().providers?.connected[0]?.modelsCheckedAt).toBeGreaterThan(before)
+    await client.disconnectProvider("openai")
+    expect(connected(client)).toEqual([])
+    await expect(client.disconnectProvider("openai")).rejects.toThrow(
+      "You haven't connected OpenAI",
+    )
+  })
+
+  test("on a Runner that runs both, the model says the Harness; Claude Code's default is asked for by name", async () => {
+    const { client } = await online()
+    const branch = { _tag: "Existing", name: "main", newWorkBranch: true } as const
+    const pi = await client.createSession({
+      repo: "kddige/kndl",
+      branch,
+      runnerId: RunnerId.make("r-pi"),
+      model: "openai/gpt-6-sol",
+      thinkingLevel: "high",
+    })
+    expect(pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol", thinkingLevel: "high" })
+    // A Claude Code alias is Claude Code's (ADR 0030).
+    const sonnet = await client.createSession({
+      repo: "kddige/kndl",
+      branch,
+      runnerId: RunnerId.make("r-pi"),
+      model: "sonnet",
+    })
+    expect(sonnet).toMatchObject({ harness: "ClaudeCode", model: "sonnet" })
+    const claudeCode = await client.createSession({
+      repo: "kddige/kndl",
+      branch,
+      runnerId: RunnerId.make("r-pi"),
+      harness: "ClaudeCode",
+    })
+    expect(claudeCode).toMatchObject({ harness: "ClaudeCode" })
+    expect(claudeCode.model).toBeUndefined()
+  })
+
+  test("sets which Harness runs Claude's Models in new Sessions, which the store keeps (ADR 0030)", async () => {
+    const { client } = await online()
+    await eventually(() => expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode"))
+    const answered = await client.setClaudeHarness("Pi")
+    expect(answered.claudeHarness).toBe("Pi")
+    expect(client.getState().providers?.claudeHarness).toBe("Pi")
   })
 })

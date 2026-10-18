@@ -43,9 +43,9 @@ Claude Code exited with code 1. Its Sandbox is stopped. …
 
 ## A woken Session's conversation starts over
 
-**What you see.** A woken Session's history says Claude Code couldn't resume its conversation.
+**What you see.** A woken Session's history says Claude Code, or pi, couldn't resume its conversation.
 
-**Why.** Claude Code exited before it saved the conversation, so there was nothing to resume.
+**Why.** The agent exited before it saved the conversation, so there was nothing to resume.
 
 **Fix.** Nothing. The Workspace is as it was; only the conversation starts over.
 
@@ -124,19 +124,101 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 ## You have no Claude credential
 
-**What you see.** New Session asks you to add your Claude credential, or a Session went to sleep saying its Creator has none, or removed or replaced theirs.
+**What you see.** New Session says **Add your setup token first**, or a Session went to sleep saying its Creator has none, or removed or replaced theirs.
 
-**Why.** A Session runs on its Creator's Claude credential, and a Runner has none of its own. Removing or replacing a credential, or removing its owner as a Member, puts their awake Sessions to sleep.
+**Why.** A Claude Code Session, and Claude's Models in any Session, run on the Creator's Claude credential, and a Runner has none of its own. Removing or replacing a credential, or removing its owner as a Member, puts their awake Sessions to sleep.
 
 **Fix.** The Session's Creator [adds theirs](/guides/add-your-claude-credential/) and wakes it. A Session whose Creator is no longer a Member stays readable, but can't wake.
+
+## You have no Models
+
+**What you see.** New Session says **Connect a Provider first**, its **Model** list says **No Models yet. Connect a Provider on your Account page.**, or a Session went to sleep with:
+
+```
+Put to sleep: it runs on the Models of alice, who started it, and they have none
+```
+
+**Why.** A pi Session runs on its Creator's Models: those of their Connected providers, and Claude's when they have a Claude credential. A Runner has none of its own.
+
+**Fix.** The Session's Creator [connects a Provider](/guides/connect-your-providers/), or [adds their Claude credential](/guides/add-your-claude-credential/), and wakes it.
+
+## A Turn fails on a Provider's Model
+
+**What you see.** In a pi Session, a Turn's footer says **Failed**, with the reason under it, such as:
+
+```
+The Session's Creator hasn't connected OpenAI: they connect it on the Account page.
+```
+
+**Why.** The Provider of the Session's Model refused the call, or the Creator disconnected it. A sign-in the Provider stopped renewing shows **It doesn't work anymore** on its card on the **Account** page.
+
+**Fix.** The Creator [connects the Provider again](/guides/connect-your-providers/#replace-or-disconnect-it), or [switches the Session's Model](/guides/manage-a-session/#choose-the-model-and-thinking-level), and sends the prompt again.
+
+## Switching between Claude Code and pi is refused
+
+**What you see.** Picking a Model the other Harness runs shows one of:
+
+| Refusal | Fix |
+|---|---|
+| `build-box doesn't run both Claude Code and pi: update it to switch this Session to Claude Code.` (or `… to pi.`) | The Session's Runner runs one Harness alone, or hasn't said which it runs since the Hub started. Wait until it's online, or see [New Sessions run Claude Code](#new-sessions-run-claude-code). |
+| `You have no Claude credential: add your setup token on the Account page.` | [Add your Claude credential](/guides/add-your-claude-credential/), then pick the Model again. |
+| `You have no Models to run a pi Session on: connect a Provider on the Account page.` | [Connect a Provider](/guides/connect-your-providers/), then pick the Model again. |
+
+**Why.** A switch stops one [Harness](/reference/glossary/#harness) and starts the other on the Session's Runner, so the Runner must run both, and you must have what the other runs on.
+
+**Fix.** As the table says. The Session stays on the Model it ran on meanwhile.
+
+## A switch to pi puts the Session to sleep
+
+**What you see.** After you pick one of pi's Models, the Session goes Asleep, and its transcript says:
+
+```
+The Session is Asleep: pi could not start on build-box: the Sandbox could not be readied for pi: its Sandbox was made before pi, so it runs pi once it sleeps and wakes
+```
+
+**Why.** The Session's Sandbox was started before its Runner had pi, and was kept across a Runner restart.
+
+**Fix.** Press **Wake now**. The Session wakes on pi, with a [Handoff](/reference/glossary/#handoff) of what happened on Claude Code.
+
+## The agent doesn't know what happened before a switch
+
+**What you see.** After a switch between Claude Code and pi, the Session's history says:
+
+```
+pi started without a handoff of what happened on Claude Code: its mod doesn't take one.
+```
+
+**Why.** The mod the Runner loaded into the Session is from before [Handoffs](/reference/glossary/#handoff), so it takes none.
+
+**Fix.** Tell the agent what it needs in your next prompt. A Runner on the Hub's commit, with its mod built (`bun run mod:build` in a checkout), loads a mod that takes them.
+
+## New Sessions run Claude Code
+
+**What you see.** New Session's **Model** lists only **Anthropic · Claude Code**, or New Session says **Add your setup token first** though you connected a Provider. Or a start fails with:
+
+```
+… This Runner doesn't run pi Sessions: its log says why.
+```
+
+**Why.** The Runner can't run pi, so it runs Claude Code Sessions alone. With **Any online Runner**, New Session offers pi's Models only when every online Runner runs pi. A Runner gets pi as it starts: see [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads).
+
+**Fix.** On the Runner's machine, find why in its log:
+
+```sh
+kndl logs runner -n 10000 | grep 'Sessions run Claude Code alone'
+```
+
+Fix what it names, such as no route to the npm registry or `nodejs.org`, then restart the Runner with `kndl runner stop` and `kndl runner start`. Meanwhile, pick a Runner that runs pi in **Runner**.
 
 ## Only someone else can drive this Session
 
 **What you see.** The prompt box is off, there's no **Terminal** tab, and a command is refused with:
 
 ```
-Only Alice Lee, who started this Session, can drive it: it runs on their Claude credential.
+Only Alice Lee, who started this Session, can drive it: it runs on their Connected providers.
 ```
+
+A Claude Code Session's says `it runs on their Claude credential.`
 
 **Why.** Only a Session's Creator prompts it, answers it, stops it, controls it and uses its terminal. Everyone else watches.
 

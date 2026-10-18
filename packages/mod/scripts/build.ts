@@ -6,6 +6,10 @@
 // as it starts (#159), but a Sandbox made before then mounts this one, and Claude Code there
 // reloads it when its files change, losing the end of a Turn running then; `bun run runner` builds
 // the mod each time it starts, under running Sessions (#157).
+//
+// It also bundles kndl's pi extension (ADR 0029) into pi/dist/kndl.js: one ESM file for the Node
+// that runs pi, with Effect and the protocol inside, and pi's own packages left to pi, which hands
+// an extension its own copies of them.
 
 import { join } from "node:path"
 
@@ -26,13 +30,34 @@ const [bundle] = built.outputs
 if (bundle === undefined) throw new Error("bun build wrote no bundle")
 const code = await bundle.text()
 
-for (const plugin of plugins) {
-  const outfile = join(root, "plugins", plugin, "hooks/hub-link-lib.js")
+/** Writes `text` to `outfile` unless it holds it already. */
+const writeChanged = async (label: string, outfile: string, text: string) => {
   const existing = Bun.file(outfile)
-  if ((await existing.exists()) && (await existing.text()) === code) {
-    console.log(`${plugin}: hub-link-lib.js is up to date`)
+  if ((await existing.exists()) && (await existing.text()) === text) {
+    console.log(`${label} is up to date`)
   } else {
-    await Bun.write(outfile, code)
-    console.log(`${plugin}: wrote hub-link-lib.js (${Math.round(code.length / 1024)} KB)`)
+    await Bun.write(outfile, text)
+    console.log(`wrote ${label} (${Math.round(text.length / 1024)} KB)`)
   }
 }
+
+for (const plugin of plugins)
+  await writeChanged(
+    `${plugin}: hub-link-lib.js`,
+    join(root, "plugins", plugin, "hooks/hub-link-lib.js"),
+    code,
+  )
+
+const pi = await Bun.build({
+  entrypoints: [join(root, "pi/src/index.ts")],
+  target: "node",
+  format: "esm",
+  external: ["@earendil-works/*"],
+})
+if (!pi.success) {
+  for (const message of pi.logs) console.error(message)
+  process.exit(1)
+}
+const [extension] = pi.outputs
+if (extension === undefined) throw new Error("bun build wrote no pi extension")
+await writeChanged("pi: kndl.js", join(root, "pi/dist/kndl.js"), await extension.text())

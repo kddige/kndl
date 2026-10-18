@@ -95,6 +95,8 @@ export interface ComposerProps {
   picker?: ReactNode
   /** What is written, for one that isn't a prompt: a message to an agent (ADR 0014). */
   copy?: ComposerCopy
+  /** The empty prompt box's words: `Ask Claude` unless said. */
+  placeholder?: string
   /**
    * Uploads a file pasted (#276), dropped or picked with the attach button (#277); without it,
    * the Composer takes no attachments, and has no attach button.
@@ -116,9 +118,9 @@ export interface ComposerCopy {
   readonly stop: string
 }
 
-const promptCopy = (running: boolean): ComposerCopy => ({
+const promptCopy = (running: boolean, placeholder = "Ask Claude"): ComposerCopy => ({
   field: "Prompt",
-  placeholder: running ? "Queue a prompt for after this Turn" : "Ask Claude",
+  placeholder: running ? "Queue a prompt for after this Turn" : placeholder,
   send: running ? "Queue prompt" : "Send prompt",
   stop: "Stop",
 })
@@ -135,7 +137,8 @@ export function Composer({
   disabledReason,
   hint,
   picker: modelPicker,
-  copy = promptCopy(running),
+  placeholder,
+  copy = promptCopy(running, placeholder),
   attach,
   cantAttach = "Attachments go with prompts only, not here yet.",
   needsText = false,

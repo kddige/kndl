@@ -12,13 +12,13 @@ type Fetched = { url: string; body?: string }
 /** The welcome of a Hub that takes PromptAlreadySubmitted (#323). */
 export const welcome = {
   status: 200,
-  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3, alreadySubmitted: true }),
+  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 4, alreadySubmitted: true }),
 }
 
 /** A Hub's from before #323, which refuses a PromptAlreadySubmitted. */
 export const olderWelcome = {
   status: 200,
-  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3 }),
+  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 4 }),
 }
 
 /** The Hub's answer to a fetch. */
@@ -29,8 +29,9 @@ export const answer = (status: number, text: string) => ({
 /**
  * A session a Runner started, linked to a Hub whose first poll answers `commands` once `ready`
  * settles, and whose later ones are held, as its long poll does; it answers for the attachments in
- * `files`, by id and then offset, and 404 for any other, and its hello with `hello`. Returns the
- * requests, and the events posted.
+ * `files`, by id and then offset, and 404 for any other, its hello with `hello`, and its history
+ * (ADR 0030) from `history`, by the query asked, and 404 for any other. Returns the requests, and the
+ * events posted.
  */
 export const linkedSession = (
   on: On,
@@ -39,6 +40,7 @@ export const linkedSession = (
   env: Record<string, string> = {},
   files: Record<string, Record<number, Record<string, unknown>>> = {},
   hello: { status: number; text: string } = welcome,
+  history: Record<string, { status: number; text: string }> = {},
 ) => {
   mock.env(on, {
     KNDL_URL: hubUrl,
@@ -66,6 +68,13 @@ export const linkedSession = (
       return file === undefined
         ? answer(404, JSON.stringify({ error: "There is no such attachment." }))
         : answer(200, JSON.stringify(file))
+    }
+    const [, query] = /\/mod\/history\?(.*)$/.exec(e.url) ?? []
+    if (query !== undefined) {
+      const turns = history[query]
+      return turns === undefined
+        ? answer(404, JSON.stringify({ error: "There is no such Session." }))
+        : answer(turns.status, turns.text)
     }
     polled++
     if (polled > 1) return new Promise(() => undefined)

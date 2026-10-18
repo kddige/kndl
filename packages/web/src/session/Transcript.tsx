@@ -9,7 +9,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
-import { clock, count, duration, statusOf } from "../app/format.ts"
+import { clock, count, dollars, duration, statusOf } from "../app/format.ts"
 import type {
   AgentView,
   Block,
@@ -46,6 +46,16 @@ import { ToolCall } from "./ToolCall.tsx"
 type NameTurnModel = (model: string) => string | undefined
 
 const TurnModelContext = createContext<NameTurnModel>(() => undefined)
+
+/**
+ * Who answers a Turn, by the model it ran (undefined while it runs): Claude, on Claude Code; a pi
+ * Session's Model, by name (ADR 0029).
+ */
+export type NameReplier = (turnModel: string | undefined) => string
+
+const claude: NameReplier = () => "Claude"
+
+const ReplierContext = createContext<NameReplier>(claude)
 
 const styles = stylex.create({
   list: {
@@ -94,7 +104,8 @@ const styles = stylex.create({
     fontSize: text.xs,
   },
   sentFiles: { marginInlineStart: space.s8 },
-  claudeMark: {
+  // The initial of whoever answers: Claude, or a pi Session's Model.
+  replierMark: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -229,6 +240,11 @@ const styles = stylex.create({
     color: color.textSubtle,
     fontSize: text.xs,
   },
+  failure: {
+    flexBasis: "100%",
+    color: color.dangerSubtleText,
+    overflowWrap: "anywhere",
+  },
   working: {
     display: "inline-flex",
     alignItems: "center",
@@ -263,29 +279,34 @@ export const Transcript = memo(function Transcript({
   sessionId,
   items,
   nameTurnModel = noTurnModel,
+  nameReplier = claude,
 }: {
   sessionId: SessionId
   items: ReadonlyArray<TranscriptItem>
   /** Names a Turn's model in its footer when it isn't the Session's own. */
   nameTurnModel?: NameTurnModel
+  /** Names who answers each Turn: Claude unless said. */
+  nameReplier?: NameReplier
 }) {
   return (
     <SessionContext value={sessionId}>
-      <TurnModelContext value={nameTurnModel}>
-        <ol aria-label="Conversation" {...stylex.props(styles.list)}>
-          {items.map((item) => (
-            <li key={item.key}>
-              {item.kind === "turn" ? (
-                <Turn turn={item.turn} />
-              ) : item.kind === "cancelled" ? (
-                <CancelledPrompt at={item.at} prompt={item.event} />
-              ) : (
-                <Notice at={item.at} event={item.event} />
-              )}
-            </li>
-          ))}
-        </ol>
-      </TurnModelContext>
+      <ReplierContext value={nameReplier}>
+        <TurnModelContext value={nameTurnModel}>
+          <ol aria-label="Conversation" {...stylex.props(styles.list)}>
+            {items.map((item) => (
+              <li key={item.key}>
+                {item.kind === "turn" ? (
+                  <Turn turn={item.turn} />
+                ) : item.kind === "cancelled" ? (
+                  <CancelledPrompt at={item.at} prompt={item.event} />
+                ) : (
+                  <Notice at={item.at} event={item.event} />
+                )}
+              </li>
+            ))}
+          </ol>
+        </TurnModelContext>
+      </ReplierContext>
     </SessionContext>
   )
 })
@@ -293,6 +314,7 @@ export const Transcript = memo(function Transcript({
 const noTurnModel: NameTurnModel = () => undefined
 
 const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
+  const replier = useContext(ReplierContext)(turn.end?.usage?.model)
   return (
     <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
       <div {...stylex.props(styles.speaker)}>
@@ -308,10 +330,10 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
         sx={styles.sentFiles}
       />
       <div {...stylex.props(styles.speaker)}>
-        <span aria-hidden="true" {...stylex.props(styles.claudeMark)}>
-          C
+        <span aria-hidden="true" {...stylex.props(styles.replierMark)}>
+          {replier.charAt(0).toUpperCase()}
         </span>
-        <span {...stylex.props(styles.name)}>Claude</span>
+        <span {...stylex.props(styles.name)}>{replier}</span>
       </div>
       <div {...stylex.props(styles.reply)}>
         <Blocks blocks={turn.blocks} ended={turn.end !== null} />
@@ -321,8 +343,8 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
             prompt={prompt}
             note={
               turn.end === null
-                ? "Steered in · Claude reads it at its next step"
-                : "Steered in, not read before the Turn ended · Claude reads it with the next prompt"
+                ? `Steered in · ${replier} reads it at its next step`
+                : `Steered in, not read before the Turn ended · ${replier} reads it with the next prompt`
             }
             unread
           />
@@ -596,17 +618,23 @@ function TurnFooter({ turn }: { turn: TurnView }) {
       </div>
     )
   }
-  const otherModel = turn.end.usage && nameTurnModel(turn.end.usage.model)
+  const { usage } = turn.end
+  const otherModel = usage && nameTurnModel(usage.model)
   return (
     <div {...stylex.props(styles.footer)}>
       <EndBadge end={turn.end} stoppers={stoppers} />
       {otherModel !== undefined && <span title="The model this Turn ran on">{otherModel}</span>}
       <span>{duration(turn.end.durationMs)}</span>
-      {turn.end.usage && (
-        <span title={turn.end.usage.model}>
-          {count(turn.end.usage.inputTokens + turn.end.usage.cacheReadInputTokens)} in ·{" "}
-          {count(turn.end.usage.outputTokens)} out
+      {usage && (
+        <span title={usage.model}>
+          {count(usage.input + usage.cacheRead)} in · {count(usage.output)} out
+          {/* What the Harness reported it cost, as it is. */}
+          {usage.cost !== undefined && ` · ${dollars(usage.cost)}`}
         </span>
+      )}
+      {turn.end.reason === "error" && turn.end.errorMessage !== undefined && (
+        // Why it failed, as the Provider or Harness said it.
+        <span {...stylex.props(styles.failure)}>{turn.end.errorMessage}</span>
       )}
     </div>
   )
@@ -614,13 +642,13 @@ function TurnFooter({ turn }: { turn: TurnView }) {
 
 function EndBadge({ end, stoppers }: { end: TurnEnded; stoppers: string }) {
   switch (end.reason) {
-    case "Answered":
+    case "stop":
       return null
-    case "Stopped":
+    case "aborted":
       return <Badge intent="warning">{stoppers ? `Stopped by ${stoppers}` : "Stopped"}</Badge>
-    case "Refused":
-      return <Badge intent="warning">Refused</Badge>
-    case "Failed":
+    case "length":
+      return <Badge intent="warning">Hit the output limit</Badge>
+    case "error":
       return <Badge intent="danger">Failed</Badge>
   }
 }

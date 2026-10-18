@@ -29,6 +29,13 @@ export const hostFromGuest = "host.microsandbox.internal"
 export const claudeStateGuestPath = "/var/lib/kndl/claude"
 
 /**
+ * pi's state in the Sandbox, its `PI_CODING_AGENT_DIR` (ADR 0029): its settings and its
+ * sessions, the conversations `--session-id` resumes. On the `claude` volume beside Claude Code's,
+ * so it survives sleep, and an Archived Session keeps it.
+ */
+export const piStateGuestPath = `${claudeStateGuestPath}/pi`
+
+/**
  * The key of the volume holding Claude Code's state. Archiving keeps it, as it keeps the
  * Workspace, so a restored Session resumes its conversation; purging removes it.
  */
@@ -52,6 +59,12 @@ export const modPlugins = ["hub-link", "hub-link-commands"] as const
  * MCP server of each, which Claude Code names `plugin:kndl:<server>`.
  */
 export const gatewayPlugin = "kndl"
+
+/**
+ * The mod's pi extension (ADR 0029) in the Session's copy of the mod, which pi loads with `-e`:
+ * one file, which `bun run mod:build` writes to `pi/dist/kndl.js` in the mod package.
+ */
+export const piExtension = "pi/kndl.js"
 
 export interface SessionLayoutOptions {
   readonly sessionId: SessionId

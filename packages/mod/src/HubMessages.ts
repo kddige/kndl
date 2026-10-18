@@ -19,6 +19,7 @@ import {
 } from "@kndl/protocol"
 import type {
   MarkedFile,
+  ModCommand,
   ModEventsEncoded,
   Participant,
   Question,
@@ -31,6 +32,16 @@ import { Exit, Schema } from "effect"
 
 export type ModEventEncoded = typeof ModEvent.Encoded
 
+/** One of the Hub's commands to a mod, by its tag. */
+export type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { readonly _tag: Tag }>
+
+/** A Participant as JSON: the Hub's commands carry them, and the events say them back. */
+export type Sender = typeof Participant.Encoded
+
+/** Whether `value` is a plain object: not null, and not an array. */
+export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
 const clipNote = (cut: number) => `… (${cut} more chars)`
 
 /** Shortens `text` to at most `max` characters, saying how much was cut. */
@@ -41,15 +52,21 @@ export const clip = (text: string, max = MaxToolSummaryLength) => {
   return `${text.slice(0, Math.max(0, kept))}${clipNote(text.length - Math.max(0, kept))}`
 }
 
-/**
- * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), and marks the
- * files of a steered prompt, a message to a subagent and a reply (#278).
- */
-export const helloBody = (hello: {
+/** What a mod's hello says of it. */
+export interface HelloFields {
   readonly sessionId: string
-  readonly claudeSessionId: string
+  readonly conversationId: string
   readonly model: string
-}) =>
+  /** It takes a SwitchModel (ADR 0029): kndl's pi extension does, the Claude Code plugins don't. */
+  readonly switchesModels?: true
+}
+
+/**
+ * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), marks the
+ * files of a steered prompt, a message to a subagent and a reply (#278), and takes a context
+ * handoff, serving its agent the Session's earlier Turns (ADR 0030).
+ */
+export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
   JSON.stringify(
     Schema.encodeSync(ModHello)(
       Schema.decodeUnknownSync(ModHello)({
@@ -58,6 +75,8 @@ export const helloBody = (hello: {
         ...hello,
         steers: true,
         attaches: true,
+        takesHandoffs: true,
+        ...(switchesModels === true && { switchesModels }),
       }),
     ),
   )
@@ -98,23 +117,22 @@ export const readCommands = (text: string): ModCommands | undefined => {
   return Exit.isSuccess(commands) ? commands.value : undefined
 }
 
-/** Claude Code's `turn.complete` reason, as the protocol names it. */
+/** Claude Code's `turn.complete` reason, as pi-ai names a stop: a refusal is an error. */
 export const turnEndReason = (
   reason: "answer" | "aborted" | "refusal" | "error",
 ): TurnEndReason => {
   switch (reason) {
     case "answer":
-      return "Answered"
+      return "stop"
     case "aborted":
-      return "Stopped"
+      return "aborted"
     case "refusal":
-      return "Refused"
     case "error":
-      return "Failed"
+      return "error"
   }
 }
 
-/** Claude Code's turn usage, as the protocol names it. */
+/** Claude Code's turn usage, as pi-ai names it. Claude Code reports no cost. */
 export const turnUsage = (usage: {
   readonly model: string
   readonly input_tokens: number
@@ -123,10 +141,10 @@ export const turnUsage = (usage: {
   readonly cache_creation_input_tokens: number
 }): TurnUsage => ({
   model: usage.model,
-  inputTokens: usage.input_tokens,
-  outputTokens: usage.output_tokens,
-  cacheReadInputTokens: usage.cache_read_input_tokens,
-  cacheCreationInputTokens: usage.cache_creation_input_tokens,
+  input: usage.input_tokens,
+  output: usage.output_tokens,
+  cacheRead: usage.cache_read_input_tokens,
+  cacheWrite: usage.cache_creation_input_tokens,
 })
 
 /** The keys Claude Code adds to a tool call's input that the tool itself never sees. */
@@ -236,12 +254,15 @@ export const deliveredPrompt = (
  * What Claude reads beside a prompt with files, and the people never see: to open each one before
  * answering. The marker alone would do; this makes sure it isn't skipped.
  */
-export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>) => {
+export const attachmentContext = (
+  attachments: ReadonlyArray<MarkedFile>,
+  toolName: string = attachmentToolName,
+) => {
   const labels = attachmentLabels(attachments)
   const files = attachments.map((file, index) => `${labels[index]} ${file.name}: id ${file.id}`)
   return [
     `This message has ${attachmentCount(attachments)} attached. Look at each before you answer,`,
-    `by calling ${attachmentToolName} once per file with its id: ${files.join("; ")}.`,
+    `by calling ${toolName} once per file with its id: ${files.join("; ")}.`,
   ].join(" ")
 }
 
@@ -301,6 +322,32 @@ export const attachmentPart = (
   return { part: part.value }
 }
 
+/** A GET of a path on the Hub, with the mod token, as the attachment tool fetches. */
+export type HubGet = (path: string) => Promise<{ readonly status: number; readonly text: string }>
+
+/**
+ * The attachment tool's answer for the file `id`, its parts fetched from the Hub with `get` in
+ * order, each from where the last says the next starts; or why it couldn't.
+ */
+export const openAttachment = async (id: string, get: HubGet): Promise<AttachmentResult> => {
+  if (id === "") return { deny: "Give the attachment's id, from its marker." }
+  const parts: Array<ModAttachment> = []
+  for (let offset: number | undefined = 0; offset !== undefined;) {
+    if (parts.length === maxAttachmentParts) break
+    let response: { readonly status: number; readonly text: string }
+    try {
+      response = await get(attachmentPartPath(id, offset))
+    } catch (error) {
+      return failed(String(error))
+    }
+    const answer = attachmentPart(response.status, response.text)
+    if ("deny" in answer) return answer
+    parts.push(answer.part)
+    offset = answer.part.next
+  }
+  return attachmentResult(parts)
+}
+
 /**
  * The attachment tool's answer from a file's parts, in order: an image block of the whole, or a
  * document block for a PDF.
@@ -325,17 +372,22 @@ export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): Attachmen
 
 /**
  * What the model is told about the Session being shared, in the system prompt: others watch, and
- * only the person who started it drives it (ADR 0026).
+ * only the person who started it drives it (ADR 0026); with the name its Harness gives the
+ * attachment tool.
  */
-export const sharedSessionNote = [
-  "This session is shared through kndl: other people may watch it, and your subagents, live in a",
-  "web UI, but only the person who started it sends it prompts, answers your questions, and",
-  "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
-  '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
-  "You run in a sandbox VM where the repository is checked out. A line such as",
-  '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
-  `a file its sender attached: to see it, call ${attachmentToolName} with its id.`,
-].join(" ")
+export const sharedSessionNoteFor = (toolName: string) =>
+  [
+    "This session is shared through kndl: other people may watch it, and your subagents, live in a",
+    "web UI, but only the person who started it sends it prompts, answers your questions, and",
+    "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
+    '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
+    "You run in a sandbox VM where the repository is checked out. A line such as",
+    '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
+    `a file its sender attached: to see it, call ${toolName} with its id.`,
+  ].join(" ")
+
+/** {@link sharedSessionNoteFor} the Claude Code plugins' attachment tool. */
+export const sharedSessionNote = sharedSessionNoteFor(attachmentToolName)
 
 /**
  * Whether a Turn that starts with `text` is the one a delivered prompt, `delivered`, started.
@@ -371,9 +423,6 @@ export const agentWorktree = (
 }
 
 // ── AskUserQuestion (#193) ─────────────────────────────────────────────────
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const text = (value: unknown) => (typeof value === "string" ? value : "")
 

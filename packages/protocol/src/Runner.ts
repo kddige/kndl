@@ -16,9 +16,9 @@ import {
   VariablesRefused,
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
-import { ClaudeSessionId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { ConversationId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import { GatewayServer } from "./McpServer.ts"
-import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
+import { Harness, ModelName, RunnerModels, ThinkingLevel } from "./Model.ts"
 import { BranchName, OpenPort, RepoName } from "./Session.ts"
 import { MaxDiskUsageSessions, SessionDiskSize, Sysinfo } from "./Sysinfo.ts"
 import {
@@ -76,10 +76,15 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   /** Its last update, when that failed: kept until it next updates, so a restarted Hub hears it. */
   lastUpdate: Schema.optionalKey(UpdateFailure),
   /**
-   * The models and effort levels its Claude Code takes (#128). Absent from a Runner from before,
+   * The models and thinking levels its Claude Code takes (#128). Absent from a Runner from before,
    * or one that couldn't find out: its Sessions then run Claude Code's defaults only.
    */
   models: Schema.optionalKey(RunnerModels),
+  /**
+   * The Harnesses it runs Sessions on (ADR 0029). A Runner from before doesn't say: it runs Claude
+   * Code alone.
+   */
+  harnesses: Schema.optionalKey(Schema.Array(Harness)),
   /**
    * It takes a {@link RelaunchSession} (#128). A Runner from before doesn't say so: a Session's
    * new model then takes effect when it next wakes.
@@ -252,19 +257,19 @@ export const RunnerWelcome = Schema.TaggedStruct("RunnerWelcome", {
 export type RunnerWelcome = typeof RunnerWelcome.Type
 
 /**
- * Start Claude Code for a Session: for a new Session, after cloning its Repo onto its Work
- * branch, which it creates from the base branch unless it is the base branch (ADR 0023); to wake
- * an Asleep one, with `resume` and the Workspace already in place. Claude Code runs on its
- * Creator's setup token, which the Runner asks for first with a {@link FetchClaudeCredential}: a
- * refusal fails the start, with the Hub's message (ADR 0026).
+ * Start a Session's Harness: for a new Session, after cloning its Repo onto its Work branch, which
+ * it creates from the base branch unless it is the base branch (ADR 0023); to wake an Asleep one,
+ * with `resume` and the Workspace already in place. The Runner asks for its Creator's setup token
+ * first with a {@link FetchClaudeCredential}: Claude Code runs on it, so a refusal fails its start,
+ * with the Hub's message (ADR 0026); pi runs without it, without Claude's Models (ADR 0029).
  */
 export const StartSession = Schema.TaggedStruct("StartSession", {
   sessionId: SessionId,
   repo: RepoName,
   baseBranch: BranchName,
   workBranch: BranchName,
-  /** Claude Code's session id to resume, when waking an Asleep Session. */
-  resume: Schema.optionalKey(ClaudeSessionId),
+  /** The conversation to resume, when waking an Asleep Session. */
+  resume: Schema.optionalKey(ConversationId),
   /**
    * The token the Session's mod authenticates to the Hub with, scoped to this Session (issue #7).
    * Kept in the Runner's memory, for its mod relay to relay the mod's calls with; never passed
@@ -281,10 +286,22 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * own: the Session's Creator (#110). Absent from a Hub older than that.
    */
   gitIdentity: Schema.optionalKey(GitIdentity),
-  /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
+  /**
+   * What runs its agent (ADR 0029); absent, Claude Code. A pi Session's `model` is a Provider's
+   * Model, `openai/gpt-6-sol`, and its Claude credential is fetched only for Claude's Models: a
+   * refusal doesn't fail its start.
+   */
+  harness: Schema.optionalKey(Harness),
+  /**
+   * The model to start the Harness on (#128): Claude Code's `--model`, absent for its default; or
+   * pi's, a Provider's Model.
+   */
   model: Schema.optionalKey(ModelName),
-  /** The effort level to start Claude Code at, its `--effort` (#128); absent for its default. */
-  effort: Schema.optionalKey(EffortLevel),
+  /**
+   * The thinking level to start the Harness at (#128): Claude Code's `--effort`, pi's
+   * `--thinking`; absent for the model's usual level.
+   */
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**
    * An MCP server for each Installation on for its Repo (ADR 0020); absent for none. Sent only to
    * a Runner whose hello says it `relaysMcpServers`.
@@ -294,22 +311,31 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
 export type StartSession = typeof StartSession.Type
 
 /**
- * Start a running Session's Claude Code again with its model and effort as they are set now
- * (#128): Claude Code alone, resuming its conversation, with its Sandbox left running. The Hub
- * sends it only while no Turn runs, and only to a Runner whose hello says it `relaunches`.
- * Answered as a StartSession is, with SessionStarted, or SessionStartFailed when Claude Code
- * didn't start again, as when the Hub refuses its setup token.
+ * Start a running Session's Harness again with its model and thinking level as they are set now
+ * (#128): the Harness alone, resuming its conversation, with its Sandbox left running; or the other
+ * Harness in its place, for a model of the other's (ADR 0030). The Hub sends it only while no Turn
+ * runs, and only to a Runner whose hello says it `relaunches`. Answered as a StartSession is, with
+ * SessionStarted, or SessionStartFailed when the Harness didn't start, as when the Hub refuses
+ * Claude Code its setup token.
  */
 export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,
   repo: RepoName,
   workBranch: BranchName,
-  /** Claude Code's session id to resume, from its mod's last hello. */
-  resume: ClaudeSessionId,
+  /**
+   * The conversation to resume, from its mod's last hello on this Harness; absent when the
+   * Session has never run on it, which starts a new one (ADR 0030).
+   */
+  resume: Schema.optionalKey(ConversationId),
   /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */
   modToken: Schema.NonEmptyString,
+  /**
+   * What runs its agent now (ADR 0030); absent, Claude Code. One other than the Session ran on
+   * switches its Harness: the Runner stops the one and starts the other, in the same Sandbox.
+   */
+  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /** The Session's MCP servers, as its last start gave them: a relaunch changes none. */
   mcpServers: Schema.optionalKey(Schema.Array(GatewayServer)),
 })
