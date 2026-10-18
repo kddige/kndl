@@ -77,7 +77,13 @@ export const gatewayProviders = (
       const compat = signedIn
         ? { ...(model as { readonly compat?: object }).compat, ...signInCompat }
         : (model as { readonly compat?: object }).compat
-      return [{ ...model, baseUrl, ...(compat !== undefined && { compat }) } as unknown as ProviderModelConfig]
+      return [
+        {
+          ...model,
+          baseUrl,
+          ...(compat !== undefined && { compat }),
+        } as unknown as ProviderModelConfig,
+      ]
     })
     if (known.length === 0) return []
     return [

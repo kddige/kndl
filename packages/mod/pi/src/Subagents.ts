@@ -31,6 +31,7 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import type { ModCommand } from "@kndl/protocol"
 import { deliveredPrompt } from "../../src/HubMessages.ts"
+import { followClaudeSession } from "./claude/Claude.ts"
 import { questionTool } from "./Questions.ts"
 import { Turns } from "./Turns.ts"
 
@@ -94,7 +95,8 @@ export interface ChildSpec {
 
 /**
  * A subagent's pi session: in memory, with pi's system prompt, context files and skills as pi
- * finds them, and none of its extensions, which are the parent's to run (this one among them).
+ * finds them, and none of its extensions, which are the parent's to run (this one among them),
+ * but the Claude bridge's following of its session.
  */
 export const createChild = async (spec: ChildSpec): Promise<AgentSession> => {
   const settingsManager = SettingsManager.inMemory(spec.settings)
@@ -103,6 +105,8 @@ export const createChild = async (spec: ChildSpec): Promise<AgentSession> => {
     agentDir: spec.agentDir,
     settingsManager,
     noExtensions: true,
+    // The Claude bridge follows each session it runs Claude for: a subagent's too.
+    extensionFactories: [{ name: "kndl-claude", factory: followClaudeSession }],
     appendSystemPrompt: [subagentNote],
   })
   await resourceLoader.reload()
@@ -118,6 +122,8 @@ export const createChild = async (spec: ChildSpec): Promise<AgentSession> => {
     sessionManager: SessionManager.inMemory(spec.cwd),
     settingsManager,
   })
+  // Starts the session for its extensions: the Claude bridge learns its directory on session_start.
+  await session.bindExtensions({})
   return session
 }
 

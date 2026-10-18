@@ -17,6 +17,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { ModCommand, ModEvent } from "@kndl/protocol"
 import { Schema } from "effect"
+import { sessionCwdFor } from "./claude/SessionCwd.ts"
 import { childModel, childTools, createChild, Subagents } from "./Subagents.ts"
 
 const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
@@ -345,6 +346,12 @@ describe("a subagent (ADR 0014)", () => {
 const source = (kind: string) => ({ path: "", source: kind, scope: "user", origin: "top-level" })
 
 describe("what a subagent runs on", () => {
+  test("a session the Claude bridge follows, so its Claude turns find their directory and prompt", async () => {
+    const session = await child()
+    expect(sessionCwdFor(session.sessionManager.getSessionId())).toBe(dir)
+    session.dispose()
+  })
+
   const parent = { provider: "faux", id: "large" }
   const offered = ["faux/small", "faux/large"]
 
