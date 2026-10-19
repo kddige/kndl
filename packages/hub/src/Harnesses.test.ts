@@ -2,12 +2,7 @@
 // module's interface, on a Hub stood in for by plain data: its Runners and its Members' Models.
 
 import { describe, expect, test } from "bun:test"
-import {
-  type Participant,
-  ParticipantId,
-  type ProviderModel,
-  RunnerId,
-} from "@kndl/protocol"
+import { type Participant, ParticipantId, type ProviderModel, RunnerId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { claudeCodeModelText, makeHarnesses, noModelsText } from "./Harnesses.ts"
 import type { ModelSetting } from "./Sessions.ts"
@@ -117,11 +112,11 @@ describe("its model, against its Creator's Models (ADR 0029)", () => {
   })
 })
 
-describe("what a Session runs on", () => {
-  /** Why a Session can't run for `creator`, on a Hub where alice has Models. */
-  const whyNot = (creator: Participant, you?: Participant) =>
-    Effect.runPromise(hub([gpt]).agent.whyNotRunnable(creator, you))
+/** Why a Session can't run for `creator`, on a Hub where alice has Models. */
+const whyNot = (creator: Participant, you?: Participant) =>
+  Effect.runPromise(hub([gpt]).agent.whyNotRunnable(creator, you))
 
+describe("what a Session runs on", () => {
   test("its Creator's Models, Claude credential or not (ADR 0029)", async () => {
     expect(await whyNot(alice)).toBeUndefined()
     expect(await whyNot(bob, bob)).toEqual({

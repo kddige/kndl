@@ -12,10 +12,7 @@ import {
   type ModEventsEncoded,
   Participant,
   ParticipantId,
-  PromptId,
   ProtocolVersion,
-  QueuedPrompt,
-  SessionId,
 } from "@kndl/protocol"
 import { Effect, Exit, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
@@ -25,7 +22,6 @@ import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
-import { PromptQueue } from "./PromptQueue.ts"
 import { SignIns } from "./SignIns.ts"
 import {
   Connection,
@@ -1329,7 +1325,6 @@ describe("archive, restore and purge", () => {
   test("its Creator can delete a Session: it is archived at once, and its Runner stops it for good", async () => {
     const scene = await sessionScene()
     const { hub, runner, web, sessionId, mod } = scene
-    const bobWeb = await openWeb(hub, "bob")
     joinSession(web, sessionId)
     await web.take("SessionHistory")
     web.send({ _tag: "OpenTerminal", sessionId })
@@ -2089,9 +2084,7 @@ describe("model and thinking level (#128)", () => {
       "'sonnet' is Claude Code's name for a model, and Sessions no longer run on Claude Code: pick one of your Models, named <provider>/<id>, such as anthropic/claude-opus-5-5.",
     )
     bobWeb.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
-    expect((await bobWeb.take("CommandFailed")).message).toBe(
-      "Model 'openai/gpt-6-sol' not found",
-    )
+    expect((await bobWeb.take("CommandFailed")).message).toBe("Model 'openai/gpt-6-sol' not found")
   })
 
   test("an Asleep Session starts with it when it wakes", async () => {
@@ -3471,7 +3464,10 @@ describe("Repo access", () => {
     // Everyone who sees it drives it, in the Pi Durable spike: it runs on alice's Models still.
     octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
     expect(await mod.deliveries(500)).toEqual([
-      expect.objectContaining({ text: "hi", sender: expect.objectContaining({ login: "octocat" }) }),
+      expect.objectContaining({
+        text: "hi",
+        sender: expect.objectContaining({ login: "octocat" }),
+      }),
     ])
     octocatWeb.send({ _tag: "OpenTerminal", sessionId })
     expect(await runner.take("RequestTerminalSnapshot")).toEqual({
@@ -3689,7 +3685,6 @@ describe("subagents (ADR 0014)", () => {
   test("its Creator can message an agent: logged, sent to the mod, waking an Asleep Session", async () => {
     const scene = await agentScene()
     const { hub, runner, web, sessionId, mod } = scene
-    const bobWeb = await openWeb(hub, "bob")
     await mod.poll()
     web.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "Check the docs too" })
     expect(
@@ -4243,7 +4238,7 @@ describe("connections (#243)", () => {
 
 describe("driving (ADR 0026, lifted in the Pi Durable spike)", () => {
   test("anyone who sees a Session prompts it, stops its Turn and uses its terminal, on its Creator's accounts", async () => {
-    const { hub, runner, web, sessionId, mod } = await sessionScene()
+    const { hub, runner, sessionId, mod } = await sessionScene()
     const bobWeb = await openWeb(hub, "bob")
     joinSession(bobWeb, sessionId)
     expect(await bobWeb.take("SessionHistory")).toMatchObject({ sessionId })
@@ -4500,5 +4495,542 @@ describe("a Hub starting (the Pi Durable spike)", () => {
       await stopAll()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// ── Threads (docs/design/durable-harness.md) ──────────────────────────────
+
+/** Matches a TextDelta of the Turn `turnId` logged. */
+const deltaOf = (turnId: string) => (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
+  m.entry.event._tag === "TextDelta" && m.entry.event.turnId === turnId
+
+type ThreadSummaryOf = NonNullable<Extract<Web, { _tag: "SessionUpdated" }>["session"]["threads"]>
+
+/** The Session's threads, as the SessionUpdated a client took says. */
+const threadsOf = (m: Extract<Web, { _tag: "SessionUpdated" }>): ThreadSummaryOf =>
+  m.session.threads ?? []
+
+const loggedTag =
+  (tag: string) =>
+  (m: Extract<Web, { _tag: "SessionEventLogged" }>): boolean =>
+    m.entry.event._tag === tag
+
+/**
+ * A durable agent's Session after a main-loop Turn `t-1`, which alice and bob both joined, on a Hub
+ * where alice has `models`.
+ */
+async function threadScene(models: ReadonlyArray<TestModel> = [gpt, claudeOpus]) {
+  const { hub, catalogue } = await piHub(models)
+  const scene = await sessionScene(hub, piSession)
+  const { web, sessionId, mod } = scene
+  expect((await mod.hello({ durable: true, switchesModels: true })).status).toBe(200)
+  joinSession(web, sessionId)
+  await web.take("SessionHistory")
+  const bobWeb = await openWeb(hub, "bob")
+  joinSession(bobWeb, sessionId)
+  await bobWeb.take("SessionHistory")
+  await mod.post(...answered("t-1", "Add a health check", "Added /health."))
+  await bobWeb.take("SessionEventLogged", turnEndedLogged("t-1"))
+  await mod.poll()
+  return { ...scene, catalogue, bobWeb }
+}
+
+/** Bob starts a thread off `t-1`: its id, from the ThreadCreated he is sent. */
+async function bobStartsThread(
+  scene: Awaited<ReturnType<typeof threadScene>>,
+  more: Record<string, unknown> = {},
+) {
+  scene.bobWeb.send({
+    _tag: "CreateThread",
+    sessionId: scene.sessionId,
+    anchorTurnId: "t-1",
+    text: "what about Windows?\nAnd macOS.",
+    ...more,
+  })
+  return (await scene.bobWeb.take("ThreadCreated")).threadId
+}
+
+describe("threads (docs/design/durable-harness.md)", () => {
+  test("anyone starts one off a main-loop Turn: logged, kept with the Session, and sent to the agent", async () => {
+    const scene = await threadScene()
+    const { web, bobWeb, sessionId, mod } = scene
+    const threadId = await bobStartsThread(scene)
+    expect(threadId).toStartWith("thr_")
+
+    const started = (await web.take("SessionEventLogged", loggedTag("ThreadStarted"))).entry.event
+    expect(started).toEqual({
+      _tag: "ThreadStarted",
+      threadId,
+      anchorTurnId: "t-1",
+      title: "what about Windows?",
+      startedBy: bob,
+    })
+    const sent = (await web.take("SessionEventLogged", loggedTag("ThreadPromptSent"))).entry.event
+    expect(sent).toEqual({
+      _tag: "ThreadPromptSent",
+      threadId,
+      promptId: expect.any(String),
+      sender: bob,
+      text: "what about Windows?\nAnd macOS.",
+    })
+    expect(await mod.next("StartThread", 500)).toEqual([
+      {
+        _tag: "StartThread",
+        sessionId,
+        threadId,
+        anchorTurnId: "t-1",
+        promptId: (sent as { readonly promptId: string }).promptId,
+        text: "what about Windows?\nAnd macOS.",
+        sender: bob,
+      },
+    ])
+    const updated = await web.take("SessionUpdated", (m) => threadsOf(m).length > 0)
+    expect(threadsOf(updated)).toEqual([
+      {
+        id: threadId,
+        title: "what about Windows?",
+        anchorTurnId: "t-1",
+        startedBy: bob,
+        running: false,
+      },
+    ])
+    // Everyone who connects later sees it.
+    expect((await openWeb(scene.hub, "carol")).sessions.sessions[0]?.threads).toEqual(
+      threadsOf(updated),
+    )
+    expect(await bobWeb.untaken("CommandFailed")).toEqual([])
+  })
+
+  test("is refused off a Turn the main loop didn't have, or with a model its Creator hasn't", async () => {
+    const scene = await threadScene([gpt, claudeOpus])
+    const { bobWeb, sessionId, mod } = scene
+    const create = async (more: Record<string, unknown>) => {
+      bobWeb.send({ _tag: "CreateThread", sessionId, text: "hm", anchorTurnId: "t-1", ...more })
+      return (await bobWeb.take("CommandFailed")).message
+    }
+    expect(await create({ anchorTurnId: "t-nope" })).toBe(
+      "There is no such Turn in the Session to start a thread off.",
+    )
+    // A thread's own Turn isn't the main loop's.
+    const threadId = await bobStartsThread(scene)
+    await mod.post({
+      _tag: "TurnStarted",
+      turnId: "t-thread",
+      threadId,
+      text: "",
+      sender: { _tag: "FromParticipant", participant: bob },
+    })
+    expect(await create({ anchorTurnId: "t-thread" })).toBe(
+      "There is no such Turn in the Session to start a thread off.",
+    )
+    expect(await create({ model: "xai/grok-5" })).toBe("Model 'xai/grok-5' not found")
+    expect(await create({ model: "sonnet" })).toContain("Claude Code's name for a model")
+
+    // One of the Creator's, and a thinking level, start it on them.
+    const other = await bobStartsThread(scene, {
+      model: "openai/gpt-6-sol",
+      thinkingLevel: "high",
+    })
+    const [start] = (await mod.next("StartThread", 500)).filter((c) => c.threadId === other)
+    expect(start).toMatchObject({ model: "openai/gpt-6-sol", thinkingLevel: "high" })
+  })
+
+  test("is refused by an agent from before threads, which says so in its hello", async () => {
+    const { hub } = await piHub([gpt])
+    const scene = await sessionScene(hub, piSession)
+    const { web, sessionId, mod } = scene
+    await mod.post(...answered("t-1", "hi", "hello"))
+    web.send({ _tag: "CreateThread", sessionId, anchorTurnId: "t-1", text: "more" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "This Session's agent doesn't take threads: restart it.",
+    )
+    web.send({ _tag: "CompactConversation", sessionId })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "This Session's agent doesn't take threads: restart it.",
+    )
+    expect(await mod.next("StartThread", 100)).toEqual([])
+  })
+
+  test("its Turns run beside the main loop's: they set the thread running, never the Session's Turn", async () => {
+    const scene = await threadScene()
+    const { web, bobWeb, sessionId, mod } = scene
+    const threadId = await bobStartsThread(scene)
+    const [start] = await mod.next("StartThread", 500)
+    const promptId = defined(start).promptId
+    await mod.post({
+      _tag: "TurnStarted",
+      turnId: "t-2",
+      threadId,
+      text: "[bob] what about Windows?",
+      sender: { _tag: "FromParticipant", participant: bob },
+      promptId,
+    })
+    const running = await web.take("SessionUpdated", (m) => threadsOf(m)[0]?.running === true)
+    expect(running.session.currentTurn).toBeNull()
+
+    // The main loop takes a prompt meanwhile, and its text streams apart from the thread's.
+    bobWeb.send({ _tag: "SendPrompt", sessionId, text: "and on the main loop" })
+    const [main] = await mod.deliveries(500)
+    expect(main).toMatchObject({ text: "and on the main loop" })
+    await mod.post(
+      turnStarted("t-3", defined(main).promptId),
+      { _tag: "TextDelta", turnId: "t-2", threadId, text: "Windows, too." },
+      { _tag: "TextDelta", turnId: "t-3", text: "Main." },
+    )
+    expect((await web.take("SessionEventLogged", deltaOf("t-2"))).entry.event).toEqual({
+      _tag: "TextDelta",
+      turnId: "t-2",
+      threadId,
+      text: "Windows, too.",
+    })
+    expect((await web.take("SessionEventLogged", deltaOf("t-3"))).entry.event).toEqual({
+      _tag: "TextDelta",
+      turnId: "t-3",
+      text: "Main.",
+    })
+
+    // The thread's end leaves the main loop's Turn running.
+    await mod.post({ _tag: "TurnEnded", turnId: "t-2", threadId, reason: "stop", durationMs: 9 })
+    await web.take(
+      "SessionUpdated",
+      (m) => threadsOf(m)[0]?.running === false && m.session.currentTurn === "t-3",
+    )
+
+    // And the main loop's ends its own.
+    await mod.post(turnEnded("t-3"))
+    await web.take("SessionUpdated", (m) => m.session.currentTurn === null)
+  })
+
+  test("anyone posts into it, and stops its Turn, which is logged", async () => {
+    const scene = await threadScene()
+    const { web, sessionId, mod } = scene
+    const threadId = await bobStartsThread(scene)
+    await mod.next("StartThread", 500)
+
+    // Nothing runs in it yet.
+    web.send({ _tag: "StopThread", sessionId, threadId })
+    expect((await web.take("CommandFailed")).message).toBe("No Turn runs in the thread.")
+    web.send({ _tag: "PromptThread", sessionId, threadId: "thr_nope", text: "?" })
+    expect((await web.take("CommandFailed")).message).toBe("The Session has no such thread.")
+
+    web.send({ _tag: "PromptThread", sessionId, threadId, text: "and Linux" })
+    const sent = (
+      await web.take(
+        "SessionEventLogged",
+        (m) => m.entry.event._tag === "ThreadPromptSent" && m.entry.event.sender.id === alice.id,
+      )
+    ).entry.event as { readonly promptId: string }
+    expect(await mod.next("DeliverThreadPrompt", 500)).toEqual([
+      {
+        _tag: "DeliverThreadPrompt",
+        sessionId,
+        threadId,
+        promptId: sent.promptId,
+        text: "and Linux",
+        sender: alice,
+      },
+    ])
+
+    await mod.post({
+      _tag: "TurnStarted",
+      turnId: "t-2",
+      threadId,
+      text: "",
+      sender: { _tag: "FromParticipant", participant: bob },
+    })
+    await web.take("SessionUpdated", (m) => threadsOf(m)[0]?.running === true)
+    web.send({ _tag: "StopThread", sessionId, threadId })
+    expect(
+      (await web.take("SessionEventLogged", loggedTag("TurnStopRequested"))).entry.event,
+    ).toEqual({ _tag: "TurnStopRequested", by: alice, threadId })
+    expect(await mod.next("StopThread", 500)).toEqual([{ _tag: "StopThread", sessionId, threadId }])
+  })
+
+  test("anyone switches its model, to one of the Creator's; a switch the agent can't make is undone", async () => {
+    const scene = await threadScene()
+    const { web, bobWeb, sessionId, mod } = scene
+    const threadId = await bobStartsThread(scene)
+    await mod.next("StartThread", 500)
+
+    web.send({ _tag: "SetThreadModel", sessionId, threadId, model: "xai/grok-5" })
+    expect((await web.take("CommandFailed")).message).toBe("Model 'xai/grok-5' not found")
+    web.send({
+      _tag: "SetThreadModel",
+      sessionId,
+      threadId,
+      model: "openai/gpt-6-sol",
+      thinkingLevel: "low",
+    })
+    expect(
+      (await bobWeb.take("SessionEventLogged", loggedTag("ThreadModelChanged"))).entry.event,
+    ).toEqual({
+      _tag: "ThreadModelChanged",
+      threadId,
+      by: alice,
+      model: "openai/gpt-6-sol",
+      thinkingLevel: "low",
+    })
+    expect(
+      threadsOf(await bobWeb.take("SessionUpdated", (m) => threadsOf(m)[0]?.model !== undefined)),
+    ).toMatchObject([{ id: threadId, model: "openai/gpt-6-sol", thinkingLevel: "low" }])
+    expect(await mod.next("SwitchThreadModel", 500)).toEqual([
+      {
+        _tag: "SwitchThreadModel",
+        sessionId,
+        threadId,
+        model: "openai/gpt-6-sol",
+        thinkingLevel: "low",
+      },
+    ])
+
+    await mod.post({
+      _tag: "ModelSwitchFailed",
+      asked: "openai/gpt-6-sol",
+      model: "anthropic/claude-opus-5-5",
+      message: "no such model",
+      threadId,
+    })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "SetThreadModel",
+      sessionId,
+      message:
+        "Couldn't switch the thread “what about Windows?” to openai/gpt-6-sol: no such model. It still runs on anthropic/claude-opus-5-5.",
+    })
+    expect(
+      threadsOf(
+        await bobWeb.take(
+          "SessionUpdated",
+          (m) => threadsOf(m)[0]?.model === "anthropic/claude-opus-5-5",
+        ),
+      ),
+    ).toMatchObject([{ thinkingLevel: "low" }])
+    // The Session's own model is as it was.
+    expect(await bobWeb.untaken("CommandFailed")).toEqual([])
+  })
+
+  test("anyone compacts the main loop or a thread, with instructions", async () => {
+    const scene = await threadScene()
+    const { bobWeb, sessionId, mod } = scene
+    const threadId = await bobStartsThread(scene)
+    await mod.next("StartThread", 500)
+    bobWeb.send({ _tag: "CompactConversation", sessionId })
+    bobWeb.send({ _tag: "CompactConversation", sessionId, threadId, instructions: "keep the plan" })
+    const commands = await mod.next("Compact", 500)
+    expect([...commands, ...(await mod.next("Compact", 200))]).toEqual([
+      { _tag: "Compact", sessionId, sender: bob },
+      { _tag: "Compact", sessionId, threadId, instructions: "keep the plan", sender: bob },
+    ])
+    // The agent says when it compacts, and what came of it: logged, redacted, for everyone.
+    await mod.post(
+      { _tag: "CompactionStarted", threadId, reason: "manual", by: bob },
+      { _tag: "CompactionEnded", threadId, outcome: "compacted", summary: "We chose Windows." },
+      { _tag: "PlanChanged", plan: { steps: [{ text: "Port it", status: "in_progress" }] } },
+      {
+        _tag: "UsageChanged",
+        threadId,
+        usage: { input: 10, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+      },
+    )
+    for (const tag of [
+      "CompactionStarted",
+      "CompactionEnded",
+      "PlanChanged",
+      "UsageChanged",
+    ] as const) {
+      expect((await bobWeb.take("SessionEventLogged", loggedTag(tag))).entry.event._tag).toBe(tag)
+    }
+  })
+
+  test("commands the agent hasn't taken are sent again after its next hello, until it has", async () => {
+    const scene = await threadScene()
+    const { hub, runner, web, bobWeb, sessionId } = scene
+    const threadId = await bobStartsThread(scene)
+    web.send({
+      _tag: "SetThreadModel",
+      sessionId,
+      threadId,
+      model: "openai/gpt-6-sol",
+    })
+    await web.take("SessionEventLogged", loggedTag("ThreadModelChanged"))
+
+    // The agent exits before it takes them: its outbox goes with it.
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    // A prompt to the thread wakes it, as a prompt does.
+    bobWeb.send({ _tag: "PromptThread", sessionId, threadId, text: "still there?" })
+    const start = await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const next = new Mod(hub, sessionId, start.modToken)
+    expect((await next.hello({ durable: true })).status).toBe(200)
+    const sent = withoutPresence(await next.poll(500))
+    expect(sent.map((command) => command._tag)).toEqual([
+      "StartThread",
+      "SwitchThreadModel",
+      "DeliverThreadPrompt",
+    ])
+    const [startThread, , prompt] = sent as [
+      Extract<Command, { _tag: "StartThread" }>,
+      Command,
+      Extract<Command, { _tag: "DeliverThreadPrompt" }>,
+    ]
+
+    // The thread's first Turn took its prompt, and the second prompt steered it; the model switch
+    // was polled past. A hello after that sends nothing again.
+    await next.post(
+      {
+        _tag: "TurnStarted",
+        turnId: "t-2",
+        threadId,
+        text: "",
+        sender: { _tag: "FromParticipant", participant: bob },
+        promptId: startThread.promptId,
+      },
+      {
+        _tag: "PromptSteered",
+        turnId: "t-2",
+        threadId,
+        promptId: prompt.promptId,
+        text: "still there?",
+        sender: bob,
+      },
+    )
+    await web.take("SessionUpdated", (m) => threadsOf(m)[0]?.running === true)
+    await next.poll()
+    expect((await next.hello({ durable: true })).status).toBe(200)
+    // Nor a prompt of the main loop's, whose queue none of them touched.
+    expect(withoutPresence(await next.poll(200))).toEqual([])
+  })
+
+  test("a thread's prompt the agent fails is told to its sender, and not sent again", async () => {
+    const scene = await threadScene()
+    const { bobWeb, sessionId, mod } = scene
+    await bobStartsThread(scene)
+    const [start] = await mod.next("StartThread", 500)
+    await mod.post({
+      _tag: "PromptFailed",
+      promptId: defined(start).promptId,
+      message: "the fork failed",
+    })
+    expect(await bobWeb.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "CreateThread",
+      sessionId,
+      message: "Your prompt could not be delivered to the thread: the fork failed",
+    })
+    await mod.poll()
+    expect((await mod.hello({ durable: true })).status).toBe(200)
+    expect(await mod.next("StartThread", 100)).toEqual([])
+  })
+
+  test("a running thread keeps the Session from idling to sleep, and its Turn is aborted when the agent stops", async () => {
+    const sleepy = await startHub({
+      config: { devLogin: true, sleepAfterMs: 200 },
+      modelCatalog: Layer.succeed(ModelCatalog, {
+        modelsFor: () => Effect.succeed([gpt]),
+        signedIn: () => Effect.succeed([]),
+      }),
+    })
+    const { runner, web, sessionId, mod } = await sessionScene(sleepy, piSession)
+    expect((await mod.hello({ durable: true })).status).toBe(200)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(...answered("t-1", "hi", "hello"))
+    web.send({ _tag: "CreateThread", sessionId, anchorTurnId: "t-1", text: "more" })
+    const threadId = (await web.take("ThreadCreated")).threadId
+    await mod.post({
+      _tag: "TurnStarted",
+      turnId: "t-2",
+      threadId,
+      text: "",
+      sender: { _tag: "FromParticipant", participant: alice },
+    })
+    await web.take("SessionUpdated", (m) => threadsOf(m)[0]?.running === true)
+    web.send({ _tag: "LeaveSession", sessionId })
+
+    // Idle well past its wait but for the thread, it isn't put to sleep.
+    await Bun.sleep(600)
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    // Its agent stops: the thread's Turn ends, aborted, and the Session sleeps.
+    joinSession(web, sessionId)
+    await web.take("SessionHistory", (m) => m.sessionId === sessionId)
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    const aborted = await web.take(
+      "SessionEventLogged",
+      (m) => m.entry.event._tag === "TurnEnded" && m.entry.event.turnId === "t-2",
+    )
+    expect(aborted.entry.event).toEqual({
+      _tag: "TurnEnded",
+      turnId: "t-2",
+      threadId,
+      reason: "aborted",
+      durationMs: expect.any(Number),
+    })
+    const asleepNow = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(threadsOf(asleepNow)).toMatchObject([{ id: threadId, running: false }])
+  })
+
+  test("an agent's resumed Turn runs as the main loop's, and takes no prompt from the queue", async () => {
+    const scene = await threadScene()
+    const { web, sessionId, mod } = scene
+    await web.take("PromptQueueChanged", queueIs())
+    web.send({ _tag: "SendPrompt", sessionId, text: "queued" })
+    await web.take("PromptQueueChanged", queueIs("queued"))
+    const [delivered] = await mod.deliveries(500)
+    expect(delivered).toMatchObject({ text: "queued" })
+    await mod.post(turnStarted("t-r", undefined, { _tag: "Resumed" }))
+    const resumed = await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-r")
+    expect(resumed.session.currentTurn).toBe("t-r")
+    // The prompt it was sent waits on in the queue, for its own Turn.
+    expect(await web.untaken("PromptQueueChanged")).toEqual([])
+  })
+
+  test("the agent's history and a handoff hold the main loop's Turns, not threads'", async () => {
+    const scene = await threadScene()
+    const { mod, web } = scene
+    const threadId = await bobStartsThread(scene)
+    await mod.post(
+      {
+        _tag: "TurnStarted",
+        turnId: "t-2",
+        threadId,
+        text: "thread prompt",
+        sender: { _tag: "FromParticipant", participant: bob },
+      },
+      { _tag: "TextDelta", turnId: "t-2", threadId, text: "thread answer" },
+      { _tag: "TurnEnded", turnId: "t-2", threadId, reason: "stop", durationMs: 5 },
+    )
+    await web.take("SessionEventLogged", turnEndedLogged("t-2"))
+    const { turns } = (await (await mod.history()).json()) as {
+      turns: Array<{ prompt: string; answer: string }>
+    }
+    expect(turns.map((turn) => [turn.prompt, turn.answer])).toEqual([
+      ["Add a health check", "Added /health."],
+    ])
+  })
+
+  test("its Creator's Models are sent to everyone who joins, and again when they change", async () => {
+    const scene = await threadScene([gpt])
+    const { hub, web, sessionId } = scene
+    const carol = await openWeb(hub, "carol")
+    joinSession(carol, sessionId)
+    expect(await carol.take("SessionModels")).toEqual({
+      _tag: "SessionModels",
+      sessionId,
+      models: [gpt],
+    })
+    scene.catalogue.models = [gpt, grok]
+    // As when alice's Claude credential changes, which Claude's Models come with.
+    web.send({
+      _tag: "SetClaudeCredential",
+      requestId: "c",
+      secret: "sk-ant-oat01-ANOTHER_FAKE_TOKEN_FOR_TESTS_0000",
+    })
+    expect(await carol.take("SessionModels", (m) => m.models.length === 2)).toEqual({
+      _tag: "SessionModels",
+      sessionId,
+      models: [gpt, grok],
+    })
   })
 })

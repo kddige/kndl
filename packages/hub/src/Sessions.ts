@@ -970,25 +970,28 @@ export class Sessions extends Context.Service<
       })
 
       const endThreadTurns = Effect.fn("Sessions.endThreadTurns")(function* (id: SessionId) {
+        // Read before they are cleared: RETURNING gives the values a row has after.
         const rows = yield* sql<{
           readonly threadId: string
           readonly turnId: string
           readonly startedAt: number | null
         }>`
+          SELECT thread_id AS threadId, running_turn AS turnId, turn_started_at AS startedAt
+          FROM threads WHERE session_id = ${id} AND running_turn IS NOT NULL
+        `
+        if (rows.length === 0) return []
+        yield* sql`
           UPDATE threads SET running_turn = NULL, turn_started_at = NULL
           WHERE session_id = ${id} AND running_turn IS NOT NULL
-          RETURNING thread_id AS threadId, running_turn AS turnId, turn_started_at AS startedAt
         `
         return rows
-          .map(
-            (row): ThreadTurn => ({
-              threadId: ThreadId.make(row.threadId),
-              turnId: TurnId.make(row.turnId),
-              startedAt: row.startedAt ?? 0,
-            }),
-          )
+          .map((row): ThreadTurn => ({
+            threadId: ThreadId.make(row.threadId),
+            turnId: TurnId.make(row.turnId),
+            startedAt: row.startedAt ?? 0,
+          }))
           .toSorted((a, b) => a.threadId.localeCompare(b.threadId))
-      })
+      }, sql.withTransaction)
 
       return Sessions.of({
         create,

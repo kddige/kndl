@@ -11,15 +11,14 @@
 //   dropped, and its sender gets a CommandFailed, rather than put back to fail again. One it
 //   reports as PromptAlreadySubmitted, delivered again but given to Claude Code before, leaves the
 //   queue as if its Turn had started (#323).
-// - Driving (ADR 0026): a Session runs on its Creator's setup token, and only its Creator drives
-//   it. Every command that prompts it, steers or cancels its prompts, answers its questions,
-//   stops its Turns or subagents, controls it (sleep, wake, Keep awake, restart, archive,
-//   restore, rename, model and thinking level) or uses its terminal is refused anyone else, once
-//   Repo access lets them see it (`authorize`), as is their forward of it Asleep, which would wake
-//   it.
-//   They watch: they join it, read it, and forward its Open ports. Its terminal frames go to its
-//   Creator's connections alone. Purging an Archived Session isn't driving it (ADR 0027).
-// - Steering (#195, ADR 0018): while a Turn runs, the Creator can hand a queued prompt to it
+// - Driving (ADR 0026, lifted in the Pi Durable spike, docs/design/durable-harness.md): a Session
+//   runs on its Creator's accounts, and everyone whose Repo access lets them see it drives it:
+//   prompts it, steers or cancels its prompts, answers its questions, stops its Turns or
+//   subagents, starts and posts in its threads, compacts it, controls it (sleep, wake, Keep awake,
+//   restart, archive, restore, rename, model and thinking level), uses its terminal, and forwards
+//   it, waking it if Asleep. `driveRefusal` stays the one place the rule would come back.
+//   Purging an Archived Session isn't driving it (ADR 0027).
+// - Steering (#195, ADR 0018): while a Turn runs, anyone can hand a queued prompt to it
 //   (SteerPrompt), if the Session's mod said in its hello that it steers. The prompt keeps its
 //   place in the queue until the mod reports it joined the Turn (PromptSteered), and nothing else
 //   is delivered meanwhile. A steer the mod reports as PromptFailed leaves the prompt where it
@@ -32,7 +31,7 @@
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
 //     sends StartSession with `resume`, the conversation id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
-//   - Keep awake (SetKeepAwake, ADR 0016): the Creator can turn it on, and it stays on, recorded
+//   - Keep awake (SetKeepAwake, ADR 0016): anyone can turn it on, and it stays on, recorded
 //     with who turned it on, until they turn it off or press Sleep, or the Session is archived. While it is on the Session is never idle, so never put to sleep
 //     for it; an Asleep one is woken when it is turned on, and again whenever its Runner is back
 //     from a drain or a restart (or the Hub's). A Claude Code that exits on its own leaves it
@@ -52,12 +51,12 @@
 //     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
 //     are waiting. A Runner that restarted under it says it has no mod token for it, and is sent
 //     a new one (ModTokenReissued, #157).
-//   - Archive (#18, ADR 0026): the Creator can delete a Session, which archives it at once.
+//   - Archive (#18, ADR 0026): anyone can delete a Session, which archives it at once.
 //     The Hub records it Archived, with who did it and when, and sends StopSession `Archive`: the
 //     Runner destroys the Sandbox and its volumes, keeping the Workspace.
 //     A Runner that is offline is sent it when it is back. An Archived Session takes no prompts
 //     and opens no terminal; its history stays readable.
-//   - Restore: the Creator can bring an Archived Session back until it is purged. It comes
+//   - Restore: anyone can bring an Archived Session back until it is purged. It comes
 //     back Asleep (Frozen while its Runner is offline), and its next prompt wakes it on a fresh
 //     Sandbox around the kept Workspace.
 //   - Purge: `HubConfig.archiveRetention` after it was archived, a periodic sweep deletes the
@@ -66,34 +65,26 @@
 //     back, again on every connection until it answers SessionPurged. Anyone who can see an
 //     Archived Session may purge it sooner (PurgeArchivedSession, #351), to free its Runner's
 //     disk: not just its Creator, since that isn't driving it (ADR 0027).
-// - Session names (#120): the Creator can rename a Session (RenameSession), in any state;
+// - Session names (#120): anyone can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
 // - Model and thinking level (#128): a Session's setting, chosen with CreateSession or changed by
-//   its Creator (SetSessionModel) unless it is Archived, and checked against the models its
-//   Runner's Claude Code said it has. Each change is logged as a ModelSwitched. Claude Code takes
-//   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
-//   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
-//   resuming its conversation, in the same Sandbox. The queued prompts wait for its new mod.
-// - Harnesses (ADR 0029, Harnesses.ts): a Session runs Claude Code or pi, and the relay asks its
-//   Harness what differs: its name in what the Session says, its model check, and what it runs
-//   on. A model names its Harness (`harnessOfModel`, ADR 0030). A new one without a model is pi
-//   when its Runner's hello says it runs pi, unless Claude Code is asked for, or its Creator's
-//   default Model is Claude's and they run Claude's Models on Claude Code (their `claudeHarness`,
-//   ConnectedProviders.ts); pi asked for on a Runner that doesn't run it is refused. A pi
-//   Session's model is one of its Creator's Models, as ModelCatalog has them
-//   (`openai/gpt-6-sol`), the first of them, Claude's first, unless one is chosen; it runs on
-//   them, not on a Claude credential, so a Creator with none can't start or wake one. Its new
-//   model goes to a mod that switches models as a SwitchModel once no Turn runs, in place of the
-//   RelaunchSession, and the queued prompts go after it.
-// - Switching Harness (ADR 0030): a model of the other Harness, on a Runner that runs both, for
-//   a Creator with what it runs on, is logged as a ModelSwitched saying the Harness. Once no Turn
-//   runs, the Session is relaunched on it (RelaunchSession `harness`), resuming that Harness's own
-//   conversation, or starting one; an Asleep one wakes on it. Each Harness keeps its conversation
-//   and how far into the history it has seen (Sessions.ts): the one switched from has seen it all.
-//   When the new Harness's mod says hello, it is handed, before the next prompt, the Turns it
-//   hasn't seen (DeliverHandoff, Handoff.ts), if it takes handoffs; one that doesn't starts
-//   without, and the Session says so. Its agent reads further back with `GET /mod/history`.
+//   anyone (SetSessionModel) unless it is Archived, and checked against its Creator's Models, as
+//   ModelCatalog has them (`openai/gpt-6-sol`), since it runs on their accounts (ADR 0026). Each
+//   change is logged as a ModelSwitched. Everyone who joins a Session is sent its Creator's Models
+//   (SessionModels), and again when they change. A running agent never switches mid-Turn: once no
+//   Turn runs, a mod that switches models is sent a SwitchModel, the queued prompts going after
+//   it; another is relaunched (RelaunchSession), resuming its conversation, in the same Sandbox.
+// - One Harness (docs/design/durable-harness.md, Harnesses.ts): every Session runs the durable
+//   agent, the `Pi` Harness, on its Creator's Models, the first of them, Claude's first, unless one
+//   is chosen; a Creator with none can't start or wake one. Claude Code runs none: asked for, or a
+//   model of its names (`sonnet`), it is refused. A Runner whose hello doesn't say it runs pi
+//   starts and wakes none, and says to update it. A Session from before, on Claude Code, moves
+//   onto the durable agent as it next starts (`settleHarness`): on its Creator's default Model
+//   unless its model is one of theirs, in a new conversation, handed what Claude Code saw
+//   (DeliverHandoff, Handoff.ts) when its mod says hello, as ADR 0030's switch between Harnesses
+//   was; its agent reads further back with `GET /mod/history`. A subagent Claude Code started
+//   can't be messaged or stopped by it.
 // - Subagents (#152, ADR 0014): a Session's Claude Code starts subagents with its Agent tool, and
 //   its mod reports each one. AgentStarted and AgentStatusChanged are logged and kept with the
 //   Session (Sessions.ts), whose summary lists the Running and Interrupted ones; a status for an
@@ -101,24 +92,41 @@
 //   idle, so it doesn't sleep under the agent, and a draining Runner waits for it as for a Turn.
 //   When its Claude Code stops (sleep, exit, a lost Runner, a relaunch for a new model), its
 //   Running agents are Interrupted.
-//   - The Creator can message an agent (MessageAgent): logged as AgentMessaged and sent to
+//   - Anyone can message an agent (MessageAgent): logged as AgentMessaged and sent to
 //     the mod, which resumes one that has stopped. An Asleep Session is woken for it first. A
 //     Running agent can be stopped (StopAgent). A mod that can't do either says so with
 //     AgentCommandFailed, passed on to the person as a CommandFailed.
 // - Open questions (#193): when Claude asks with AskUserQuestion on the main loop, the mod reports
 //   QuestionAsked. The Hub logs it and keeps it as the Session's Open question (Sessions.ts), so
 //   a client that reloads, or a Hub that restarts, still shows it; while it is open the Session
-//   isn't idle. The Creator may answer it (AnswerQuestion): the Hub sends the mod a
+//   isn't idle. Anyone may answer it (AnswerQuestion): the Hub sends the mod a
 //   DeliverAnswer for the question it reported only, and the mod settles which answer came first,
 //   there or at the terminal, and reports QuestionClosed, which closes it. A later answer is
 //   refused, by the Hub or by the mod (AnswerFailed), saying who answered first and what. A
 //   question still open when its Turn ends, or its Claude Code stops, or it is archived, is
-//   closed Cancelled. What the Creator picks before answering (PickAnswer) is passed to everyone
+//   closed Cancelled. What each picks before answering (PickAnswer) is passed to everyone
 //   in the Session (QuestionPicks), in memory only. A question the agent asked `async` doesn't hold
 //   the agent up, and stays open past the end of its Turn: the mod gives the agent the answer as a
 //   message, into the Turn if it still runs, else as a Turn of its own.
-// - The terminal mirror: frames from the Runner to the Creator's web clients watching, keystrokes
-//   back.
+// - Threads (docs/design/durable-harness.md): conversations forked off the main loop at one of its
+//   Turns, which run beside it. Anyone starts one (CreateThread), posts into it (PromptThread),
+//   stops its Turn (StopThread), switches its model to one of the Creator's (SetThreadModel), or
+//   compacts it or the main loop (CompactConversation); an Asleep Session is woken first, as for a
+//   message to a subagent. The Hub mints a thread's id, keeps it with the Session (Sessions.ts),
+//   whose summary lists it, logs ThreadStarted, ThreadPromptSent and ThreadModelChanged itself,
+//   and sends the mod the command. An agent whose hello said it isn't the durable agent is refused
+//   them, saying to restart it. The commands aren't lost to an outbox dropped as the agent stops,
+//   or sent while it sleeps or starts: each is kept (ThreadCommands.ts) and sent again after every
+//   hello of the agent, until a Turn starts from its prompt or the prompt steers one, or, for the
+//   others, the mod has polled past it. Sent twice, a prompt runs once: the agent submits it with
+//   its id as its request id. A thread's Turn events carry its id: its TurnStarted and TurnEnded
+//   set it running and idle, never the Session's Turn, and its PromptSteered leaves the Prompt
+//   queue alone. A running thread keeps the Session from idling to sleep, and a draining Runner
+//   waits for it, as for a subagent; when the agent stops, each running thread's Turn is logged
+//   ended `aborted`, as its restart reports a `Resumed` Turn for each it goes on with. The agent's
+//   compactions, Plan and running cost are logged as it reports them.
+// - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back. It
+//   is a plain shell in the Sandbox, without the agent's secrets.
 // - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
 //   Sandbox whenever that changes, the whole list each time. The Hub keeps the latest list in
 //   memory only, process names redacted, and sends it with the Session to the web. It is cleared
@@ -168,20 +176,18 @@
 //   any Repo's.
 // - Claude credentials (ADR 0015, ADR 0026, ClaudeCredentials.ts): each person stores their own
 //   setup token, checked with Anthropic off the lock, and is sent what they can see of it
-//   (ClaudeCredentialState) after the welcome and whenever it changes. A Session runs on its
-//   Creator's alone: a Runner asks for it just before it starts Claude Code, and only for a
-//   Session it runs. A Session whose Creator has none, or isn't a Member any more, doesn't start:
-//   CreateSession is refused, a wake leaves it Asleep, and the Runner's fetch is refused. A pi
-//   Session needs its Creator's Models instead (ADR 0029): its Runner still asks, for Claude's
-//   Models, and a refusal doesn't fail its start. Every credential is redacted from every Session.
+//   (ClaudeCredentialState) after the welcome and whenever it changes. Claude's Models are among a
+//   Creator's Models with one. A Session runs on its Creator's alone, whoever drives it: a Runner
+//   asks for it as it starts the agent, for the Claude bridge, and only for a Session it runs; a
+//   refusal doesn't fail its start. A Session whose Creator has no Models, or isn't a Member any
+//   more, doesn't start: CreateSession is refused, and a wake leaves it Asleep. Every credential
+//   is redacted from every Session.
 //   - Revoking: when a Creator removes or replaces theirs, or is removed as a Member, their
 //     Active Sessions are put to sleep at once, even mid-Turn, each saying why. A Frozen one is
 //     put to sleep when its Runner is back, as is one whose Creator has no credential then, or
 //     isn't a Member.
-//   - Upgrading: as the Hub starts, prompts queued by anyone but their Session's Creator, from
-//     before only the Creator could prompt, are taken out of the queue, each logged as a
-//     PromptCancelled. Every Session is Frozen then, so one whose Creator has no credential is
-//     put to sleep when its Runner is back, as above.
+//   - Upgrading: every Session is Frozen as the Hub starts, so one whose Creator has nothing to
+//     run it on is put to sleep when its Runner is back, as above.
 // - Connected providers (ADR 0029, ConnectedProviders.ts): each Member's own accounts at
 //   Providers, handled by ProviderRelay.ts. Each Member is sent theirs (ProvidersState) after the
 //   welcome and whenever they change, their Claude credential included, since Claude's Models are
@@ -195,10 +201,10 @@
 //   whenever one is made or revoked, and may revoke them from any of their web clients.
 // - Forwards (#180, ADR 0016): `kndl forward` keeps a connection per Session it forwards
 //   (ForwardRoutes.ts), sent the Session whenever it changes. A forward is presence, named with
-//   the machine its CLI token is named after, so it keeps the Session from being idle. Its
-//   Creator's forward to an Asleep Session wakes it; anyone else's is closed, since waking it
-//   drives it (ADR 0026). When the Session goes to sleep anyway, or is archived or purged, or
-//   its person loses access or revokes the CLI token, the forward is closed, saying why.
+//   the machine its CLI token is named after, so it keeps the Session from being idle. A forward
+//   to an Asleep Session wakes it. When the Session goes to sleep anyway, or is archived or
+//   purged, or its person loses access or revokes the CLI token, the forward is closed, saying
+//   why.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -635,6 +641,13 @@ const hasRunningAgents = (session: SessionSummary) =>
 /** Whether a Turn runs in one of the Session's threads: it is working, as for a subagent. */
 const hasRunningThreads = (session: SessionSummary) =>
   session.threads?.some((thread) => thread.running) === true
+
+/** A text stream's key: its Turn's, subagent's and thread's. */
+const streamKey = (event: {
+  readonly turnId: string
+  readonly agentId?: string
+  readonly threadId?: string
+}) => `${event.turnId}/${event.agentId ?? ""}/${event.threadId ?? ""}`
 
 /** The prompt a thread command carries, if it carries one. */
 const promptOfCommand = (command: ThreadCommand) =>
@@ -1153,13 +1166,6 @@ export class SessionRelay extends Context.Service<
           text,
         })
       })
-
-      /** A text stream's key: its Turn's, subagent's and thread's. */
-      const streamKey = (event: {
-        readonly turnId: string
-        readonly agentId?: string
-        readonly threadId?: string
-      }) => `${event.turnId}/${event.agentId ?? ""}/${event.threadId ?? ""}`
 
       /** Logs a TextDelta as far as it can be, redacted, holding back what could start a value. */
       const textDelta = Effect.fn("SessionRelay.textDelta")(function* (
@@ -1785,7 +1791,8 @@ export class SessionRelay extends Context.Service<
         command: ThreadCommand,
       ) {
         const seq = yield* outbox.enqueue(sessionId, command)
-        if (promptOfCommand(command) === undefined) live.threadCommandSent(sessionId, { seq, pending })
+        if (promptOfCommand(command) === undefined)
+          live.threadCommandSent(sessionId, { seq, pending })
       })
 
       /**
@@ -2469,8 +2476,8 @@ export class SessionRelay extends Context.Service<
          * a Repo, creating a Session or about its Environment (#104), alike whether the Repo
          * exists or not. Leaving a Session or closing its terminal needs no access, nor do Runner
          * commands or shared variables, which are no Repo's: there are no roles (ADR 0009). A
-         * command that drives a Session is then refused anyone but its Creator (ADR 0026), and a
-         * Runner's update anyone but the Hub's Owner (ADR 0028).
+         * command that drives a Session is then refused whom `driveRefusal` says (ADR 0026; no one
+         * in the Pi Durable spike), and a Runner's update anyone but the Hub's Owner (ADR 0028).
          */
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
           message: RelayedCommand,
@@ -2478,7 +2485,7 @@ export class SessionRelay extends Context.Service<
           if (isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
-          /** The Session the command drives, which only its Creator may (ADR 0026). */
+          /** The Session the command drives (ADR 0026), which everyone may in the spike. */
           let driven: SessionSummary | undefined
           switch (message._tag) {
             case "WebHello":
@@ -2899,7 +2906,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "SetKeepAwake": {
-              // Its Creator may, in any state but Archived (ADR 0016, ADR 0026).
+              // Anyone may, in any state but Archived (ADR 0016).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2961,7 +2968,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "ArchiveSession": {
-              // Its Creator may (ADR 0026).
+              // Anyone who sees it may, in the Pi Durable spike.
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2972,7 +2979,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "RenameSession": {
-              // Its Creator may, in any state (#120).
+              // Anyone may, in any state (#120).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -3229,9 +3236,13 @@ export class SessionRelay extends Context.Service<
               const session = yield* threadSession(message)
               if (Option.isNone(session)) return
               if (!(yield* log.hasMainTurn(sessionId, anchorTurnId))) {
-                return refuse(message, "There is no such Turn in the Session to start a thread off.", {
-                  sessionId,
-                })
+                return refuse(
+                  message,
+                  "There is no such Turn in the Session to start a thread off.",
+                  {
+                    sessionId,
+                  },
+                )
               }
               const setting = yield* threadSetting(message, session.value)
               if (Option.isNone(setting)) return
@@ -3252,13 +3263,25 @@ export class SessionRelay extends Context.Service<
               })
               yield* logEvent(
                 sessionId,
-                ThreadStarted.make({ threadId, anchorTurnId, title, startedBy: you, ...setting.value }),
+                ThreadStarted.make({
+                  threadId,
+                  anchorTurnId,
+                  title,
+                  startedBy: you,
+                  ...setting.value,
+                }),
               )
               const prompt = { promptId, sender: you, text: message.text, ...carrying(sent.value) }
               yield* logEvent(sessionId, ThreadPromptSent.make({ threadId, ...prompt }))
               yield* queueThreadCommand(
                 sessionId,
-                StartThread.make({ sessionId, threadId, anchorTurnId, ...prompt, ...setting.value }),
+                StartThread.make({
+                  sessionId,
+                  threadId,
+                  anchorTurnId,
+                  ...prompt,
+                  ...setting.value,
+                }),
               )
               peer.send(ThreadCreated.make({ sessionId, threadId }))
               return yield* sessionUpdated(sessionId)
@@ -4355,7 +4378,8 @@ export class SessionRelay extends Context.Service<
             const { sender } = threadPrompt.value as StartThread | DeliverThreadPrompt
             return toWeb(
               CommandFailed.make({
-                command: threadPrompt.value._tag === "StartThread" ? "CreateThread" : "PromptThread",
+                command:
+                  threadPrompt.value._tag === "StartThread" ? "CreateThread" : "PromptThread",
                 sessionId,
                 message: `Your prompt could not be delivered to the thread: ${event.message}`,
               }),
