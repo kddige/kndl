@@ -1,23 +1,18 @@
-// What runs a Session's agent (ADR 0029): Claude Code or pi, switched between Turns when its model
-// is one of the other's (ADR 0030). The Session relay asks a Session's Harness, or a new
-// Session's, instead of branching on which it is:
+// What runs a Session's agent. In the Pi Durable spike (docs/design/durable-harness.md) every
+// Session runs the durable agent, the `Pi` Harness, on its Creator's Models: Claude Code (ADR 0029,
+// 0030) runs none. The Session relay asks it:
 //
-// - What it is called, in what a Session says of its start and exit: "Claude Code", "pi".
-// - Which Harness a new Session gets: pi where its Runner's hello says it runs pi, unless Claude
-//   Code is asked for; pi asked for on a Runner that doesn't run it is refused.
-// - Its model and thinking level (#128), checked: Claude Code's against what its Runner's Claude
-//   Code said in its hello, in Claude Code's words; pi's against its Creator's Models, as
-//   ModelCatalog has them, named `<provider>/<id>`, the default Model (`defaultProviderModel`)
-//   when none is asked for, since a pi Session always names its model.
-// - What it runs on, and why it can't: Claude Code on its Creator's setup token (ADR 0026), pi on
-//   their Models, of a Connected provider or Claude's (ADR 0029). Whether its Creator is still a
-//   Member is the relay's: it holds for every Harness.
-// - Whether a Session can switch to it (ADR 0030): to Claude Code on any Runner, which every one
-//   runs; to pi on one whose hello since the Hub started said it runs pi.
+// - What it is called, in what a Session says of its start and exit: "the agent".
+// - Its model and thinking level (#128), checked against its Creator's Models, as ModelCatalog has
+//   them, named `<provider>/<id>`, the default Model (`defaultProviderModel`) when none is asked
+//   for, since a Session always names its model. Claude Code's names for its models, which have no
+//   Provider, are refused, saying so.
+// - What it runs on, and why it can't: its Creator's Models, of a Connected provider or Claude's
+//   (ADR 0029). Whether its Creator is still a Member is the relay's.
+// - Whether a Runner runs it: one whose hello since the Hub started said it runs pi.
 
 import {
   defaultProviderModel,
-  findModel,
   findProviderModel,
   type Harness,
   modelNotFoundText,
@@ -26,7 +21,6 @@ import {
   type ProviderModel,
   providerModelName,
   type RunnerId,
-  type RunnerModels,
   thinkingLevelRefusal,
 } from "@kndl/protocol"
 import { Effect } from "effect"
@@ -36,11 +30,11 @@ import type { ModelSetting } from "./Sessions.ts"
 /** A model and thinking level as checked for a Session (#128). */
 export interface CheckedModel {
   readonly setting: ModelSetting
-  /** What the model is called; for Claude Code's default, the model it runs, if its Runner says. */
+  /** What the model is called. */
   readonly label: string | undefined
 }
 
-/** Why a Session on a Harness can't run for its Creator. */
+/** Why a Session can't run for its Creator. */
 export interface NotRunnable {
   /** Why it can't start or wake, told to whoever asked. */
   readonly refusal: string
@@ -48,27 +42,24 @@ export interface NotRunnable {
   readonly sleep: string
 }
 
-/** One Harness, as the Session relay asks it. */
+/** The Harness every Session runs, as the Session relay asks it. */
 export interface SessionHarness {
   readonly harness: Harness
-  /** What it is called in what a Session says of it: "Claude Code", "pi". */
+  /** What it is called in what a Session says of it, mid-sentence: "the agent". */
   readonly name: string
+  /** StartSession's and RelaunchSession's `harness`, and a stored Session's. */
+  readonly flag: { readonly harness: "Pi" }
   /**
-   * StartSession's and a stored Session's `harness`: said for pi alone, as a Session from before
-   * pi, which runs Claude Code, says none.
-   */
-  readonly flag: { readonly harness?: "Pi" }
-  /**
-   * A model and thinking level as asked for, for a Session on the Runner for the Creator: the
-   * setting it runs with and the model's label, or why it is refused.
+   * A model and thinking level as asked for, for a Session of the Creator: the setting it runs
+   * with and the model's label, or why it is refused.
    */
   readonly check: (
     asked: ModelSetting,
-    on: { readonly runnerId: RunnerId; readonly creatorId: ParticipantId },
+    on: { readonly creatorId: ParticipantId },
   ) => Effect.Effect<CheckedModel | string, SqlError>
   /**
-   * Why a Session on it can't run for `creator` now, as they have nothing it runs on, or undefined
-   * while it can. `you` is who is told, when it is the Creator.
+   * Why a Session can't run for `creator` now, as they have no Models, or undefined while it can.
+   * `you` is who is told, when it is the Creator.
    */
   readonly whyNotRunnable: (
     creator: Participant,
@@ -76,109 +67,55 @@ export interface SessionHarness {
   ) => Effect.Effect<NotRunnable | undefined>
 }
 
-/** What a Harness asks of the Hub. */
+/** What the Harness asks of the Hub. */
 export interface HarnessDependencies {
   /**
-   * A Runner the Hub knows: its name, the models its Claude Code last said it has, and the
-   * Harnesses it runs, as its last hello since the Hub started said; null before then.
+   * A Runner the Hub knows: its name, and the Harnesses it runs, as its last hello since the Hub
+   * started said; null before then.
    */
   readonly runner: (id: RunnerId) => Effect.Effect<
     | {
         readonly name: string
-        readonly models: RunnerModels | null
         readonly harnesses: ReadonlyArray<Harness> | null
       }
     | undefined,
     SqlError
   >
-  /** The Models a Member's pi Sessions can run now (ModelCatalog). */
+  /** The Models a Member's Sessions can run now (ModelCatalog). */
   readonly modelsFor: (creator: ParticipantId) => Effect.Effect<ReadonlyArray<ProviderModel>>
-  /** Whether a Member has a Claude credential now (ClaudeCredentials). */
-  readonly hasClaudeCredential: (creator: ParticipantId) => boolean
 }
 
 export interface Harnesses {
-  /** The Session's Harness: Claude Code unless it says pi. */
-  readonly of: (session: { readonly harness?: Harness }) => SessionHarness
+  /** The durable agent, which every Session runs. */
+  readonly agent: SessionHarness
   /**
-   * A new Session's Harness on the Runner: the one asked for, else pi where the Runner runs it,
-   * else Claude Code. Refused, saying why, for pi on a Runner that doesn't run it.
+   * Why no Session can start or wake on the Runner, or undefined when they can: it runs the
+   * durable agent once its hello since the Hub started said it runs pi.
    */
-  readonly forNew: (
-    asked: Harness | undefined,
-    runner: { readonly name: string; readonly runsPi: boolean },
-  ) => SessionHarness | string
-  /**
-   * Why a Session on the Runner can't switch to the Harness (ADR 0030), or undefined when it can:
-   * every Runner runs Claude Code, and pi one that said so since the Hub started.
-   */
-  readonly switchRefusal: (
-    to: Harness,
-    runnerId: RunnerId,
-  ) => Effect.Effect<string | undefined, SqlError>
+  readonly runnerRefusal: (runnerId: RunnerId) => Effect.Effect<string | undefined, SqlError>
 }
 
-/** Why a pi Session can't start for its Creator, told to them (ADR 0029). */
+/** Why a Session can't start for its Creator, told to them (ADR 0029). */
 export const noModelsText =
-  "You have no Models to run a pi Session on: connect a Provider on the Account page."
+  "You have no Models to run a Session on: connect a Provider on the Account page."
+
+/**
+ * Why a model of Claude Code's own names, with no Provider (`sonnet`, `default`), is refused: no
+ * Session runs on Claude Code now.
+ */
+export const claudeCodeModelText = (model: string) =>
+  `'${model}' is Claude Code's name for a model, and Sessions no longer run on Claude Code: pick one of your Models, named <provider>/<id>, such as anthropic/claude-opus-5-5.`
 
 export const makeHarnesses = (hub: HarnessDependencies): Harnesses => {
-  const claudeCode: SessionHarness = {
-    harness: "ClaudeCode",
-    name: "Claude Code",
-    flag: {},
-    /**
-     * Against what the Runner's Claude Code takes, as it last said in its hello. A model it
-     * doesn't list is refused with Claude Code's own words. With no list, as from a Runner whose
-     * Claude Code couldn't say, only Claude Code's default is taken.
-     */
-    check: Effect.fn("Harnesses.claudeCode.check")(function* (asked, on) {
-      const known = yield* hub.runner(on.runnerId)
-      const models = known?.models ?? null
-      if (models === null) {
-        if (asked.model === undefined && asked.thinkingLevel === undefined) {
-          return { setting: {}, label: undefined }
-        }
-        return `${known?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
-      }
-      const model = asked.model === undefined ? models.default : findModel(models, asked.model)
-      if (model === undefined) return modelNotFoundText(asked.model ?? "")
-      if (asked.thinkingLevel !== undefined) {
-        if (!model.reasoning) return `${model.label} takes no thinking level.`
-        if (!models.thinkingLevels.includes(asked.thinkingLevel)) {
-          return `Claude Code on ${known?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
-        }
-      }
-      return {
-        setting: {
-          // The `default` alias is no setting: Claude Code's default, whatever it is then.
-          ...(model !== models.default && asked.model !== undefined && { model: asked.model }),
-          ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
-        },
-        label: model.label,
-      }
-    }),
-    // On the Creator's setup token, and no other (ADR 0026).
-    whyNotRunnable: (creator, you) =>
-      Effect.succeed(
-        hub.hasClaudeCredential(creator.id)
-          ? undefined
-          : {
-              refusal:
-                you?.id === creator.id
-                  ? "You have no Claude credential: add your setup token on the Account page."
-                  : `${creator.login}, who started this Session, has no Claude credential: they can add theirs on the Account page.`,
-              sleep: `Put to sleep: it runs on the Claude credential of ${creator.login}, who started it, and they have none`,
-            },
-      ),
-  }
-
-  const pi: SessionHarness = {
+  const agent: SessionHarness = {
     harness: "Pi",
-    name: "pi",
+    name: "the agent",
     flag: { harness: "Pi" },
     // Against the Creator's Models; the default Model when none is asked for.
-    check: Effect.fn("Harnesses.pi.check")(function* (asked, on) {
+    check: Effect.fn("Harnesses.agent.check")(function* (asked, on) {
+      if (asked.model !== undefined && !asked.model.includes("/")) {
+        return claudeCodeModelText(asked.model)
+      }
       const models = yield* hub.modelsFor(on.creatorId)
       if (models.length === 0) return noModelsText
       const model =
@@ -198,7 +135,7 @@ export const makeHarnesses = (hub: HarnessDependencies): Harnesses => {
       }
     }),
     // On the Creator's Models, of a Connected provider or Claude's (ADR 0029).
-    whyNotRunnable: Effect.fn("Harnesses.pi.whyNotRunnable")(function* (creator, you) {
+    whyNotRunnable: Effect.fn("Harnesses.agent.whyNotRunnable")(function* (creator, you) {
       if ((yield* hub.modelsFor(creator.id)).length > 0) return undefined
       return {
         refusal:
@@ -211,25 +148,16 @@ export const makeHarnesses = (hub: HarnessDependencies): Harnesses => {
   }
 
   return {
-    of: (session) => (session.harness === "Pi" ? pi : claudeCode),
-    forNew: (asked, runner) => {
-      const harness = asked ?? (runner.runsPi ? "Pi" : "ClaudeCode")
-      if (harness === "Pi" && !runner.runsPi) {
-        return `${runner.name} doesn't run pi: update it, or start a Claude Code Session there.`
-      }
-      return harness === "Pi" ? pi : claudeCode
-    },
-    switchRefusal: Effect.fn("Harnesses.switchRefusal")(function* (to, runnerId) {
-      // Every Runner runs Claude Code: one whose pi couldn't be readied too.
-      if (to === "ClaudeCode") return undefined
+    agent,
+    runnerRefusal: Effect.fn("Harnesses.runnerRefusal")(function* (runnerId) {
       const known = yield* hub.runner(runnerId)
       const name = known?.name ?? "The Runner"
       const runs = known?.harnesses ?? null
+      if (runs !== null && runs.includes("Pi")) return undefined
       if (runs === null) {
-        return `${name} hasn't connected since the Hub started, so it isn't known to run pi: switch this Session to pi once it is back.`
+        return `${name} hasn't connected since the Hub started, so it isn't known to run the durable agent.`
       }
-      if (runs.includes("Pi")) return undefined
-      return `${name} doesn't run both Claude Code and pi: update it to switch this Session to ${pi.name}.`
+      return `${name} runs a version from before the durable agent: update it on the Runners page.`
     }),
   }
 }

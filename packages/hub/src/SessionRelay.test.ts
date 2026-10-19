@@ -931,7 +931,7 @@ describe("the Session lifecycle", () => {
     ).toEqual({
       _tag: "SessionStateChanged",
       state: "Asleep",
-      message: "Claude Code could not start on mac: the Sandbox did not start",
+      message: "The agent could not start on mac: the Sandbox did not start",
     })
     // Not retried on its own, but the prompt stays queued for the next wake.
     expect(await runner.untaken("StartSession")).toEqual([])
@@ -1209,7 +1209,7 @@ describe("Runner reports", () => {
     expect((await web.take("SessionEventLogged")).entry.event).toEqual({
       _tag: "SessionStateChanged",
       state: "Asleep",
-      message: "Claude Code exited with code 1",
+      message: "The agent exited with code 1",
     })
     runner.send({ _tag: "SessionStarted", sessionId })
     expect((await web.take("SessionUpdated", (m) => m.session.state === "Active")).session.id).toBe(
@@ -2272,7 +2272,7 @@ describe("model and thinking level (#128)", () => {
     expect(asleepNow.session).not.toHaveProperty("modelPending")
     expect(
       (await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
-    ).toMatchObject({ message: "Claude Code could not start on mac: tmux is gone" })
+    ).toMatchObject({ message: "The agent could not start on mac: tmux is gone" })
   })
 
   test("an Archived Session's model can't be changed", async () => {
@@ -4777,7 +4777,7 @@ describe("revoking a Claude credential (ADR 0026)", () => {
       (await bobWeb.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
     ).toMatchObject({
       message:
-        "Claude Code could not start: You have no Claude credential: add your setup token on the Account page.",
+        "The agent could not start: You have no Claude credential: add your setup token on the Account page.",
     })
     expect(await runner.untaken("StartSession")).toEqual([])
   })

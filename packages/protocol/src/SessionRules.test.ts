@@ -20,7 +20,7 @@ import {
 /** A Refusal saying `refusal`. */
 const refused = (refusal: string) => ({ refusal: expect.stringContaining(refusal) })
 
-describe("driving a Session (ADR 0026)", () => {
+describe("driving a Session (ADR 0026, lifted in the Pi Durable spike)", () => {
   const alice = { id: "p-alice", name: "Alice" }
   const bob = { id: "p-bob" }
 
@@ -29,15 +29,10 @@ describe("driving a Session (ADR 0026)", () => {
     expect(driveRefusal(alice, alice, "Pi")).toBeUndefined()
   })
 
-  test("anyone else is told what it runs on: Claude Code's credential, or pi's Connected providers", () => {
-    const claude =
-      "Only Alice, who started this Session, can drive it: it runs on their Claude credential."
-    expect(driveRefusal(bob, alice)).toEqual({ refusal: claude })
-    expect(driveRefusal(bob, alice, "ClaudeCode")).toEqual({ refusal: claude })
-    expect(driveRefusal(bob, alice, "Pi")).toEqual({
-      refusal:
-        "Only Alice, who started this Session, can drive it: it runs on their Connected providers.",
-    })
+  test("and so does everyone else who sees it", () => {
+    expect(driveRefusal(bob, alice)).toBeUndefined()
+    expect(driveRefusal(bob, alice, "ClaudeCode")).toBeUndefined()
+    expect(driveRefusal(bob, alice, "Pi")).toBeUndefined()
   })
 })
 

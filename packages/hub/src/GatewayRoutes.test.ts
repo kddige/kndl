@@ -691,7 +691,7 @@ describe("a Session's start (#216)", () => {
     expect(await lastChangeOf(web, sessionId)).toEqual({
       _tag: "SessionStateChanged",
       state: "Asleep",
-      message: `Claude Code could not start: Linear needs a value for API key. ${wayOut}`,
+      message: `The agent could not start: Linear needs a value for API key. ${wayOut}`,
       installationsFailed: [
         {
           installationId: linear.id,
@@ -766,7 +766,7 @@ describe("a Session's start (#216)", () => {
     expect(await lastChangeOf(web, sessionId)).toEqual({
       _tag: "SessionStateChanged",
       state: "Asleep",
-      message: `Claude Code could not start: Linear's MCP server refused its credential (401). ${wayOut}`,
+      message: `The agent could not start: Linear's MCP server refused its credential (401). ${wayOut}`,
       installationsFailed: [
         { installationId: linear.id, installation: "Linear", reason: "Rejected", status: 401 },
       ],
@@ -791,7 +791,7 @@ describe("a Session's start (#216)", () => {
       {
         _tag: "SandboxNoted",
         message:
-          "Down's MCP server could not be reached. Claude Code started all the same: its tools fail until it answers.",
+          "Down's MCP server could not be reached. The agent started all the same: its tools fail until it answers.",
         installationFailed: {
           installationId: down.id,
           installation: "Down",

@@ -39,6 +39,11 @@ export class SessionLog extends Context.Service<
       { readonly entries: ReadonlyArray<SessionLogEntry>; readonly earlier: boolean },
       SqlError
     >
+    /**
+     * Whether the Session's main loop had a Turn `turnId`: a TurnStarted of neither a subagent
+     * nor a thread.
+     */
+    readonly hasMainTurn: (sessionId: SessionId, turnId: string) => Effect.Effect<boolean, SqlError>
     /** The seq of the Session's last entry, or none for an empty log. */
     readonly lastSeq: (sessionId: SessionId) => Effect.Effect<EventSeq | undefined, SqlError>
   }
@@ -116,6 +121,22 @@ export class SessionLog extends Context.Service<
         return { entries: rows.map(toEntry), earlier }
       })
 
+      const hasMainTurn = Effect.fn("SessionLog.hasMainTurn")(function* (
+        sessionId: SessionId,
+        turnId: string,
+      ) {
+        const rows = yield* sql<{ readonly seq: number }>`
+          SELECT seq FROM session_events
+          WHERE session_id = ${sessionId}
+            AND json_extract(event, '$._tag') = 'TurnStarted'
+            AND json_extract(event, '$.turnId') = ${turnId}
+            AND json_extract(event, '$.agentId') IS NULL
+            AND json_extract(event, '$.threadId') IS NULL
+          LIMIT 1
+        `
+        return rows.length > 0
+      })
+
       const lastSeq = Effect.fn("SessionLog.lastSeq")(function* (sessionId: SessionId) {
         const rows = yield* sql<{ readonly seq: number | null }>`
           SELECT MAX(seq) AS seq FROM session_events WHERE session_id = ${sessionId}
@@ -124,7 +145,7 @@ export class SessionLog extends Context.Service<
         return seq === null || seq === undefined ? undefined : EventSeq.make(seq)
       })
 
-      return SessionLog.of({ append, history, lastTurns, lastSeq })
+      return SessionLog.of({ append, history, lastTurns, hasMainTurn, lastSeq })
     }),
   )
 }

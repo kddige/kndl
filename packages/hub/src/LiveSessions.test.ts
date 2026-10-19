@@ -38,6 +38,8 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
   live.steers.add(sessionId)
   live.attaches.add(sessionId)
   live.switchesModels.add(sessionId)
+  live.durable.set(sessionId, true)
+  live.threadCommandsOut.set(sessionId, [{ seq: ModCommandSeq.make(2), pending: 1 }])
   live.handoffs.set(sessionId, {
     seq: ModCommandSeq.make(1),
     harness: "Pi",
@@ -62,7 +64,9 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
   const redactor = new StreamRedactor(needlesOf([]))
   live.textStreams.set(
     sessionId,
-    new Map([["t-1/", { turnId, agentId: undefined, redactor, flushing: false }]]),
+    new Map([
+      ["t-1//", { turnId, agentId: undefined, threadId: undefined, redactor, flushing: false }],
+    ]),
   )
   live.terminalStreams.set(sessionId, { redactor, size: { cols: 80, rows: 24 }, flushing: false })
 }
@@ -73,6 +77,8 @@ const pieces = [
   "steers",
   "attaches",
   "switchesModels",
+  "durable",
+  "threadCommandsOut",
   "handoffs",
   "starting",
   "stopping",
@@ -151,6 +157,8 @@ describe("a Session's live state ending", () => {
       "steers",
       "attaches",
       "switchesModels",
+      "durable",
+      "threadCommandsOut",
       "handoffs",
       "starting",
       "openPorts",
@@ -203,7 +211,7 @@ describe("delivery", () => {
     live.startSent(id, start)
     expect(live.awaitingHello(id)).toBe(true)
     expect(live.view(id).start).toBe(start)
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
     expect(live.awaitingHello(id)).toBe(false)
     live.relaunched(id)
     expect(live.awaitingHello(id)).toBe(true)
@@ -213,7 +221,7 @@ describe("delivery", () => {
 /** A Session whose mod said it steers. */
 const steeringSession = () => {
   const live = makeLiveSessions()
-  live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+  live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
   return live
 }
 
@@ -258,12 +266,12 @@ describe("steering", () => {
     expect(live.steer(id, { ...steering, promptId: two, queued: false })).toEqual(
       refused("not in the Prompt queue"),
     )
-    live.modHello(id, { steers: false, attaches: false, switchesModels: false })
+    live.modHello(id, { steers: false, attaches: false, switchesModels: false, durable: false })
     expect(live.steer(id, { ...steering, promptId: two })).toEqual(
       refused("a mod from before steering"),
     )
     // A relaunch's new mod hasn't said whether it steers: its old one's steers are dropped.
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
     expect(live.steer(id, { ...steering, promptId: two })).toBe("ok")
     live.relaunched(id)
     expect(live.cancelRefusal(id, two)).toBeUndefined()
@@ -271,12 +279,12 @@ describe("steering", () => {
 
   test("hands a prompt with files to a mod that marks them, and refuses one from before (#278)", () => {
     const live = makeLiveSessions()
-    live.modHello(id, { steers: true, attaches: false, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: false, switchesModels: false, durable: false })
     expect(live.modAttaches(id)).toBe(false)
     expect(live.steer(id, { ...steering, promptId: one, hasAttachments: true })).toEqual(
       refused("a mod from before attachments"),
     )
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
     expect(live.modAttaches(id)).toBe(true)
     expect(live.steer(id, { ...steering, promptId: one, hasAttachments: true })).toBe("ok")
   })
@@ -394,7 +402,7 @@ describe("what a Session is doing", () => {
       awaitingHello: true,
       startUnderWay: true,
     })
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
     expect(doing(live)).toEqual({ ...nothing, settling: true, busy: true, startUnderWay: true })
     live.claudeStarted(id)
     expect(doing(live)).toEqual(nothing)
@@ -417,7 +425,7 @@ describe("what a Session is doing", () => {
 
   test("a steer awaiting the mod's answer blocks delivery alone", () => {
     const live = makeLiveSessions()
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id, { steers: true, attaches: true, switchesModels: false, durable: false })
     live.steer(id, {
       promptId: one,
       by: alice.id,

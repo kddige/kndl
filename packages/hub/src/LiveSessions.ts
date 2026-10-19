@@ -74,10 +74,19 @@ export interface HandoffSent {
   readonly through: EventSeq | undefined
 }
 
+/** A thread command or Compact a Session's agent was sent, not a prompt, until it polls past it. */
+export interface ThreadCommandSent {
+  /** Its number in the mod's outbox. */
+  readonly seq: ModCommandSeq
+  /** Its number among the Session's thread commands (ThreadCommands.ts). */
+  readonly pending: number
+}
+
 /** Claude's text of a Turn's loop, as it streams. */
 export interface TextStream {
   readonly turnId: TextDelta["turnId"]
   readonly agentId: TextDelta["agentId"]
+  readonly threadId: TextDelta["threadId"]
   readonly redactor: StreamRedactor
   flushing: boolean
 }
@@ -173,6 +182,16 @@ interface Pieces {
   /** Sessions whose mod said in its hello that it takes a SwitchModel (ADR 0029). */
   readonly switchesModels: SessionSet
   /**
+   * Whether each Session's mod said in its hello that it is the durable agent, which takes thread
+   * commands and Compact (docs/design/durable-harness.md); absent until a mod says hello.
+   */
+  readonly durable: PerSession<boolean>
+  /**
+   * The thread commands and Compacts, not prompts, each Session's mod was sent and hasn't polled
+   * past: they are done once it has (ThreadCommands.ts).
+   */
+  readonly threadCommandsOut: PerSession<Array<ThreadCommandSent>>
+  /**
    * The DeliverHandoff each Session's mod was sent and hasn't polled past (ADR 0030). The Session
    * records its Harness as handed what it hadn't seen only then, so a handoff its outbox dropped
    * first, or a Hub restart lost, is handed again at the mod's next hello.
@@ -237,7 +256,7 @@ interface Pieces {
   readonly sandboxTokens: PerSession<SandboxTokens> & {
     readonly values: () => Iterable<SandboxTokens>
   }
-  /** Each Session's text streams, by Turn and subagent, until the Turn ends. */
+  /** Each Session's text streams, by Turn, subagent and thread, until the Turn ends. */
   readonly textStreams: PerSession<Map<string, TextStream>>
   /** Each Session's terminal Output, and the last frame's size, for held text let go. */
   readonly terminalStreams: PerSession<TerminalStream>
@@ -288,8 +307,20 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
       readonly steers: boolean
       readonly attaches: boolean
       readonly switchesModels: boolean
+      readonly durable: boolean
     },
   ) => void
+  /**
+   * Whether the Session's mod is the durable agent (docs/design/durable-harness.md): true or false
+   * as its hello said, or undefined before a mod said hello, as while it starts.
+   */
+  readonly modDurable: (id: SessionId) => boolean | undefined
+  /** The mod was sent a thread command that isn't a prompt: done once it polls past it. */
+  readonly threadCommandSent: (id: SessionId, sent: ThreadCommandSent) => void
+  /** Whether a thread command that isn't a prompt is on its way to the mod. */
+  readonly sendingThreadCommands: (id: SessionId) => boolean
+  /** The mod polled for the commands after `after`: the thread commands it took up to it. */
+  readonly threadCommandsCollected: (id: SessionId, after: ModCommandSeq) => ReadonlyArray<number>
   /** Whether the Session's mod said it marks the files of a message or a reply (#278). */
   readonly modAttaches: (id: SessionId) => boolean
   /** Whether the Session's mod said it takes a SwitchModel (ADR 0029). */
@@ -468,6 +499,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "durable",
+    "threadCommandsOut",
     // Its outbox is dropped: a handoff its mod didn't collect is handed to the next one.
     "handoffs",
     "starting",
@@ -493,6 +526,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "durable",
+    "threadCommandsOut",
     "handoffs",
     "starting",
     "starts",
@@ -517,6 +552,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "durable",
+    "threadCommandsOut",
     // Its outbox is dropped, as it is for ClaudeGone.
     "handoffs",
     // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
@@ -535,7 +572,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // A start under way is settled by what it says when it is back, too.
     "starts",
     "restarts",
-    // `inFlight`, `starting`, `steering`, the mod's flags, `handoffs`, `installationTrouble` and
+    // `inFlight`, `starting`, `steering`, the mod's flags, `handoffs`, `threadCommandsOut`,
+    // `installationTrouble` and
     // the streams are kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its
     // own, so they stay true while it is Frozen. A Runner back without it ends them with
     // ClaudeGone. Going Frozen clears `openPorts`.
@@ -547,6 +585,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "steers",
     "attaches",
     "switchesModels",
+    "durable",
+    "threadCommandsOut",
     "handoffs",
     "starting",
     "stopping",
@@ -583,6 +623,8 @@ export const makeLiveSessions = (): LiveSessions => {
     steers: new Set(),
     attaches: new Set(),
     switchesModels: new Set(),
+    durable: new Map(),
+    threadCommandsOut: new Map(),
     handoffs: new Map(),
     starting: new Set(),
     stopping: new Map(),
@@ -630,11 +672,15 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     relaunched: (id) => {
       pieces.steering.delete(id)
-      // Its outbox is dropped: a handoff the old mod didn't collect goes to the new one.
+      // Its outbox is dropped: a handoff the old mod didn't collect goes to the new one, as do
+      // thread commands.
       pieces.handoffs.delete(id)
+      pieces.threadCommandsOut.delete(id)
+      pieces.durable.delete(id)
       pieces.starting.add(id)
     },
-    modHello: (id, { steers, attaches, switchesModels }) => {
+    modHello: (id, { steers, attaches, switchesModels, durable }) => {
+      pieces.durable.set(id, durable)
       if (steers) pieces.steers.add(id)
       else pieces.steers.delete(id)
       if (attaches) pieces.attaches.add(id)
@@ -644,6 +690,20 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.starting.delete(id)
     },
     modAttaches: (id) => pieces.attaches.has(id),
+    modDurable: (id) => pieces.durable.get(id),
+    threadCommandSent: (id, sent) => {
+      const out = pieces.threadCommandsOut.get(id) ?? []
+      pieces.threadCommandsOut.set(id, [...out, sent])
+    },
+    sendingThreadCommands: (id) => pieces.threadCommandsOut.has(id),
+    threadCommandsCollected: (id, after) => {
+      const out = pieces.threadCommandsOut.get(id) ?? []
+      const taken = out.filter((sent) => sent.seq <= after)
+      const left = out.filter((sent) => sent.seq > after)
+      if (left.length > 0) pieces.threadCommandsOut.set(id, left)
+      else pieces.threadCommandsOut.delete(id)
+      return taken.map((sent) => sent.pending)
+    },
     modSwitchesModels: (id) => pieces.switchesModels.has(id),
     handoffSent: (id, handoff) => pieces.handoffs.set(id, handoff),
     handingOff: (id) => pieces.handoffs.has(id),

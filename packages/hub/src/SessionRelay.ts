@@ -244,12 +244,11 @@ import {
   type ProviderCommand,
   findProviderModel,
   defaultProviderModel,
+  providerModelName,
   DeliverHandoff,
   type Harness,
-  harnessOfModel,
   PresenceChanged,
   type PresentParticipant,
-  PromptCancelled,
   PromptId,
   PromptQueueChanged,
   QueuedPrompt,
@@ -275,7 +274,20 @@ import {
   type InstallationId,
   type TerminalFrame,
   TurnStarted,
+  TurnEnded,
   type TextDelta,
+  Compact,
+  DeliverThreadPrompt,
+  SessionModels,
+  StartThread,
+  StopThread,
+  SwitchThreadModel,
+  ThreadCreated,
+  ThreadId,
+  ThreadModelChanged,
+  ThreadPromptSent,
+  ThreadStarted,
+  threadTitleFrom,
   SessionId,
   SessionDiskUsage,
   SessionRemoved,
@@ -410,6 +422,7 @@ import { makeSessionDiskUsage } from "./SessionDiskUsage.ts"
 import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { type ModelSetting, Sessions } from "./Sessions.ts"
+import { type ThreadCommand, ThreadCommands } from "./ThreadCommands.ts"
 import { randomId } from "./Tokens.ts"
 import { type PendingTunnel, TunnelRefused, Tunnels } from "./Tunnels.ts"
 
@@ -483,9 +496,10 @@ interface AccessVerdict {
 }
 
 /**
- * The web commands that drive a Session, which only its Creator may send (ADR 0026): everyone
- * else with Repo access watches it. PurgeArchivedSession isn't one: it frees a Runner's disk, and
- * anyone who sees the Session may (ADR 0027).
+ * The web commands that drive a Session, which ADR 0026 left to its Creator alone (`driveRefusal`):
+ * in the Pi Durable spike, everyone with Repo access drives it (docs/design/durable-harness.md).
+ * PurgeArchivedSession isn't one: it frees a Runner's disk, and anyone who sees the Session may
+ * (ADR 0027).
  */
 const drivingCommands: ReadonlySet<WebToHub["_tag"]> = new Set<WebToHub["_tag"]>([
   "SendPrompt",
@@ -507,6 +521,11 @@ const drivingCommands: ReadonlySet<WebToHub["_tag"]> = new Set<WebToHub["_tag"]>
   "OpenTerminal",
   "TerminalInput",
   "TerminalResize",
+  "CreateThread",
+  "PromptThread",
+  "StopThread",
+  "SetThreadModel",
+  "CompactConversation",
 ])
 
 /** Fails opening a tunnel, with the close code its client gets (ADR 0016). */
@@ -598,20 +617,30 @@ const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
 })
 
-/** The Harness the Session runs on now (ADR 0029): Claude Code unless it says pi. */
+/**
+ * The Harness the Session runs on now (ADR 0029): the durable agent's, Pi, but for a Session from
+ * before it that hasn't woken since, which says none, as it ran Claude Code. It moves onto the
+ * durable agent as it next starts (`settleHarness`).
+ */
 const harnessNow = (session: { readonly harness?: Harness }): Harness =>
   session.harness ?? "ClaudeCode"
 
-/**
- * The Harness the Session's model runs on (ADR 0030): the one it runs on from its next start, which
- * differs from the one it runs on now (`harnessNow`) until a switch between Harnesses is made. No
- * model is Claude Code's default: a pi Session always names its model.
- */
-const harnessSet = (session: SessionSummary): Harness => harnessOfModel(session.model)
+/** The durable agent, in what a Session says, at the start of a sentence. */
+const TheAgent = "The agent"
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
   session.agents?.some((agent) => agent.status === "Running") === true
+
+/** Whether a Turn runs in one of the Session's threads: it is working, as for a subagent. */
+const hasRunningThreads = (session: SessionSummary) =>
+  session.threads?.some((thread) => thread.running) === true
+
+/** The prompt a thread command carries, if it carries one. */
+const promptOfCommand = (command: ThreadCommand) =>
+  command._tag === "StartThread" || command._tag === "DeliverThreadPrompt"
+    ? command.promptId
+    : undefined
 
 export class SessionRelay extends Context.Service<
   SessionRelay,
@@ -656,8 +685,7 @@ export class SessionRelay extends Context.Service<
     /**
      * A `kndl forward`, once welcomed, by a caller already checked for access (#180): sends
      * it the Session, now and whenever it changes, and counts it as presence until the scope
-     * closes. An Asleep Session is woken, for its Creator alone; one that isn't is closed,
-     * saying why.
+     * closes. An Asleep Session is woken; one that can't wake is closed, saying why.
      */
     readonly connectForward: (
       cli: CliIdentity,
@@ -732,6 +760,7 @@ export class SessionRelay extends Context.Service<
       const sessions = yield* Sessions
       const log = yield* SessionLog
       const prompts = yield* PromptQueue
+      const threadCommands = yield* ThreadCommands
       const attachments = yield* Attachments
       const runners = yield* Runners
       const modTokens = yield* ModTokens
@@ -764,11 +793,10 @@ export class SessionRelay extends Context.Service<
       /** Each Session's live state, in memory only (LiveSessions.ts). */
       const live = makeLiveSessions()
 
-      /** Claude Code and pi, as a Session's or a new Session's Harness (ADR 0029). */
+      /** The durable agent, every Session's Harness (docs/design/durable-harness.md). */
       const harnesses = makeHarnesses({
         runner: (id) => Effect.map(runners.get(id), Option.getOrUndefined),
         modelsFor: modelCatalog.modelsFor,
-        hasClaudeCredential: (id) => claudeCredentials.info(id) !== undefined,
       })
 
       const markBusy = (sessionId: SessionId) =>
@@ -866,7 +894,8 @@ export class SessionRelay extends Context.Service<
               turn:
                 session.currentTurn !== null ||
                 live.promptOut(session.id) ||
-                hasRunningAgents(session),
+                hasRunningAgents(session) ||
+                hasRunningThreads(session),
               settling: live.settling(session.id),
             })),
           ),
@@ -908,7 +937,7 @@ export class SessionRelay extends Context.Service<
             message: `Put to sleep: ${creator.login}, who started it, isn't a Member of this Hub any more`,
           }
         }
-        const not = yield* harnesses.of(session).whyNotRunnable(creator)
+        const not = yield* harnesses.agent.whyNotRunnable(creator)
         return not === undefined ? undefined : { message: not.sleep }
       })
 
@@ -1120,9 +1149,17 @@ export class SessionRelay extends Context.Service<
           _tag: "TextDelta",
           turnId: stream.turnId,
           ...(stream.agentId !== undefined && { agentId: stream.agentId }),
+          ...(stream.threadId !== undefined && { threadId: stream.threadId }),
           text,
         })
       })
+
+      /** A text stream's key: its Turn's, subagent's and thread's. */
+      const streamKey = (event: {
+        readonly turnId: string
+        readonly agentId?: string
+        readonly threadId?: string
+      }) => `${event.turnId}/${event.agentId ?? ""}/${event.threadId ?? ""}`
 
       /** Logs a TextDelta as far as it can be, redacted, holding back what could start a value. */
       const textDelta = Effect.fn("SessionRelay.textDelta")(function* (
@@ -1135,12 +1172,13 @@ export class SessionRelay extends Context.Service<
           streams = new Map()
           live.textStreams.set(sessionId, streams)
         }
-        const key = `${event.turnId}/${event.agentId ?? ""}`
+        const key = streamKey(event)
         let stream = streams.get(key)
         if (stream === undefined) {
           stream = {
             turnId: event.turnId,
             agentId: event.agentId,
+            threadId: event.threadId,
             redactor: new StreamRedactor(needles),
             flushing: false,
           }
@@ -1174,16 +1212,23 @@ export class SessionRelay extends Context.Service<
         if (streams !== undefined) {
           for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
           if (event._tag === "TurnEnded") {
-            if (event.agentId === undefined) live.textStreams.delete(sessionId)
-            else streams.delete(`${event.turnId}/${event.agentId}`)
+            // The main loop's ends its subagents' streams too; a thread's or a subagent's, its own.
+            if (event.agentId !== undefined || event.threadId !== undefined) {
+              streams.delete(streamKey(event))
+            } else {
+              for (const [key, stream] of streams) {
+                if (stream.threadId === undefined) streams.delete(key)
+              }
+            }
           }
         }
         yield* append(sessionId, redactEvent(needles, event))
       })
 
       /**
-       * Sends a terminal frame, redacted, to those watching: the Creator's connections alone, as
-       * no one else opens its terminal (ADR 0026).
+       * Sends a terminal frame, redacted, to those watching: every connection that opened it, as
+       * everyone drives a Session in the Pi Durable spike. It is a plain shell, without the agent's
+       * secrets (docs/design/durable-harness.md).
        */
       const terminalFrame = Effect.fn("SessionRelay.terminalFrame")(function* (
         session: SessionSummary,
@@ -1192,10 +1237,7 @@ export class SessionRelay extends Context.Service<
         const { sessionId } = frame
         const needles = yield* needlesFor(session.repo)
         const send = (data: string, size: TerminalFrame["size"]) => {
-          toWeb(
-            { ...frame, size, data },
-            (client) => client.terminals.has(sessionId) && client.you.id === session.creator.id,
-          )
+          toWeb({ ...frame, size, data }, (client) => client.terminals.has(sessionId))
           // Before Claude Code's terminal is up, the output is the start's: the Environment's
           // build and start script. A terminal shows nothing until a Snapshot, so the web shows
           // it from here instead (#70).
@@ -1471,11 +1513,11 @@ export class SessionRelay extends Context.Service<
         if (runnerUpdates.holding(session.value.runnerId)) return
         // A new model or thinking level first (#128): switched in place by a mod that switches
         // models (ADR 0029), the prompt going after it; else the prompt waits for the new mod's
-        // hello. A model of the other Harness relaunches the Session on it (ADR 0030).
+        // hello. A Session still on Claude Code is relaunched on the durable agent.
         if (session.value.modelPending === true) {
-          const sameHarness = harnessSet(session.value) === harnessNow(session.value)
-          if (sameHarness && live.modSwitchesModels(sessionId)) yield* switchModel(session.value)
-          else if (yield* relaunch(session.value)) return
+          if (harnessNow(session.value) === "Pi" && live.modSwitchesModels(sessionId)) {
+            yield* switchModel(session.value)
+          } else if (yield* relaunch(session.value)) return
         }
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
@@ -1611,7 +1653,7 @@ export class SessionRelay extends Context.Service<
             const blocking = failures.filter(failureBlocksStart)
             if (blocking.length > 0) {
               return yield* claudeGone(now.value, {
-                message: `${harnesses.of(now.value).name} could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
+                message: `${TheAgent} could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
                 installationsFailed: blocking,
               })
             }
@@ -1619,7 +1661,7 @@ export class SessionRelay extends Context.Service<
               yield* noteFailure(
                 session.id,
                 failure,
-                `${harnesses.of(now.value).name} started all the same: its tools fail until it answers.`,
+                `${TheAgent} started all the same: its tools fail until it answers.`,
               )
             }
             runner.peer.send(start)
@@ -1693,10 +1735,9 @@ export class SessionRelay extends Context.Service<
         )
 
       /**
-       * Why a subagent can't be messaged or stopped now (ADR 0030): it ran on the other Harness,
-       * which alone has it. That is the one running the Session, or, for one that isn't running,
-       * the one it wakes on, its model's. Undefined when it ran on that one, or the Session has no
-       * such agent.
+       * Why a subagent can't be messaged or stopped now: it ran on Claude Code, before the Session
+       * moved onto the durable agent, which doesn't have it. Undefined when it ran on the durable
+       * agent, or the Session has no such agent.
        */
       const agentElsewhere = Effect.fn("SessionRelay.agentElsewhere")(function* (
         session: SessionSummary,
@@ -1704,11 +1745,8 @@ export class SessionRelay extends Context.Service<
         verb: "message" | "stop",
       ) {
         const agent = yield* sessions.agentOf(session.id, agentId)
-        const running = session.state === "Active" || session.state === "Frozen"
-        const reaches = running ? harnessNow(session) : harnessSet(session)
-        if (Option.isNone(agent) || agent.value.harness === reaches) return undefined
-        const name = harnesses.of({ harness: agent.value.harness }).name
-        return `${agent.value.description} ran on ${name}: switch the Session back to a ${name} model to ${verb} it.`
+        if (Option.isNone(agent) || agent.value.harness === harnessNow(session)) return undefined
+        return `${agent.value.description} ran on Claude Code, which no longer runs this Session: the agent can't ${verb} it.`
       })
 
       /**
@@ -1728,51 +1766,159 @@ export class SessionRelay extends Context.Service<
         yield* sessionUpdated(session.id)
       })
 
+      // ── Threads (docs/design/durable-harness.md) ─────────────────────────
+
       /**
-       * Records the Session on the Harness its model runs on, once that is another (ADR 0030), as
-       * it is relaunched or woken there: the Harness it ran on has seen its history so far, and the
-       * new one is handed what it hasn't when its mod says hello (`handOff`). The Session as it is
-       * now.
+       * Who last switched each thread's model, by `<sessionId>/<threadId>`, to be told if the agent
+       * can't. In memory only: after a Hub restart, a failed switch is only noted in the Session.
+       */
+      const threadModelSwitchers = new Map<string, ParticipantId>()
+
+      /**
+       * Sends the Session's agent a thread command it hasn't taken yet: one that isn't a prompt is
+       * done once the mod polls past it (`modPolled`), a prompt once its Turn starts or it steers
+       * one.
+       */
+      const sendThreadCommand = Effect.fn("SessionRelay.sendThreadCommand")(function* (
+        sessionId: SessionId,
+        pending: number,
+        command: ThreadCommand,
+      ) {
+        const seq = yield* outbox.enqueue(sessionId, command)
+        if (promptOfCommand(command) === undefined) live.threadCommandSent(sessionId, { seq, pending })
+      })
+
+      /**
+       * Keeps a thread command or Compact for the Session's agent until it is done
+       * (ThreadCommands.ts), and sends it now to a durable agent that has said hello. One that is
+       * starting, or asleep, is sent it after its hello, with every other it hasn't taken.
+       */
+      const queueThreadCommand = Effect.fn("SessionRelay.queueThreadCommand")(function* (
+        sessionId: SessionId,
+        command: ThreadCommand,
+      ) {
+        const pending = yield* threadCommands.add(sessionId, command)
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session)) return
+        const { state } = session.value
+        const running = state === "Active" || state === "Frozen"
+        if (!running || live.awaitingHello(sessionId) || live.modDurable(sessionId) !== true) return
+        yield* sendThreadCommand(sessionId, pending, command)
+      })
+
+      /**
+       * The agent couldn't switch a thread's model: the thread runs on what it ran on, its setting
+       * says so again unless it was switched since, and whoever switched it is told, or, if the
+       * Hub doesn't know who, the Session's history says so.
+       */
+      const threadModelSwitchFailed = Effect.fn("SessionRelay.threadModelSwitchFailed")(function* (
+        sessionId: SessionId,
+        threadId: ThreadId,
+        event: Extract<ModEvent, { readonly _tag: "ModelSwitchFailed" }>,
+      ) {
+        const session = yield* sessions.get(sessionId)
+        const thread = yield* sessions.threadOf(sessionId, threadId)
+        if (Option.isNone(session) || Option.isNone(thread)) return
+        if (thread.value.model === event.asked) {
+          const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
+          const { thinkingLevel } = thread.value
+          // Only a Model of its Creator's is taken as the one it runs on; else the Session's.
+          yield* sessions.setThreadModel(
+            sessionId,
+            threadId,
+            findProviderModel(creatorModels, event.model) === undefined
+              ? {}
+              : { model: event.model, ...(thinkingLevel !== undefined && { thinkingLevel }) },
+          )
+          yield* sessionUpdated(sessionId)
+        }
+        const message = `Couldn't switch the thread “${thread.value.title}” to ${event.asked ?? "the Session's model"}: ${event.message}. It still runs on ${event.model}.`
+        const key = `${sessionId}/${threadId}`
+        const switcher = threadModelSwitchers.get(key)
+        threadModelSwitchers.delete(key)
+        if (switcher === undefined) {
+          return yield* logEvent(sessionId, SandboxNoted.make({ message }))
+        }
+        toWeb(
+          CommandFailed.make({ command: "SetThreadModel", sessionId, message }),
+          (client) => client.you.id === switcher,
+        )
+      })
+
+      /** The Models the Session can run on, its Creator's (ADR 0026), as its joiners are sent them. */
+      const sessionModels = Effect.fn("SessionRelay.sessionModels")(function* (
+        session: SessionSummary,
+      ) {
+        return SessionModels.make({
+          sessionId: session.id,
+          models: yield* modelCatalog.modelsFor(session.creator.id),
+        })
+      })
+
+      /** The Member's Models changed: those who joined their Sessions are sent them again. */
+      const sessionModelsChanged = Effect.fn("SessionRelay.sessionModelsChanged")(function* (
+        creatorId: ParticipantId,
+      ) {
+        for (const session of yield* sessions.list) {
+          if (session.creator.id !== creatorId) continue
+          if (![...peers.webClients].some((client) => client.joined.has(session.id))) continue
+          toJoined(session.id, yield* sessionModels(session))
+        }
+      })
+
+      /**
+       * Moves a Session from before the durable agent, on Claude Code, onto it
+       * (docs/design/durable-harness.md), as it is relaunched or woken: Claude Code has seen its
+       * history so far, and the durable agent is handed it when its mod says hello (`handOff`). It
+       * runs on its Creator's default Model unless its model is one of theirs already; with none, it
+       * can't start (`cantStartOn`). The Session as it is now.
        */
       const settleHarness = Effect.fn("SessionRelay.settleHarness")(function* (
         session: SessionSummary,
       ) {
-        const to = harnessSet(session)
-        if (to === harnessNow(session)) return session
-        yield* sessions.switchHarness(session.id, to, yield* log.lastSeq(session.id))
-        yield* Effect.logInfo(
-          `Session ${session.id} switches from ${harnesses.of(session).name} to ${harnesses.of({ harness: to }).name}`,
-        )
+        if (harnessNow(session) === "Pi") return session
+        yield* sessions.switchHarness(session.id, "Pi", yield* log.lastSeq(session.id))
+        const models = yield* modelCatalog.modelsFor(session.creator.id)
+        if (session.model === undefined || findProviderModel(models, session.model) === undefined) {
+          const first = defaultProviderModel(models)
+          yield* sessions.setModel(
+            session.id,
+            first === undefined ? {} : { model: providerModelName(first) },
+            false,
+          )
+        }
+        yield* Effect.logInfo(`Session ${session.id} moves from Claude Code onto the durable agent`)
         return Option.getOrElse(yield* sessions.get(session.id), () => session)
       })
 
       /**
-       * Starts the Session's Harness again with its model and thinking level as set now (#128),
-       * once they changed while it ran, resuming its conversation, its Sandbox left running; or the
-       * other Harness, for a model of the other's (ADR 0030), resuming that one's conversation, or
-       * starting one if it never ran the Session. Only between Turns: `deliverNext` asks, when the
-       * Session is Active and idle.
-       * Whether it was sent; not to a Runner that doesn't take it, or before the Harness's
-       * conversation is known, when the setting waits for the Session's next wake instead.
+       * Starts the Session's agent again with its model and thinking level as set now (#128), once
+       * they changed while it ran, for a mod that doesn't switch models in place, its Sandbox left
+       * running; or, for a Session still on Claude Code, the durable agent in its place
+       * (`settleHarness`). Only between Turns: `deliverNext` asks, when the Session is Active and
+       * idle. Whether it was sent; not to a Runner that doesn't take it, or doesn't run the durable
+       * agent, or before the agent's conversation is known, when the setting waits for the Session's
+       * next wake instead.
        */
       const relaunch = Effect.fn("SessionRelay.relaunch")(function* (before: SessionSummary) {
         const runner = peers.runner(before.runnerId)
         if (runner === undefined || !runner.relaunches) return false
-        const switching = harnessSet(before) !== harnessNow(before)
-        const resume = yield* sessions.conversationId(before.id, harnessSet(before))
+        if ((yield* harnesses.runnerRefusal(runner.id)) !== undefined) return false
+        const switching = harnessNow(before) !== "Pi"
+        const resume = yield* sessions.conversationId(before.id, "Pi")
         if (!switching && Option.isNone(resume)) return false
         const session = yield* settleHarness(before)
         // In place of the old one: the old mod has nothing more to say.
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
-        // Commands the old mod didn't collect are stale, as when it sleeps.
+        // Commands the old mod didn't collect are stale, as when it sleeps; thread commands are
+        // kept (ThreadCommands.ts), for the new one.
         yield* outbox.clear(session.id)
         live.relaunched(session.id)
         yield* sessions.setModelPending(session.id, false)
-        const { name } = harnesses.of(session)
         yield* Effect.logInfo(
           switching
-            ? `Switching ${session.id} from ${harnesses.of(before).name} to ${name}`
-            : `Restarting ${name} of ${session.id} for its new model`,
+            ? `Switching ${session.id} from Claude Code to the durable agent`
+            : `Restarting the agent of ${session.id} for its new model`,
         )
         runner.peer.send(
           RelaunchSession.make({
@@ -1781,15 +1927,15 @@ export class SessionRelay extends Context.Service<
             workBranch: session.workBranch,
             ...(Option.isSome(resume) && { resume: resume.value }),
             modToken,
-            // Absent, the Runner runs Claude Code: said for pi, and for any switch.
-            ...(switching ? { harness: harnessNow(session) } : harnesses.of(session).flag),
+            ...harnesses.agent.flag,
             ...modelFlags(session),
             // The same as before: a change to the Repo's waits for its next wake or Restart.
             ...gatewayServers(session.mcpServers ?? []),
           }),
         )
-        // Its agents stop with the old Claude Code.
+        // Its agents and threads stop with the old agent.
         yield* agentsInterrupted(session.id)
+        yield* threadsAborted(session.id)
         yield* sessionUpdated(session.id)
         return true
       })
@@ -1817,8 +1963,9 @@ export class SessionRelay extends Context.Service<
         // No one can answer its question now: the next Claude Code doesn't ask it again.
         const cancelled = yield* cancelQuestion(session)
         const interrupted = yield* agentsInterrupted(session.id)
+        const aborted = yield* threadsAborted(session.id)
         if (session.state === "Archived") {
-          if (interrupted || cancelled) yield* sessionUpdated(session.id)
+          if (interrupted || cancelled || aborted) yield* sessionUpdated(session.id)
           return
         }
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
@@ -1840,6 +1987,31 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
+       * The Session's agent stopped: the Turn running in each of its threads ended, each logged as
+       * a TurnEnded `aborted` (docs/design/durable-harness.md), as its main loop's Turn is over. The
+       * agent's restart reports a `Resumed` Turn for each it goes on with. Whether any ran; the
+       * caller sends the SessionUpdated.
+       */
+      const threadsAborted = Effect.fn("SessionRelay.threadsAborted")(function* (
+        sessionId: SessionId,
+      ) {
+        const now = yield* Clock.currentTimeMillis
+        const ended = yield* sessions.endThreadTurns(sessionId)
+        for (const turn of ended) {
+          yield* logEvent(
+            sessionId,
+            TurnEnded.make({
+              turnId: turn.turnId,
+              threadId: turn.threadId,
+              reason: "aborted",
+              durationMs: Math.max(0, now - turn.startedAt),
+            }),
+          )
+        }
+        return ended.length > 0
+      })
+
+      /**
        * Wakes an Asleep Session on its online Runner: records it Active and starts its Claude
        * Code again, resuming the conversation its mod last said hello from, on the same
        * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
@@ -1856,7 +2028,7 @@ export class SessionRelay extends Context.Service<
           return undefined
         }
         // Its prompts wait in its queue, and wake it once its Runner is updated.
-        const refusal = runnerRefusal(runner)
+        const refusal = runnerRefusal(runner) ?? (yield* harnesses.runnerRefusal(runner.id))
         if (refusal !== undefined) return refusal
         const session = yield* settleHarness(asleep)
         const cantStart = yield* cantStartOn(session, why.by)
@@ -1875,7 +2047,7 @@ export class SessionRelay extends Context.Service<
           yield* sessionUpdated(session.id)
           return undefined
         }
-        const resume = yield* sessions.conversationId(session.id, harnessNow(session))
+        const resume = yield* sessions.conversationId(session.id, "Pi")
         // A Harness it switched to, yet to be handed what it hasn't seen.
         const switched = Option.isSome(yield* sessions.handoffFrom(session.id))
         const environment = yield* sessionEnvironment(session.repo)
@@ -1885,13 +2057,13 @@ export class SessionRelay extends Context.Service<
         // It starts with its model and thinking level as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         const woken = `Woken on ${runner.name}`
-        const { name } = harnesses.of(session)
+        const { name } = harnesses.agent
         yield* changeState(session, "Active", {
           ...why,
           message: Option.isSome(resume)
             ? woken
             : switched
-              ? `${woken}: it runs on ${name} now`
+              ? `${woken}: it runs on the durable agent now`
               : `${woken}, with a new conversation: ${name}'s last one is unknown`,
         })
         yield* sendStart(
@@ -1907,7 +2079,7 @@ export class SessionRelay extends Context.Service<
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...harnesses.of(session).flag,
+            ...harnesses.agent.flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -1916,15 +2088,14 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * Why the Session's Claude Code can't start: values its Environment needs are unset, or
-       * there is no Claude credential to run it on, its Creator's (ADR 0026), or for pi none of
-       * their Models (ADR 0029). `you` is who is told.
+       * Why the Session's agent can't start: values its Environment needs are unset, or its
+       * Creator has no Models to run it on (ADR 0029). `you` is who is told.
        */
       const cantStartOn = Effect.fn("SessionRelay.cantStartOn")(function* (
         session: SessionSummary,
         you: Participant | undefined,
       ) {
-        const { name } = harnesses.of(session)
+        const name = TheAgent
         const needed = yield* environments.valuesNeeded(session.repo)
         if (needed.length > 0) {
           return {
@@ -1934,7 +2105,7 @@ export class SessionRelay extends Context.Service<
         }
         const { creator } = session
         const nothing = (yield* members.isMember(creator.id))
-          ? (yield* harnesses.of(session).whyNotRunnable(creator, you))?.refusal
+          ? (yield* harnesses.agent.whyNotRunnable(creator, you))?.refusal
           : `${creator.login}, who started this Session, isn't a Member of this Hub any more.`
         if (nothing !== undefined) {
           return {
@@ -1945,13 +2116,21 @@ export class SessionRelay extends Context.Service<
         return undefined
       })
 
-      /** Wakes the Session if it is Asleep with prompts waiting, as ones queued while Frozen. */
+      /**
+       * Wakes the Session if it is Asleep with prompts or thread commands waiting, as ones queued
+       * while Frozen.
+       */
       const wakeIfWaiting = Effect.fn("SessionRelay.wakeIfWaiting")(function* (
         sessionId: SessionId,
       ) {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session) || session.value.state !== "Asleep") return
-        if ((yield* prompts.list(sessionId)).length === 0) return
+        if (
+          (yield* prompts.list(sessionId)).length === 0 &&
+          (yield* threadCommands.pending(sessionId)).length === 0
+        ) {
+          return
+        }
         yield* wake(session.value, { message: "Woken for the prompts waiting in its queue" })
       })
 
@@ -2000,8 +2179,8 @@ export class SessionRelay extends Context.Service<
       /** Whether the Session is Active with nothing going on and no one there. */
       const isIdle = Effect.fn("SessionRelay.isIdle")(function* (session: SessionSummary) {
         if (session.state !== "Active" || session.currentTurn !== null) return false
-        // Its agents work on after the Turn that started them (ADR 0014).
-        if (hasRunningAgents(session)) return false
+        // Its agents work on after the Turn that started them (ADR 0014), and its threads beside it.
+        if (hasRunningAgents(session) || hasRunningThreads(session)) return false
         // Claude waits on its question (#193), as its Turn does.
         if (session.openQuestion !== undefined) return false
         if (peers.runner(session.runnerId) === undefined) return false
@@ -2052,10 +2231,12 @@ export class SessionRelay extends Context.Service<
         const at = yield* Clock.currentTimeMillis
         live.ended(session.id, "Archived")
         yield* outbox.clear(session.id)
+        yield* threadCommands.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
         for (const client of peers.webClients) client.terminals.delete(session.id)
         yield* cancelQuestion(session)
+        yield* threadsAborted(session.id)
         yield* sessions.archive(session.id, {
           by: by.id,
           at,
@@ -2129,45 +2310,30 @@ export class SessionRelay extends Context.Service<
       // ── New Sessions ─────────────────────────────────────────────────────
 
       /**
-       * A new Session's Harness on the Runner, and the model and thinking level to check with it.
-       * A model names its Harness (ADR 0030), which must be the one asked for, if one is. Without a
-       * model, the one asked for; else, on a Runner that runs pi (ADR 0029), Claude Code when the
-       * Creator's default Model is Claude's and they run Claude's Models there (their
-       * ProvidersState's `claudeHarness`), and pi otherwise, on that default Model.
+       * A new Session's Harness on the Runner, and the model and thinking level to check with it:
+       * the durable agent, on a Runner that runs it (docs/design/durable-harness.md). Claude Code
+       * asked for is refused: it runs no Session now.
        */
       const newSessionHarness = Effect.fn("SessionRelay.newSessionHarness")(function* (
         message: Extract<WebToHub, { readonly _tag: "CreateSession" }>,
         runner: OnlineRunner,
-        creator: Participant,
       ): Effect.fn.Return<
         { readonly harness: SessionHarness; readonly asked: ModelSetting } | string,
         SqlError
       > {
+        if (message.harness === "ClaudeCode") {
+          return "Claude Code no longer runs Sessions: they run on the durable agent, on your Models."
+        }
+        const refused = yield* harnesses.runnerRefusal(runner.id)
+        if (refused !== undefined) return refused
         const { model, thinkingLevel } = message
-        const level = thinkingLevel === undefined ? {} : { thinkingLevel }
-        // As its hello said: it is online.
-        const known = yield* runners.get(runner.id)
-        const runsPi = Option.exists(known, ({ harnesses: runs }) => runs?.includes("Pi") === true)
-        const on = (asked: Harness | undefined, setting: ModelSetting) => {
-          const harness = harnesses.forNew(asked, { name: runner.name, runsPi })
-          return typeof harness === "string" ? harness : { harness, asked: setting }
+        return {
+          harness: harnesses.agent,
+          asked: {
+            ...(model !== undefined && { model }),
+            ...(thinkingLevel !== undefined && { thinkingLevel }),
+          },
         }
-        if (model !== undefined) {
-          const of = harnessOfModel(model)
-          if (message.harness !== undefined && message.harness !== of) {
-            return `${model} runs on ${harnesses.of({ harness: of }).name}, not ${harnesses.of({ harness: message.harness }).name}.`
-          }
-          return on(of, { model, ...level })
-        }
-        if (message.harness !== undefined || !runsPi) return on(message.harness, level)
-        const first = defaultProviderModel(yield* modelCatalog.modelsFor(creator.id))
-        if (
-          first?.provider === "anthropic" &&
-          (yield* members.claudeHarness(creator.id)) === "ClaudeCode"
-        ) {
-          return on("ClaudeCode", level)
-        }
-        return on("Pi", level)
       })
 
       /** A Session to create and start, from New Session. */
@@ -2182,7 +2348,7 @@ export class SessionRelay extends Context.Service<
         readonly why: Why
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
-        /** What runs its agent (ADR 0029), until its model is the other's (ADR 0030). */
+        /** What runs its agent: the durable agent. */
         readonly harness: SessionHarness
         /** Its model and thinking level (#128), checked by its Harness; its default if absent. */
         readonly model?: ModelSetting
@@ -2232,7 +2398,7 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...harnesses.of(session).flag,
+            ...harnesses.agent.flag,
             ...modelFlags(session),
             ...gatewayServers(installations),
           }),
@@ -2482,6 +2648,106 @@ export class SessionRelay extends Context.Service<
           }))
         })
 
+        /**
+         * The Session a thread command names, unless it is Archived or its agent doesn't take
+         * threads (docs/design/durable-harness.md); else none, the command refused.
+         */
+        const threadSession = Effect.fn("SessionRelay.threadSession")(function* (
+          message: Extract<
+            WebToHub,
+            {
+              readonly _tag:
+                | "CreateThread"
+                | "PromptThread"
+                | "StopThread"
+                | "SetThreadModel"
+                | "CompactConversation"
+            }
+          >,
+        ) {
+          const { sessionId } = message
+          const session = yield* sessionFor(message)
+          if (Option.isNone(session)) return session
+          if (session.value.state === "Archived") {
+            refuse(message, "The Session is archived: restore it first.", { sessionId })
+            return Option.none<SessionSummary>()
+          }
+          // A mod from before, of pi or Claude Code, that said hello and runs still.
+          const running = session.value.state === "Active" || session.value.state === "Frozen"
+          if (running && !live.awaitingHello(sessionId) && live.modDurable(sessionId) === false) {
+            refuse(message, "This Session's agent doesn't take threads: restart it.", {
+              sessionId,
+            })
+            return Option.none<SessionSummary>()
+          }
+          return session
+        })
+
+        /** The Session's thread, or none, the command refused. */
+        const threadFor = Effect.fn("SessionRelay.threadFor")(function* (
+          message: WebToHub & { readonly sessionId: SessionId },
+          threadId: ThreadId,
+        ) {
+          const thread = yield* sessions.threadOf(message.sessionId, threadId)
+          if (Option.isNone(thread)) {
+            refuse(message, "The Session has no such thread.", { sessionId: message.sessionId })
+          }
+          return thread
+        })
+
+        /**
+         * A new thread's model and thinking level, checked against the Session's Creator's Models:
+         * none for the Session's; or none at all, the command refused.
+         */
+        const threadSetting = Effect.fn("SessionRelay.threadSetting")(function* (
+          message: Extract<WebToHub, { readonly _tag: "CreateThread" }>,
+          session: SessionSummary,
+        ) {
+          const { thinkingLevel } = message
+          if (message.model === undefined && thinkingLevel === undefined) {
+            return Option.some<ModelSetting>({})
+          }
+          // A thinking level alone is for the Session's model.
+          const model = message.model ?? session.model
+          const checked = yield* harnesses.agent.check(
+            {
+              ...(model !== undefined && { model }),
+              ...(thinkingLevel !== undefined && { thinkingLevel }),
+            },
+            { creatorId: session.creator.id },
+          )
+          if (typeof checked === "string") {
+            refuse(message, checked, { sessionId: session.id })
+            return Option.none<ModelSetting>()
+          }
+          return Option.some<ModelSetting>({
+            ...(message.model !== undefined && { model: checked.setting.model }),
+            ...(thinkingLevel !== undefined && { thinkingLevel }),
+          })
+        })
+
+        /**
+         * Wakes the Session for a thread command if it is Asleep, as for a message to a subagent:
+         * whether the command goes on; if not, it was refused.
+         */
+        const wokenFor = Effect.fn("SessionRelay.wokenFor")(function* (
+          message: WebToHub & { readonly sessionId: SessionId },
+          session: SessionSummary,
+        ) {
+          const { sessionId } = message
+          if (session.state !== "Asleep") return true
+          const refused = yield* wake(session, { by: you })
+          if (refused !== undefined) {
+            refuse(message, refused, { sessionId })
+            return false
+          }
+          if (!live.awaitingHello(sessionId)) {
+            refuse(message, "The Session could not be woken: see its history.", { sessionId })
+            return false
+          }
+          return true
+        })
+
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: RelayedCommand) {
           if (isEnvironmentCommand(message))
             return yield* environmentRelay.receiveWeb(client, message)
@@ -2515,13 +2781,10 @@ export class SessionRelay extends Context.Service<
               }
               const behind = runnerRefusal(runner)
               if (behind !== undefined) return refuse(message, behind, { requestId })
-              const chosen = yield* newSessionHarness(message, runner, you)
+              const chosen = yield* newSessionHarness(message, runner)
               if (typeof chosen === "string") return refuse(message, chosen, { requestId })
               const { harness } = chosen
-              const model = yield* harness.check(chosen.asked, {
-                runnerId: runner.id,
-                creatorId: you.id,
-              })
+              const model = yield* harness.check(chosen.asked, { creatorId: you.id })
               if (typeof model === "string") return refuse(message, model, { requestId })
               // Repo access was checked before the lock was taken. The branches are the form's
               // word (ADR 0023): one that isn't there fails the clone, as it always has.
@@ -2575,6 +2838,8 @@ export class SessionRelay extends Context.Service<
               if (picked !== undefined && picked.picks.length > 0) {
                 peer.send(QuestionPicks.make({ sessionId, ...picked }))
               }
+              // Its Creator's Models, which anyone may switch it, or a thread, to.
+              peer.send(yield* sessionModels(session.value))
               if (!(yield* presenceChanged(sessionId, before))) {
                 peer.send(PresenceChanged.make({ sessionId, participants: before }))
               }
@@ -2719,7 +2984,8 @@ export class SessionRelay extends Context.Service<
             }
 
             case "SetSessionModel": {
-              // Its Creator may, in any state but Archived (#128).
+              // Anyone who sees it may, in any state but Archived (#128), to one of its Creator's
+              // Models: it runs on their accounts (ADR 0026).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2728,23 +2994,18 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
-              // The model says its Harness (ADR 0030): Claude Code's default, which names none,
-              // is Claude Code's. A pi Session always names its model.
-              const was = harnessSet(session.value)
-              const to = harnessOfModel(message.model)
-              const harness = harnesses.of({ harness: to })
-              const checked = yield* harness.check(message, {
-                runnerId: session.value.runnerId,
-                creatorId: session.value.creator.id,
-              })
+              // A thinking level alone is for the model it runs on.
+              const model = message.model ?? session.value.model
+              const checked = yield* harnesses.agent.check(
+                {
+                  ...(model !== undefined && { model }),
+                  ...(message.thinkingLevel !== undefined && {
+                    thinkingLevel: message.thinkingLevel,
+                  }),
+                },
+                { creatorId: session.value.creator.id },
+              )
               if (typeof checked === "string") return refuse(message, checked, { sessionId })
-              // The other Harness: its Runner must run both, and its Creator have what it runs on.
-              if (to !== harnessNow(session.value)) {
-                const refused =
-                  (yield* harnesses.switchRefusal(to, session.value.runnerId)) ??
-                  (yield* harness.whyNotRunnable(session.value.creator, you))?.refusal
-                if (refused !== undefined) return refuse(message, refused, { sessionId })
-              }
               const { setting } = checked
               if (
                 session.value.model === setting.model &&
@@ -2752,9 +3013,9 @@ export class SessionRelay extends Context.Service<
               ) {
                 return
               }
-              // A running Harness takes it once no Turn runs: in place, from a mod that switches
-              // models (`switchModel`), else started again (`relaunch`), on the other Harness for
-              // its model. One that isn't running starts with it when it wakes, on its Harness.
+              // A running agent takes it once no Turn runs: in place, from a mod that switches
+              // models (`switchModel`), else started again (`relaunch`). One that isn't running
+              // starts with it when it wakes.
               const running = session.value.state === "Active" || session.value.state === "Frozen"
               yield* sessions.setModel(sessionId, setting, running)
               yield* logEvent(
@@ -2763,13 +3024,8 @@ export class SessionRelay extends Context.Service<
                   by: you,
                   ...setting,
                   ...(checked.label !== undefined && { modelLabel: checked.label }),
-                  ...(to !== was && { harness: to }),
                 }),
               )
-              if (!running) {
-                const now = yield* sessions.get(sessionId)
-                if (Option.isSome(now)) yield* settleHarness(now.value)
-              }
               yield* sessionUpdated(sessionId)
               return yield* deliverNext(sessionId)
             }
@@ -2967,6 +3223,139 @@ export class SessionRelay extends Context.Service<
               return
             }
 
+            case "CreateThread": {
+              // Anyone who sees the Session may (docs/design/durable-harness.md).
+              const { sessionId, anchorTurnId } = message
+              const session = yield* threadSession(message)
+              if (Option.isNone(session)) return
+              if (!(yield* log.hasMainTurn(sessionId, anchorTurnId))) {
+                return refuse(message, "There is no such Turn in the Session to start a thread off.", {
+                  sessionId,
+                })
+              }
+              const setting = yield* threadSetting(message, session.value)
+              if (Option.isNone(setting)) return
+              if (!(yield* wokenFor(message, session.value))) return
+              // Marked sent as it is logged, so a thread refused, or a wake, keeps none.
+              const sent = yield* markSentOrRefuse(message, message.attachments, "prompt")
+              if (Option.isNone(sent)) return
+              const threadId = ThreadId.make(`thr_${randomId()}`)
+              const promptId = PromptId.make(randomId())
+              const title = threadTitleFrom(message.text)
+              yield* sessions.threadStarted(sessionId, {
+                id: threadId,
+                anchorTurnId,
+                title,
+                startedBy: you.id,
+                ...setting.value,
+                createdAt: yield* Clock.currentTimeMillis,
+              })
+              yield* logEvent(
+                sessionId,
+                ThreadStarted.make({ threadId, anchorTurnId, title, startedBy: you, ...setting.value }),
+              )
+              const prompt = { promptId, sender: you, text: message.text, ...carrying(sent.value) }
+              yield* logEvent(sessionId, ThreadPromptSent.make({ threadId, ...prompt }))
+              yield* queueThreadCommand(
+                sessionId,
+                StartThread.make({ sessionId, threadId, anchorTurnId, ...prompt, ...setting.value }),
+              )
+              peer.send(ThreadCreated.make({ sessionId, threadId }))
+              return yield* sessionUpdated(sessionId)
+            }
+
+            case "PromptThread": {
+              // Anyone may post into a thread: it steers a Turn running there.
+              const { sessionId, threadId } = message
+              const session = yield* threadSession(message)
+              if (Option.isNone(session)) return
+              if (Option.isNone(yield* threadFor(message, threadId))) return
+              if (!(yield* wokenFor(message, session.value))) return
+              const sent = yield* markSentOrRefuse(message, message.attachments, "prompt")
+              if (Option.isNone(sent)) return
+              const prompt = {
+                promptId: PromptId.make(randomId()),
+                sender: you,
+                text: message.text,
+                ...carrying(sent.value),
+              }
+              yield* logEvent(sessionId, ThreadPromptSent.make({ threadId, ...prompt }))
+              return yield* queueThreadCommand(
+                sessionId,
+                DeliverThreadPrompt.make({ sessionId, threadId, ...prompt }),
+              )
+            }
+
+            case "StopThread": {
+              const { sessionId, threadId } = message
+              const session = yield* threadSession(message)
+              if (Option.isNone(session)) return
+              const thread = yield* threadFor(message, threadId)
+              if (Option.isNone(thread)) return
+              if (!thread.value.running) {
+                return refuse(message, "No Turn runs in the thread.", { sessionId })
+              }
+              yield* logEvent(sessionId, TurnStopRequested.make({ by: you, threadId }))
+              return yield* queueThreadCommand(sessionId, StopThread.make({ sessionId, threadId }))
+            }
+
+            case "SetThreadModel": {
+              // To one of the Session's Creator's Models (ADR 0026), from its next request on. A
+              // Session asleep takes it as it wakes.
+              const { sessionId, threadId } = message
+              const session = yield* threadSession(message)
+              if (Option.isNone(session)) return
+              const thread = yield* threadFor(message, threadId)
+              if (Option.isNone(thread)) return
+              const checked = yield* harnesses.agent.check(
+                {
+                  model: message.model,
+                  ...(message.thinkingLevel !== undefined && {
+                    thinkingLevel: message.thinkingLevel,
+                  }),
+                },
+                { creatorId: session.value.creator.id },
+              )
+              if (typeof checked === "string") return refuse(message, checked, { sessionId })
+              const { model, thinkingLevel } = checked.setting
+              if (model === undefined) return
+              if (thread.value.model === model && thread.value.thinkingLevel === thinkingLevel) {
+                return
+              }
+              yield* sessions.setThreadModel(sessionId, threadId, checked.setting)
+              threadModelSwitchers.set(`${sessionId}/${threadId}`, you.id)
+              const level = thinkingLevel === undefined ? {} : { thinkingLevel }
+              yield* logEvent(
+                sessionId,
+                ThreadModelChanged.make({ threadId, by: you, model, ...level }),
+              )
+              yield* queueThreadCommand(
+                sessionId,
+                SwitchThreadModel.make({ sessionId, threadId, model, ...level }),
+              )
+              return yield* sessionUpdated(sessionId)
+            }
+
+            case "CompactConversation": {
+              // The main loop's, or a thread's. An Asleep Session is woken for it, as for a prompt.
+              const { sessionId, threadId, instructions } = message
+              const session = yield* threadSession(message)
+              if (Option.isNone(session)) return
+              if (threadId !== undefined && Option.isNone(yield* threadFor(message, threadId))) {
+                return
+              }
+              if (!(yield* wokenFor(message, session.value))) return
+              return yield* queueThreadCommand(
+                sessionId,
+                Compact.make({
+                  sessionId,
+                  ...(threadId !== undefined && { threadId }),
+                  ...(instructions !== undefined && { instructions }),
+                  sender: you,
+                }),
+              )
+            }
+
             case "OpenTerminal": {
               // Watching needs no running terminal: frames come once there is one, starting
               // with the snapshot the Runner sends when it attaches to a started Session, or
@@ -2992,7 +3381,7 @@ export class SessionRelay extends Context.Service<
 
             case "TerminalInput":
             case "TerminalResize": {
-              // Keystrokes reach only a running Claude Code, from someone watching its terminal.
+              // Keystrokes reach only a running Sandbox's shell, from anyone watching its terminal.
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -3052,6 +3441,7 @@ export class SessionRelay extends Context.Service<
                 )
                 // Claude's Models are among their Models, with a Claude credential.
                 yield* providerRelay.changed(you.id)
+                yield* sessionModelsChanged(you.id)
                 if ("removed" in changed) {
                   if (!changed.removed) return
                   return yield* sleepSessionsOf(you.id, () => ({
@@ -3552,7 +3942,7 @@ export class SessionRelay extends Context.Service<
                 message.environmentVersion ?? null,
               )
               yield* changeState(session.value, "Active", {
-                message: `${harnesses.of(session.value).name} started on ${runner.name}`,
+                message: `${TheAgent} started on ${runner.name}`,
               })
               if (session.value.state === "Active") yield* sessionUpdated(message.sessionId)
               yield* deliverNext(message.sessionId)
@@ -3561,7 +3951,7 @@ export class SessionRelay extends Context.Service<
               // Asleep, with why in its history; queued prompts wait for the next wake.
               yield* sessions.setLastOutput(message.sessionId, null)
               return yield* claudeGone(session.value, {
-                message: `${harnesses.of(session.value).name} could not start on ${runner.name}: ${message.message}`,
+                message: `${TheAgent} could not start on ${runner.name}: ${message.message}`,
               })
             case "SessionStopped": {
               const settled = live.stopped(message.sessionId)
@@ -3589,8 +3979,8 @@ export class SessionRelay extends Context.Service<
                 asked ?? {
                   message:
                     message.reason === "Requested"
-                      ? `${harnesses.of(session.value).name} stopped`
-                      : `${harnesses.of(session.value).name} exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
+                      ? `${TheAgent} stopped`
+                      : `${TheAgent} exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
                 },
                 restartBy !== undefined,
               )
@@ -3751,7 +4141,7 @@ export class SessionRelay extends Context.Service<
                   revokedWhileAway.delete(session.id)
                   if (session.state !== "Asleep") {
                     yield* claudeGone(session, {
-                      message: `${runner.name} is back; ${harnesses.of(session).name} is not running there`,
+                      message: `${runner.name} is back; ${harnesses.agent.name} is not running there`,
                     })
                   }
                   // Prompts queued while it was Frozen wake it.
@@ -3810,8 +4200,8 @@ export class SessionRelay extends Context.Service<
         const from = yield* sessions.handoffFrom(session.id)
         if (Option.isNone(from) || live.handingOff(session.id)) return
         const to = harnessNow(session)
-        const { name } = harnesses.of(session)
-        const was = harnesses.of({ harness: from.value }).name
+        const name = harnesses.agent.name
+        const was = from.value === "Pi" ? "pi" : "Claude Code"
         const seen = Option.getOrUndefined(yield* sessions.seenSeq(session.id, to))
         const { handoff, through } = yield* readHandoff((range) =>
           log.lastTurns(session.id, { ...range, ...(seen !== undefined && { after: seen }) }),
@@ -3837,16 +4227,23 @@ export class SessionRelay extends Context.Service<
         if (through !== undefined) yield* sessions.setSeenSeq(sessionId, harness, through)
       })
 
-      /** The mod polled for its commands after `after`: a handoff among those it took is handed. */
+      /**
+       * The mod polled for its commands after `after`: a handoff among those it took is handed, and
+       * the thread commands among them that aren't prompts are done (ThreadCommands.ts).
+       */
       const modPolled = (sessionId: SessionId, after: ModCommandSeq) =>
         // Off the lock unless one is on its way, as most polls find none.
-        live.handingOff(sessionId)
+        live.handingOff(sessionId) || live.sendingThreadCommands(sessionId)
           ? serialized(
-              Effect.suspend(() => {
+              Effect.gen(function* () {
                 const collected = live.handoffCollected(sessionId, after)
-                return collected === undefined
-                  ? Effect.void
-                  : handedOff(sessionId, collected.harness, collected.through)
+                if (collected !== undefined) {
+                  yield* handedOff(sessionId, collected.harness, collected.through)
+                }
+                yield* threadCommands.taken(
+                  sessionId,
+                  live.threadCommandsCollected(sessionId, after),
+                )
               }),
             )
           : Effect.void
@@ -3871,9 +4268,16 @@ export class SessionRelay extends Context.Service<
           steers: hello.steers === true,
           attaches: hello.attaches === true,
           switchesModels: hello.switchesModels === true,
+          durable: hello.durable === true,
         })
         yield* handOff(session.value)
         yield* presenceToMod(sessionId)
+        // The thread commands its agent hasn't taken, again: its outbox may have been dropped.
+        if (hello.durable === true) {
+          for (const pending of yield* threadCommands.pending(sessionId)) {
+            yield* sendThreadCommand(sessionId, pending.seq, pending.command)
+          }
+        }
         yield* deliverNext(sessionId)
       }, serialized)
 
@@ -3945,6 +4349,19 @@ export class SessionRelay extends Context.Service<
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
+          // A thread's prompt is done with: told to its sender, not sent again.
+          const threadPrompt = yield* threadCommands.promptTaken(sessionId, event.promptId)
+          if (Option.isSome(threadPrompt) && promptOfCommand(threadPrompt.value) !== undefined) {
+            const { sender } = threadPrompt.value as StartThread | DeliverThreadPrompt
+            return toWeb(
+              CommandFailed.make({
+                command: threadPrompt.value._tag === "StartThread" ? "CreateThread" : "PromptThread",
+                sessionId,
+                message: `Your prompt could not be delivered to the thread: ${event.message}`,
+              }),
+              (client) => client.you.id === sender.id,
+            )
+          }
           const steeredBy = live.promptFailed(sessionId, event.promptId)
           if (steeredBy !== undefined) {
             // A steer that failed leaves the prompt in its place, to wait for the Turn to end.
@@ -3961,12 +4378,11 @@ export class SessionRelay extends Context.Service<
           // again at once, and hold up the rest of the queue.
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
-          const session = Option.getOrUndefined(yield* sessions.get(sessionId))
           toWeb(
             CommandFailed.make({
               command: "SendPrompt",
               sessionId,
-              message: `Your prompt could not be delivered to ${harnesses.of(session ?? {}).name}: ${event.message}`,
+              message: `Your prompt could not be delivered to ${harnesses.agent.name}: ${event.message}`,
             }),
             (client) => client.you.id === failed.value.sender.id,
           )
@@ -3975,7 +4391,9 @@ export class SessionRelay extends Context.Service<
 
         if (event._tag === "PromptAlreadySubmitted") {
           // Delivered again, as after the Hub restarted or the mod's TurnStarted was lost, and not
-          // run twice (#323): it is out of the queue, as if its Turn had just started.
+          // run twice (#323): it is out of the queue, as if its Turn had just started. A thread's is
+          // done with.
+          yield* threadCommands.promptTaken(sessionId, event.promptId)
           live.turnStarted(sessionId, event.promptId)
           const removed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(removed)) return
@@ -4002,6 +4420,10 @@ export class SessionRelay extends Context.Service<
                 ? client.you.id === event.senderId
                 : client.joined.has(sessionId),
           )
+        }
+
+        if (event._tag === "ModelSwitchFailed" && event.threadId !== undefined) {
+          return yield* threadModelSwitchFailed(sessionId, event.threadId, event)
         }
 
         if (event._tag === "ModelSwitchFailed") {
@@ -4106,7 +4528,18 @@ export class SessionRelay extends Context.Service<
             harness: Option.isSome(now) ? harnessNow(now.value) : "ClaudeCode",
           })
           yield* sessionUpdated(sessionId)
+        } else if (event._tag === "TurnStarted" && event.threadId !== undefined) {
+          // A thread's Turn leaves the main loop as it was; its prompt has reached the agent.
+          yield* sessions.setThreadTurn(sessionId, event.threadId, {
+            turnId: event.turnId,
+            startedAt: yield* Clock.currentTimeMillis,
+          })
+          if (event.promptId !== undefined) {
+            yield* threadCommands.promptTaken(sessionId, event.promptId)
+          }
+          yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnStarted") {
+          // A Turn the agent resumed (`Resumed`) runs as any other, from no prompt of the queue.
           yield* sessions.setCurrentTurn(sessionId, event.turnId)
           if (event.promptId !== undefined) {
             live.turnStarted(sessionId, event.promptId)
@@ -4114,11 +4547,22 @@ export class SessionRelay extends Context.Service<
             if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
           yield* sessionUpdated(sessionId)
+        } else if (event._tag === "PromptSteered" && event.threadId !== undefined) {
+          // A thread's prompt joined its Turn: it has reached the agent.
+          yield* threadCommands.promptTaken(sessionId, event.promptId)
         } else if (event._tag === "PromptSteered") {
           // It joined the Turn: out of the queue, and shown in the Turn instead.
           live.promptSteered(sessionId, event.promptId)
           const steered = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isSome(steered)) yield* queueChanged(sessionId)
+        } else if (
+          event._tag === "TurnEnded" &&
+          event.agentId === undefined &&
+          event.threadId !== undefined
+        ) {
+          if (yield* sessions.setThreadTurn(sessionId, event.threadId, null)) {
+            yield* sessionUpdated(sessionId)
+          }
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
           // Its question can't be answered once it has ended, unless the agent asked it async and
@@ -4191,29 +4635,6 @@ export class SessionRelay extends Context.Service<
 
       // ── Start-up ─────────────────────────────────────────────────────────
 
-      // Only the Creator prompts a Session (ADR 0026): a prompt someone else queued before is
-      // cancelled, and the chat shows it was. Done each time the Hub starts, it finds none the
-      // second time.
-      for (const session of yield* sessions.list) {
-        const { creator } = session
-        let cancelled = false
-        for (const prompt of yield* prompts.list(session.id)) {
-          if (prompt.sender.id === creator.id) continue
-          if (Option.isNone(yield* prompts.remove(session.id, prompt.id))) continue
-          cancelled = true
-          yield* logEvent(
-            session.id,
-            PromptCancelled.make({
-              promptId: prompt.id,
-              sender: prompt.sender,
-              text: prompt.text,
-              message: `Cancelled: only ${creator.name}, who started this Session, can prompt it now.`,
-            }),
-          )
-        }
-        if (cancelled) yield* Effect.logInfo(`Cancelled the prompts others queued in ${session.id}`)
-      }
-
       // No Runner is connected to a Hub that just started, so every Session waits Frozen for
       // its Runner to say hello.
       for (const session of yield* sessions.list) {
@@ -4276,7 +4697,10 @@ export class SessionRelay extends Context.Service<
       yield* PubSub.take(providerChanges).pipe(
         Effect.flatMap((change) => {
           needlesByRepo.clear()
-          return change.answered ? Effect.void : providerRelay.changed(change.participantId)
+          return Effect.andThen(
+            change.answered ? Effect.void : providerRelay.changed(change.participantId),
+            serialized(sessionModelsChanged(change.participantId)),
+          )
         }),
         Effect.catchCause((cause) =>
           Effect.logError("Could not send a Member their Connected providers", cause),
@@ -4408,8 +4832,7 @@ export class SessionRelay extends Context.Service<
 
       /**
        * A forward to the Session, from a caller ForwardRoutes.ts has checked for access. An Asleep
-       * Session is woken first, if the caller is its Creator: one that isn't is closed with why,
-       * and never counted present.
+       * Session is woken first; one that can't wake is closed with why, and never counted present.
        */
       const connectForward = (cli: CliIdentity, sessionId: SessionId, peer: Peer<HubToForward>) =>
         Effect.gen(function* () {
@@ -4425,16 +4848,7 @@ export class SessionRelay extends Context.Service<
                 peer.close(ForwardCloseCode.Archived, "The Session is archived.")
                 return undefined
               }
-              // Waking it drives it: only its Creator's forward does (ADR 0026).
-              if (session.state === "Asleep" && cli.participant.id !== session.creator.id) {
-                peer.close(
-                  ForwardCloseCode.WentAsleep,
-                  closeReason(
-                    `The Session is Asleep, and only ${session.creator.name} can wake it.`,
-                  ),
-                )
-                return undefined
-              }
+              // Anyone's forward wakes it, as everyone drives it in the Pi Durable spike.
               if (session.state === "Asleep") {
                 const refused = yield* wake(session, { by: cli.participant })
                 const woken = Option.getOrUndefined(yield* sessions.get(sessionId))

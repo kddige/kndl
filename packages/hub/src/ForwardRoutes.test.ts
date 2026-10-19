@@ -292,7 +292,7 @@ describe("the forward endpoint", () => {
     expect(await forward.closed).toEqual({
       code: ForwardCloseCode.WentAsleep,
       reason:
-        "Claude Code could not start: You have no Claude credential: add your setup token on the Account page.",
+        "The agent could not start: You have no Claude credential: add your setup token on the Account page.",
     })
   })
 

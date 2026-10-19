@@ -14,22 +14,17 @@ export interface Refusal {
 // ── Who drives a Session (ADR 0026) ──
 
 /**
- * Why `you` can't drive a Session created by `creator`, or undefined when they can: only its
- * Creator prompts it, steers or cancels its prompts, answers it, stops it or its subagents,
- * controls it, and opens its terminal. It runs on what they connected: Claude Code on their setup
- * token, pi on their Connected providers (ADR 0029); a Session that names no `harness` runs
- * Claude Code. Everyone else with Repo access watches.
+ * Why `you` can't drive a Session created by `creator`, or undefined when they can. ADR 0026 had
+ * only its Creator prompt it, steer or cancel its prompts, answer it, stop it or its subagents,
+ * control it and open its terminal; the Pi Durable spike lifts that driving rule for testing
+ * (docs/design/durable-harness.md): everyone who sees a Session drives it, and it still runs on
+ * its Creator's accounts. The predicate stays, so the rule can come back in one place.
  */
 export const driveRefusal = (
-  you: { readonly id: string },
-  creator: { readonly id: string; readonly name: string },
-  harness?: Harness,
-): Refusal | undefined =>
-  you.id === creator.id
-    ? undefined
-    : {
-        refusal: `Only ${creator.name}, who started this Session, can drive it: it runs on their ${harness === "Pi" ? "Connected providers" : "Claude credential"}.`,
-      }
+  _you: { readonly id: string },
+  _creator: { readonly id: string; readonly name: string },
+  _harness?: Harness,
+): Refusal | undefined => undefined
 
 // ── The Prompt queue and Steer (ADR 0018) ──
 

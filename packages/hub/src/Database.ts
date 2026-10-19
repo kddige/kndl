@@ -870,6 +870,40 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP TABLE hub_device`
     yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
   }),
+  // Threads (docs/design/durable-harness.md): conversations forked off a Session's main loop at one
+  // of its Turns, oldest first by `created_at`. `model` and `thinking_level` are null while it runs
+  // on the Session's; `running_turn` is the Turn running in it now, null while it is idle, with when
+  // it started. `thread_commands` holds each Session's thread commands and Compacts its agent hasn't
+  // taken yet, as HubToMod JSON, numbered in the order they were sent, never twice, delivered again after each hello of its
+  // agent until it has: a prompt's (`prompt_id`) once its Turn starts or it steers one, the others
+  // once its agent has polled past them.
+  "0047_threads": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE threads (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        anchor_turn_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        started_by TEXT NOT NULL REFERENCES participants (id),
+        model TEXT,
+        thinking_level TEXT,
+        running_turn TEXT,
+        turn_started_at INTEGER,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, thread_id)
+      )
+    `
+    yield* sql`
+      CREATE TABLE thread_commands (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        command TEXT NOT NULL,
+        prompt_id TEXT
+      )
+    `
+    yield* sql`CREATE INDEX thread_commands_session ON thread_commands (session_id, seq)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
