@@ -69,6 +69,11 @@ export interface SessionState {
 export interface SyncResult {
   /** The session to resume, or null to start one. */
   readonly sessionId: string | null
+  /**
+   * Where the query's prompt starts in the conversation (system messages aside): the session
+   * holds everything before it. The current user turn, or what of it the session doesn't hold.
+   */
+  readonly promptFrom: number
   /** Where the query begins in the session it resumes, to cut back to should it stop. */
   readonly checkpoint?: Checkpoint
 }
@@ -241,7 +246,7 @@ export class SessionMirrors {
 
   /**
    * Makes Claude Code's session for `piSessionId` hold the conversation up to the current user
-   * turn, and says which to resume.
+   * turn, and says which to resume, and where in the conversation the query's prompt starts.
    *
    * - Reuse: in step with the mirror, or ahead of it only by the final assistant message appended
    *   after a turn (which Claude Code's session has already). Resumes it, keeping the cache warm.
@@ -260,14 +265,15 @@ export class SessionMirrors {
   ): SyncResult {
     // System messages are the conversation's prompt state, never imported, so never counted.
     const history = nonSystemMessages(messages) as unknown as PiMessages
-    const priorMessages = history.slice(0, turnStart(history))
+    const promptStart = turnStart(history)
+    const priorMessages = history.slice(0, promptStart)
     let sharedSession = this.state(piSessionId)
 
     if (
       sharedSession &&
       !sharedSession.needsRebuild &&
       sharedSession.prefixHash !== undefined &&
-      prefixHash(priorMessages, sharedSession.cursor) !== sharedSession.prefixHash
+      prefixHash(history, sharedSession.cursor) !== sharedSession.prefixHash
     ) {
       this.log.debug(
         `sync: the conversation doesn't start with the ${sharedSession.cursor} messages session ${sharedSession.sessionId.slice(0, 8)} holds (rewritten): rebuilding`,
@@ -280,9 +286,9 @@ export class SessionMirrors {
       sharedSession &&
       !sharedSession.needsRebuild &&
       rewindTo === undefined &&
-      priorMessages.length >= sharedSession.cursor
+      sharedSession.cursor <= history.length
     ) {
-      const missed = priorMessages.slice(sharedSession.cursor)
+      const missed = history.slice(sharedSession.cursor, promptStart)
       const trailingAssistantOnly = missed.length === 1 && missed[0]?.role === "assistant"
       if (missed.length === 0 || trailingAssistantOnly) {
         if (trailingAssistantOnly) {
@@ -294,13 +300,16 @@ export class SessionMirrors {
           this.log.debug(`Case 3: resuming session ${sharedSession.sessionId.slice(0, 8)}`)
         }
         this.log.debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId}`)
+        // The session may hold the start of the prompt turn already: a stopped query's prompt.
+        const promptFrom = Math.max(promptStart, sharedSession.cursor)
         const checkpoint = checkpointAt(
           sharedSession.sessionId,
           this.sessionPath(sharedSession.sessionId, cwd),
-          priorMessages,
+          history.slice(0, promptFrom),
         )
         return {
           sessionId: sharedSession.sessionId,
+          promptFrom,
           ...(checkpoint === undefined ? {} : { checkpoint }),
         }
       }
@@ -315,7 +324,7 @@ export class SessionMirrors {
         : this.rewind(
             sharedSession,
             rewindTo,
-            priorMessages,
+            history,
             cwd,
             customToolNameToSdk,
             modelId,
@@ -331,7 +340,7 @@ export class SessionMirrors {
         this.deleteClaudeSession(sharedSession.sessionId, sharedSession.cwd)
         this.setState(piSessionId, null)
       }
-      return { sessionId: null }
+      return { sessionId: null, promptFrom: promptStart }
     }
     const previousSessionId = sharedSession?.sessionId
     const dir = this.claudeDir
@@ -367,7 +376,11 @@ export class SessionMirrors {
       `syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`,
     )
     const checkpoint = checkpointAt(session.sessionId, session.jsonlPath, priorMessages)
-    return { sessionId: session.sessionId, ...(checkpoint === undefined ? {} : { checkpoint }) }
+    return {
+      sessionId: session.sessionId,
+      promptFrom: promptStart,
+      ...(checkpoint === undefined ? {} : { checkpoint }),
+    }
   }
 
   // --- What happens to a conversation's mirror, as the bridge tells it ---
@@ -600,11 +613,16 @@ export class SessionMirrors {
    * since after it, keeping the session's id and every record Claude Code wrote before. Undefined
    * when it can't: the conversation doesn't follow on from the checkpoint, or the file isn't the
    * one the checkpoint was taken of. The caller then rebuilds.
+   *
+   * The stopped query's prompt, and the attachments Claude Code put on it, stay when the
+   * conversation holds it just as it was sent. Pi Durable leaves a stopped reply out of the
+   * conversation, so a prompt stopped before its answer and the next one make one user turn: the
+   * stopped one stays in the session, and the query is prompted with the rest (`promptFrom`).
    */
   private rewind(
     state: SessionState,
     checkpoint: Checkpoint,
-    priorMessages: PiMessages,
+    history: PiMessages,
     cwd: string,
     customToolNameToSdk: Map<string, string>,
     modelId: string | undefined,
@@ -615,13 +633,14 @@ export class SessionMirrors {
       return undefined
     }
     if (checkpoint.sessionId !== state.sessionId) return refuse("the session changed since")
-    if (priorMessages.length < checkpoint.cursor) return refuse("the conversation is shorter")
+    if (history.length < checkpoint.cursor) return refuse("the conversation is shorter")
     if (
       checkpoint.cursor > 0 &&
-      priorMessages[checkpoint.cursor - 1]?.timestamp !== checkpoint.lastTimestamp
+      history[checkpoint.cursor - 1]?.timestamp !== checkpoint.lastTimestamp
     )
       return refuse("the conversation changed before the checkpoint")
-    const since = priorMessages.slice(checkpoint.cursor)
+    const promptStart = Math.max(turnStart(history), checkpoint.cursor)
+    const since = history.slice(checkpoint.cursor)
     if (since.length > 0 && since[0]?.role !== "user")
       return refuse("the messages since don't start at a prompt")
 
@@ -629,11 +648,25 @@ export class SessionMirrors {
     try {
       const tail = readTail(jsonlPath, checkpoint)
       if (tail === undefined) return refuse("the session file isn't the one checkpointed")
-      const prompt = promptLength(since)
-      const plan = planRewind(tail, userTurnText(since.slice(0, prompt)))
+      // The stopped query's prompt: the user messages the messages since start with. All of them
+      // but one, at most, when nothing but the user turn follows the checkpoint: one is the next
+      // query's prompt.
+      const leading = promptLength(since)
+      const longest = leading < since.length ? leading : leading - 1
+      let prompt = 0
+      let plan = planRewind(tail, "")
+      for (let length = longest; length > 0; length--) {
+        const candidate = planRewind(tail, userTurnText(since.slice(0, length)))
+        if (!candidate.keptPrompt) continue
+        prompt = length
+        plan = candidate
+        break
+      }
       truncateSync(jsonlPath, checkpoint.bytes + plan.keep)
       const session = this.reopenSession(jsonlPath, state.sessionId, cwd, modelId)
-      const rest = plan.keptPrompt ? since.slice(prompt) : since
+      // What the session is to hold, the prompt kept or not: the conversation up to the prompt.
+      const promptFrom = Math.max(promptStart, checkpoint.cursor + prompt)
+      const rest = history.slice(checkpoint.cursor + prompt, promptFrom)
       // The prompt's `@file` expansions, when it's written again from the conversation's.
       const carried = plan.keptPrompt ? [] : collectCarriedAttachments(plan.cut)
       this.importMessages(session, rest, customToolNameToSdk, carried)
@@ -644,18 +677,19 @@ export class SessionMirrors {
         session.records.length,
       ))
         this.log.diag("session_verify_fail", { warning, cwd, claudeDir: this.claudeDir ?? null })
-      this.setState(piSessionId, {
-        sessionId: state.sessionId,
-        ...holding(priorMessages),
-        cwd,
-      })
+      const held = history.slice(0, promptFrom)
+      this.setState(piSessionId, { sessionId: state.sessionId, ...holding(held), cwd })
       this.log.debug(
         `syncResult: path=truncate sessionId=${state.sessionId} kept=${checkpoint.bytes + plan.keep}B ` +
-          `prompt=${plan.keptPrompt ? "kept" : "rewritten"} cut=${plan.cut.length} records, ` +
+          `prompt=${plan.keptPrompt ? `kept(${prompt})` : "rewritten"} cut=${plan.cut.length} records, ` +
           `wrote ${rest.length} pi msgs`,
       )
-      const next = checkpointAt(state.sessionId, jsonlPath, priorMessages)
-      return { sessionId: state.sessionId, ...(next === undefined ? {} : { checkpoint: next }) }
+      const next = checkpointAt(state.sessionId, jsonlPath, held)
+      return {
+        sessionId: state.sessionId,
+        promptFrom,
+        ...(next === undefined ? {} : { checkpoint: next }),
+      }
     } catch (error) {
       return refuse(`it failed: ${String(error)}`)
     }

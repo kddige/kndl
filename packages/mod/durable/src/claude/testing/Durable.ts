@@ -6,10 +6,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { Type } from "@earendil-works/pi-ai"
+import { fauxProvider, Type } from "@earendil-works/pi-ai"
 import type {
   Api,
   AssistantMessageEventStream,
+  FauxProviderHandle,
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai"
@@ -35,6 +36,9 @@ export const HaikuId = "claude-haiku-5-5"
 
 /** The Model a conversation runs on: Claude Haiku, through the bridge. */
 export const haiku = { provider: "anthropic", modelId: HaikuId } as const
+
+/** Another Provider's Model, pi-ai's faux one, which answers as the test sets it to. */
+export const other = { provider: "other", modelId: "other-model" } as const
 
 /** A promise and what settles it. */
 export interface Deferred<T = void> {
@@ -71,6 +75,8 @@ export interface DurableBridge {
   readonly dir: string
   readonly claudeDir: string
   readonly fake: FakeClaudeCode
+  /** The other Provider, on the Harness's Models beside the bridge. */
+  readonly faux: FauxProviderHandle
   provider: ClaudeBridgeProvider
   harness: Harness
   /** The root conversation, on Claude Haiku. */
@@ -108,6 +114,7 @@ export async function startDurable(
   const claudeDir = join(dir, "claude")
   const fake = new FakeClaudeCode({ claudeDir, ...options.fake })
   const calls: Array<ProviderCall> = []
+  const faux = fauxProvider({ provider: other.provider, models: [{ id: other.modelId }] })
 
   let gateWaiters: Array<(answer: string) => void> = []
   let started = deferred()
@@ -185,6 +192,7 @@ export async function startDurable(
       : new MemoryStorage()
   const openHarness = async (provider: ClaudeBridgeProvider) => {
     const models = createModels()
+    models.setProvider(faux.provider)
     // Every call recorded, as the bridge gets it.
     models.setProvider({
       ...provider,
@@ -213,6 +221,7 @@ export async function startDurable(
     dir,
     claudeDir,
     fake,
+    faux,
     provider,
     harness,
     conversation: await harness.root(context, { agent: { model: haiku } }),

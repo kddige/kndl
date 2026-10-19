@@ -661,8 +661,10 @@ export function createBridge(config: BridgeConfig): Bridge {
     const startQuery = (): void => {
       const syncResult = mirrors.sync(context.messages, cwd, customToolNameToSdk, cliModel, key)
       const resumeSessionId = syncResult.sessionId
-      const promptBlocks = extractUserPromptBlocks(context.messages, log)
-      let promptText = extractUserPrompt(context.messages) ?? ""
+      // What of the user turn the session doesn't hold already.
+      const promptMessages = context.messages.slice(syncResult.promptFrom)
+      const promptBlocks = extractUserPromptBlocks(promptMessages, log)
+      let promptText = extractUserPrompt(promptMessages) ?? ""
 
       // A turn going on past a rewrite, a restart, or a change of tools ends at a tool result, not
       // a prompt: say so.
