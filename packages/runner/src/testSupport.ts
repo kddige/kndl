@@ -15,7 +15,7 @@ import {
   type VariablesFor,
   type VariableValue,
 } from "@kndl/protocol"
-import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
+import { type Cause, type Duration, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
@@ -448,6 +448,8 @@ export class FakeSandboxes {
   claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
   /** What each Sandbox says the agent and the terminal run with: Claude Code's, but for its state. */
   piEnv: Readonly<Record<string, string>> = { LANG: "C.UTF-8" }
+  /** How long a start takes, as a real Sandbox's boot does; none unless a test says. */
+  startTakes: Duration.Input = 0
   /** The bytes each Session's volumes take, for `diskUsage`; 0 for one not set. */
   readonly diskUsages = new Map<SessionId, number>()
   /** The Sessions whose `diskUsage` fails. */
@@ -462,17 +464,20 @@ export class FakeSandboxes {
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
       start: (id, _directories, target) =>
-        Effect.sync(() => {
-          this.calls.push(`start ${id}`)
-          this.targets.push(target)
-          this.running.add(id)
-          return {
-            ...(target.environment === undefined
-              ? {}
-              : { environmentVersion: target.environment.version }),
-            claude: { path: this.claudePath, env: this.claudeEnv },
-            pi: { node: this.nodePath, env: this.piEnv },
-          }
+        Effect.suspend(() => {
+          const started = Effect.sync(() => {
+            this.calls.push(`start ${id}`)
+            this.targets.push(target)
+            this.running.add(id)
+            return {
+              ...(target.environment === undefined
+                ? {}
+                : { environmentVersion: target.environment.version }),
+              claude: { path: this.claudePath, env: this.claudeEnv },
+              pi: { node: this.nodePath, env: this.piEnv },
+            }
+          })
+          return this.startTakes === 0 ? started : Effect.delay(started, this.startTakes)
         }),
       running: Effect.sync(() => [...this.running]),
       keep: (id) =>

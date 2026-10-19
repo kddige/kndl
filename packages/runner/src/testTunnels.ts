@@ -243,6 +243,9 @@ export async function tunnelScene(options: {
   )
   const dir = sceneDir()
   const fakeNode = join(dir, "fake-node")
+  // A Sandbox takes a moment to start, as a real one does, so a Session is seen starting.
+  const sandboxes = new FakeSandboxes(undefined, fakeNode)
+  sandboxes.startTakes = "300 millis"
   const sessionsRoot = join(dir, `sessions-${Date.now()}`)
   const layer = TunnelsLive.pipe(
     Layer.provideMerge(SessionsLive.pipe(Layer.provide(openPorts))),
@@ -266,7 +269,7 @@ export async function tunnelScene(options: {
         }),
       ),
       new FakeWorkspaces(sessionsRoot).layer,
-      new FakeSandboxes(undefined, fakeNode).layer,
+      sandboxes.layer,
       new FakeModRelay().layer,
     ]),
     Layer.provideMerge(
