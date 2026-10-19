@@ -138,6 +138,19 @@ export class HubLink {
     await this.flush()
   }
 
+  /**
+   * Posts everything queued, waiting for a post under way, for at most `ms`: what a process does
+   * before it exits, so its last events reach the Hub.
+   */
+  async drain(ms = 2_000) {
+    const deadline = (this.options.now ?? Date.now)() + ms
+    while (!this.isStopped && (this.outbox.size > 0 || this.isFlushing)) {
+      if ((this.options.now ?? Date.now)() > deadline) return
+      if (this.isFlushing) await this.wait(20)
+      else await this.flush()
+    }
+  }
+
   private stopRejected(reason: string) {
     this.isStopped = true
     this.options.onStatus({ _tag: "Rejected", reason })

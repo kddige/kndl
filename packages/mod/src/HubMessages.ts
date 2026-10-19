@@ -57,6 +57,8 @@ export interface HelloFields {
   readonly model: string
   /** It takes a SwitchModel (ADR 0029): kndl's pi extension does, the Claude Code plugins don't. */
   readonly switchesModels?: true
+  /** It is the durable agent (docs/design/durable-harness.md): it takes threads and Compact. */
+  readonly durable?: true
 }
 
 /**
@@ -64,7 +66,7 @@ export interface HelloFields {
  * files of a steered prompt, a message to a subagent and a reply (#278), and takes a context
  * handoff, serving its agent the Session's earlier Turns (ADR 0030).
  */
-export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
+export const helloBody = ({ switchesModels, durable, ...hello }: HelloFields) =>
   JSON.stringify(
     Schema.encodeSync(ModHello)(
       Schema.decodeUnknownSync(ModHello)({
@@ -75,6 +77,7 @@ export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
         attaches: true,
         takesHandoffs: true,
         ...(switchesModels === true && { switchesModels }),
+        ...(durable === true && { durable }),
       }),
     ),
   )

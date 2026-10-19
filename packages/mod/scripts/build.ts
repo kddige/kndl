@@ -61,3 +61,20 @@ if (!pi.success) {
 const [extension] = pi.outputs
 if (extension === undefined) throw new Error("bun build wrote no pi extension")
 await writeChanged("pi: kndl.js", join(root, "pi/dist/kndl.js"), await extension.text())
+
+// The durable agent (docs/design/durable-harness.md): one ESM file for the Node the Runner starts
+// it with, with Effect and the protocol inside. Pi Durable and pi-ai stay outside: the Runner makes
+// its pinned install of them resolvable beside it.
+const durable = await Bun.build({
+  entrypoints: [join(root, "durable/src/agent.ts")],
+  target: "node",
+  format: "esm",
+  external: ["@earendil-works/*"],
+})
+if (!durable.success) {
+  for (const message of durable.logs) console.error(message)
+  process.exit(1)
+}
+const [agent] = durable.outputs
+if (agent === undefined) throw new Error("bun build wrote no durable agent")
+await writeChanged("durable: agent.js", join(root, "durable/dist/agent.js"), await agent.text())
