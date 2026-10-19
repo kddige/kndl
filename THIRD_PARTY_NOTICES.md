@@ -78,7 +78,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-The Claude bridge in `packages/mod/pi/src/claude` is ported from [pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) 0.9.3, and its tests from that package's, under this license:
+The Claude bridge in `packages/mod/durable/src/claude` is ported from [pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) 0.9.3, and its tests from that package's, under this license:
 
 ```text
 MIT License

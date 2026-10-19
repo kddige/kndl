@@ -12,13 +12,5 @@
     "newlinesBetween": false
   },
   "sortPackageJson": false,
-  "ignorePatterns": [
-    ".agents/",
-    ".claude/",
-    "skills-lock.json",
-    "bun.lock",
-    "*.md",
-    "packages/mod/plugins/*/.claude-plugin/types/",
-    "packages/mod/plugins/*/hooks/hub-link-lib.js"
-  ]
+  "ignorePatterns": [".agents/", ".claude/", "skills-lock.json", "bun.lock", "*.md"]
 }

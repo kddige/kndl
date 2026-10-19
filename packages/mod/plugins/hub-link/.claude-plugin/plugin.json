@@ -1,6 +1,0 @@
-{
-  "name": "hub-link",
-  "version": "0.3.0",
-  "description": "Reports a Claude Code Session to its kndl: its Turns, tool calls and subagents.",
-  "author": { "name": "kddige" }
-}

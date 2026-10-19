@@ -155,12 +155,12 @@ Updating this Runner to the Hub's commit (the Hub runs 1a2b3c4d5e6f on main).
 
 **Fix.** Start the Runner again, or fix its connection. Prompts sent meanwhile wait, and run once the Runner is back. See [Frozen](/concepts/session-lifecycle/#frozen).
 
-## The hub-link mod isn't built
+## The mod isn't built
 
 **What you see.** The Runner exits at startup with:
 
 ```
-The hub-link mod isn't built: …/packages/mod/plugins/hub-link/hooks/hub-link-lib.js is missing. Run `bun run mod:build`.
+The mod isn't built: …/packages/mod/durable/dist/agent.js is missing. Run `bun run mod:build`.
 ```
 
 **Why.** The Runner loads the mod into each Session's agent, and nothing has built it.

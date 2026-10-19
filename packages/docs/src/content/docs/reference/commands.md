@@ -306,8 +306,8 @@ Run these from the root of a kndl checkout. They keep state in the dev home, `~/
 | `bun run typecheck` | Type-check every package. |
 | `bun run lint` | Lint with oxlint. A warning fails it. |
 | `bun run format` | Format with oxfmt. `bun run format:check` only checks. |
-| `bun run mod:build` | Build the mod's hook library into each plugin under `packages/mod/plugins/`. |
-| `bun run mod:check` | Build the mod, then validate and test each of its plugins with `claude plugin`. |
+| `bun run mod:build` | Bundle the headless agent into `packages/mod/durable/dist/agent.js`. |
+| `bun run mod:check` | Build and type-check the durable agent, then run the mod's tests. No Claude Code binary needed. |
 | `bun run docs:dev` | Serve this site with hot reload on <http://localhost:4321/kndl/>. |
 | `bun run docs:build` | Build this site into `packages/docs/dist`, and check its links. |
 
