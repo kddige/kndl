@@ -13,6 +13,7 @@ import {
   Dialog,
   DialogClose,
   Field,
+  Markdown,
   Textarea,
   WarningIcon,
 } from "../ui/index.ts"
@@ -97,7 +98,6 @@ const styles = stylex.create({
     color: color.textSecondary,
     fontSize: text.sm,
     lineHeight: leading.normal,
-    whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
   },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
@@ -159,10 +159,7 @@ export function CompactionLine({ compaction }: { compaction: CompactionView }) {
               {reason}
             </span>
           )}
-          <time
-            {...stylex.props(styles.meta)}
-            dateTime={new Date(compaction.at).toISOString()}
-          >
+          <time {...stylex.props(styles.meta)} dateTime={new Date(compaction.at).toISOString()}>
             <span aria-hidden="true">· </span>
             {clock(compaction.at)}
           </time>
@@ -181,9 +178,9 @@ export function CompactionLine({ compaction }: { compaction: CompactionView }) {
         <span aria-hidden="true" {...stylex.props(styles.rule)} />
       </div>
       {open && end?.summary !== undefined && (
-        <p id={id} {...stylex.props(styles.summary)}>
-          {end.summary}
-        </p>
+        <div id={id} {...stylex.props(styles.summary)}>
+          <Markdown text={end.summary} />
+        </div>
       )}
     </div>
   )

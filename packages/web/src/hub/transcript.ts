@@ -560,10 +560,7 @@ class Conversation {
   }
 
   /** Its fold, with a view made of each Turn in `changed`. */
-  finish(
-    changed: ReadonlySet<number>,
-    view: (turn: FoldedTurn) => TurnView,
-  ): ConversationFold {
+  finish(changed: ReadonlySet<number>, view: (turn: FoldedTurn) => TurnView): ConversationFold {
     if (!this.changed && changed.size === 0) return this.from
     for (const index of changed) {
       const turn = this.turns[index] as FoldedTurn

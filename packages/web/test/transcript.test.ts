@@ -850,6 +850,16 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
   return entries(Array.from({ length }, () => pick(makers)()))
 }
 
+const posted = (promptId: string, sender: typeof alice, text: string): EventEncoded => ({
+  _tag: "ThreadPromptSent",
+  threadId: "thr-1",
+  promptId,
+  sender,
+  text,
+})
+const step = (text: string, status: "pending" | "in_progress" | "done") => ({ text, status })
+const spent = (cost: number) => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost })
+
 describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-harness.md)", () => {
   /** A finished main-loop Turn, t-1, which threads fork off. */
   const answered: ReadonlyArray<EventEncoded> = [
@@ -865,13 +875,6 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
     startedBy: bob,
     model: "openai/gpt-6-sol",
   }
-  const posted = (promptId: string, sender: typeof alice, text: string): EventEncoded => ({
-    _tag: "ThreadPromptSent",
-    threadId: "thr-1",
-    promptId,
-    sender,
-    text,
-  })
 
   test("a thread's events fold into its own Turns, and leave the main loop as it was", () => {
     const transcript = transcriptOf(
@@ -1087,7 +1090,6 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
   })
 
   test("the Plan is each conversation's latest, marked where it changed, in place of its call", () => {
-    const step = (text: string, status: "pending" | "in_progress" | "done") => ({ text, status })
     const first = { steps: [step("Add the route", "in_progress"), step("Test it", "pending")] }
     const second = { steps: [step("Add the route", "done"), step("Test it", "in_progress")] }
     const transcript = transcriptOf(
@@ -1127,7 +1129,6 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
   })
 
   test("what each conversation spent is the latest it said", () => {
-    const spent = (cost: number) => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost })
     const transcript = transcriptOf(
       entries([
         started,

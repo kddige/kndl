@@ -296,10 +296,7 @@ function LoadedSession({
   const connectable = useHubState((hubState) => hubState.providers?.connectable)
   // Looked for only when the log or the model changes, not on every change the Hub sends.
   const log = useHubState((hubState) => hubState.joined[summary.id]?.log)
-  const knownLabel = useMemo(
-    () => knownModelLabel(log ?? [], summary.model),
-    [log, summary.model],
-  )
+  const knownLabel = useMemo(() => knownModelLabel(log ?? [], summary.model), [log, summary.model])
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
@@ -537,77 +534,79 @@ function LoadedSession({
   const yourAccounts = yours ? "your accounts" : `${summary.creator.name}'s accounts`
   const cost = transcript.usage?.cost
 
+  const titleStrip = (
+    <TitleStrip
+      summary={summary}
+      // Its name, edited in place: anyone may rename it, whatever its state.
+      title={
+        renaming ? (
+          <InlineEdit
+            label="Session name"
+            defaultValue={title}
+            placeholder={summary.workBranch}
+            maxLength={MaxSessionNameLength}
+            // A rename that isn't sent keeps the field open, with what was typed.
+            onCommit={(typed) => {
+              const sent = renameSession(hub, summary, typed)
+              if (sent) setRenaming(false)
+              return sent
+            }}
+            onCancel={() => setRenaming(false)}
+            sx={[styles.nameField, fieldText.title]}
+          />
+        ) : (
+          title
+        )
+      }
+      meta={
+        <>
+          {summary.workBranch === summary.baseBranch ? (
+            `on ${summary.baseBranch}`
+          ) : (
+            <>
+              {/* Named, the title no longer says which branch it works on. */}
+              {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
+            </>
+          )}{" "}
+          <span aria-hidden="true">·</span>{" "}
+          <span
+            title={`It spends ${yourAccounts}: the Providers ${yours ? "you" : summary.creator.name} connected. Everyone here drives it.`}
+            {...stylex.props(styles.nowrap)}
+          >
+            on {yourAccounts}
+          </span>
+          {cost !== undefined && cost > 0 && (
+            <>
+              {" "}
+              <span aria-hidden="true">·</span>{" "}
+              <span
+                title={`What the main conversation has spent so far, on ${yourAccounts}`}
+                {...stylex.props(styles.nowrap)}
+              >
+                {spent(cost)} spent
+              </span>
+            </>
+          )}
+          {summary.keepAwake !== undefined && (
+            <>
+              {" "}
+              <span aria-hidden="true">·</span>{" "}
+              <span {...stylex.props(styles.keptAwake)}>
+                <SunIcon {...stylex.props(styles.sun)} />
+                {keptAwakeText(summary.keepAwake, you?.id)}
+              </span>
+            </>
+          )}
+        </>
+      }
+      presence={presence}
+      actions={actions}
+    />
+  )
+
   return (
     <ModelNamesContext value={nameModel}>
       <main {...stylex.props(styles.view)}>
-        <TitleStrip
-          summary={summary}
-          // Its name, edited in place: anyone may rename it, whatever its state.
-          title={
-            renaming ? (
-              <InlineEdit
-                label="Session name"
-                defaultValue={title}
-                placeholder={summary.workBranch}
-                maxLength={MaxSessionNameLength}
-                // A rename that isn't sent keeps the field open, with what was typed.
-                onCommit={(typed) => {
-                  const sent = renameSession(hub, summary, typed)
-                  if (sent) setRenaming(false)
-                  return sent
-                }}
-                onCancel={() => setRenaming(false)}
-                sx={[styles.nameField, fieldText.title]}
-              />
-            ) : (
-              title
-            )
-          }
-          meta={
-            <>
-              {summary.workBranch === summary.baseBranch ? (
-                `on ${summary.baseBranch}`
-              ) : (
-                <>
-                  {/* Named, the title no longer says which branch it works on. */}
-                  {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
-                </>
-              )}{" "}
-              <span aria-hidden="true">·</span>{" "}
-              <span
-                title={`It spends ${yourAccounts}: the Providers ${yours ? "you" : summary.creator.name} connected. Everyone here drives it.`}
-                {...stylex.props(styles.nowrap)}
-              >
-                on {yourAccounts}
-              </span>
-              {cost !== undefined && cost > 0 && (
-                <>
-                  {" "}
-                  <span aria-hidden="true">·</span>{" "}
-                  <span
-                    title={`What the main conversation has spent so far, on ${yourAccounts}`}
-                    {...stylex.props(styles.nowrap)}
-                  >
-                    {spent(cost)} spent
-                  </span>
-                </>
-              )}
-              {summary.keepAwake !== undefined && (
-                <>
-                  {" "}
-                  <span aria-hidden="true">·</span>{" "}
-                  <span {...stylex.props(styles.keptAwake)}>
-                    <SunIcon {...stylex.props(styles.sun)} />
-                    {keptAwakeText(summary.keepAwake, you?.id)}
-                  </span>
-                </>
-              )}
-            </>
-          }
-          presence={presence}
-          actions={actions}
-        />
-
         <Dialog
           size="sm"
           open={confirming !== null}
@@ -635,17 +634,26 @@ function LoadedSession({
         <CompactDialog
           open={compacting}
           onOpenChange={setCompacting}
-          onCompact={(instructions) => command("Compact", hub.compact(summary.id, { instructions }))}
+          onCompact={(instructions) =>
+            command("Compact", hub.compact(summary.id, { instructions }))
+          }
         />
 
         <div {...stylex.props(styles.body)}>
           {conversationShown &&
             (agentId !== undefined ? (
               <div {...stylex.props(styles.conversation)}>
-                <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
+                {titleStrip}
+                <AgentPanel
+                  session={summary}
+                  agentId={agentId}
+                  agent={agent}
+                  onClose={closeAgent}
+                />
               </div>
             ) : (
               <div {...stylex.props(styles.conversation)}>
+                {titleStrip}
                 <div
                   ref={scroller.ref}
                   onScroll={scroller.onScroll}
@@ -792,7 +800,8 @@ function findTurn(
   items: JoinedSession["transcript"]["items"],
   turnId: TurnId,
 ): TurnView | undefined {
-  for (const item of items) if (item.kind === "turn" && item.turn.turnId === turnId) return item.turn
+  for (const item of items)
+    if (item.kind === "turn" && item.turn.turnId === turnId) return item.turn
   return undefined
 }
 

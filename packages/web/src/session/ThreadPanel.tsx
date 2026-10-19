@@ -15,12 +15,11 @@ import * as stylex from "@stylexjs/stylex"
 import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { notSent } from "../app/copy.ts"
 import { clock, spent } from "../app/format.ts"
-import { useHub } from "../app/hub.tsx"
+import { useHub, useHubState } from "../app/hub.tsx"
 import type { SentPrompt, ThreadView, TurnView } from "../hub/transcript.ts"
 import {
   ArrowLeftIcon,
   Avatar,
-  Button,
   CloseIcon,
   CompactIcon,
   IconButton,
@@ -29,20 +28,11 @@ import {
   MenuItem,
   MoreIcon,
   Spinner,
-  StopIcon,
   ThreadIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import {
-  color,
-  leading,
-  motion,
-  radius,
-  space,
-  text,
-  weight,
-} from "../ui/tokens.stylex.ts"
+import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { CompactDialog } from "./Compaction.tsx"
 import { Composer, type ComposerCopy } from "./Composer.tsx"
 import { ModelPicker } from "./ModelPicker.tsx"
@@ -121,8 +111,14 @@ const styles = stylex.create({
   live: {
     display: "inline-flex",
     alignItems: "center",
-    gap: space.s1,
+    flexShrink: 0,
+    gap: space.s1_5,
+    height: "1.5rem",
+    paddingInline: space.s2,
+    borderRadius: radius.full,
+    backgroundColor: color.accentTint,
     color: color.accentText,
+    fontSize: text.sm,
     fontWeight: weight.medium,
   },
   jump: {
@@ -252,12 +248,16 @@ const styles = stylex.create({
     paddingBottom: space.s4,
     paddingInline: space.s4,
   },
-  stop: { flexShrink: 0 },
+  nowrap: { whiteSpace: "nowrap" },
 })
 
 /** What the panel shows: a thread, or a new one being written off a Turn. */
 export type ThreadPanelOf =
-  | { readonly kind: "thread"; readonly threadId: ThreadId; readonly thread: ThreadView | undefined }
+  | {
+      readonly kind: "thread"
+      readonly threadId: ThreadId
+      readonly thread: ThreadView | undefined
+    }
   | { readonly kind: "new"; readonly anchorTurnId: TurnId }
 
 export function ThreadPanel({
@@ -311,6 +311,8 @@ export function ThreadPanel({
   }, [opened])
 
   const archived = session.state === "Archived"
+  const yours = useHubState((state) => state.you?.id === session.creator.id)
+  const accounts = yours ? "your accounts" : `${session.creator.name}'s accounts`
   const running = thread?.running !== undefined
   const sessionModelName = providerModelLabel(models, sessionSetting)
   const threadSetting: ModelSetting =
@@ -321,9 +323,7 @@ export function ThreadPanel({
           ...(thread?.thinkingLevel !== undefined && { thinkingLevel: thread.thinkingLevel }),
         }
   const modelName =
-    threadSetting.model === undefined
-      ? sessionModelName
-      : modelLabel(models, threadSetting.model)
+    threadSetting.model === undefined ? sessionModelName : modelLabel(models, threadSetting.model)
   const nameReplier = useCallback(
     (turnModel: string | undefined) =>
       turnModel === undefined ? modelName : modelLabel(models, turnModel),
@@ -408,13 +408,20 @@ export function ThreadPanel({
             </IconButton>
           )}
           <ThreadIcon {...stylex.props(styles.titleIcon)} />
-          <h2 id={titleId} ref={heading} tabIndex={-1} title={title} {...stylex.props(styles.title)}>
+          <h2
+            id={titleId}
+            ref={heading}
+            tabIndex={-1}
+            title={title}
+            {...stylex.props(styles.title)}
+          >
             {title}
           </h2>
-          {running && (
-            <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={stop} sx={styles.stop}>
-              Stop
-            </Button>
+          {activity !== undefined && (
+            <span title={`${activity}…`} {...stylex.props(styles.live)}>
+              {running && <Spinner size="sm" />}
+              {running ? "Replying" : "Waiting"}
+            </span>
           )}
           {of.kind === "thread" && !archived && (
             <Menu
@@ -437,17 +444,6 @@ export function ThreadPanel({
           )}
         </div>
         <p {...stylex.props(styles.meta, layout === "full" && styles.fullColumn)}>
-          {activity !== undefined && (
-            <>
-              <span {...stylex.props(styles.live)}>
-                {running && <Spinner size="sm" />}
-                {activity}…
-              </span>
-              <span aria-hidden="true" {...stylex.props(styles.dot)}>
-                ·
-              </span>
-            </>
-          )}
           {anchor !== undefined && anchorTurnId !== undefined ? (
             <span>
               Forked from{" "}
@@ -456,27 +452,23 @@ export function ThreadPanel({
                 onClick={() => onJumpToAnchor(anchorTurnId)}
                 {...stylex.props(styles.jump, focus.ring)}
               >
-                {anchorName(anchor)} at {clock(anchor.at)}
-              </button>
+                {anchorName(anchor)}
+              </button>{" "}
+              at {clock(anchor.at)}
             </span>
           ) : (
             <span>Forked from the conversation</span>
-          )}
-          {thread !== undefined && (
-            <>
-              <span aria-hidden="true" {...stylex.props(styles.dot)}>
-                ·
-              </span>
-              <span>Started by {thread.startedBy.name}</span>
-            </>
           )}
           {cost !== undefined && cost > 0 && (
             <>
               <span aria-hidden="true" {...stylex.props(styles.dot)}>
                 ·
               </span>
-              <span title={`What this thread has spent, on ${session.creator.name}'s accounts`}>
-                {spent(cost)}
+              <span
+                title={`What this thread has spent, on ${accounts}`}
+                {...stylex.props(styles.nowrap)}
+              >
+                {spent(cost)} spent
               </span>
             </>
           )}
@@ -505,9 +497,7 @@ export function ThreadPanel({
           {thread !== undefined && thread.sent.length > 0 && (
             <SentList sent={thread.sent} running={running} />
           )}
-          {creating !== null && (
-            <CreatingPrompt text={creating.text} failed={creating.failed} />
-          )}
+          {creating !== null && <CreatingPrompt text={creating.text} failed={creating.failed} />}
         </div>
       </div>
 
@@ -535,8 +525,11 @@ export function ThreadPanel({
               connectable={connectable}
               value={threadSetting}
               onChange={pickModel}
-              inherit={{ label: `Session's model · ${sessionModelName}`, name: sessionModelName }}
-              footer={`Runs on ${session.creator.name}'s accounts. Ask a cheaper or smarter model here without changing the Session's.`}
+              inherit={{
+                label: `Same as the Session · ${sessionModelName}`,
+                name: sessionModelName,
+              }}
+              footer={`Runs on ${accounts}. A thread can try a cheaper or smarter model; the Session's stays as it is.`}
               disabled={archived}
               side="top"
             />
@@ -568,7 +561,7 @@ function anchorName(turn: TurnView): string {
     case "FromAgent":
       return turn.agentDescription ? `${turn.agentDescription}'s result` : "an agent's result"
     case "Resumed":
-      return "a resumed Turn"
+      return "the answer after the restart"
     default:
       return "a Turn"
   }
@@ -642,7 +635,9 @@ function SentList({ sent, running }: { sent: ReadonlyArray<SentPrompt>; running:
             <span {...stylex.props(styles.name)}>{prompt.sender.name}</span>
             <span {...stylex.props(styles.sentNote)}>
               <Spinner size="sm" />
-              {running ? "Sent · steers the reply at its next step" : "Sent · the agent picks it up next"}
+              {running
+                ? "Sent · steers the reply at its next step"
+                : "Sent · the agent picks it up next"}
             </span>
           </div>
           {prompt.text !== "" && <div {...stylex.props(styles.bubble)}>{prompt.text}</div>}

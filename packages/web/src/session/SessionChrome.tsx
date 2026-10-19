@@ -203,9 +203,7 @@ export function TitleStrip({
           <OpenPorts summary={summary} />
           <SessionMcpServers summary={summary} />
           <Presence presence={presence} />
-          {summary.state !== "Archived" && (
-            <SessionMenu summary={summary} actions={actions} />
-          )}
+          {summary.state !== "Archived" && <SessionMenu summary={summary} actions={actions} />}
         </div>
       </div>
       <p {...stylex.props(textRole.meta, styles.meta)}>

@@ -6,7 +6,7 @@ import type { SessionId, ThreadId } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, useContext } from "react"
-import { counted, spent, timeAgo } from "../app/format.ts"
+import { counted, timeAgo } from "../app/format.ts"
 import type { ThreadView } from "../hub/transcript.ts"
 import { AvatarStack, ChevronRightIcon, Spinner, ThreadIcon } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -157,12 +157,6 @@ export function ThreadRows({
               <span {...stylex.props(styles.meta, activity !== undefined && styles.live)}>
                 {thread.running !== undefined && <Spinner size="sm" />}
                 {activity !== undefined ? `${activity}…` : `Last reply ${timeAgo(thread.lastAt)}`}
-                {thread.usage !== undefined && thread.usage.cost > 0 && (
-                  <span>
-                    <span aria-hidden="true">· </span>
-                    {spent(thread.usage.cost)}
-                  </span>
-                )}
               </span>
               <span {...stylex.props(styles.end)} />
               {thread.model !== undefined && (

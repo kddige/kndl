@@ -129,9 +129,7 @@ const styles = stylex.create({
   },
   resumedText: { minWidth: 0, color: color.text, fontWeight: weight.medium },
   // The new Turn's thread being written: this is the answer it forks from.
-  forking: {
-    boxShadow: `inset 2px 0 0 ${color.accent}`,
-  },
+  forking: { backgroundColor: color.surfaceMuted },
   threads: { marginInlineStart: space.s8, marginTop: `calc(${space.s1} * -1)` },
   replyButton: {
     display: "inline-flex",
@@ -164,7 +162,7 @@ const styles = stylex.create({
     gap: space.s2,
     minWidth: 0,
   },
-  name: { fontWeight: weight.semibold },
+  name: { fontWeight: weight.semibold, whiteSpace: "nowrap" },
   time: { color: color.textTertiary, fontSize: text.xs },
   prompt: {
     marginInlineStart: space.s8,
@@ -318,6 +316,8 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     minWidth: 0,
+    flexBasis: "12rem",
+    flexGrow: 1,
     color: color.textTertiary,
     fontSize: text.xs,
   },
@@ -842,7 +842,8 @@ function EndBadge({
   continued: boolean
 }) {
   // Ended by a restart, and picked up again: nobody stopped it.
-  if (continued && stoppers === "") return <Badge icon={<ResumeIcon />}>Interrupted by a restart</Badge>
+  if (continued && stoppers === "")
+    return <Badge icon={<ResumeIcon />}>Interrupted by a restart</Badge>
   switch (end.reason) {
     case "stop":
       return null

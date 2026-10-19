@@ -129,7 +129,7 @@ export function ModelPicker({
   const groups: Array<SearchSelectGroup> = [
     ...(inherit === undefined
       ? []
-      : [{ label: "Follow", options: [{ value: inheritRow, label: inherit.label }] }]),
+      : [{ label: "The Session's", options: [{ value: inheritRow, label: inherit.label }] }]),
     ...groupByProvider(models ?? []).map((group) => ({
       label: providerName(group.provider, connectable),
       options: group.models.map((each) => ({

@@ -50,13 +50,16 @@ export function planChanges(
 
 /** One line on what a change did, for the Turn's marker. */
 export function planChangeText(plan: Plan, previous: Plan | undefined): string {
-  if (previous === undefined) return `Made a plan of ${plan.steps.length} steps`
   const { finished, started, added } = planChanges(plan, previous)
+  // A plan mostly of steps the last one didn't have is a new one.
+  if (previous === undefined || added.length * 2 > plan.steps.length)
+    return `Made a plan of ${plan.steps.length} steps`
   if (finished.length > 0 && started.length > 0)
     return `Finished “${finished.at(-1)}”, started “${started[0]}”`
   if (finished.length > 0) return `Finished “${finished.at(-1)}”`
   if (started.length > 0) return `Started “${started[0]}”`
-  if (added.length > 0) return `Added “${added[0]}”${added.length > 1 ? ` and ${added.length - 1} more` : ""}`
+  if (added.length > 0)
+    return `Added “${added[0]}”${added.length > 1 ? ` and ${added.length - 1} more` : ""}`
   return "Updated the plan"
 }
 
@@ -228,6 +231,8 @@ const styles = stylex.create({
     height: "0.375rem",
     borderRadius: radius.full,
     backgroundColor: color.accentText,
+  },
+  nowDotLive: {
     animationName: { default: "none", [MOTION_OK]: breathe },
     animationDuration: "1.6s",
     animationTimingFunction: "ease-in-out",
@@ -261,7 +266,7 @@ function StepIcon({ status, live }: { status: PlanStepStatus; live: boolean }) {
         <CircleCheckIcon {...stylex.props(styles.doneIcon)} />
       ) : status === "in_progress" ? (
         <span {...stylex.props(styles.nowRing)}>
-          <span {...stylex.props(live && styles.nowDot)} />
+          <span {...stylex.props(styles.nowDot, live && styles.nowDotLive)} />
         </span>
       ) : (
         <CircleIcon {...stylex.props(styles.pendingIcon)} />
@@ -283,12 +288,19 @@ export function PlanSteps({
   live?: boolean
 }) {
   const known = previous && new Set(previous.steps.map((step) => step.text))
+  // Steps are known by their text, so a step keeps its row as others come and go; one renamed is
+  // a new step. Two of the same text are told apart by which of them it is.
+  const seen = new Map<string, number>()
+  const keys = plan.steps.map((step) => {
+    const nth = (seen.get(step.text) ?? 0) + 1
+    seen.set(step.text, nth)
+    return nth === 1 ? step.text : `${step.text} (${nth})`
+  })
   return (
     <ol {...stylex.props(styles.steps)}>
       {plan.steps.map((step, index) => (
         <li
-          // Steps are identified by their text: one renamed is a new step.
-          key={`${index}-${step.text}`}
+          key={keys[index]}
           {...stylex.props(
             styles.step,
             step.status === "done" && styles.stepDone,

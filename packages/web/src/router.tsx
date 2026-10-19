@@ -109,7 +109,11 @@ const sessionRoute = createRoute({
         onThreadChange={(next, options) =>
           void navigate({
             search:
-              next === undefined ? {} : "thread" in next ? { thread: next.thread } : { fork: next.fork },
+              next === undefined
+                ? {}
+                : "thread" in next
+                  ? { thread: next.thread }
+                  : { fork: next.fork },
             ...(options?.replace === true && { replace: true }),
           })
         }
