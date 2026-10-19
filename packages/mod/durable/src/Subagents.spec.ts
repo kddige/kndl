@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { TestAgent, ada, callTool, eventually, holdTool, say } from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
+import { AgentsDoc } from "./Docs.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -143,6 +145,77 @@ describe("a subagent", () => {
       agentId: "nobody",
       command: "StopAgent",
     })
+  })
+
+  test("a thread's agent recovers independently and notifies only its thread", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => {
+        if (inAgent(request))
+          return request.last?.role === "toolResult"
+            ? say("Child recovered.")
+            : callTool("hold", { label: "child" })
+        if (request.system.includes("This is a thread of the session")) {
+          if (request.text.includes("<task-notification>"))
+            return say("Thread received the result.")
+          if (request.last?.role === "toolResult") return say("Child started.")
+          return callTool("agent", { description: "Thread child", prompt: "Work independently." })
+        }
+        if (request.text.includes("main busy")) return callTool("hold", { label: "main" })
+        return say("Main answer.")
+      },
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "anchor", text: "Anchor", sender: ada })
+    const anchor = await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({ _tag: "DeliverPrompt", promptId: "main", text: "Keep main busy", sender: ada })
+    await agent.event((event) => event._tag === "ToolCallStarted")
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: anchor.turnId,
+      promptId: "thread",
+      text: "Delegate",
+      sender: ada,
+    })
+    const spawned = await agent.event((event) => event._tag === "AgentStarted")
+    expect(spawned.threadId).toBe("t1")
+    const agentId = String(spawned.agentId)
+    await agent.event((event) => event._tag === "ToolCallStarted" && event.agentId === agentId)
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
+    const known = await agent.agent?.harness.snapshot(AgentsDoc, BACKGROUND_CONTEXT)
+    const record = known?.agents[agentId]
+    if (record === undefined) throw new Error("missing child")
+    const child = await agent.agent?.harness.conversation(record.conversationId, BACKGROUND_CONTEXT)
+    const tools = (await child?.agent(BACKGROUND_CONTEXT))?.tools.map((tool) => tool.name)
+    expect(tools).not.toContain("agent")
+    expect(tools).not.toContain("ask_user_question")
+    await agent.stop()
+    agent.hub.forget()
+    const from = agent.hub.events.length
+    await agent.start()
+    await eventually(() => hold.calls.length >= 4 || undefined)
+    hold.release()
+    const result = await agent.event(
+      (event) =>
+        event._tag === "TurnStarted" && (event.sender as { agentId?: string }).agentId === agentId,
+      from,
+    )
+    expect(result).toMatchObject({
+      threadId: "t1",
+      text: expect.stringContaining("Child recovered."),
+    })
+    await agent.event((event) => event._tag === "TurnEnded" && event.turnId === result.turnId, from)
+    const own = agent.hub.events.slice(from).filter((event) => event.agentId === agentId)
+    expect(own.length).toBeGreaterThan(2)
+    expect(own.every((event) => event.threadId === undefined)).toBe(true)
+    expect(
+      agent.hub.events
+        .slice(from)
+        .filter((event) => event._tag === "TurnStarted" && event.threadId === undefined)
+        .every((event) => (event.sender as { _tag: string })._tag === "Resumed"),
+    ).toBe(true)
   })
 
   test("survives a restart, Running again, and its result still comes", async () => {

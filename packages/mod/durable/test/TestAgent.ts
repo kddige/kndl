@@ -90,7 +90,12 @@ export interface TestAgentOptions {
 }
 
 /** The Creator's Models, as the Hub lists them. */
-export const listedModels = ["openai/gpt-test", "openai/gpt-other", "xai/grok-test"]
+export const listedModels = [
+  "openai/gpt-test",
+  "openai/gpt-other",
+  "xai/grok-test",
+  "openai/gpt-tiny",
+]
 
 export class TestAgent {
   readonly hub: FakeHub
@@ -121,6 +126,7 @@ export class TestAgent {
         provider: "openai",
         models: [
           { id: "gpt-test", contextWindow: 200_000 },
+          { id: "gpt-tiny", contextWindow: 3_000 },
           { id: "gpt-other" },
           { id: "gpt-later" },
         ],

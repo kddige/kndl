@@ -192,6 +192,10 @@ export class FakeHub {
   readonly events: Array<Event> = []
   readonly gatewayRequests: Array<GatewayRequest> = []
   readonly mcpRequests: Array<McpRequest> = []
+  /** A slow discovery, so tests can prompt immediately without racing tool installation. */
+  mcpListDelayMs = 0
+  /** Refuse event posts to exercise a lost process's volatile outbox. */
+  rejectEvents = false
   /** What `/mod/providers` answers: the Creator's Models, now. */
   providers: ModProviders
   /** What the Gateway answers next, in order. */
@@ -313,6 +317,7 @@ export class FakeHub {
       })
     }
     if (url.pathname === "/mod/events") {
+      if (this.rejectEvents) return new Response(null, { status: 503 })
       if (!this.greeted) return new Response(null, { status: 409 })
       const { messages } = (await request.json()) as { messages: Array<Event> }
       this.events.push(...messages)
@@ -374,6 +379,8 @@ export class FakeHub {
     if (authorization !== `Bearer ${this.options.modToken}`)
       return Response.json({ error: "bad token" }, { status: 401 })
     if (message.id === undefined) return new Response(null, { status: 202 })
+    if (message.method === "tools/list" && this.mcpListDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, this.mcpListDelayMs))
     const result = (() => {
       switch (message.method) {
         case "initialize":

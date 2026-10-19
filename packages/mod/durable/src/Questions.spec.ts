@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
+import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable"
 import { TestAgent, ada, bob, callTool, say } from "../test/TestAgent.ts"
+import { QuestionsDoc } from "./Docs.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -120,6 +123,109 @@ describe("ask_user_question", () => {
         .map((event) => event.text)
         .join(""),
     ).toContain("date-fns")
+  })
+
+  test("an accepted sync answer survives a restart before the tool result commits", async () => {
+    let holding = true
+    let accepted!: () => void
+    const atResult = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    const pause = defineExtension({
+      name: "test-answer-checkpoint",
+      hooks: [
+        hook(ToolTask, {
+          afterTool: async (call, _result, _api, context) => {
+            if (call.name !== "ask_user_question" || !holding) return
+            accepted()
+            await new Promise<void>((_resolve, reject) => {
+              const abort = () => reject(new Error("restart before result commit"))
+              if (context.abortSignal?.aborted) abort()
+              else context.abortSignal?.addEventListener("abort", abort, { once: true })
+            })
+          },
+        }),
+      ],
+    })
+    agent = new TestAgent({
+      extensions: [pause],
+      reply: (request) =>
+        request.last?.role === "toolResult"
+          ? say(`Kept the answer: ${request.text}`)
+          : callTool("ask_user_question", { questions: [question] }),
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Pick one", sender: ada })
+    const asked = await agent.event((event) => event._tag === "QuestionAsked")
+    agent.send({
+      _tag: "DeliverAnswer",
+      toolCallId: asked.toolCallId,
+      answer: { _tag: "Answered", answers: { "Which library?": "luxon" } },
+      sender: bob,
+    })
+    await atResult
+    await agent.stop()
+    holding = false
+    agent.hub.forget()
+    const from = agent.hub.events.length
+    await agent.start()
+    const events = await agent.until((event) => event._tag === "TurnEnded", from)
+    expect(events.filter((event) => event._tag === "QuestionAsked")).toHaveLength(0)
+    expect(
+      events
+        .filter((event) => event._tag === "TextDelta")
+        .map((event) => event.text)
+        .join(""),
+    ).toContain("luxon")
+  })
+
+  test("recovers an async answer accepted just before its input was admitted", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        request.text.includes("Next")
+          ? say("Next.")
+          : request.text.includes("answered the questions you asked earlier")
+            ? say("Recovered Bob's answer.")
+            : request.last?.role === "toolResult"
+              ? say("Working on.")
+              : callTool("ask_user_question", { questions: [question], async: true }),
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Pick one", sender: ada })
+    const asked = await agent.event((event) => event._tag === "QuestionAsked")
+    await agent.event((event) => event._tag === "TurnEnded")
+    // The durable checkpoint after accepting an answer, before submitting it to the model.
+    await started.harness.commit(async (tx) => {
+      const record = (await tx.doc(QuestionsDoc)).open[String(asked.toolCallId)]
+      if (record === undefined) throw new Error("missing question")
+      record.closed = {
+        outcome: { _tag: "Answered", answers: { "Which library?": "luxon" } },
+        by: bob,
+      }
+    }, BACKGROUND_CONTEXT)
+    await agent.stop()
+    agent.hub.forget()
+    const from = agent.hub.events.length
+    await agent.start()
+    const events = await agent.until((event) => event._tag === "TurnEnded", from)
+    expect(events.find((event) => event._tag === "TurnStarted")).toMatchObject({
+      sender: { _tag: "FromParticipant", participant: bob },
+      text: expect.stringContaining("luxon"),
+    })
+    expect(events.some((event) => event._tag === "QuestionAsked")).toBe(false)
+    // Another crash, after submit but before its acknowledgement, finds the same request id.
+    await agent.agent?.harness.commit(async (tx) => {
+      const record = (await tx.doc(QuestionsDoc)).open[String(asked.toolCallId)]
+      if (record !== undefined) delete record.answerSubmitted
+    }, BACKGROUND_CONTEXT)
+    await agent.stop()
+    agent.hub.forget()
+    const requests = agent.requests.length
+    const againFrom = agent.hub.events.length
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "barrier", text: "Next", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded", againFrom)
+    expect(agent.requests).toHaveLength(requests + 1)
   })
 
   test("a stopped Turn cancels its question", async () => {

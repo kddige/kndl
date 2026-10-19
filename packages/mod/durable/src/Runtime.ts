@@ -19,6 +19,9 @@ export interface Runtime {
   /** GETs a path on the Hub with the mod token, until `signal` aborts. */
   readonly hubGet: (path: string, signal?: AbortSignal) => ReturnType<HubGet>
   readonly catalog: Catalog
+  readonly secrets: ReadonlyArray<string>
+  /** Whether this Hub accepts an admission receipt for a redelivered prompt. */
+  readonly takesAlreadySubmitted: () => boolean
   /** A new id, for a Turn, an agent or a question. */
   readonly newId: () => string
   readonly log: (text: string) => void

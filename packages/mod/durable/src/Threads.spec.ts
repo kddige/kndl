@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
+import type { EntryId } from "@earendil-works/pi-durable"
 import { TestAgent, ada, bob, callTool, holdTool, say } from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
+import { PlanDoc, TurnsDoc } from "./Docs.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -64,6 +67,42 @@ describe("a thread", () => {
     await agent.event((event) => event._tag === "TurnEnded" && event.turnId === busy.turnId)
   })
 
+  test("forks a running Turn at its newest committed progress, not its original prompt", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => {
+        if (inThread(request)) return say("Following the progress.")
+        const call = callTool("hold", {})
+        return {
+          ...call,
+          content: [
+            { type: "text", text: "Committed progress: README was examined." },
+            ...call.content,
+          ],
+        }
+      },
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Investigate", sender: ada })
+    const running = await agent.event((event) => event._tag === "ToolCallStarted")
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    const turns = await started.harness.snapshot(TurnsDoc, root.id, BACKGROUND_CONTEXT)
+    expect(turns?.turns[String(running.turnId)]?.entry).toBeDefined()
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: running.turnId,
+      promptId: "q2",
+      text: "About that progress",
+      sender: bob,
+    })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
+    expect(JSON.stringify(agent.requests.find(inThread)?.context.messages)).toContain(
+      "Committed progress: README was examined.",
+    )
+  })
+
   test("is started once, however often its StartThread is delivered", async () => {
     agent = new TestAgent({
       reply: (request) => (inThread(request) ? say("Thread.") : say("Main.")),
@@ -81,7 +120,11 @@ describe("a thread", () => {
     }
     agent.send(start)
     await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
+    const redelivered = agent.hub.events.length
     agent.send(start)
+    expect(
+      await agent.event((event) => event._tag === "PromptAlreadySubmitted", redelivered),
+    ).toMatchObject({ promptId: "q2" })
     agent.send({
       _tag: "DeliverThreadPrompt",
       threadId: "t1",
@@ -95,6 +138,69 @@ describe("a thread", () => {
     expect(
       agent.hub.events.filter((event) => event._tag === "TurnStarted" && event.promptId === "q2"),
     ).toHaveLength(1)
+  })
+
+  test("recovers an answer's fork anchor if the process died before recording its end", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        inThread(request) ? say("Thread answer.") : say("The original answer was 42."),
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Original question", sender: ada })
+    const first = await agent.event((event) => event._tag === "TurnEnded")
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await started.harness.commit(async (tx) => {
+      const submission = await tx.submissionByRequest(root.id, "q1")
+      if (submission === undefined) throw new Error("missing input")
+      const doc = await tx.doc(TurnsDoc, root.id)
+      const turnId = String(first.turnId)
+      doc.current = { input: submission.id, turnIds: [turnId] }
+      const turn = doc.turns[turnId]
+      if (turn === undefined) throw new Error("missing Turn")
+      delete turn.answer
+      delete turn.last
+    }, BACKGROUND_CONTEXT)
+    await agent.stop()
+    agent.hub.forget()
+    const from = agent.hub.events.length
+    await agent.start()
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: first.turnId,
+      promptId: "q2",
+      text: "Explain",
+      sender: bob,
+    })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from)
+    expect(JSON.stringify(agent.requests.find(inThread)?.context.messages)).toContain(
+      "The original answer was 42.",
+    )
+  })
+
+  test("reports an admission exception instead of leaving a thread prompt pending forever", async () => {
+    agent = new TestAgent({ reply: () => say("Main.") })
+    const started = await agent.start()
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    // A stale fork point, for example after reopening a mismatched Session's state volume.
+    await started.harness.commit(async (tx) => {
+      ;(await tx.doc(TurnsDoc, root.id)).turns.stale = { answer: 999_999 as EntryId }
+    }, BACKGROUND_CONTEXT)
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: "stale",
+      promptId: "q1",
+      text: "Try it",
+      sender: bob,
+    })
+    expect(await agent.event((event) => event._tag === "PromptFailed")).toMatchObject({
+      promptId: "q1",
+    })
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Still working?", sender: ada })
+    expect(await agent.event((event) => event._tag === "TurnEnded")).toMatchObject({
+      reason: "stop",
+    })
   })
 
   test("is steered by a prompt while it runs, and stopped on its own", async () => {
@@ -208,6 +314,34 @@ describe("a thread", () => {
 })
 
 describe("the Plan", () => {
+  test("replays its absolute state after a crash between commit and report, including a clear", async () => {
+    agent = new TestAgent({ reply: () => say("Ok.") })
+    const started = await agent.start()
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await started.harness.commit(async (tx) => {
+      ;(await tx.doc(PlanDoc, root.id)).steps = [
+        { text: "Persisted but not reported", status: "pending" },
+      ]
+    }, BACKGROUND_CONTEXT)
+    await agent.stop()
+    agent.hub.forget()
+    let from = agent.hub.events.length
+    const restarted = await agent.start()
+    expect(await agent.event((event) => event._tag === "PlanChanged", from)).toMatchObject({
+      plan: { steps: [{ text: "Persisted but not reported" }] },
+    })
+    await restarted.harness.commit(async (tx) => {
+      ;(await tx.doc(PlanDoc, root.id)).steps = []
+    }, BACKGROUND_CONTEXT)
+    await agent.stop()
+    agent.hub.forget()
+    from = agent.hub.events.length
+    await agent.start()
+    expect(await agent.event((event) => event._tag === "PlanChanged", from)).toMatchObject({
+      plan: { steps: [] },
+    })
+  })
+
   test("is reported as the agent changes it, and a thread starts with it as of its fork", async () => {
     agent = new TestAgent({
       reply: (request) => {
@@ -286,6 +420,58 @@ describe("Compact", () => {
       _tag: "CompactionEnded",
       outcome: "compacted",
       summary: expect.stringContaining("A summary of it all."),
+    })
+  })
+})
+
+describe("Compact admission", () => {
+  test("a skipped compaction starts before it ends, and invalid threads fail explicitly", async () => {
+    agent = new TestAgent({ reply: () => say("Hi.") })
+    await agent.start()
+    agent.send({ _tag: "Compact", sender: bob })
+    let events = await agent.until((event) => event._tag === "CompactionEnded")
+    expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
+    expect(events.at(-1)?.outcome).toBe("skipped")
+    const from = agent.hub.events.length
+    agent.send({ _tag: "Compact", threadId: "missing", sender: bob })
+    events = await agent.until((event) => event._tag === "CompactionEnded", from)
+    expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
+    expect(events.at(-1)).toMatchObject({ threadId: "missing", outcome: "failed" })
+  })
+})
+
+describe("background compaction", () => {
+  test("summarizes a long conversation as it goes, and says so", async () => {
+    agent = new TestAgent({
+      model: "openai/gpt-tiny",
+      settings: {
+        compaction: { reserveTokens: 1_000, keepRecentTokens: 400, backgroundTokens: 800 },
+      },
+      reply: (request) => {
+        const first = request.context.messages[0]
+        if (first?.role === "system" && JSON.stringify(first.content).includes("summarization"))
+          return say("## Goal\nThe summary so far.")
+        return say(`An answer: ${"words ".repeat(250)}`)
+      },
+    })
+    await agent.start()
+    for (let index = 0; index < 6; index++) {
+      const from = agent.hub.events.length
+      agent.send({
+        _tag: "DeliverPrompt",
+        promptId: `q${index}`,
+        text: `Question ${index}`,
+        sender: ada,
+      })
+      await agent.until((event) => event._tag === "TurnEnded", from)
+      if (agent.hub.ofTag("CompactionEnded").length > 0) break
+    }
+    const started = await agent.event((event) => event._tag === "CompactionStarted")
+    expect(started).toMatchObject({ reason: "threshold" })
+    expect(started.by).toBeUndefined()
+    expect(await agent.event((event) => event._tag === "CompactionEnded")).toMatchObject({
+      outcome: "compacted",
+      summary: expect.stringContaining("The summary so far."),
     })
   })
 })

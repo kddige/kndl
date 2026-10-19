@@ -6,7 +6,9 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "check": "bun run build && claude plugin validate plugins/hub-link && claude plugin validate plugins/hub-link-commands && claude plugin test plugins/hub-link && claude plugin test plugins/hub-link-commands",
-    "typecheck": "bash scripts/typecheck.sh"
+    "typecheck": "bash scripts/typecheck.sh",
+    "typecheck:durable": "tsc --noEmit -p durable",
+    "test:durable": "bun test durable"
   },
   "devDependencies": {
     "@earendil-works/chord": "1.3.0",

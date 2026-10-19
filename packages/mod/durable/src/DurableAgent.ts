@@ -32,7 +32,7 @@ import { HubLink } from "../../src/HubLink.ts"
 import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
 import { attachmentToolDefinition } from "./Attachments.ts"
 import { Commands, conversationModel } from "./Commands.ts"
-import { AgentsDoc, SessionDoc, ThreadsDoc } from "./Docs.ts"
+import { AgentsDoc, PlanDoc, SessionDoc, ThreadsDoc } from "./Docs.ts"
 import {
   handoffToolDefinition,
   searchHistoryToolDefinition,
@@ -41,7 +41,7 @@ import {
 import { Loops } from "./Loops.ts"
 import { McpServers, mcpNamespaces } from "./Mcp.ts"
 import type { McpServerSpec } from "./Mcp.ts"
-import { planToolDefinition } from "./Plan.ts"
+import { planToolDefinition, reportPlan } from "./Plan.ts"
 import type { Catalog } from "./Providers.ts"
 import { Questions } from "./Questions.ts"
 import type { Runtime } from "./Runtime.ts"
@@ -216,6 +216,8 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     context,
     hubGet,
     catalog,
+    secrets,
+    takesAlreadySubmitted: () => made.link?.takesAlreadySubmitted === true,
     newId: randomUUID,
     log,
     closing: () => closing,
@@ -284,15 +286,16 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
     },
   })
-  const stored = (await root.agent(context)).model
+  const stored = await root.agent(context)
   if (
-    model !== undefined &&
-    (stored?.provider !== model.provider || stored.modelId !== model.modelId)
+    (model !== undefined &&
+      (stored.model?.provider !== model.provider || stored.model.modelId !== model.modelId)) ||
+    stored.thinkingLevel !== (options.thinkingLevel ?? "off")
   )
     await root.configure(
       {
-        model,
-        ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
+        ...(model === undefined ? {} : { model }),
+        thinkingLevel: options.thinkingLevel ?? null,
       },
       context,
     )
@@ -312,7 +315,6 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   const commands = new Commands({
     runtime,
     questions,
-    takesAlreadySubmitted: () => made.link?.takesAlreadySubmitted === true,
     threadWithheld: () => [questionsExtension],
     modelChanged: (name) => {
       sessionModel = name
@@ -352,14 +354,24 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
       true,
     )
 
+  // The Plan is an absolute projection: replaying it repairs a crash between its commit and
+  // the tool's report (including a cleared Plan), without replaying transcript deltas.
+  for (const id of [
+    root.id,
+    ...Object.values(threads).map((thread) => thread.conversationId),
+    ...Object.values(known).map((agent) => agent.conversationId),
+  ]) {
+    const plan = await opened.snapshot(PlanDoc, id, context)
+    if (plan !== undefined) reportPlan(runtime, id, plan)
+  }
+
+  // Discovery must precede anything that enables scheduling (including a submitted recovered
+  // answer or the first Hub command). Otherwise tool_search sees an empty catalogue, and a
+  // recovering code mode script can permanently journal a tool_unavailable result.
+  registry.install(await mcp.extension())
   link.start()
   await questions.reaskAsync()
   opened.resume()
-
-  // The MCP servers connect meanwhile: their tools are deferred, found when the model searches.
-  void mcp.extension().then((extension) => {
-    if (!closing) registry.install(extension)
-  })
   // The agent tool offers the Creator's Models as the catalogue has them now.
   const offered = () => catalog.names().join("\n")
   let offeredNow = offered()

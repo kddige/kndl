@@ -23,7 +23,8 @@ const cannotRun = (() => {
   if (major < 22 || (major === 22 && minor < 19)) return `node ${major}.${minor} is too old`
   return undefined
 })()
-if (cannotRun !== undefined) console.warn(`skipping the durable agent's end-to-end test: ${cannotRun}`)
+if (cannotRun !== undefined)
+  console.warn(`skipping the durable agent's end-to-end test: ${cannotRun}`)
 
 let hub: FakeHub
 let dir: string
@@ -59,13 +60,19 @@ const log = () => {
 
 describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
   beforeAll(() => {
-    const built = Bun.spawnSync(["bun", "scripts/build.ts"], { cwd: root, stdout: "ignore", stderr: "pipe" })
+    const built = Bun.spawnSync(["bun", "scripts/build.ts"], {
+      cwd: root,
+      stdout: "ignore",
+      stderr: "pipe",
+    })
     if (built.exitCode !== 0) throw new Error(built.stderr.toString())
     dir = mkdtempSync(join(tmpdir(), "kndl-durable-e2e-"))
     Bun.spawnSync(["mkdir", "-p", join(dir, "workspace")])
     hub = new FakeHub({
       modToken,
-      providers: { models: [{ provider: "openai", id: "gpt-4.1", label: "GPT-4.1", thinkingLevels: [] }] },
+      providers: {
+        models: [{ provider: "openai", id: "gpt-4.1", label: "GPT-4.1", thinkingLevels: [] }],
+      },
       attachments: {},
     })
   })
@@ -90,10 +97,20 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
     // Its MCP server connected, at the Gateway, with the Session token.
     await hub.until(() => hub.mcpRequests.find((request) => request.method === "tools/list"))
     hub.scripts.push(
-      when(toolCallReply("bash", { command: "echo smoke-$((40+2))" }, { input: 30, output: 7 }), "function_call_output", true),
+      when(
+        toolCallReply("bash", { command: "echo smoke-$((40+2))" }, { input: 30, output: 7 }),
+        "function_call_output",
+        true,
+      ),
       when(textReply("The command said 42.", { input: 40, output: 6 }), "function_call_output"),
     )
-    hub.send({ _tag: "DeliverPrompt", sessionId: "s-e2e", promptId: "q1", text: "Run it", sender: ada })
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId: "s-e2e",
+      promptId: "q1",
+      text: "Run it",
+      sender: ada,
+    })
     const events = await hub.eventsUntil(0, (event) => event._tag === "TurnEnded")
     expect(events.map((event) => event._tag)).toEqual([
       "TurnStarted",
@@ -102,10 +119,18 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
       "TextDelta",
       "TurnEnded",
     ])
-    expect(events[2]).toMatchObject({ outcome: "Succeeded", output: expect.stringContaining("smoke-42") })
-    expect(events[4]).toMatchObject({ reason: "stop", usage: { model: "openai/gpt-4.1", input: 70, output: 13 } })
+    expect(events[2]).toMatchObject({
+      outcome: "Succeeded",
+      output: expect.stringContaining("smoke-42"),
+    })
+    expect(events[4]).toMatchObject({
+      reason: "stop",
+      usage: { model: "openai/gpt-4.1", input: 70, output: 13 },
+    })
     expect(hub.gatewayRequests[0]?.authorization).toBe(`Bearer ${modToken}`)
-    expect(JSON.stringify(hub.gatewayRequests[0]?.body)).toContain("This session is shared through kndl")
+    expect(JSON.stringify(hub.gatewayRequests[0]?.body)).toContain(
+      "This session is shared through kndl",
+    )
 
     agent?.kill("SIGTERM")
     expect(await agent?.exited).toBe(0)
@@ -124,7 +149,13 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
       when(textReply("The sleep was cut off.", { input: 12, output: 5 }), "interrupted"),
     )
     const from = hub.events.length
-    hub.send({ _tag: "DeliverPrompt", sessionId: "s-e2e", promptId: "q2", text: "Wait for it", sender: ada })
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId: "s-e2e",
+      promptId: "q2",
+      text: "Wait for it",
+      sender: ada,
+    })
     await hub.eventsUntil(from, (event) => event._tag === "ToolCallStarted")
     await new Promise((resolve) => setTimeout(resolve, 300))
     agent?.kill("SIGKILL")
@@ -134,10 +165,177 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
     start()
     const events = await hub.eventsUntil(resumedFrom, (event) => event._tag === "TurnEnded")
     expect(events[0]).toMatchObject({ _tag: "TurnStarted", sender: { _tag: "Resumed" } })
-    expect(events.find((event) => event._tag === "ToolCallEnded")).toMatchObject({ outcome: "Failed" })
+    expect(events.find((event) => event._tag === "ToolCallEnded")).toMatchObject({
+      outcome: "Failed",
+    })
     expect(events.at(-1)).toMatchObject({ reason: "stop" })
     // The prompt delivered again after the restart isn't run twice.
-    hub.send({ _tag: "DeliverPrompt", sessionId: "s-e2e", promptId: "q2", text: "Wait for it", sender: ada })
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId: "s-e2e",
+      promptId: "q2",
+      text: "Wait for it",
+      sender: ada,
+    })
     await hub.eventsUntil(resumedFrom, (event) => event._tag === "PromptAlreadySubmitted")
+  }, 30_000)
+
+  test("recovers main and thread runs independently while another thread finishes", async () => {
+    const anchor = hub.events.find((event) => event._tag === "TurnStarted")
+    hub.scripts.push(
+      when(toolCallReply("bash", { command: "sleep 60" }, { input: 10, output: 3 }), "ROOT-HOLD"),
+      when(
+        toolCallReply("bash", { command: "sleep 60" }, { input: 10, output: 3 }),
+        "THREAD-HOLD-1",
+      ),
+      when(textReply("Fast thread finished.", { input: 8, output: 4 }), "THREAD-FAST-2"),
+    )
+    const from = hub.events.length
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId: "s-e2e",
+      promptId: "q-root",
+      text: "ROOT-HOLD",
+      sender: ada,
+    })
+    hub.send({
+      _tag: "StartThread",
+      sessionId: "s-e2e",
+      threadId: "t1",
+      anchorTurnId: anchor?.turnId,
+      promptId: "q-thread",
+      text: "THREAD-HOLD-1",
+      sender: ada,
+    })
+    hub.send({
+      _tag: "StartThread",
+      sessionId: "s-e2e",
+      threadId: "t2",
+      anchorTurnId: anchor?.turnId,
+      promptId: "q-fast",
+      text: "THREAD-FAST-2",
+      sender: ada,
+    })
+    await hub.eventsUntil(
+      from,
+      (event) => event._tag === "ToolCallStarted" && event.threadId === "t1",
+    )
+    const fast = await hub.eventsUntil(
+      from,
+      (event) => event._tag === "TurnEnded" && event.threadId === "t2",
+    )
+    expect(fast.some((event) => event._tag === "TurnEnded" && event.threadId !== "t2")).toBe(false)
+    agent?.kill("SIGKILL")
+    await agent?.exited
+    hub.forget()
+    hub.scripts.push(
+      when(textReply("Main recovered.", { input: 12, output: 5 }), "ROOT-HOLD"),
+      when(textReply("Thread recovered.", { input: 12, output: 5 }), "THREAD-HOLD-1"),
+    )
+    const recovered = hub.events.length
+    start()
+    await hub.eventsUntil(
+      recovered,
+      (event) => event._tag === "TurnEnded" && event.threadId === "t1",
+    )
+    await hub.eventsUntil(
+      recovered,
+      (event) => event._tag === "TurnEnded" && event.threadId === undefined,
+    )
+    const starts = hub.events.slice(recovered).filter((event) => event._tag === "TurnStarted")
+    expect(starts).toHaveLength(2)
+    expect(starts.every((event) => (event.sender as { _tag: string })._tag === "Resumed")).toBe(
+      true,
+    )
+    expect(starts.map((event) => event.threadId).toSorted()).toEqual(["t1", undefined].toSorted())
+    expect(
+      hub.events
+        .slice(recovered)
+        .filter((event) => event.threadId === "t1")
+        .every((event) => event.agentId === undefined),
+    ).toBe(true)
+    hub.send({
+      _tag: "DeliverThreadPrompt",
+      sessionId: "s-e2e",
+      threadId: "t1",
+      promptId: "q-thread",
+      text: "THREAD-HOLD-1",
+      sender: ada,
+    })
+    await hub.eventsUntil(
+      recovered,
+      (event) => event._tag === "PromptAlreadySubmitted" && event.promptId === "q-thread",
+    )
+  }, 30_000)
+
+  test("a background subagent's code mode survives SIGKILL without repeating a finished command", async () => {
+    const code =
+      'await tools.bash({ command: "echo once >> journal.log" }); await tools.bash({ command: "echo waiting > checkpoint; sleep 60" }); console.log("CHILD-JOURNAL-DONE")'
+    hub.scripts.push(
+      when(
+        toolCallReply(
+          "agent",
+          { description: "Crash journal", prompt: "Child codemode crash task" },
+          { input: 10, output: 5 },
+        ),
+        "SPAWN-CRASH",
+      ),
+      when(
+        toolCallReply("codemode", { code }, { input: 10, output: 8 }),
+        "Child codemode crash task",
+      ),
+      when(textReply("Started the durable child.", { input: 12, output: 4 }), "Started the agent"),
+    )
+    const from = hub.events.length
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId: "s-e2e",
+      promptId: "q-child",
+      text: "SPAWN-CRASH",
+      sender: ada,
+    })
+    const spawned = (await hub.eventsUntil(from, (event) => event._tag === "AgentStarted")).at(-1)
+    const agentId = spawned?.agentId
+    await hub.eventsUntil(
+      from,
+      (event) =>
+        event._tag === "ToolCallStarted" && event.agentId === agentId && event.tool === "codemode",
+    )
+    await hub.until(() => existsSync(join(dir, "workspace/checkpoint")) || undefined)
+    await hub.eventsUntil(
+      from,
+      (event) => event._tag === "TurnEnded" && event.agentId === undefined,
+    )
+    agent?.kill("SIGKILL")
+    await agent?.exited
+    hub.forget()
+    hub.scripts.push(
+      when(textReply("Child crash result.", { input: 12, output: 5 }), "CHILD-JOURNAL-DONE"),
+      when(textReply("The child recovered too.", { input: 14, output: 6 }), "Child crash result."),
+    )
+    const recovered = hub.events.length
+    start()
+    await hub.eventsUntil(
+      recovered,
+      (event) => event._tag === "TurnEnded" && event.agentId === undefined,
+    )
+    expect(readFileSync(join(dir, "workspace/journal.log"), "utf8")).toBe("once\n")
+    const events = hub.events.slice(recovered)
+    expect(
+      events.find((event) => event._tag === "AgentStatusChanged" && event.agentId === agentId),
+    ).toMatchObject({ status: "Running" })
+    expect(events.find((event) => event._tag === "TurnStarted")).toMatchObject({
+      sender: { _tag: "FromAgent", agentId },
+    })
+    expect(
+      events
+        .filter((event) => event.agentId === agentId)
+        .every((event) => event.threadId === undefined),
+    ).toBe(true)
+    expect(
+      events
+        .filter((event) => event._tag === "ToolCallStarted" && event.agentId === agentId)
+        .map((event) => event.tool),
+    ).toEqual(["codemode"])
   }, 30_000)
 })
