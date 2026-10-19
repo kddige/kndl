@@ -180,6 +180,20 @@ describe("Runners and Sessions", () => {
 })
 
 describe("joining and leaving", () => {
+  test("a joined Session keeps the Models the Hub sends for it, its Creator's", () => {
+    const models = [
+      { provider: "anthropic", id: "claude-opus-5-5", label: "Claude Opus 5.5", thinkingLevels: [] },
+    ] as const
+    const state = run(
+      joined,
+      hub({ _tag: "SessionModels", sessionId: "s-1", models }),
+      // Another Session's, not joined, are dropped.
+      hub({ _tag: "SessionModels", sessionId: "s-2", models }),
+    )
+    expect(state.joined[s1]?.models?.map((model) => model.label)).toEqual(["Claude Opus 5.5"])
+    expect(state.joined["s-2" as never]).toBeUndefined()
+  })
+
   test("Joined starts an empty Session that waits for its history", () => {
     const state = run(joined)
     expect(state.joined[s1]).toEqual({
@@ -190,6 +204,7 @@ describe("joining and leaving", () => {
       queue: [],
       startLog: null,
       questionPicks: null,
+      models: null,
     })
   })
 
@@ -388,6 +403,7 @@ describe("presence and the Prompt queue", () => {
       queue: [],
       startLog: null,
       questionPicks: null,
+      models: null,
     })
   })
 })

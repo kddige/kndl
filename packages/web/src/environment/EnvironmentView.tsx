@@ -8,7 +8,6 @@
 import {
   type BranchChoice,
   type EnvironmentVersionInfo,
-  type Harness,
   type ModelName,
   type RunnerId,
   type ThinkingLevel,
@@ -84,8 +83,6 @@ export interface PendingSession {
   /** The branch choice it was set up with (ADR 0023). */
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
-  /** Claude Code, where New Session was asked for it on a Runner that runs pi (ADR 0029). */
-  readonly harness?: Harness
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
 }
@@ -378,7 +375,6 @@ function EnvironmentEditor({
         repo,
         branch: pending.branch,
         ...(pending.runnerId !== undefined && { runnerId: pending.runnerId }),
-        ...(pending.harness !== undefined && { harness: pending.harness }),
         ...(pending.model !== undefined && { model: pending.model }),
         ...(pending.thinkingLevel !== undefined && { thinkingLevel: pending.thinkingLevel }),
       })
@@ -842,7 +838,7 @@ function EnvironmentEditor({
         title="MCP servers"
         note={
           <>
-            The Installations on for this Repo: Claude Code in its Sessions gets their tools from
+            The Installations on for this Repo: the agent in its Sessions gets their tools from
             their next wake or restart. A change creates no Environment version.{" "}
             <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
               Manage MCP servers

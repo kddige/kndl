@@ -5,13 +5,13 @@ import {
   type SessionId,
   type SessionSummary,
   sessionTitle,
+  type ThreadId,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
-import { recentAgents } from "../hub/transcript.ts"
-import { useDrives } from "../session/drive.ts"
+import { recentAgents, type ThreadView } from "../hub/transcript.ts"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import { WaitingDot } from "../session/QuestionChip.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -41,6 +41,7 @@ import {
   Sidebar,
   Spinner,
   SunIcon,
+  ThreadIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -139,7 +140,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hubVersion = useHubState((state) => state.hubVersion)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
-  const { agent: agentId } = useSearch({ strict: false })
+  const { agent: agentId, thread: threadId } = useSearch({ strict: false })
   // Archived Sessions is the one Sessions page in the pinned rows; the rest are Settings'.
   const archive = pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname)
   useRememberPlace(pathname)
@@ -156,10 +157,15 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       ? undefined
       : state.joined[sessionId as SessionId]?.transcript.agentList,
   )
-  // When an agent's view opens, its folded Session opens, so its row isn't hidden.
+  // The open Session's threads, live from its transcript.
+  const openThreads = useHubState((state) =>
+    sessionId === undefined ? undefined : state.joined[sessionId as SessionId]?.transcript.threads,
+  )
+  // When an agent's view or a thread opens, its folded Session opens, so its row isn't hidden.
   useEffect(() => {
-    if (sessionId !== undefined && agentId !== undefined) setFolded(sessionId, false)
-  }, [sessionId, agentId])
+    if (sessionId !== undefined && (agentId !== undefined || threadId !== undefined))
+      setFolded(sessionId, false)
+  }, [sessionId, agentId, threadId])
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
   // Before the early return below: hooks run on every render.
   const [list, setList] = useState<HTMLDivElement | null>(null)
@@ -277,23 +283,44 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
                   current && openAgents !== undefined && openAgents.length > 0
                     ? recentAgents(openAgents, agentId)
                     : (session.agents ?? [])
+                const threads = recentThreads(
+                  current && openThreads !== undefined
+                    ? [...openThreads.values()].map(threadRowOf)
+                    : (session.threads ?? []).map((thread) => ({
+                        id: thread.id,
+                        title: thread.title,
+                        running: thread.running,
+                        lastAt: 0,
+                      })),
+                  current ? threadId : undefined,
+                )
                 return (
                   <SessionRow
                     key={session.id}
                     session={session}
-                    current={current && agentId === undefined}
-                    {...(agents.length > 0 && {
+                    current={current && agentId === undefined && threadId === undefined}
+                    {...(agents.length + threads.length > 0 && {
                       nested: {
                         open: !folded.has(session.id),
                         onOpenChange: (open) => setFolded(session.id, !open, known),
-                        children: agents.map((agent) => (
-                          <AgentRow
-                            key={agent.id}
-                            session={session}
-                            agent={agent}
-                            current={current && agent.id === agentId}
-                          />
-                        )),
+                        children: [
+                          ...threads.map((thread) => (
+                            <ThreadRow
+                              key={thread.id}
+                              session={session}
+                              thread={thread}
+                              current={current && thread.id === threadId}
+                            />
+                          )),
+                          ...agents.map((agent) => (
+                            <AgentRow
+                              key={agent.id}
+                              session={session}
+                              agent={agent}
+                              current={current && agent.id === agentId}
+                            />
+                          )),
+                        ],
                       },
                     })}
                   />
@@ -309,8 +336,8 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
 
 /**
  * A Session in the sidebar: its state's dot, its Session name (or Work branch) and what it's busy
- * with, leading to it. Its Rename button, its Creator's alone (ADR 0026), turns the row into a
- * field for the name. Its agents' rows are `nested` under it.
+ * with, leading to it. Its Rename button, anyone's, turns the row into a field for the name. Its
+ * threads' and agents' rows are `nested` under it.
  */
 function SessionRow({
   session,
@@ -322,7 +349,6 @@ function SessionRow({
   nested?: Omit<NestedNavItems, "label">
 }) {
   const hub = useHub()
-  const drives = useDrives(session)
   const [renaming, setRenaming] = useState(false)
   useEffect(() => onRenameRequest(session.id, () => setRenaming(true)), [session.id])
   const title = sessionTitle(session)
@@ -341,7 +367,7 @@ function SessionRow({
       current={current}
       title={session.name === undefined ? title : `${title} · ${session.workBranch}`}
       trailing={<SessionIndicators session={session} />}
-      {...(nested && { nested: { ...nested, label: `Agents of ${title}` } })}
+      {...(nested && { nested: { ...nested, label: `Threads and agents of ${title}` } })}
       // The same menu on a pointer's ⋯ (no Tab stop of its own: the list is one) and on a
       // right-click, Shift+F10 or the Menu key.
       action={
@@ -357,27 +383,100 @@ function SessionRow({
         </Menu>
       }
       contextMenu={menu}
-      {...(drives && { onRename: () => setRenaming(true) })}
-      {...(drives &&
-        renaming && {
-          editor: (
-            <InlineEdit
-              label="Session name"
-              defaultValue={title}
-              placeholder={session.workBranch}
-              maxLength={MaxSessionNameLength}
-              // A rename that isn't sent keeps the field open, with what was typed.
-              onCommit={(typed) => {
-                const sent = renameSession(hub, session, typed)
-                if (sent) setRenaming(false)
-                return sent
-              }}
-              onCancel={() => setRenaming(false)}
-            />
-          ),
-        })}
+      onRename={() => setRenaming(true)}
+      {...(renaming && {
+        editor: (
+          <InlineEdit
+            label="Session name"
+            defaultValue={title}
+            placeholder={session.workBranch}
+            maxLength={MaxSessionNameLength}
+            // A rename that isn't sent keeps the field open, with what was typed.
+            onCommit={(typed) => {
+              const sent = renameSession(hub, session, typed)
+              if (sent) setRenaming(false)
+              return sent
+            }}
+            onCancel={() => setRenaming(false)}
+          />
+        ),
+      })}
     >
       {title}
+    </NavItem>
+  )
+}
+
+/** A thread as the sidebar lists it. */
+interface ThreadRowData {
+  readonly id: ThreadId
+  readonly title: string
+  readonly running: boolean
+  /** When anything last happened in it; 0 where only the Session's summary is known. */
+  readonly lastAt: number
+}
+
+const threadRowOf = (thread: ThreadView): ThreadRowData => ({
+  id: thread.threadId,
+  title: thread.title,
+  running: thread.running !== undefined,
+  lastAt: thread.lastAt,
+})
+
+/** How many idle threads the open Session lists; the rest are in its transcript. */
+const recentIdle = 3
+
+/**
+ * A Session's threads for the sidebar: the running ones first, then the latest idle ones, and the
+ * one whose panel is open, each group newest first.
+ */
+function recentThreads(
+  threads: ReadonlyArray<ThreadRowData>,
+  open: string | undefined,
+): ReadonlyArray<ThreadRowData> {
+  const newest = threads
+    .map((thread, index) => ({ thread, index }))
+    .toSorted((a, b) => b.thread.lastAt - a.thread.lastAt || b.index - a.index)
+    .map(({ thread }) => thread)
+  const running = newest.filter((thread) => thread.running)
+  const idle = newest.filter((thread) => !thread.running)
+  const shown = new Set(idle.slice(0, recentIdle))
+  return [...running, ...idle.filter((thread) => shown.has(thread) || thread.id === open)]
+}
+
+/** A thread under its Session's row: running or not, and its title, leading to its panel. */
+function ThreadRow({
+  session,
+  thread,
+  current,
+}: {
+  session: SessionSummary
+  thread: ThreadRowData
+  current: boolean
+}) {
+  return (
+    <NavItem
+      render={
+        <Link
+          to="/sessions/$sessionId"
+          params={{ sessionId: session.id }}
+          search={{ thread: thread.id }}
+        />
+      }
+      icon={<ThreadIcon />}
+      current={current}
+      title={thread.running ? `${thread.title} · Replying` : thread.title}
+      {...(thread.running && {
+        trailing: (
+          <NavSlot>
+            <span role="img" aria-label="Replying" {...stylex.props(styles.busy)}>
+              <Spinner size="sm" />
+            </span>
+          </NavSlot>
+        ),
+      })}
+    >
+      {thread.title}
     </NavItem>
   )
 }
@@ -412,7 +511,7 @@ function AgentRow({
 
 /**
  * What a Session is busy with, and whether its Environment changed, in the row's rail. A Session
- * with a Running agent is working even between Turns.
+ * with a Running agent or a thread replying is working even between Turns.
  */
 function SessionIndicators({ session }: { session: SessionSummary }) {
   const you = useHubState((state) => state.you)
@@ -425,10 +524,11 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           ? "Working"
           : session.agents?.some((agent) => agent.status === "Running") === true
             ? "Agents working"
-            : null
-  // The agent asked a question (#193): it waits on its Creator to answer rather than working.
+            : session.threads?.some((thread) => thread.running) === true
+              ? "Threads working"
+              : null
+  // The agent asked a question (#193): it waits on an answer rather than working.
   const waiting = session.openQuestion !== undefined
-  const waitingOn = session.creator.id === you?.id ? "you" : session.creator.name
   // What a restart would apply: a newer Environment, or its Repo's Installations (ADR 0020).
   const changed = environmentChanged(session)
     ? "Environment changed"
@@ -456,8 +556,8 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
         <NavSlot>
           <span
             role="img"
-            aria-label={`Waiting on ${waitingOn}`}
-            title={`Waiting on ${waitingOn}: the agent asked a question`}
+            aria-label="Waiting on an answer"
+            title="Waiting on an answer: the agent asked a question"
             {...stylex.props(styles.waiting)}
           >
             <WaitingDot />

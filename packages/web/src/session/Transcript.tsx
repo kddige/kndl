@@ -4,7 +4,9 @@ import {
   type PromptCancelled,
   type SessionId,
   type SessionStateChanged,
+  type ThreadId,
   type TurnEnded,
+  type TurnId,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
@@ -15,6 +17,7 @@ import type {
   Block,
   NoticeEvent,
   SteeredPrompt,
+  ThreadView,
   TranscriptItem,
   TurnView,
 } from "../hub/transcript.ts"
@@ -27,17 +30,25 @@ import {
   CloseIcon,
   Disclosure,
   Markdown,
+  ResumeIcon,
   SessionStatus,
   Spinner,
   SteerIcon,
+  ThreadIcon,
   WarningIcon,
 } from "../ui/index.ts"
+import { turnRow } from "../ui/markers.stylex.ts"
 import { focus, textLink } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
-import { modelSwitchedText } from "./models.ts"
+import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { CompactionLine } from "./Compaction.tsx"
+import { modelSwitchedText, threadModelChangedText } from "./models.ts"
+import { PlanMarker } from "./Plan.tsx"
 import { QuestionChip } from "./QuestionChip.tsx"
 import { SentAttachments, SessionContext } from "./SentAttachments.tsx"
+import { ModelNamesContext, ThreadRows } from "./ThreadRows.tsx"
 import { ToolCall } from "./ToolCall.tsx"
+
+const HOVER = "@media (hover: hover)"
 
 /**
  * Names the model a Turn ran when the footer should say so: when it isn't the one the Session is
@@ -48,14 +59,29 @@ type NameTurnModel = (model: string) => string | undefined
 const TurnModelContext = createContext<NameTurnModel>(() => undefined)
 
 /**
- * Who answers a Turn, by the model it ran (undefined while it runs): Claude, on Claude Code; a pi
- * Session's Model, by name (ADR 0029).
+ * Who answers a Turn, by the model it ran (undefined while it runs): the Session's Model, or the
+ * thread's, by name.
  */
 export type NameReplier = (turnModel: string | undefined) => string
 
-const claude: NameReplier = () => "Claude"
+const agentReplier: NameReplier = () => "Agent"
 
-const ReplierContext = createContext<NameReplier>(claude)
+const ReplierContext = createContext<NameReplier>(agentReplier)
+
+/**
+ * The main conversation's threads (docs/design/durable-harness.md): each Turn's, shown under it,
+ * and how to reply in a new one.
+ */
+export interface TranscriptThreads {
+  /** The threads off each Turn, by its id. */
+  readonly anchored: ReadonlyMap<TurnId, ReadonlyArray<ThreadView>>
+  /** The thread whose panel is open. */
+  readonly open?: ThreadId | undefined
+  /** The Turn a new thread is being written off, marked as replied to. */
+  readonly forking?: TurnId | undefined
+  /** Starts a thread off a Turn. */
+  readonly onReply: (turnId: TurnId) => void
+}
 
 const styles = stylex.create({
   list: {
@@ -66,14 +92,77 @@ const styles = stylex.create({
     padding: 0,
     listStyle: "none",
   },
-  turn: { display: "flex", flexDirection: "column", gap: space.s3 },
+  turn: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s3,
+    // A Turn jumped to from a thread lights up for a moment, so the eye finds it.
+    marginInline: `calc(${space.s2} * -1)`,
+    paddingInline: space.s2,
+    borderRadius: radius.lg,
+    backgroundColor: { default: "transparent", ":is([data-flash])": color.accentTint },
+    transitionProperty: "background-color",
+    transitionDuration: { default: "700ms", ":is([data-flash])": motion.durationNormal },
+    transitionTimingFunction: motion.easeOut,
+    scrollMarginBlock: space.s6,
+  },
+  // A Turn the agent resumed after a restart hangs from the one the restart ended.
+  continuation: { marginTop: `calc(${space.s3} * -1)` },
+  resumedLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s2,
+    minWidth: 0,
+    color: color.textSecondary,
+    fontSize: text.sm,
+  },
+  resumedMark: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.75rem",
+    height: "1.75rem",
+    borderRadius: radius.full,
+    backgroundColor: color.successTint,
+    color: color.successText,
+    flexShrink: 0,
+  },
+  resumedText: { minWidth: 0, color: color.text, fontWeight: weight.medium },
+  // The new Turn's thread being written: this is the answer it forks from.
+  forking: { backgroundColor: color.surfaceMuted },
+  threads: { marginInlineStart: space.s8, marginTop: `calc(${space.s1} * -1)` },
+  replyButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    marginInlineStart: "auto",
+    height: "1.5rem",
+    paddingInline: space.s1_5,
+    borderWidth: 0,
+    borderRadius: radius.md,
+    backgroundColor: {
+      default: "transparent",
+      ":hover": { default: null, [HOVER]: color.surfaceHover },
+    },
+    color: {
+      default: color.textTertiary,
+      [stylex.when.ancestor(":hover", turnRow)]: { default: null, [HOVER]: color.textSecondary },
+      [stylex.when.ancestor(":focus-within", turnRow)]: color.textSecondary,
+    },
+    fontFamily: "inherit",
+    fontSize: text.xs,
+    fontWeight: weight.medium,
+    cursor: "pointer",
+    transitionProperty: "background-color, color",
+    transitionDuration: motion.durationFast,
+  },
   speaker: {
     display: "flex",
     alignItems: "center",
     gap: space.s2,
     minWidth: 0,
   },
-  name: { fontWeight: weight.semibold },
+  name: { fontWeight: weight.semibold, whiteSpace: "nowrap" },
   time: { color: color.textTertiary, fontSize: text.xs },
   prompt: {
     marginInlineStart: space.s8,
@@ -227,6 +316,8 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s1,
     minWidth: 0,
+    flexBasis: "12rem",
+    flexGrow: 1,
     color: color.textTertiary,
     fontSize: text.xs,
   },
@@ -277,26 +368,46 @@ export const Transcript = memo(function Transcript({
   sessionId,
   items,
   nameTurnModel = noTurnModel,
-  nameReplier = claude,
+  nameReplier = agentReplier,
+  threads,
+  label = "Conversation",
 }: {
   sessionId: SessionId
   items: ReadonlyArray<TranscriptItem>
   /** Names a Turn's model in its footer when it isn't the Session's own. */
   nameTurnModel?: NameTurnModel
-  /** Names who answers each Turn: Claude unless said. */
+  /** Names who answers each Turn. */
   nameReplier?: NameReplier
+  /** The main conversation's threads; absent in a thread's own. */
+  threads?: TranscriptThreads | undefined
+  label?: string
 }) {
   return (
     <SessionContext value={sessionId}>
       <ReplierContext value={nameReplier}>
         <TurnModelContext value={nameTurnModel}>
-          <ol aria-label="Conversation" {...stylex.props(styles.list)}>
+          <ol aria-label={label} {...stylex.props(styles.list)}>
             {items.map((item) => (
-              <li key={item.key}>
+              <li
+                key={item.key}
+                {...stylex.props(
+                  item.kind === "turn" &&
+                    item.turn.sender._tag === "Resumed" &&
+                    styles.continuation,
+                )}
+              >
                 {item.kind === "turn" ? (
-                  <Turn turn={item.turn} />
+                  <Turn
+                    turn={item.turn}
+                    threads={threads?.anchored.get(item.turn.turnId)}
+                    open={threads?.open}
+                    forking={threads?.forking === item.turn.turnId}
+                    onReply={threads?.onReply}
+                  />
                 ) : item.kind === "cancelled" ? (
                   <CancelledPrompt at={item.at} prompt={item.event} />
+                ) : item.kind === "compaction" ? (
+                  <CompactionLine compaction={item.compaction} />
                 ) : (
                   <Notice at={item.at} event={item.event} />
                 )}
@@ -311,28 +422,55 @@ export const Transcript = memo(function Transcript({
 
 const noTurnModel: NameTurnModel = () => undefined
 
-const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
+const Turn = memo(function Turn({
+  turn,
+  threads,
+  open,
+  forking = false,
+  onReply,
+}: {
+  turn: TurnView
+  /** The threads off it, in the main conversation. */
+  threads?: ReadonlyArray<ThreadView> | undefined
+  /** The thread whose panel is open. */
+  open?: ThreadId | undefined
+  /** Whether a new thread is being written off it. */
+  forking?: boolean
+  /** Starts a thread off it; absent where threads don't start, as in a thread. */
+  onReply?: ((turnId: TurnId) => void) | undefined
+}) {
   const replier = useContext(ReplierContext)(turn.end?.usage?.model)
+  const sessionId = useContext(SessionContext)
+  const resumed = turn.sender._tag === "Resumed"
   return (
-    <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
-      <div {...stylex.props(styles.speaker)}>
-        <Sender turn={turn} />
-        <time {...stylex.props(styles.time)} dateTime={new Date(turn.at).toISOString()}>
-          {clock(turn.at)}
-        </time>
-      </div>
-      {turn.prompt !== "" && <div {...stylex.props(styles.prompt)}>{turn.prompt}</div>}
-      <SentAttachments
-        attachments={turn.attachments}
-        label="The prompt's attachments"
-        sx={styles.sentFiles}
-      />
-      <div {...stylex.props(styles.speaker)}>
-        <span aria-hidden="true" {...stylex.props(styles.replierMark)}>
-          {replier.charAt(0).toUpperCase()}
-        </span>
-        <span {...stylex.props(styles.name)}>{replier}</span>
-      </div>
+    <article
+      {...stylex.props(styles.turn, turnRow, forking && styles.forking)}
+      data-turn={turn.turnId}
+    >
+      {resumed ? (
+        <ResumedLine at={turn.at} />
+      ) : (
+        <>
+          <div {...stylex.props(styles.speaker)}>
+            <Sender turn={turn} />
+            <time {...stylex.props(styles.time)} dateTime={new Date(turn.at).toISOString()}>
+              {clock(turn.at)}
+            </time>
+          </div>
+          {turn.prompt !== "" && <div {...stylex.props(styles.prompt)}>{turn.prompt}</div>}
+          <SentAttachments
+            attachments={turn.attachments}
+            label="The prompt's attachments"
+            sx={styles.sentFiles}
+          />
+          <div {...stylex.props(styles.speaker)}>
+            <span aria-hidden="true" {...stylex.props(styles.replierMark)}>
+              {replier.charAt(0).toUpperCase()}
+            </span>
+            <span {...stylex.props(styles.name)}>{replier}</span>
+          </div>
+        </>
+      )}
       <div {...stylex.props(styles.reply)}>
         <Blocks blocks={turn.blocks} ended={turn.end !== null} />
         {turn.unread.map((prompt) => (
@@ -347,11 +485,35 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
             unread
           />
         ))}
-        <TurnFooter turn={turn} />
+        <TurnFooter turn={turn} onReply={onReply} />
       </div>
+      {threads !== undefined && threads.length > 0 && sessionId !== null && (
+        <div {...stylex.props(styles.threads)}>
+          <ThreadRows sessionId={sessionId} threads={threads} open={open} />
+        </div>
+      )}
     </article>
   )
 })
+
+/**
+ * Where a Turn resumed after a restart begins (docs/design/durable-harness.md): the agent picked
+ * its run up where it stopped, as the Turn the restart ended goes on.
+ */
+function ResumedLine({ at }: { at: number }) {
+  return (
+    <div {...stylex.props(styles.resumedLine)}>
+      <span aria-hidden="true" {...stylex.props(styles.resumedMark)}>
+        <ResumeIcon />
+      </span>
+      <span {...stylex.props(styles.resumedText)}>Picked up where it left off</span>
+      <span>after a restart</span>
+      <time {...stylex.props(styles.time)} dateTime={new Date(at).toISOString()}>
+        {clock(at)}
+      </time>
+    </div>
+  )
+}
 
 /**
  * A queued prompt the Hub cancelled without it running (ADR 0026): its sender's words, shown as
@@ -421,6 +583,15 @@ function Sender({ turn }: { turn: TurnView }) {
             {turn.agentDescription || sender.agentId}
           </AgentLink>
           <Badge intent="accent">Agent</Badge>
+        </>
+      )
+    case "Resumed":
+      return (
+        <>
+          <span aria-hidden="true" {...stylex.props(styles.sessionMark)}>
+            <ResumeIcon />
+          </span>
+          <span {...stylex.props(styles.name)}>Resumed</span>
         </>
       )
     case "FromSession":
@@ -501,6 +672,10 @@ function BlockView({ block, ended }: { block: Block; ended: boolean }) {
       )
     case "steered":
       return <Steered prompt={block} note="Steered into the Turn" />
+    case "compaction":
+      return <CompactionLine compaction={block.compaction} />
+    case "plan":
+      return <PlanMarker plan={block.plan} previous={block.previous} />
   }
 }
 
@@ -603,9 +778,25 @@ const AgentCard = memo(function AgentCard({ agent }: { agent: AgentView }) {
   )
 })
 
-function TurnFooter({ turn }: { turn: TurnView }) {
+function TurnFooter({
+  turn,
+  onReply,
+}: {
+  turn: TurnView
+  onReply?: ((turnId: TurnId) => void) | undefined
+}) {
   const nameTurnModel = useContext(TurnModelContext)
   const stoppers = names(turn.stopRequests)
+  const reply = onReply && (
+    <button
+      type="button"
+      onClick={() => onReply(turn.turnId)}
+      {...stylex.props(styles.replyButton, focus.ring)}
+    >
+      <ThreadIcon />
+      Reply in thread
+    </button>
+  )
   if (turn.end === null) {
     return (
       <div {...stylex.props(styles.footer)}>
@@ -613,6 +804,7 @@ function TurnFooter({ turn }: { turn: TurnView }) {
           <Spinner size="sm" />
           {stoppers ? `Stopping (asked by ${stoppers})` : "Working"}
         </span>
+        {reply}
       </div>
     )
   }
@@ -620,7 +812,7 @@ function TurnFooter({ turn }: { turn: TurnView }) {
   const otherModel = usage && nameTurnModel(usage.model)
   return (
     <div {...stylex.props(styles.footer)}>
-      <EndBadge end={turn.end} stoppers={stoppers} />
+      <EndBadge end={turn.end} stoppers={stoppers} continued={turn.continued === true} />
       {otherModel !== undefined && <span title="The model this Turn ran on">{otherModel}</span>}
       <span>{duration(turn.end.durationMs)}</span>
       {usage && (
@@ -634,11 +826,24 @@ function TurnFooter({ turn }: { turn: TurnView }) {
         // Why it failed, as the Provider or Harness said it.
         <span {...stylex.props(styles.failure)}>{turn.end.errorMessage}</span>
       )}
+      {reply}
     </div>
   )
 }
 
-function EndBadge({ end, stoppers }: { end: TurnEnded; stoppers: string }) {
+function EndBadge({
+  end,
+  stoppers,
+  continued,
+}: {
+  end: TurnEnded
+  stoppers: string
+  /** Whether the agent picked it up again after a restart, in the next Turn. */
+  continued: boolean
+}) {
+  // Ended by a restart, and picked up again: nobody stopped it.
+  if (continued && stoppers === "")
+    return <Badge icon={<ResumeIcon />}>Interrupted by a restart</Badge>
   switch (end.reason) {
     case "stop":
       return null
@@ -663,6 +868,7 @@ const stateWords: Record<SessionStateChanged["state"], string> = {
 }
 
 function Notice({ at, event }: { at: number; event: NoticeEvent }) {
+  const nameModel = useContext(ModelNamesContext)
   // An Installation that fails the Session (#216): an error, with a way to fix it.
   if (event._tag === "SandboxNoted" && event.installationFailed !== undefined) {
     const failed = event.installationFailed
@@ -699,6 +905,11 @@ function Notice({ at, event }: { at: number; event: NoticeEvent }) {
         <>
           <Avatar name={event.by.name} src={event.by.avatarUrl} size="sm" />
           <span>{modelSwitchedText(event)}</span>
+        </>
+      ) : event._tag === "ThreadModelChanged" ? (
+        <>
+          <Avatar name={event.by.name} src={event.by.avatarUrl} size="sm" />
+          <span>{threadModelChangedText(event, nameModel)}</span>
         </>
       ) : (
         <span>{event.message}</span>

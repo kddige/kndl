@@ -2,8 +2,8 @@
 // a way out. Fix opens the Installation on the MCP page; whoever may change it (access to every
 // Repo it lists, as the Hub requires) can take the Session's Repo off it here instead, and the
 // Session is woken at once. A global one (#219) anyone in the Session can turn off for its Repo
-// instead, but only the Owner can fix. Retry wakes it, which checks the Installations again: only
-// the Session's Creator has it (ADR 0026). Its queued prompts wait meanwhile, and run once it
+// instead, but only the Owner can fix. Retry wakes it, which checks the Installations again: anyone
+// in the Session can. Its queued prompts wait meanwhile, and run once it
 // starts. An OAuth Installation not connected
 // (#217) has Reconnect instead of Fix: through its authorization server and back to the MCP page,
 // or first asking for a client entered by hand, where that offers no registration (#218).
@@ -58,7 +58,7 @@ export function InstallationsFailedBanner({
 }: {
   summary: SessionSummary
   failures: ReadonlyArray<InstallationFailure>
-  /** Wakes the Session again; absent for someone watching it, who can't (ADR 0026). */
+  /** Wakes the Session again; absent where it can't be woken. */
   onRetry?: (() => void) | undefined
 }) {
   const hub = useHub()
@@ -219,7 +219,7 @@ export function InstallationsFailedBanner({
         {one ? "it" : "them"}, or {leaveText(summary.repo, failures)}
         {onRetry
           ? ", then retry. Prompts sent now wait in the queue until it starts."
-          : `. Then ${summary.creator.name} can wake it.`}
+          : ". Then wake it."}
       </Banner>
       <Dialog
         size="sm"

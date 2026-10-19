@@ -14,11 +14,13 @@ export interface Refusal {
 // ── Who drives a Session (ADR 0026) ──
 
 /**
- * Why `you` can't drive a Session created by `creator`, or undefined when they can. ADR 0026 had
- * only its Creator prompt it, steer or cancel its prompts, answer it, stop it or its subagents,
- * control it and open its terminal; the Pi Durable spike lifts that driving rule for testing
- * (docs/design/durable-harness.md): everyone who sees a Session drives it, and it still runs on
- * its Creator's accounts. The predicate stays, so the rule can come back in one place.
+ * Why `you` can't drive a Session created by `creator`, or undefined when they can.
+ *
+ * The Pi Durable spike (docs/design/durable-harness.md) lifts ADR 0026's driving rule for testing:
+ * everyone who can see a Session prompts it, steers or cancels its prompts, answers it, stops it
+ * or its subagents, starts and posts in its threads, compacts it, controls it and opens its
+ * terminal. ADR 0026's billing half stands: the Session still runs on its Creator's accounts. So
+ * this never refuses; it stays, with its callers, as the one place to put the rule back.
  */
 export const driveRefusal = (
   _you: { readonly id: string },

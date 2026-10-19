@@ -33,6 +33,7 @@ import type {
   PresentParticipant,
   PendingInvite,
   ProviderId,
+  ProviderModel,
   ProvidersState,
   RequestId,
   SignInEnded,
@@ -97,6 +98,11 @@ export interface JoinedSession {
    * shares any. For the question `toolCallId` names, which may have closed since.
    */
   readonly questionPicks: QuestionPicksState | null
+  /**
+   * The Models it can run on, its Creator's (ADR 0026), which the Hub sends everyone who joins it
+   * so anyone can switch it or start a thread on another; null until the Hub has.
+   */
+  readonly models: ReadonlyArray<ProviderModel> | null
 }
 
 /** The Participants' picks for an Open question, as the Hub last shared them (#193). */
@@ -305,6 +311,7 @@ const emptyJoined: JoinedSession = {
   queue: [],
   startLog: null,
   questionPicks: null,
+  models: null,
 }
 
 export function reduce(state: HubState, action: HubAction): HubState {
@@ -421,6 +428,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...session,
         questionPicks: { toolCallId: action.toolCallId, picks: action.picks },
       }))
+    case "SessionModels":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        models: action.models,
+      }))
+    case "ThreadCreated":
+      // An answer for whoever started the thread: the HubClient hands it to them.
+      return state
     case "SessionStartLogged":
       return updateJoined(state, action.sessionId, (session) => {
         // All of it so far, or another start's output: in place of what was held.

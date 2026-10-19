@@ -20,7 +20,7 @@ import {
 /** A Refusal saying `refusal`. */
 const refused = (refusal: string) => ({ refusal: expect.stringContaining(refusal) })
 
-describe("driving a Session (ADR 0026, lifted in the Pi Durable spike)", () => {
+describe("driving a Session (ADR 0026, lifted by the Pi Durable spike)", () => {
   const alice = { id: "p-alice", name: "Alice" }
   const bob = { id: "p-bob" }
 
@@ -29,7 +29,7 @@ describe("driving a Session (ADR 0026, lifted in the Pi Durable spike)", () => {
     expect(driveRefusal(alice, alice, "Pi")).toBeUndefined()
   })
 
-  test("and so does everyone else who sees it", () => {
+  test("everyone else drives it too, on its Creator's accounts", () => {
     expect(driveRefusal(bob, alice)).toBeUndefined()
     expect(driveRefusal(bob, alice, "ClaudeCode")).toBeUndefined()
     expect(driveRefusal(bob, alice, "Pi")).toBeUndefined()

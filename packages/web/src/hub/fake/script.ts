@@ -1,7 +1,9 @@
 // What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with
-// some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. Only a
-// Session's Creator drives it (ADR 0026): Alice drives hers, and watches Bob's, which has a prompt
-// of hers that the Hub cancelled. The demo's Turn starts a subagent in the foreground and one in the
+// some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. Every
+// Session runs the durable agent (docs/design/durable-harness.md), and everyone in it drives it:
+// the demo has a Plan, a thread Bob started on another Model, a Turn resumed after a restart and a
+// compaction, and while it plays, Bob posts in the thread as the main conversation streams. Bob's
+// own Session has a prompt of Alice's the Hub cancelled, from before. The demo's Turn starts a subagent in the foreground and one in the
 // background that outlives it, and Release 0.4 has subagents that finished, were stopped and were
 // interrupted (ADR 0014). The demo has dev servers listening in its Sandbox: a Docker one, and one
 // on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193). pi-box runs
@@ -17,6 +19,7 @@ import type {
   OpenPortWire,
   ParticipantWire,
   PendingInviteWire,
+  PlanWire,
   QuestionPickWire,
   QuestionWire,
   RunnerSummaryWire,
@@ -70,6 +73,8 @@ export type ReplyStep =
       readonly result: string
       readonly relay?: string
     }
+  /** The agent changes its Plan with `update_plan`. */
+  | { readonly kind: "plan"; readonly plan: PlanWire }
   /** The Creator queues a prompt while the Turn runs, as from another tab. */
   | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
   | { readonly kind: "pause"; readonly steps: number }
@@ -396,11 +401,22 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         currentTurn: null,
         // Started before Alice applied version 2: it shows "Environment changed".
         environment: { version: 1, latestVersion: 2 },
-        // Alice switched it after the first Turn, which ran on Claude Code's default (#128).
-        model: "sonnet",
+        harness: "Pi",
+        // Alice switched it after the first Turn (#128).
+        model: "anthropic/claude-sonnet-5-5",
         thinkingLevel: "high",
         // Alice keeps it up while Bob tries its dev server (ADR 0016).
         keepAwake: { by: you, at: now - 30 * 60_000 },
+        threads: [
+          {
+            id: backoffThreadId,
+            title: backoffQuestion,
+            anchorTurnId: "t-seed-1",
+            startedBy: bob,
+            running: false,
+            model: "openai/gpt-6-sol",
+          },
+        ],
       },
       // Vite on Node 22 listens on `localhost`, which is `::1` only; Postgres runs in Docker.
       ports: [
@@ -409,35 +425,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         { port: 5432, addresses: ["0.0.0.0", "::"], process: "docker-proxy" },
       ],
       at: now - 2 * hour,
-      events: [
-        ...turn("t-seed-1", you, "Add a test that the web client reconnects after a drop", [
-          {
-            _tag: "TextDelta",
-            text: "I'll start by reading the client to see how it handles a closed socket.",
-          },
-          tool(
-            "Read",
-            { file_path: "packages/web/src/hub/client.ts" },
-            "export class HubClient {\n  …\n}",
-          ),
-          tool(
-            "Bash",
-            { command: "bun test packages/web", description: "Run the web tests" },
-            " 52 pass\n 0 fail\nRan 52 tests across 5 files. [612.00ms]",
-          ),
-          {
-            _tag: "TextDelta",
-            text: "Added `reconnects with afterSeq` to **client.test.ts**. It drops the socket mid-Turn and checks that:\n\n1. the client says hello again,\n2. it joins with the last `seq` it has, and\n3. no entry shows twice.\n\nAll tests pass.",
-          },
-        ]),
-        {
-          _tag: "ModelSwitched",
-          by: you,
-          model: "sonnet",
-          modelLabel: "Sonnet 5.5",
-          thinkingLevel: "high",
-        },
-      ],
+      events: demoHistory(),
     },
     {
       summary: {
@@ -600,7 +588,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
 function releaseSessions(now: number): Array<SeedSession> {
   const studio = { runnerId: "r-studio" }
   const at = now - 40 * 60_000
-  const haiku = "claude-haiku-4-5-20251001"
+  const haiku = "anthropic/claude-haiku-4-5"
   const changelog = { agentId: "a-changelog", description: "Write the 0.4 changelog" }
   const docs = { agentId: "a-docs", description: "Document the protocol" }
   const bump = { agentId: "a-bump", description: "Bump the package versions" }
@@ -628,7 +616,7 @@ function releaseSessions(now: number): Array<SeedSession> {
             text: "These don't touch each other, so I'll hand each to a subagent in the background.",
           },
           agentCall("t-release-1", changelog, "general-purpose", haiku),
-          agentCall("t-release-1", docs, "general-purpose", "claude-sonnet-5-5"),
+          agentCall("t-release-1", docs, "general-purpose", "anthropic/claude-sonnet-5-5"),
           agentCall("t-release-1", bump, "general-purpose", haiku),
           {
             _tag: "TextDelta",
@@ -703,6 +691,205 @@ function releaseSessions(now: number): Array<SeedSession> {
   ]
 }
 
+/** The demo's thread, which Bob started off its first answer, on GPT-6-Sol. */
+export const backoffThreadId = "thr-backoff"
+const backoffQuestion = "Does it back off between retries, or hammer the Hub?"
+
+/** The demo's first Turn's Plan, as each step of it went. */
+const reconnectPlan = (
+  ...statuses: [PlanStatus, PlanStatus, PlanStatus, PlanStatus]
+): PlanWire => ({
+  steps: [
+    { text: "Read how the client handles a closed socket", status: statuses[0] },
+    { text: "Write a test that drops the socket mid-Turn", status: statuses[1] },
+    { text: "Check it joins again from the last seq", status: statuses[2] },
+    { text: "Run the web tests", status: statuses[3] },
+  ],
+})
+
+type PlanStatus = PlanWire["steps"][number]["status"]
+
+const spend = (cost: number) => ({
+  input: Math.round(cost * 40_000),
+  output: Math.round(cost * 6_000),
+  cacheRead: Math.round(cost * 300_000),
+  cacheWrite: Math.round(cost * 20_000),
+  cost,
+})
+
+/**
+ * The demo's history, as the durable agent writes one: a Turn that kept a Plan, a thread Bob
+ * started off it on GPT-6-Sol, where Alice replied too, a switch of Model, a Turn the agent's
+ * restart cut short and picked up again, and a compaction once the context filled up.
+ */
+function demoHistory(): Array<SessionEventWire> {
+  const sonnet = "anthropic/claude-sonnet-5-5"
+  const gpt = "openai/gpt-6-sol"
+  return [
+    ...turn(
+      "t-seed-1",
+      you,
+      "Add a test that the web client reconnects after a drop",
+      [
+        { _tag: "Plan", plan: reconnectPlan("in_progress", "pending", "pending", "pending") },
+        {
+          _tag: "TextDelta",
+          text: "I'll start by reading the client to see how it handles a closed socket.",
+        },
+        tool(
+          "read",
+          { path: "packages/web/src/hub/client.ts" },
+          "export class HubClient {\n  …\n}",
+        ),
+        { _tag: "Plan", plan: reconnectPlan("done", "in_progress", "pending", "pending") },
+        tool(
+          "edit",
+          { path: "packages/web/test/client.test.ts" },
+          "Edited packages/web/test/client.test.ts",
+        ),
+        { _tag: "Plan", plan: reconnectPlan("done", "done", "done", "in_progress") },
+        tool(
+          "bash",
+          { command: "bun test packages/web" },
+          " 52 pass\n 0 fail\nRan 52 tests across 5 files. [612.00ms]",
+        ),
+        { _tag: "Plan", plan: reconnectPlan("done", "done", "done", "done") },
+        {
+          _tag: "TextDelta",
+          text: "Added `reconnects with afterSeq` to **client.test.ts**. It drops the socket mid-Turn and checks that:\n\n1. the client says hello again,\n2. it joins with the last `seq` it has, and\n3. no entry shows twice.\n\nAll tests pass.",
+        },
+      ],
+      sonnet,
+    ),
+    { _tag: "UsageChanged", usage: spend(0.21) },
+    {
+      _tag: "ThreadStarted",
+      threadId: backoffThreadId,
+      anchorTurnId: "t-seed-1",
+      title: backoffQuestion,
+      startedBy: bob,
+      model: gpt,
+    },
+    {
+      _tag: "ThreadPromptSent",
+      threadId: backoffThreadId,
+      promptId: "p-seed-t1",
+      sender: bob,
+      text: backoffQuestion,
+    },
+    ...threadTurn(
+      backoffThreadId,
+      "t-seed-t1",
+      bob,
+      "p-seed-t1",
+      backoffQuestion,
+      [
+        tool(
+          "bash",
+          { command: "grep -n backoff packages/web/src/hub/client.ts" },
+          "128:const backoff = [500, 1_000, 2_000, 5_000, 10_000]",
+        ),
+        {
+          _tag: "TextDelta",
+          text: "It backs off: **0.5s, 1s, 2s, 5s**, then every **10s** for as long as the Hub is gone (`backoff` in client.ts). A welcome resets it, so a Hub that comes back is reached within 10s at most.",
+        },
+      ],
+      gpt,
+    ),
+    {
+      _tag: "ThreadPromptSent",
+      threadId: backoffThreadId,
+      promptId: "p-seed-t2",
+      sender: you,
+      text: "Should the cap be longer on a phone, to save battery?",
+    },
+    ...threadTurn(
+      backoffThreadId,
+      "t-seed-t2",
+      you,
+      "p-seed-t2",
+      "Should the cap be longer on a phone, to save battery?",
+      [
+        {
+          _tag: "TextDelta",
+          text: "I wouldn't: a socket retry every 10s costs next to nothing, and the page already stops retrying while it's hidden. A longer cap would mostly make the reconnect feel slow.",
+        },
+      ],
+      gpt,
+    ),
+    { _tag: "UsageChanged", threadId: backoffThreadId, usage: spend(0.03) },
+    {
+      _tag: "ModelSwitched",
+      by: you,
+      model: sonnet,
+      modelLabel: "Claude Sonnet 5.5",
+      thinkingLevel: "high",
+    },
+    // The agent's process restarted mid-Turn: the Hub ended the Turn, and the agent picked its run
+    // up again where it was once it was back.
+    ...turn(
+      "t-seed-2",
+      you,
+      "Now show how long until the next try in the reconnecting banner",
+      [
+        { _tag: "TextDelta", text: "Starting with the banner's copy, then the countdown." },
+        tool(
+          "read",
+          { path: "packages/web/src/app/HubShell.tsx" },
+          "function Reconnecting() { … }",
+        ),
+      ],
+      sonnet,
+      { reason: "aborted" },
+    ),
+    ...sessionTurn(
+      "t-seed-3",
+      { _tag: "Resumed" },
+      "",
+      [
+        tool(
+          "edit",
+          { path: "packages/web/src/app/HubShell.tsx" },
+          "Edited packages/web/src/app/HubShell.tsx",
+        ),
+        {
+          _tag: "TextDelta",
+          text: "The banner now counts down — **Reconnecting in 4s…** — then says *Reconnecting…* while it tries, and goes away on the welcome.",
+        },
+      ],
+      sonnet,
+    ),
+    { _tag: "CompactionStarted", reason: "threshold" },
+    {
+      _tag: "CompactionEnded",
+      outcome: "compacted",
+      summary:
+        "Alice asked for a reconnect test: added `reconnects with afterSeq` to client.test.ts, which drops the socket mid-Turn and checks the hello, the join from the last seq and no duplicates; all 52 web tests pass. In a thread, Bob confirmed the backoff (0.5s to a 10s cap) and Alice decided against a longer cap on phones. The reconnecting banner in HubShell.tsx now counts down to the next try.",
+    },
+    { _tag: "UsageChanged", usage: spend(0.46) },
+  ]
+}
+
+/** A finished Turn of a thread, for seeding history: the prompt posted, and the answer. */
+function threadTurn(
+  threadId: string,
+  turnId: string,
+  sender: ParticipantWire,
+  promptId: string,
+  prompt: string,
+  body: TurnBody,
+  model: string,
+): Array<SessionEventWire> {
+  return sessionTurn(
+    turnId,
+    { _tag: "FromParticipant", participant: sender },
+    `[${sender.name}] ${prompt}`,
+    body,
+    model,
+    { threadId, promptId },
+  )
+}
+
 /** The Agent tool starting a background agent, as its Turn's body shows it. */
 function agentCall(
   turnId: string,
@@ -742,6 +929,10 @@ function agentRun(turnId: string, agentId: string, body: TurnBody): Array<Sessio
       events.push({ _tag: "TextDelta", turnId, agentId, text: part.text })
       continue
     }
+    if (part._tag === "Plan") {
+      events.push({ _tag: "PlanChanged", agentId, plan: part.plan })
+      continue
+    }
     const toolCallId = `${turnId}-tool-${++count}`
     events.push(
       { _tag: "ToolCallStarted", turnId, agentId, toolCallId, tool: part.tool, input: part.input },
@@ -763,6 +954,8 @@ function agentRun(turnId: string, agentId: string, body: TurnBody): Array<Sessio
 type TurnBody = ReadonlyArray<
   | { _tag: "TextDelta"; text: string }
   | { _tag: "Tool"; tool: string; input: string; output: string }
+  /** The agent's `update_plan` call, and the Plan it set. */
+  | { _tag: "Plan"; plan: PlanWire }
   /** An Agent call and the subagent it started, whose toolCallId is filled in. */
   | {
       _tag: "Agent"
@@ -780,6 +973,7 @@ function turn(
   prompt: string,
   body: TurnBody,
   model?: string,
+  options: { readonly reason?: "stop" | "aborted" } = {},
 ): Array<SessionEventWire> {
   return sessionTurn(
     turnId,
@@ -787,31 +981,75 @@ function turn(
     `[${sender.name}] ${prompt}`,
     body,
     model,
+    options,
   )
 }
 
-/** A finished Turn, for seeding history: `text` is the prompt as the model got it. */
+/**
+ * A finished Turn, for seeding history: `text` is the prompt as the model got it. With `threadId`,
+ * it is that thread's; `reason` "aborted" ends it as a restart or a stop does, with no usage.
+ */
 function sessionTurn(
   turnId: string,
   sender: Extract<SessionEventWire, { _tag: "TurnStarted" }>["sender"],
   text: string,
   body: TurnBody,
-  model = "claude-opus-5-5",
+  model = "anthropic/claude-opus-5-5",
+  options: {
+    readonly threadId?: string
+    readonly promptId?: string
+    readonly reason?: "stop" | "aborted"
+  } = {},
 ): Array<SessionEventWire> {
-  const events: Array<SessionEventWire> = [{ _tag: "TurnStarted", turnId, text, sender }]
+  const thread = options.threadId === undefined ? {} : { threadId: options.threadId }
+  const events: Array<SessionEventWire> = [
+    {
+      _tag: "TurnStarted",
+      turnId,
+      ...thread,
+      text,
+      sender,
+      ...(options.promptId !== undefined && { promptId: options.promptId }),
+    },
+  ]
   let count = 0
   for (const part of body) {
     if (part._tag === "TextDelta") {
-      events.push({ _tag: "TextDelta", turnId, text: part.text })
+      events.push({ _tag: "TextDelta", turnId, ...thread, text: part.text })
       continue
     }
     const toolCallId = `${turnId}-tool-${++count}`
+    if (part._tag === "Plan") {
+      const input = JSON.stringify(part.plan)
+      events.push(
+        { _tag: "ToolCallStarted", turnId, ...thread, toolCallId, tool: "update_plan", input },
+        { _tag: "PlanChanged", ...thread, plan: part.plan },
+        {
+          _tag: "ToolCallEnded",
+          turnId,
+          ...thread,
+          toolCallId,
+          tool: "update_plan",
+          outcome: "Succeeded",
+          output: "Plan updated.",
+        },
+      )
+      continue
+    }
     events.push(
-      { _tag: "ToolCallStarted", turnId, toolCallId, tool: part.tool, input: part.input },
+      {
+        _tag: "ToolCallStarted",
+        turnId,
+        ...thread,
+        toolCallId,
+        tool: part.tool,
+        input: part.input,
+      },
       ...(part._tag === "Agent" ? [{ ...part.started, toolCallId }] : []),
       {
         _tag: "ToolCallEnded",
         turnId,
+        ...thread,
         toolCallId,
         tool: part.tool,
         outcome: "Succeeded",
@@ -819,20 +1057,25 @@ function sessionTurn(
       },
     )
   }
-  events.push({
-    _tag: "TurnEnded",
-    turnId,
-    reason: "stop",
-    durationMs: 18_400,
-    usage: {
-      model,
-      input: 3_100,
-      output: 420,
-      cacheRead: 22_000,
-      cacheWrite: 1_200,
-      cost: 0.0372,
-    },
-  })
+  events.push(
+    options.reason === "aborted"
+      ? { _tag: "TurnEnded", turnId, ...thread, reason: "aborted", durationMs: 9_800 }
+      : {
+          _tag: "TurnEnded",
+          turnId,
+          ...thread,
+          reason: "stop",
+          durationMs: 18_400,
+          usage: {
+            model,
+            input: 3_100,
+            output: 420,
+            cacheRead: 22_000,
+            cacheWrite: 1_200,
+            cost: 0.0372,
+          },
+        },
+  )
   return events
 }
 
@@ -849,6 +1092,7 @@ function tool(
  * while Bob watches.
  */
 export const scriptedTurn: ReadonlyArray<ReplyStep> = [
+  { kind: "plan", plan: collapsePlan("in_progress", "pending", "pending", "pending") },
   { kind: "text", text: "Sure. First I'll look at how the chat renders tool calls today." },
   {
     kind: "tool",
@@ -857,13 +1101,14 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     output:
       "packages/web/src/session/ToolCall.tsx\npackages/web/src/hub/transcript.ts\npackages/web/src/session/Transcript.tsx",
   },
+  { kind: "plan", plan: collapsePlan("done", "in_progress", "pending", "pending") },
   {
     kind: "agent",
     agentId: "agent-kit",
     agentType: "Explore",
     description: "Survey the UI kit",
     prompt: "List the kit components that can collapse content, and how they're styled.",
-    model: "claude-haiku-4-5-20251001",
+    model: "anthropic/claude-haiku-4-5",
     steps: [
       { kind: "text", text: "Looking through the kit's components." },
       {
@@ -890,7 +1135,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     agentType: "general-purpose",
     description: "Find docs that mention tool calls",
     prompt: "Find the docs pages that describe how the chat shows tool calls.",
-    model: "claude-haiku-4-5-20251001",
+    model: "anthropic/claude-haiku-4-5",
     background: true,
     worktree: {
       path: "/workspace/kndl/.claude/worktrees/agent-docs",
@@ -912,7 +1157,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     relay:
       "The docs agent found one page that describes tool calls: **work-in-a-session.md**. I'll update it with the README.",
   },
-  { kind: "queue", sender: you, text: "Then add a line about it to the README" },
+  { kind: "queue", sender: bob, text: "Then add a line about it to the README" },
   {
     kind: "tool",
     tool: "Edit",
@@ -923,6 +1168,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     },
     output: "The file packages/web/src/session/ToolCall.tsx has been updated.",
   },
+  { kind: "plan", plan: collapsePlan("done", "done", "in_progress", "pending") },
   {
     kind: "tool",
     tool: "Bash",
@@ -938,11 +1184,47 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     output: " 58 pass\n 0 fail",
     steps: 6,
   },
+  { kind: "plan", plan: collapsePlan("done", "done", "done", "in_progress") },
   {
     kind: "text",
     text: "\n\nTool calls now start **collapsed**. Each one shows:\n\n- the tool's name,\n- a one-line summary of its input, such as the command, and\n- whether it succeeded.\n\nOpen one to see its full input and output:\n\n```ts\n<Disclosure summary={<ToolSummary call={call} />}>\n  <ToolDetails call={call} />\n</Disclosure>\n```\n\nThe tests pass.",
   },
 ]
+
+/** The live Turn's Plan, as each step of it goes. */
+function collapsePlan(...statuses: [PlanStatus, PlanStatus, PlanStatus, PlanStatus]): PlanWire {
+  return {
+    steps: [
+      { text: "Find where the chat renders tool calls", status: statuses[0] },
+      { text: "Start tool calls collapsed, with a one-line summary", status: statuses[1] },
+      { text: "Run the web tests", status: statuses[2] },
+      { text: "Tell the docs", status: statuses[3] },
+    ],
+    ...(statuses[0] === "in_progress" && {
+      explanation: "Small change: the Disclosure the kit has does the folding.",
+    }),
+  }
+}
+
+/** A reply in a thread, to anything posted there: short, on the thread's own Model. */
+export function threadReplyTo(text: string): ReadonlyArray<ReplyStep> {
+  const quoted = text.length > 60 ? `${text.slice(0, 57)}…` : text
+  return [
+    { kind: "text", text: `Good question. Checking "${quoted}" against the code first.` },
+    {
+      kind: "tool",
+      tool: "bash",
+      input: { command: "grep -rn retry packages/web/src/hub" },
+      output:
+        "packages/web/src/hub/client.ts:128:const backoff = [500, 1_000, 2_000, 5_000, 10_000]",
+      steps: 6,
+    },
+    {
+      kind: "text",
+      text: "\n\nIt never gives up: after the first few tries it keeps trying every **10s**, and the banner says so. On flaky Wi-Fi that means a reconnect within 10s of the network coming back.",
+    },
+  ]
+}
 
 const libraryQuestion = "Which date library should the web UI use?"
 

@@ -350,3 +350,61 @@ export function UpdateIcon(props: IconProps) {
     </Icon>
   )
 }
+
+/** A thread: two speech bubbles, a reply under a message. */
+export function ThreadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 3.75a1.25 1.25 0 0 1 1.25-1.25h5.5a1.25 1.25 0 0 1 1.25 1.25V7a1.25 1.25 0 0 1-1.25 1.25H6l-2.25 1.75V8.25a1.25 1.25 0 0 1-1.25-1.25z" />
+      <path d="M12.25 6.25a1.25 1.25 0 0 1 1.25 1.25v3.25A1.25 1.25 0 0 1 12.25 12v1.5L10 12H8a1.25 1.25 0 0 1-1.25-1.25v-.5" />
+    </Icon>
+  )
+}
+
+/** The Plan: a checklist. */
+export function PlanIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m2.5 4 1.25 1.25L6 3M2.5 9.5l1.25 1.25L6 8.5M8.5 4.25h5M8.5 9.75h5" />
+    </Icon>
+  )
+}
+
+/** Compaction: older messages folded into a summary. */
+export function CompactIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 3.5h10M3 12.5h10M8 5.5v5M5.75 8.25 8 10.5l2.25-2.25" />
+    </Icon>
+  )
+}
+
+/** A run picked up again: a play mark inside a returning arc. */
+export function ResumeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13.25 8A5.25 5.25 0 1 1 11.7 4.25" />
+      <path d="M13.25 2.5v2.75H10.5" />
+      <path d="m6.75 6 2.5 2-2.5 2z" />
+    </Icon>
+  )
+}
+
+/** A step not started: an empty circle. */
+export function CircleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5.25" />
+    </Icon>
+  )
+}
+
+/** A step done: a circle with a check. */
+export function CircleCheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5.25" />
+      <path d="m5.75 8.1 1.6 1.6 2.9-3.2" />
+    </Icon>
+  )
+}

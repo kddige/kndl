@@ -32,6 +32,8 @@ import {
   type InviteCreated,
   type InviteId,
   type ModelName,
+  type ThreadId,
+  type TurnId,
   type PairingCodeCreated,
   type PairingCodeId,
   type ParticipantId,
@@ -147,6 +149,12 @@ type Request = WebToHub extends infer Message
     : never
   : never
 
+/** A CreateThread waiting for the Hub's ThreadCreated. */
+interface ThreadAsked {
+  resolve(threadId: ThreadId): void
+  reject(error: CommandError): void
+}
+
 export class HubClient {
   readonly transport: HubTransport
   #state: HubState = initialState
@@ -155,6 +163,8 @@ export class HubClient {
   readonly #retryDelay: (attempt: number) => number
   readonly #requests = new Map<string, PendingRequest>()
   readonly #terminals = new Map<SessionId, Set<TerminalWriter>>()
+  /** The CreateThreads sent and not answered yet, by Session, oldest first. */
+  readonly #threadsAsked = new Map<SessionId, Array<ThreadAsked>>()
   #socket: HubSocket | null = null
   /** Whether the current socket was welcomed. */
   #welcomed = false
@@ -295,6 +305,93 @@ export class HubClient {
    */
   steerPrompt(sessionId: SessionId, promptId: PromptId): boolean {
     return this.#send({ _tag: "SteerPrompt", sessionId, promptId })
+  }
+
+  /**
+   * Starts a thread off a main-loop Turn, with its first prompt (docs/design/durable-harness.md):
+   * resolves with its id once the Hub has made it, or rejects with the Hub's reason. A `model` is
+   * one of the Session's Models; absent, it runs on the Session's.
+   */
+  createThread(
+    sessionId: SessionId,
+    anchorTurnId: TurnId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+    setting: { readonly model?: ModelName; readonly thinkingLevel?: ThinkingLevel } = {},
+  ): Promise<ThreadId> {
+    const trimmed = text.trim()
+    if (trimmed === "" && attachments.length === 0)
+      return Promise.reject(new CommandError("Write something to start the thread with."))
+    return new Promise((resolve, reject) => {
+      const sent = this.#send({
+        _tag: "CreateThread",
+        sessionId,
+        anchorTurnId,
+        text: trimmed,
+        ...(attachments.length > 0 && { attachments }),
+        ...(setting.model !== undefined && { model: setting.model }),
+        ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
+      })
+      if (!sent) {
+        reject(new CommandError("Not connected to the Hub."))
+        return
+      }
+      // The Hub answers each of a connection's CreateThreads in turn: the first waiting gets it.
+      const waiting = this.#threadsAsked.get(sessionId) ?? []
+      waiting.push({ resolve, reject })
+      this.#threadsAsked.set(sessionId, waiting)
+    })
+  }
+
+  /** Posts into a thread: it starts a Turn there, or steers the one running. */
+  promptThread(
+    sessionId: SessionId,
+    threadId: ThreadId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+  ): boolean {
+    const trimmed = text.trim()
+    if (trimmed === "" && attachments.length === 0) return false
+    return this.#send({
+      _tag: "PromptThread",
+      sessionId,
+      threadId,
+      text: trimmed,
+      ...(attachments.length > 0 && { attachments }),
+    })
+  }
+
+  stopThread(sessionId: SessionId, threadId: ThreadId): boolean {
+    return this.#send({ _tag: "StopThread", sessionId, threadId })
+  }
+
+  /** Runs a thread's next requests on another of the Session's Models. */
+  setThreadModel(
+    sessionId: SessionId,
+    threadId: ThreadId,
+    setting: { readonly model: ModelName; readonly thinkingLevel?: ThinkingLevel },
+  ): boolean {
+    return this.#send({
+      _tag: "SetThreadModel",
+      sessionId,
+      threadId,
+      model: setting.model,
+      ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
+    })
+  }
+
+  /**
+   * Asks the agent to summarize the older messages of the main loop, or of a thread, now, with
+   * what to keep in `instructions`.
+   */
+  compact(sessionId: SessionId, options: { threadId?: ThreadId; instructions?: string } = {}) {
+    const instructions = options.instructions?.trim()
+    return this.#send({
+      _tag: "CompactConversation",
+      sessionId,
+      ...(options.threadId !== undefined && { threadId: options.threadId }),
+      ...(instructions !== undefined && instructions !== "" && { instructions }),
+    })
   }
 
   stopTurn(sessionId: SessionId): boolean {
@@ -1065,7 +1162,12 @@ export class HubClient {
         request.resolve(message)
         break
       }
+      case "ThreadCreated":
+        this.#threadAnswered(message.sessionId)?.resolve(message.threadId)
+        break
       case "CommandFailed": {
+        if (message.command === "CreateThread" && message.sessionId !== undefined)
+          this.#threadAnswered(message.sessionId)?.reject(new CommandError(message.message))
         const request =
           message.requestId === undefined ? undefined : this.#requests.get(message.requestId)
         if (request?.command === message.command && message.requestId !== undefined) {
@@ -1077,6 +1179,14 @@ export class HubClient {
         break
       }
     }
+  }
+
+  /** The oldest CreateThread of the Session waiting for an answer, taken out. */
+  #threadAnswered(sessionId: SessionId): ThreadAsked | undefined {
+    const waiting = this.#threadsAsked.get(sessionId)
+    const first = waiting?.shift()
+    if (waiting?.length === 0) this.#threadsAsked.delete(sessionId)
+    return first
   }
 
   /** The Hub refused the hello: stay disconnected, since trying again would be refused too. */
@@ -1157,6 +1267,11 @@ export class HubClient {
   #failRequests(reason: string): void {
     for (const request of this.#requests.values()) request.reject(new CommandError(reason))
     this.#requests.clear()
+    // A thread asked for before the connection dropped may still be made: its ThreadStarted shows
+    // it, so only the wait for its answer ends.
+    for (const waiting of this.#threadsAsked.values())
+      for (const asked of waiting) asked.reject(new CommandError(reason))
+    this.#threadsAsked.clear()
   }
 
   #dispatch(action: HubAction): void {
