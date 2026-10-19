@@ -87,7 +87,7 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `The Hub turned this Runner away: …` | [Runners](/troubleshooting/runners/#the-hub-turned-this-runner-away) |
 | A Session is Frozen | [Runners](/troubleshooting/runners/#a-session-is-frozen) |
 | `Unknown Sandbox for Session …` | [Runners](/troubleshooting/runners/#unknown-sandbox-for-session) |
-| `The hub-link mod isn't built` | [Runners](/troubleshooting/runners/#the-hub-link-mod-isnt-built) |
+| `The mod isn't built` | [Runners](/troubleshooting/runners/#the-mod-isnt-built) |
 | `Expected string at ["RUNNER_TOKEN"]`, from a checkout | [Develop kndl](/contributing/develop-kndl/#run-a-runner) |
 | `Claude Code could not start on …` | [Sessions](/troubleshooting/sessions/#claude-code-could-not-start) |
 | `Claude Code exited with code …` | [Sessions](/troubleshooting/sessions/#claude-code-exited) |

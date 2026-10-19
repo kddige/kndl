@@ -11,7 +11,6 @@ Clone kndl, run it from the checkout, and make a change that passes the checks. 
 
 - macOS or Linux, with git.
 - [Bun](https://bun.sh) 1.4 or newer.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) on `PATH`. `bun run typecheck` needs it to check the mod; it doesn't need to be signed in.
 - tmux, for the Runner's tmux tests. Without it, `bun test` skips them.
 - To run Sessions: a Mac with Apple Silicon, or Linux with KVM your user can open (add it to the `kvm` group), and a Claude setup token from `claude setup-token`, saved on your **Account** page.
 
@@ -42,7 +41,7 @@ bun test
 | `bun run lint` | [oxlint](https://oxc.rs/docs/guide/usage/linter), configured in `.oxlintrc.json`. |
 | `bun run format:check` | [oxfmt](https://oxc.rs/docs/guide/usage/formatter), configured in `.oxfmtrc.json`: formatting and import order. |
 | `bun test` | Every package's tests, including the mod's pure modules (`packages/mod/src/*.spec.ts`). `KNDL_SANDBOX_IT=1` adds the tests that boot real Sandboxes. |
-| `bun run mod:check` | Builds the mod and runs `claude plugin validate` and `claude plugin test` on each plugin. |
+| `bun run mod:check` | Builds and type-checks the durable agent and runs the mod's shared and runtime tests. No Claude Code binary or sign-in is needed. |
 
 ## Find your way around
 
@@ -52,8 +51,8 @@ kndl is one Bun workspace in TypeScript, on [Effect](https://effect.website).
 |---|---|
 | `packages/protocol` | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas, and which home a process keeps its state in. See [Protocol](/contributing/protocol/). |
 | `packages/hub` | The Hub: an HTTP and WebSocket server with its data in SQLite. |
-| `packages/runner` | A Runner: runs each Session's Claude Code in tmux in a microsandbox Sandbox, on its Creator's setup token, and relays its mod's calls to the Hub. |
-| `packages/mod` | The Claude Code mod each Session loads, as two plugins: `hub-link` reports Turns and subagents to the Hub, and `hub-link-commands` delivers prompts and stops ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)). |
+| `packages/runner` | A Runner: runs each Session's durable agent and a shell in tmux in a microsandbox Sandbox, and relays its mod's calls to the Hub. |
+| `packages/mod` | The headless Pi Durable agent, its Claude model bridge, and the shared Hub link and message helpers. |
 | `packages/cli` | The `kndl` command. Its decisions are pure modules with tests; `Host.ts` and `Shell.ts` do the I/O. `KNDL_DRY_RUN=1` prints the commands that change the system instead of running them. |
 | `packages/web` | The web UI: React on Vite, with [Base UI](https://base-ui.com) and StyleX. |
 | `packages/docs` | This site: Astro Starlight. |
@@ -142,10 +141,10 @@ Every component in its states is at `/kit`. The docs' screenshots are taken agai
 
 ```sh
 bun run mod:build
-claude --plugin-dir packages/mod/plugins/hub-link --plugin-dir packages/mod/plugins/hub-link-commands
+bun run mod:check
 ```
 
-`mod:build` bundles the mod into each plugin's `hooks/hub-link-lib.js`. A running Session picks up a new build at its next start, wake or change of model.
+`mod:build` bundles the headless agent into `packages/mod/durable/dist/agent.js`. A Session picks up a new build when its agent next starts. The Runner supplies the pinned Pi Durable packages and, for Claude model calls, the pinned Claude Code binary. Building, type-checking and running offline tests need neither that binary nor a Claude sign-in.
 
 ## Work on this site
 
@@ -177,7 +176,7 @@ Coding agents write much of kndl, often in kndl Sessions. [`AGENTS.md`](https://
 | What you see | Fix |
 |---|---|
 | The Runner exits with a `ConfigError` naming `RUNNER_TOKEN` | Set `RUNNER_TOKEN`: [Run a Runner](#run-a-runner). The Runner doesn't read the Hub's `.env.local`. |
-| `The hub-link mod isn't built: …` | Start the Runner with `bun run runner`, or run `bun run mod:build` first. |
+| `The mod isn't built: …` | Start the Runner with `bun run runner`, or run `bun run mod:build` first. |
 | `The Hub's web UI isn't built.` | Run `bun run web:build` and reload, or use `bun run web` and open <http://localhost:5173>. |
 | Settings in `.env.local` are ignored | The file goes in `packages/hub/`, not the checkout's root. Check your shell doesn't export the same names. |
 | `Only the web UI at http://localhost:5173 may make this request` | Open the address `HUB_PUBLIC_URL` names, or change it. |
