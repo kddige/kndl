@@ -337,6 +337,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     log,
     ...(options.flushDelayMs === undefined ? {} : { flushDelayMs: options.flushDelayMs }),
   })
+  made.link = link
 
   // Every conversation the Session has, followed before anything runs.
   await loops.attach(root.id, { kind: "main" }, true)
@@ -351,7 +352,6 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
       true,
     )
 
-  made.link = link
   link.start()
   await questions.reaskAsync()
   opened.resume()
