@@ -87,7 +87,7 @@ export const promptInput = (
         ? text
         : [
             { type: "text", text },
-            { type: "text", text: attachmentContext(files, options.attachmentTool) },
+            { type: "text", text: attachmentContext(files, `the ${options.attachmentTool} tool`) },
           ],
     whenBusy: options.steer ? "steer" : "followUp",
     entry: { kind: PromptEntry, data: data as unknown as JsonValue },

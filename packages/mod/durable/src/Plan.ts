@@ -3,14 +3,14 @@
 // rewindable and forked as of the fork's entry, so a thread starts with the Plan the main loop had
 // where it was forked, and goes on with its own.
 //
-// The Plan is in the system prompt, as a section, rather than only in the tool's result: a
-// section's change is sent as an appended update, which keeps the prompt cache, and it outlives
-// compaction and the agent's handoff to itself, where an old tool result would be summarized away.
-// So the tool's result only confirms.
+// The Plan reaches the model in the tool's result, not the system prompt: a prompt that changes
+// within a run doesn't reach a Claude query the bridge holds open until its next query, and the
+// result is where the model looks for what it just did anyway. The agent's handoff to itself
+// carries the Plan over (History.ts).
 
 import { Type } from "@earendil-works/pi-ai"
-import { defineTool, section } from "@earendil-works/pi-durable"
-import type { ConversationId, PromptSection } from "@earendil-works/pi-durable"
+import { defineTool } from "@earendil-works/pi-durable"
+import type { ConversationId } from "@earendil-works/pi-durable"
 import { PlanDoc } from "./Docs.ts"
 import type { PlanState } from "./Docs.ts"
 import { loopFields } from "./Loops.ts"
@@ -24,17 +24,11 @@ const marks = { pending: "[ ]", in_progress: "[~]", done: "[x]" } as const
 export const planText = (plan: Readonly<PlanState> | undefined): string | undefined => {
   if (plan === undefined || plan.steps.length === 0) return undefined
   return [
-    `Your plan, as everyone in the session sees it. Keep it current with ${planTool} as you work: mark a step in progress when you start it and done when it is.`,
+    "The plan, as everyone in the session sees it:",
     ...plan.steps.map((step) => `${marks[step.status]} ${step.text}`),
     ...(plan.explanation === undefined ? [] : [`(${plan.explanation})`]),
   ].join("\n")
 }
-
-/** The Plan, in the system prompt while it has steps. */
-export const planSection = (): PromptSection =>
-  section("plan", async (input, context) =>
-    planText(await input.read.snapshot(PlanDoc, input.conversationId, context)),
-  )
 
 /** The Plan as the Hub carries it. */
 export const planEvent = (plan: Readonly<PlanState>) => ({
@@ -56,7 +50,7 @@ export const planToolDefinition = (runtime: Runtime) =>
   defineTool({
     name: planTool,
     description: [
-      "Sets your plan for the task: its steps, each pending, in_progress or done. Everyone in the session sees it live, and it stays in your context, also after it is summarized.",
+      "Sets your plan for the task: its steps, each pending, in_progress or done. Everyone in the session sees it live.",
       "Use it for work of three or more steps: write the plan before you start, keep exactly one step in_progress while you work, and mark each done as soon as it is. Send the whole plan each time; an empty list clears it. Skip it for quick, single-step requests.",
     ].join(" "),
     parameters: Type.Object({
@@ -86,17 +80,6 @@ export const planToolDefinition = (runtime: Runtime) =>
         else doc.explanation = plan.explanation
       }, context)
       reportPlan(runtime, api.conversationId, plan)
-      const done = plan.steps.filter((step) => step.status === "done").length
-      return {
-        output: [
-          {
-            type: "text",
-            text:
-              plan.steps.length === 0
-                ? "Cleared the plan."
-                : `Updated the plan: ${plan.steps.length} steps, ${done} done.`,
-          },
-        ],
-      }
+      return { output: [{ type: "text", text: planText(plan) ?? "Cleared the plan." }] }
     },
   })

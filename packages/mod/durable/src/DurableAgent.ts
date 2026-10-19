@@ -41,7 +41,7 @@ import {
 import { Loops } from "./Loops.ts"
 import { McpServers, mcpNamespaces } from "./Mcp.ts"
 import type { McpServerSpec } from "./Mcp.ts"
-import { planSection, planToolDefinition } from "./Plan.ts"
+import { planToolDefinition } from "./Plan.ts"
 import type { Catalog } from "./Providers.ts"
 import { Questions } from "./Questions.ts"
 import type { Runtime } from "./Runtime.ts"
@@ -226,7 +226,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   const questions = new Questions(runtime)
   const questionsExtension = questions.extension()
   const registry = createRegistry()
-  // Install order is section order: who kndl is first, the Plan last.
+  // Install order is section order: who kndl is first.
   registry.install(
     defineExtension({
       name: "kndl",
@@ -258,7 +258,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   }
   let agents = installAgents()
   for (const extension of options.extensions ?? []) registry.install(extension)
-  registry.install(defineExtension({ name: "kndl-plan", sections: [planSection()], tools: [planToolDefinition(runtime)] }))
+  registry.install(defineExtension({ name: "kndl-plan", tools: [planToolDefinition(runtime)] }))
   const mcp = new McpServers(servers, { hubUrl, modToken: options.modToken, log })
 
   // ── The Harness ──

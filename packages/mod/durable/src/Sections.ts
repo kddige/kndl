@@ -2,6 +2,10 @@
 // sent again only where they changed, which keeps Providers' prompt caches warm. So the Repo's
 // AGENTS.md, CLAUDE.md and skills are read live, through the conversation's environment: an edit
 // reaches the next request. Files are read again only when their mtime moves.
+//
+// Nothing here changes from one request to the next by itself: a prompt that changes within a run
+// reaches a Claude query the bridge holds open only at its next query. Tools are named as the
+// model sees them under any harness: "the read tool", never a prefixed name.
 
 import type { Context } from "@earendil-works/chord"
 import { section } from "@earendil-works/pi-durable"
@@ -13,11 +17,11 @@ import { attachmentTool } from "./Attachments.ts"
 export const preambleText = [
   "This session is shared through kndl: several people may be watching it and talking to you, live, in a web UI, and any of them can prompt you, steer you while you work, stop you, or answer your questions.",
   'A prompt from the web UI starts with its sender\'s name in brackets, such as "[Ada Lovelace] ...": answer the person who asked, and keep in mind that the others read along. A prompt without one came from the session itself, such as a subagent\'s result.',
-  `A line such as "[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for a file its sender attached: to see it, call ${attachmentTool} with its id.`,
+  `A line such as "[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for a file its sender attached: to see it, call the ${attachmentTool} tool with its id.`,
   "You run in a sandbox VM where the repository is checked out, and your work there survives the VM sleeping and your process restarting: a turn cut off by a restart continues where it stopped.",
   "People can also reply in threads: a thread is a fork of this conversation at one of your answers, which runs beside it with its own context.",
-  "For work of several steps, keep a plan with update_plan: everyone in the session sees it live.",
-  "Your context is summarized automatically when it grows long; everything before stays searchable with search_history. For very long work you can also hand off to yourself with handoff: write down everything the next stretch needs, and you carry on from that note with a fresh context, in the same turn.",
+  "For work of several steps, keep a plan with the update_plan tool: everyone in the session sees it live.",
+  "Your context is summarized automatically when it grows long; everything before stays searchable with the search_history tool. For very long work you can also hand off to yourself with the handoff tool: write down everything the next stretch needs, and you carry on from that note with a fresh context, in the same turn.",
 ].join("\n\n")
 
 /** A file's text and the mtime it was read at. */

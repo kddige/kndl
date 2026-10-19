@@ -4,7 +4,7 @@
 //   summarized and a handoff cleared away: Pi Durable keeps them all in storage.
 // - `handoff(note)` hands the work off to itself: Pi Durable's handoff control starts a fresh
 //   context from the note, and a follow-up queued with it (`kndl.continue`) carries the run on in
-//   that context, which the Hub sees as the same Turn going on (Loops.ts).
+//   that context, with the Plan, which the Hub sees as the same Turn going on (Loops.ts).
 // - `session_history` reads the Session's Turns from the Hub (ADR 0030), as both other mods did:
 //   a Session that moved here from another Harness was handed what it hadn't seen
 //   (`DeliverHandoff`), with where the Turns it left out are.
@@ -23,7 +23,9 @@ import {
   historyToolDescription,
 } from "../../src/Handoff.ts"
 import type { Command } from "../../src/HubMessages.ts"
+import { PlanDoc } from "./Docs.ts"
 import { ContinueEntry, contentText, HandoffEntry } from "./Inputs.ts"
+import { planText } from "./Plan.ts"
 import type { Runtime } from "./Runtime.ts"
 
 export const searchHistoryTool = "search_history"
@@ -177,11 +179,13 @@ export const handoffToolDefinition = () =>
     execute: async (args, api, context) => {
       const note = args.note.trim()
       if (note === "") throw new Error("Write the note: it is all your next context starts with.")
+      // The Plan was in the context the handoff clears: it carries over with the note.
+      const plan = planText(await api.snapshot(PlanDoc, api.conversationId, context))
       const conversation = await api.conversation(api.conversationId, context)
       await conversation?.submit(
         {
           type: "input",
-          content: continueText,
+          content: plan === undefined ? continueText : `${continueText}\n\n${plan}`,
           whenBusy: "followUp",
           requestId: `continue:${api.callId}`,
           entry: { kind: ContinueEntry, data: {} },
