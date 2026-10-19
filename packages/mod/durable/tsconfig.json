@@ -1,0 +1,8 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // The durable agent runs in Node: Bun's types carry Node's, and its tests run under Bun.
+    "types": ["bun"]
+  },
+  "include": ["src/**/*.ts"]
+}
