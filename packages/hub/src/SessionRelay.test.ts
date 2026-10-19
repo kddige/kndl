@@ -4966,6 +4966,7 @@ describe("threads (docs/design/durable-harness.md)", () => {
       threadId,
       reason: "aborted",
       durationMs: expect.any(Number),
+      errorMessage: "The agent exited with code 1",
     })
     const asleepNow = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
     expect(threadsOf(asleepNow)).toMatchObject([{ id: threadId, running: false }])
@@ -5032,5 +5033,128 @@ describe("threads (docs/design/durable-harness.md)", () => {
       sessionId,
       models: [gpt, grok],
     })
+  })
+})
+
+/** The events of the kinds a stop logs, as the client took them, in order. */
+const stopEvents = async (web: Connection<Web>, count: number) => {
+  const events = []
+  for (let i = 0; i < count; i++) {
+    events.push(
+      (
+        await web.take(
+          "SessionEventLogged",
+          (m) =>
+            m.entry.event._tag === "TurnEnded" ||
+            m.entry.event._tag === "QuestionClosed" ||
+            (m.entry.event._tag === "SessionStateChanged" && m.entry.event.state !== "Active"),
+        )
+      ).entry.event,
+    )
+  }
+  return events
+}
+
+describe("a main-loop Turn when the agent stops (docs/design/durable-harness.md)", () => {
+  test("ends aborted, saying why, before its sync question is cancelled and the Session goes Asleep; its resumed run is a Turn of its own", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId, mod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(turnStarted("t-1"), {
+      _tag: "QuestionAsked",
+      turnId: "t-1",
+      toolCallId: "toolu_ask",
+      questions: [
+        {
+          question: "Which?",
+          header: "Which",
+          options: [{ label: "This" }, { label: "That" }],
+          multiSelect: false,
+        },
+      ],
+    })
+    await web.take("SessionUpdated", (m) => m.session.openQuestion !== undefined)
+
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    expect(await stopEvents(web, 3)).toEqual([
+      {
+        _tag: "TurnEnded",
+        turnId: "t-1",
+        reason: "aborted",
+        durationMs: expect.any(Number),
+        errorMessage: "The agent exited with code 1",
+      },
+      {
+        _tag: "QuestionClosed",
+        turnId: "t-1",
+        toolCallId: "toolu_ask",
+        outcome: { _tag: "Cancelled" },
+      },
+      { _tag: "SessionStateChanged", state: "Asleep", message: "The agent exited with code 1" },
+    ])
+    const sleeping = (await openWeb(hub, "carol")).sessions.sessions[0]
+    expect(sleeping).toMatchObject({ currentTurn: null })
+    expect(sleeping).not.toHaveProperty("openQuestion")
+
+    // Woken, the agent goes on with the run: a Turn of its own, `Resumed`.
+    web.send({ _tag: "WakeSession", sessionId })
+    const start = await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const woken = new Mod(hub, sessionId, start.modToken)
+    expect((await woken.hello({ durable: true })).status).toBe(200)
+    await woken.post(turnStarted("t-2", undefined, { _tag: "Resumed" }))
+    await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-2")
+  })
+
+  test("ends aborted when the Session is archived, or its Runner is back without the agent", async () => {
+    const scene = await sessionScene()
+    const { web, sessionId, mod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await mod.post(turnStarted("t-1"))
+    await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-1")
+    web.send({ _tag: "ArchiveSession", sessionId })
+    expect((await stopEvents(web, 2))[0]).toEqual({
+      _tag: "TurnEnded",
+      turnId: "t-1",
+      reason: "aborted",
+      durationMs: expect.any(Number),
+      errorMessage: "Archived by alice",
+    })
+
+    // A Runner that goes offline may come back with the agent still running: its Turn goes on.
+    const other = await sessionScene()
+    joinSession(other.web, other.sessionId)
+    await other.web.take("SessionHistory")
+    await other.mod.post(turnStarted("t-1"))
+    await other.web.take("SessionUpdated", (m) => m.session.currentTurn === "t-1")
+    await other.runner.close()
+    await other.web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    await other.web.take("SessionEventLogged", stateChanged("Frozen"))
+    expect(
+      (await other.web.untaken("SessionEventLogged")).filter(
+        (m) => m.entry.event._tag === "TurnEnded",
+      ),
+    ).toEqual([])
+    // Back without it, the Turn is over.
+    await openRunner(other.hub, other.runnerToken)
+    expect((await stopEvents(other.web, 2))[0]).toMatchObject({
+      _tag: "TurnEnded",
+      turnId: "t-1",
+      reason: "aborted",
+      errorMessage: "mac is back; the agent is not running there",
+    })
+  })
+
+  test("logs no Turn's end for a Session with none running", async () => {
+    const scene = await sessionScene()
+    const { web, sessionId } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await asleep(scene)
+    expect(
+      (await web.untaken("SessionEventLogged")).filter((m) => m.entry.event._tag === "TurnEnded"),
+    ).toEqual([])
   })
 })

@@ -122,9 +122,13 @@
 //   its id as its request id. A thread's Turn events carry its id: its TurnStarted and TurnEnded
 //   set it running and idle, never the Session's Turn, and its PromptSteered leaves the Prompt
 //   queue alone. A running thread keeps the Session from idling to sleep, and a draining Runner
-//   waits for it, as for a subagent; when the agent stops, each running thread's Turn is logged
-//   ended `aborted`, as its restart reports a `Resumed` Turn for each it goes on with. The agent's
-//   compactions, Plan and running cost are logged as it reports them.
+//   waits for it, as for a subagent. The agent's compactions, Plan and running cost are logged as
+//   it reports them.
+// - The agent stopping (put to sleep, exited, failed to start, relaunched, archived, or not running
+//   on a Runner that is back): the Turn its main loop ran, and each thread's, is logged ended
+//   `aborted`, saying why, before the question it asked is cancelled, so the transcript shows it
+//   stopped. The agent's restart reports a `Resumed` Turn for each run it goes on with, a Turn of
+//   its own. A Runner going offline ends none: the agent may outlive it.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back. It
 //   is a plain shell in the Sandbox, without the agent's secrets.
 // - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
@@ -290,6 +294,7 @@ import {
   SwitchThreadModel,
   ThreadCreated,
   ThreadId,
+  type TurnId,
   ThreadModelChanged,
   ThreadPromptSent,
   ThreadStarted,
@@ -1940,16 +1945,17 @@ export class SessionRelay extends Context.Service<
             ...gatewayServers(session.mcpServers ?? []),
           }),
         )
-        // Its agents and threads stop with the old agent.
+        // Its agents and Turns stop with the old agent: only between Turns, but for its threads'.
         yield* agentsInterrupted(session.id)
-        yield* threadsAborted(session.id)
+        yield* turnsAborted(session, { message: "Restarted for its new model" })
         yield* sessionUpdated(session.id)
         return true
       })
 
       /**
-       * The Session's Claude Code is no longer running: no Turn is, and nothing is in flight. It
-       * is Asleep, whether it was put to sleep, exited on its own or failed to start.
+       * The Session's agent is no longer running: no Turn is, those that ran logged ended
+       * (`turnsAborted`), and nothing is in flight. It is Asleep, whether it was put to sleep,
+       * exited on its own or failed to start.
        */
       const claudeGone = Effect.fn("SessionRelay.claudeGone")(function* (
         session: SessionSummary,
@@ -1964,13 +1970,13 @@ export class SessionRelay extends Context.Service<
         live.ended(session.id, restartGoesOn ? "ClaudeGoneRestarting" : "ClaudeGone")
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
-        if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
+        // Its Turns end, as the mod would have said, before the question they asked closes.
+        const aborted = yield* turnsAborted(session, why)
         // Its next start takes its model and thinking level as set then.
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         // No one can answer its question now: the next Claude Code doesn't ask it again.
         const cancelled = yield* cancelQuestion(session)
         const interrupted = yield* agentsInterrupted(session.id)
-        const aborted = yield* threadsAborted(session.id)
         if (session.state === "Archived") {
           if (interrupted || cancelled || aborted) yield* sessionUpdated(session.id)
           return
@@ -1994,28 +2000,38 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * The Session's agent stopped: the Turn running in each of its threads ended, each logged as
-       * a TurnEnded `aborted` (docs/design/durable-harness.md), as its main loop's Turn is over. The
-       * agent's restart reports a `Resumed` Turn for each it goes on with. Whether any ran; the
-       * caller sends the SessionUpdated.
+       * The Session's agent stopped (docs/design/durable-harness.md): the Turn its main loop ran, and
+       * the one each of its threads ran, ended, each logged as a TurnEnded `aborted` saying why, so
+       * the transcript shows it stopped rather than working on. The agent's restart reports a
+       * `Resumed` Turn for each it goes on with. Whether any ran; the caller sends the
+       * SessionUpdated. A Runner going offline isn't the agent stopping: it may outlive its Runner,
+       * and is settled here once the Runner is back without it (`claudeGone`).
        */
-      const threadsAborted = Effect.fn("SessionRelay.threadsAborted")(function* (
-        sessionId: SessionId,
+      const turnsAborted = Effect.fn("SessionRelay.turnsAborted")(function* (
+        session: SessionSummary,
+        why: Why,
       ) {
         const now = yield* Clock.currentTimeMillis
-        const ended = yield* sessions.endThreadTurns(sessionId)
-        for (const turn of ended) {
-          yield* logEvent(
-            sessionId,
-            TurnEnded.make({
-              turnId: turn.turnId,
-              threadId: turn.threadId,
-              reason: "aborted",
-              durationMs: Math.max(0, now - turn.startedAt),
-            }),
-          )
+        const said = whyText(why)
+        const ended = (turnId: TurnId, startedAt: number | undefined, threadId?: ThreadId) =>
+          TurnEnded.make({
+            turnId,
+            ...(threadId !== undefined && { threadId }),
+            reason: "aborted",
+            durationMs: startedAt === undefined ? 0 : Math.max(0, now - startedAt),
+            ...(said !== "" && { errorMessage: said }),
+          })
+        const { currentTurn } = session
+        if (currentTurn !== null) {
+          yield* sessions.setCurrentTurn(session.id, null)
+          const startedAt = yield* log.mainTurnStartedAt(session.id, currentTurn)
+          yield* logEvent(session.id, ended(currentTurn, startedAt))
         }
-        return ended.length > 0
+        const threads = yield* sessions.endThreadTurns(session.id)
+        for (const turn of threads) {
+          yield* logEvent(session.id, ended(turn.turnId, turn.startedAt, turn.threadId))
+        }
+        return currentTurn !== null || threads.length > 0
       })
 
       /**
@@ -2242,8 +2258,8 @@ export class SessionRelay extends Context.Service<
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
         for (const client of peers.webClients) client.terminals.delete(session.id)
+        yield* turnsAborted(session, { by, message: message ?? "Archived" })
         yield* cancelQuestion(session)
-        yield* threadsAborted(session.id)
         yield* sessions.archive(session.id, {
           by: by.id,
           at,
@@ -3235,7 +3251,7 @@ export class SessionRelay extends Context.Service<
               const { sessionId, anchorTurnId } = message
               const session = yield* threadSession(message)
               if (Option.isNone(session)) return
-              if (!(yield* log.hasMainTurn(sessionId, anchorTurnId))) {
+              if ((yield* log.mainTurnStartedAt(sessionId, anchorTurnId)) === undefined) {
                 return refuse(
                   message,
                   "There is no such Turn in the Session to start a thread off.",

@@ -40,10 +40,13 @@ export class SessionLog extends Context.Service<
       SqlError
     >
     /**
-     * Whether the Session's main loop had a Turn `turnId`: a TurnStarted of neither a subagent
-     * nor a thread.
+     * When the Session's main loop started its Turn `turnId`, as its TurnStarted, of neither a
+     * subagent nor a thread, was logged; undefined if it had no such Turn.
      */
-    readonly hasMainTurn: (sessionId: SessionId, turnId: string) => Effect.Effect<boolean, SqlError>
+    readonly mainTurnStartedAt: (
+      sessionId: SessionId,
+      turnId: string,
+    ) => Effect.Effect<number | undefined, SqlError>
     /** The seq of the Session's last entry, or none for an empty log. */
     readonly lastSeq: (sessionId: SessionId) => Effect.Effect<EventSeq | undefined, SqlError>
   }
@@ -121,20 +124,21 @@ export class SessionLog extends Context.Service<
         return { entries: rows.map(toEntry), earlier }
       })
 
-      const hasMainTurn = Effect.fn("SessionLog.hasMainTurn")(function* (
+      const mainTurnStartedAt = Effect.fn("SessionLog.mainTurnStartedAt")(function* (
         sessionId: SessionId,
         turnId: string,
       ) {
-        const rows = yield* sql<{ readonly seq: number }>`
-          SELECT seq FROM session_events
+        const rows = yield* sql<{ readonly at: number }>`
+          SELECT at FROM session_events
           WHERE session_id = ${sessionId}
             AND json_extract(event, '$._tag') = 'TurnStarted'
             AND json_extract(event, '$.turnId') = ${turnId}
             AND json_extract(event, '$.agentId') IS NULL
             AND json_extract(event, '$.threadId') IS NULL
+          ORDER BY seq DESC
           LIMIT 1
         `
-        return rows.length > 0
+        return rows[0]?.at
       })
 
       const lastSeq = Effect.fn("SessionLog.lastSeq")(function* (sessionId: SessionId) {
@@ -145,7 +149,7 @@ export class SessionLog extends Context.Service<
         return seq === null || seq === undefined ? undefined : EventSeq.make(seq)
       })
 
-      return SessionLog.of({ append, history, lastTurns, hasMainTurn, lastSeq })
+      return SessionLog.of({ append, history, lastTurns, mainTurnStartedAt, lastSeq })
     }),
   )
 }
