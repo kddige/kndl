@@ -38,29 +38,29 @@ Claude's Models run through **the Claude bridge**, ported from the pi extension 
 
 ## The protocol, version 5
 
-Additive, except the version bump, which makes a Runner of version 4 say it must update.
+The contract is code: `packages/protocol/src/Thread.ts`, and the `threadId`s, `Resumed` and new members in `Turn.ts`, `Mod.ts` and `Web.ts`. The version bump makes a peer of version 4 say it must update.
 
-**Ids:** `ThreadId`, minted by the Hub (`thr_` + 16 random base32 characters).
+**Ids:** `ThreadId`, minted by the Hub.
 
-**Events, mod to Hub:**
+**Turn events, mod to Hub (logged):**
 
-- Every Turn event that `agentId` is on (`TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`) and `TurnStarted`, `PromptSteered`, `SteeredPromptRead`, `AgentStarted`, `AgentStatusChanged` gain an optional `threadId`. Without it, the event is the main loop's, or its subagents'. A `TurnStarted`/`TurnEnded` with a `threadId` doesn't change whether the Session is busy: only the thread's.
-- `PromptSender` gains `Resumed {}`: a run the agent continued after it restarted.
-- `ThreadStarted { threadId, anchorTurnId, title, model, startedBy: Participant }`: the thread exists. Its first Turn follows.
-- `ThreadModelChanged { threadId, model, thinkingLevel? }`.
-- `CompactionStarted { threadId?, agentId?, reason: "threshold" | "overflow" | "manual" }` and `CompactionEnded { threadId?, agentId?, outcome: "compacted" | "skipped" | "failed", tokensBefore?, summary?, error? }`. Shown in the transcript where they happened.
-- `PlanChanged { threadId?, plan: Plan }`, where `Plan = { items: [{ text, status: "pending" | "in_progress" | "done" }], explanation? }`.
-- `UsageChanged { threadId?, total: { cost, input, output, cacheRead, cacheWrite } }`: a conversation's running total, from `pi.usage`.
+- `TurnStarted`, `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`, `PromptSteered`, `SteeredPromptRead` and `AgentStarted` have an optional `threadId`. Without one, the event is the main loop's, or its subagents' (by `agentId`, as today). A `TurnStarted`/`TurnEnded` with a `threadId` starts or ends that thread's Turn and leaves the Session's `currentTurn` alone.
+- `PromptSender` has `Resumed {}`: a run the agent continued after it restarted.
+- `CompactionStarted { threadId?, agentId?, reason, by? }`, `CompactionEnded { threadId?, agentId?, outcome, summary?, error? }`.
+- `PlanChanged { threadId?, agentId?, plan }`.
+- `UsageChanged { threadId?, agentId?, usage }`: a conversation's running total, sent once a Turn ends.
+- `ModelSwitchFailed` has an optional `threadId`.
+- `ModHello` has `durable: true`.
 
-**Commands, Hub to mod:**
+**Session events the Hub logs itself:** `ThreadStarted { threadId, anchorTurnId, title, startedBy, model?, thinkingLevel? }`, `ThreadPromptSent { threadId, promptId, sender, text, attachments? }` (shown as sent until the agent's `TurnStarted` or `PromptSteered` with that `promptId`), `ThreadModelChanged { threadId, by, model, thinkingLevel? }`, and `TurnStopRequested` with an optional `threadId`.
 
-- `StartThread { sessionId, threadId, anchorTurnId, promptId, text, sender, attachments?, model?, thinkingLevel? }`: fork the main loop at the answer of `anchorTurnId` and start a run with this prompt. A Turn that hasn't answered yet forks at its newest entry.
-- `DeliverThreadPrompt { sessionId, threadId, promptId, text, sender, attachments? }`: submit to the thread, with `requestId: promptId`, steering when it is busy.
-- `StopThread { sessionId, threadId }`: `abort()` the thread.
-- `SwitchThreadModel { sessionId, threadId, model, thinkingLevel? }`: `configure()` the thread.
-- `Compact { sessionId, threadId?, instructions?, sender }`: `compact(instructions)` on the main loop or a thread.
+**Commands, Hub to mod:** `StartThread { threadId, anchorTurnId, promptId, text, sender, attachments?, model?, thinkingLevel? }`, `DeliverThreadPrompt { threadId, promptId, text, sender, attachments? }` (steers a busy thread, else starts a Turn; `requestId: promptId`), `StopThread`, `SwitchThreadModel`, `Compact { threadId?, instructions?, sender }`.
 
-**Web commands:** `StartThread`, `PromptThread`, `StopThread`, `SetThreadModel`, `Compact`, each authorized as `Prompt` is: any Participant with access. The Hub mints the ids, logs nothing itself for them, and relays them to the mod; what happens comes back as events.
+**Web to Hub** (`ThreadCommand`): `CreateThread { sessionId, anchorTurnId, text, attachments?, model?, thinkingLevel? }`, `PromptThread`, `StopThread`, `SetThreadModel`, `CompactConversation`. Any Participant with access. The Hub mints the ids, logs what it logs, wakes an Asleep Session, and queues the mod command; thread commands not yet delivered when the Harness restarts are delivered again after its hello, which `requestId` makes safe.
+
+**Hub to web** (`ThreadMessage`): `ThreadCreated { sessionId, threadId }` to the creator of a thread, and `SessionModels { sessionId, models }` to everyone who joins a Session: its Creator's Models, so anyone can switch it.
+
+**`SessionSummary.threads`:** `ThreadSummary { id, title, anchorTurnId, startedBy, running, model?, thinkingLevel? }`, oldest first. A running thread keeps the Session from going to sleep for being idle, as a Turn does. When the Harness stops, the Hub ends each running thread's Turn as `aborted`, as it does the main loop's; the agent's restart reports `Resumed` Turns for those it continues.
 
 ## The agent's tools
 
