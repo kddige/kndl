@@ -2159,10 +2159,14 @@ const piRunner = {
 const piSession = { ...piRunner, create: { harness: "Pi" } }
 
 /** A Hub whose Members' pi Sessions can run `models`, which a test may change as it goes. */
-async function piHub(models: ReadonlyArray<TestModel>) {
+async function piHub(
+  models: ReadonlyArray<TestModel>,
+  database?: Layer.Layer<SqlClient.SqlClient, unknown>,
+) {
   const catalogue = { models }
   const hub = await startHub({
     config: { devLogin: true },
+    ...(database !== undefined && { database }),
     modelCatalog: Layer.succeed(ModelCatalog, {
       modelsFor: () => Effect.sync(() => catalogue.models),
       signedIn: () => Effect.succeed([]),
@@ -4519,8 +4523,11 @@ const loggedTag =
  * A durable agent's Session after a main-loop Turn `t-1`, which alice and bob both joined, on a Hub
  * where alice has `models`.
  */
-async function threadScene(models: ReadonlyArray<TestModel> = [gpt, claudeOpus]) {
-  const { hub, catalogue } = await piHub(models)
+async function threadScene(
+  models: ReadonlyArray<TestModel> = [gpt, claudeOpus],
+  database?: Layer.Layer<SqlClient.SqlClient, unknown>,
+) {
+  const { hub, catalogue } = await piHub(models, database)
   const scene = await sessionScene(hub, piSession)
   const { web, sessionId, mod } = scene
   expect((await mod.hello({ durable: true, switchesModels: true })).status).toBe(200)
@@ -4551,6 +4558,200 @@ async function bobStartsThread(
 }
 
 describe("threads (docs/design/durable-harness.md)", () => {
+  for (const command of ["CreateThread", "PromptThread"] as const) {
+    for (const boundary of ["command", "event"] as const) {
+      test(`${command} admission rolls back its row, events and command on ${boundary} failure`, async () => {
+        const scene = await threadScene()
+        const { hub, web, sessionId, mod } = scene
+        const threadId = command === "PromptThread" ? await bobStartsThread(scene) : undefined
+        if (threadId !== undefined) await mod.next("StartThread", 500)
+        // Snapshot existing history and commands, including any earlier thread. Abort a real
+        // SQLite write, not a mock: it must unwind every preceding write in this admission.
+        const snapshot = () =>
+          hub.run(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient
+              return {
+                threads: yield* sql`SELECT * FROM threads WHERE session_id = ${sessionId}`,
+                events:
+                  yield* sql`SELECT * FROM session_events WHERE session_id = ${sessionId} ORDER BY seq`,
+                commands:
+                  yield* sql`SELECT * FROM thread_commands WHERE session_id = ${sessionId} ORDER BY seq`,
+              }
+            }),
+          )
+        const before = await snapshot()
+        await hub.run(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient
+            yield* sql.unsafe(
+              boundary === "command"
+                ? `CREATE TRIGGER fail_admission AFTER INSERT ON thread_commands
+               BEGIN SELECT RAISE(ABORT, 'injected command admission failure'); END`
+                : `CREATE TRIGGER fail_admission AFTER INSERT ON session_events
+               WHEN json_extract(NEW.event, '$._tag') = 'ThreadPromptSent'
+               BEGIN SELECT RAISE(ABORT, 'injected event admission failure'); END`,
+            )
+          }),
+        )
+        // Drain earlier broadcasts before checking that rollback publishes nothing new.
+        for (const _ of await web.untaken("SessionEventLogged"))
+          await web.take("SessionEventLogged")
+        const message =
+          command === "CreateThread"
+            ? { _tag: command, sessionId, anchorTurnId: "t-1", text: "atomic prompt" }
+            : { _tag: command, sessionId, threadId: defined(threadId), text: "atomic prompt" }
+        web.send(message)
+        expect((await web.take("CommandFailed")).command).toBe(command)
+        expect(await snapshot()).toEqual(before)
+        expect(await web.untaken("SessionEventLogged")).toEqual([])
+        expect(await web.untaken("ThreadCreated")).toEqual([])
+        expect(withoutPresence(await mod.poll())).toEqual([])
+
+        await hub.run(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient
+            yield* sql`DROP TRIGGER fail_admission`
+          }),
+        )
+        web.send(message)
+        const sent = (
+          await web.take(
+            "SessionEventLogged",
+            (m) =>
+              m.entry.event._tag === "ThreadPromptSent" && m.entry.event.text === "atomic prompt",
+          )
+        ).entry.event
+        expect(sent._tag).toBe("ThreadPromptSent")
+        const delivered = await mod.next(
+          command === "CreateThread" ? "StartThread" : "DeliverThreadPrompt",
+          500,
+        )
+        expect(delivered).toHaveLength(1)
+        expect(delivered[0]).toMatchObject({
+          text: "atomic prompt",
+          promptId: (sent as { promptId: string }).promptId,
+        })
+        const after = await snapshot()
+        expect(after.commands).toHaveLength(before.commands.length + 1)
+        expect(after.events).toHaveLength(
+          before.events.length + (command === "CreateThread" ? 2 : 1),
+        )
+        expect(after.threads).toHaveLength(
+          before.threads.length + (command === "CreateThread" ? 1 : 0),
+        )
+      })
+    }
+  }
+
+  test("committed thread prompts reopen with their commands and replay until a Turn or steer receipt", async () => {
+    const dir = testDatabaseDir("kndl-thread-admission-")
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const scene = await threadScene([gpt], database)
+      const { hub, web, mod, sessionId, runnerToken, start } = scene
+      const threadId = await bobStartsThread(scene)
+      const [first] = await mod.next("StartThread", 500)
+      web.send({ _tag: "PromptThread", sessionId, threadId, text: "another saved prompt" })
+      const [next] = await mod.next("DeliverThreadPrompt", 500)
+      const admitted = [defined(first), defined(next)] satisfies [Command, Command]
+      // Neither a poll nor loss of the in-memory outbox is an admission receipt for a prompt.
+      await web.close()
+      await scene.bobWeb.close()
+      await scene.runner.close()
+      await hub.stop()
+
+      const { hub: reopened } = await piHub([gpt], database)
+      const saved = await reopened.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          const prompts = yield* sql<{ readonly promptId: string }>`
+          SELECT json_extract(event, '$.promptId') AS promptId FROM session_events
+          WHERE session_id = ${sessionId} AND json_extract(event, '$._tag') = 'ThreadPromptSent'
+          ORDER BY seq
+        `
+          const commands = yield* sql<{ readonly command: string }>`
+          SELECT command FROM thread_commands WHERE session_id = ${sessionId} ORDER BY seq
+        `
+          return { prompts, commands: commands.map((row) => JSON.parse(row.command)) }
+        }),
+      )
+      expect(saved.prompts.map((p) => p.promptId)).toEqual(admitted.map((c) => c.promptId))
+      expect(saved.commands).toEqual(admitted)
+      const back = await openRunner(
+        reopened,
+        runnerToken,
+        [sessionId],
+        undefined,
+        true,
+        piRunner.runnerHello,
+      )
+      const resumed = new Mod(reopened, sessionId, start.modToken)
+      expect((await resumed.hello({ durable: true })).status).toBe(200)
+      expect(withoutPresence(await resumed.poll(500))).toEqual(admitted)
+      await resumed.post(
+        {
+          _tag: "TurnStarted",
+          threadId,
+          turnId: "t-saved",
+          promptId: admitted[0].promptId,
+          text: admitted[0].text,
+          sender: { _tag: "FromParticipant", participant: bob },
+        },
+        {
+          _tag: "PromptSteered",
+          threadId,
+          turnId: "t-saved",
+          promptId: admitted[1].promptId,
+          text: admitted[1].text,
+          sender: alice,
+        },
+      )
+      expect(
+        await reopened.run(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient
+            return yield* sql`SELECT * FROM thread_commands WHERE session_id = ${sessionId}`
+          }),
+        ),
+      ).toEqual([])
+      await resumed.poll() // Acknowledge the previous HTTP poll's in-memory outbox entries.
+      expect((await resumed.hello({ durable: true })).status).toBe(200)
+      expect(withoutPresence(await resumed.poll(100))).toEqual([])
+      await back.close()
+      await reopened.stop()
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a duplicate thread prompt receipt leaves the main queue and its in-flight delivery alone", async () => {
+    const scene = await threadScene()
+    const { hub, web, mod, sessionId } = scene
+    await bobStartsThread(scene)
+    const [thread] = await mod.next("StartThread", 500)
+    await web.take("PromptQueueChanged", queueIs())
+    web.send({ _tag: "SendPrompt", sessionId, text: "main in flight" })
+    await web.take("PromptQueueChanged", queueIs("main in flight"))
+    const [main] = await mod.deliveries(500)
+    await mod.post({ _tag: "PromptAlreadySubmitted", promptId: defined(thread).promptId })
+    expect(await web.untaken("PromptQueueChanged")).toEqual([])
+    web.send({ _tag: "SendPrompt", sessionId, text: "main waiting" })
+    await web.take("PromptQueueChanged", queueIs("main in flight", "main waiting"))
+    expect(await mod.deliveries(100)).toEqual([])
+    expect(
+      await hub.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql`SELECT * FROM thread_commands WHERE session_id = ${sessionId}`
+        }),
+      ),
+    ).toEqual([])
+    await mod.post(turnStarted("t-main", defined(main).promptId))
+    await web.take("PromptQueueChanged", queueIs("main waiting"))
+  })
+
   test("anyone starts one off a main-loop Turn: logged, kept with the Session, and sent to the agent", async () => {
     const scene = await threadScene()
     const { web, bobWeb, sessionId, mod } = scene
