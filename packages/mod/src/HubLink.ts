@@ -1,16 +1,11 @@
-// A plugin's link to the Hub (the protocol's Mod.ts): say hello, post events in batches, and, for
-// the plugin that runs the Hub's commands, long-poll for them. When the Hub answers 409 it has restarted and forgotten the mod, so the
-// mod says hello again and polls from `after=0`, the Hub's numbering having started over. Other
+// The durable agent's link to the Hub (the protocol's Mod.ts): say hello, post events in batches,
+// and long-poll commands. When the Hub answers 409 it has restarted and forgotten the mod, so the
+// agent says hello again and polls from `after=0`, the Hub's numbering having started over. Other
 // failures are retried with a growing delay.
 //
-// It runs on what it is given (`fetch`, `after`), so the same code runs in Claude Code's mod
-// runtime, which has no timers of its own, and under `bun test`.
-//
-// All of its work runs from its own timers, never inside the hook that reported an event. In
-// Claude Code a `$` call belongs to the hook's dispatch it was made in, wherever its `$` came from,
-// and once a Stop aborts the Turn, each wait or fetch made in that dispatch is refused at once
-// ("turn-abort"). A `tool.call` hook reports its call's end after the abort, so a flush waited
-// for there was refused, and the link never posted again (#165).
+// The transport and scheduling are injected so tests can exercise retries without a server or
+// real timers. Posting and polling have their own lifetime, independent of an individual Turn:
+// stopping a Turn must not prevent its final events from reaching the Hub.
 
 import { MaxCommandWaitMs } from "@kndl/protocol"
 import type { ModCommand } from "@kndl/protocol"
@@ -47,20 +42,19 @@ export interface HubLinkOptions {
   readonly modToken: string
   /**
    * What the hello says; a function is read each time it says hello, as when the Hub restarted
-   * since a pi Session switched its model.
+   * since a Session switched its model.
    */
   readonly hello: HelloFields | (() => HelloFields)
   readonly fetch: HubFetch
   /**
-   * Calls `fn` once, `ms` from now, on its own: not in the dispatch of the hook that asked, which a
-   * Turn abort cuts short. In Claude Code, `$.clock.after`.
+   * Calls `fn` once, `ms` from now, independently of the Turn that reported an event.
    */
   readonly after: (ms: number, fn: () => void) => void
   /** Milliseconds since the epoch; `Date.now` by default. */
   readonly now?: () => number
   /**
    * Runs a command from the Hub. Commands run one at a time, in order. Without it the link only
-   * reports, and never polls: one plugin of the two runs the commands (ADR 0014).
+   * reports and never polls.
    */
   readonly onCommand?: (command: ModCommand) => Promise<void>
   readonly onStatus: (status: LinkStatus) => void

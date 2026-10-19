@@ -1,4 +1,4 @@
-// The messages hub-link exchanges with the Hub (see the protocol's Mod.ts), checked against the
+// The messages the durable agent exchanges with the Hub (see the protocol's Mod.ts), checked against the
 // protocol's schemas: every event is validated before it is queued, so one bad event can't make
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
@@ -55,7 +55,7 @@ export interface HelloFields {
   readonly sessionId: string
   readonly conversationId: string
   readonly model: string
-  /** It takes a SwitchModel (ADR 0029): kndl's pi extension does, the Claude Code plugins don't. */
+  /** It takes SwitchModel in place, rather than requiring a process relaunch (ADR 0029). */
   readonly switchesModels?: true
   /** It is the durable agent (docs/design/durable-harness.md): it takes threads and Compact. */
   readonly durable?: true
