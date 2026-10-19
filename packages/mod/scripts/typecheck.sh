@@ -31,3 +31,4 @@ tsc --noEmit -p plugins/hub-link
 tsc --noEmit -p plugins/hub-link-commands
 tsc --noEmit -p tsconfig.spec.json
 tsc --noEmit -p pi
+tsc --noEmit -p durable
