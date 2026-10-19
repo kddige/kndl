@@ -1,6 +1,8 @@
 # kndl
 
-kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs coding-agent sessions in sandboxes, on models from any Provider its members connect, and works in them together from the web: each Session's Creator drives it, and the team watches it live.
+kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs coding-agent sessions in sandboxes, on models from any Provider its members connect, and works in them together from the web.
+
+> This experimental branch lifts the Creator-only driving rule: every Participant can drive, while the Creator's accounts still pay. The definitions below describe the spike; accepted decisions remain in `docs/adr/` until the experiment is assessed.
 
 ## Infrastructure
 
@@ -17,7 +19,7 @@ What a Runner reports of its host every 30 seconds: free and total disk of the v
 _Avoid_: health check, heartbeat, metrics
 
 **Claude credential**:
-A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub: their Connected provider for Anthropic. Claude's Models, and Claude Code Sessions, run on it in the Sessions they create, on any Runner, and nobody else's prompts reach it.
+A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub: their Connected provider for Anthropic. Claude's Models run on it in the Sessions they create, on any Runner; every Participant's prompts in those Sessions use the same credential.
 _Avoid_: login, Runner login, OAuth token, Claude key, API key
 
 **Pairing code**:
@@ -55,11 +57,11 @@ _Avoid_: track, branch, ring
 ## Models
 
 **Harness**:
-The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: pi or Claude Code (ADR 0029). A Session runs on the one its Model belongs to, and switches between Turns when its Creator picks a Model of the other, with a Handoff (ADR 0030).
+The program that runs a Session's agent in its Sandbox. The spike has one Harness, the durable agent, for every Model.
 _Avoid_: driver, engine, agent, backend
 
 **Handoff**:
-What a Session's agent is told, when the Session switches Harness, of the Turns that Harness hasn't seen: who prompted what, the tools the agent called and what it answered, shortened, the newest within a budget. The agent's reasoning, tool results and Attachments don't carry over, and the agent can read further back in the Session's history when it needs to. Switching back to a Harness resumes its own conversation, with a Handoff of what happened since.
+The shortened history given to a legacy Session as it moves to the durable agent: who prompted what, the tools the agent called and what it answered. Reasoning, full tool results and Attachments do not carry over; the agent can read further back in the Session's history.
 _Avoid_: summary, transcript, migration, context transfer
 
 **Provider**:
@@ -71,7 +73,7 @@ A Member's own account at one Provider, connected on the Hub by signing in with 
 _Avoid_: integration, linked account, API key (alone), Installation
 
 **Model**:
-One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it between Turns, to any of their Models: within one Harness the conversation carries over whole, and to a Model of the other Harness through a Handoff.
+One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. Any Participant can switch it between Turns, to any of the Creator's Models, with the conversation carrying over.
 _Avoid_: engine, LLM, backend
 
 **Thinking level**:
@@ -99,11 +101,11 @@ _Avoid_: invitation code, Pairing code, join link
 ## Sessions
 
 **Session**:
-One ongoing agent conversation working on one Repo, on a Work branch, run by its Harness and driven by its Creator on their Connected providers. Who can see it is its Repo's to decide.
+One ongoing body of agent work on one Repo and Work branch, with a main conversation, optional threads and Subagents, driven together by its Participants on its Creator's Connected providers. Who can see it is its Repo's to decide.
 _Avoid_: chat, thread, agent, job
 
 **Subagent**:
-An agent that a Session's agent starts to work alongside it, on any of the Creator's Models. It runs in the Session's Sandbox, is shown under the Session, and the Session's Creator can message or stop it.
+An agent that a Session's agent starts to work alongside it, on any of the Creator's Models. It runs in the Session's Sandbox, is shown under the Session, and any Participant can message or stop it.
 _Avoid_: Child Session, sub-session, worker
 
 **Session name**:
@@ -111,19 +113,27 @@ A Session's editable display name. It defaults to the Session's Work branch, or,
 _Avoid_: title, label
 
 **Creator**:
-The person who started a Session, whose Connected providers it runs on. Only they drive it: they prompt it, answer it, stop it, control it and use its terminal. The git identity in its Sandbox is theirs.
+The person who started a Session, whose Connected providers it runs on. Every Participant can drive it on those accounts. The git identity in its Sandbox is theirs.
 _Avoid_: owner
 
 **Participant**:
-Anyone currently in a Session, the Creator included. A Participant who isn't the Creator watches: they read the Session, live or Archived, and open its Previews and Forwards, but can't drive it. Each is a Member of the Hub.
+Anyone currently in a Session, the Creator included. Every Participant can drive the Session, read it live or Archived, and open its Previews and Forwards. Each is a Member of the Hub.
 _Avoid_: collaborator, viewer, guest
 
 **Turn**:
 One prompt and the agent's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
+**Thread**:
+A conversation forked from a main conversation's Turn, with the context up to that answer, that runs beside the main conversation and other threads. Participants can prompt it, steer it and choose its own Model from the Creator's Models.
+_Avoid_: Subagent, Child Session, branch
+
+**Plan**:
+The agent's live checklist for a conversation, with steps pending, in progress or done. A thread starts with the Plan at its fork and then keeps its own.
+_Avoid_: task list, roadmap
+
 **Prompt queue**:
-The ordered prompts from the Creator waiting for the Session to finish its current Turn. A queued prompt waits unless the Creator steers it.
+The ordered prompts from Participants waiting for the Session's main conversation to finish its current Turn. A queued prompt waits unless a Participant steers it.
 _Avoid_: backlog, inbox
 
 **Attachment**:
@@ -135,7 +145,7 @@ To take a queued prompt out of the Prompt queue and feed it into the running Tur
 _Avoid_: interrupt, inject, push
 
 **Open question**:
-A question the agent asked in a Turn, with its question tool, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one the agent reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
+A question the agent asked in a Turn, with its question tool, that no one has answered yet. Any Participant answers it from the web UI; the first answer is the one the agent reads. While it is open, the Session is waiting on an answer and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
 _Avoid_: prompt, dialog, permission request
 
 **Workspace**:
@@ -232,7 +242,7 @@ _Avoid_: MCP proxy, credential proxy, mod relay, model gateway, LLM proxy
 A Session whose Sandbox is running.
 
 **Asleep**:
-A Session whose Sandbox was stopped after being idle; it wakes on the next prompt, or a Forward, with its Workspace and service data intact. A Session is idle when it has no Turn or Running agent, nobody present, no connected Forward, and Keep awake off. Background commands and Open ports don't keep it awake.
+A Session whose Sandbox was stopped after being idle; it wakes on the next prompt, or a Forward, with its Workspace and service data intact. A Session is idle when it has no running main or thread Turn or Running agent, nobody present, no connected Forward, and Keep awake off. Background commands and Open ports don't keep it awake.
 _Avoid_: paused, suspended, stopped
 
 **Keep awake**:

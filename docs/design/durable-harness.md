@@ -23,17 +23,19 @@ Claude's Models run through **the Claude bridge**, ported from the pi extension 
 
 ## The process
 
-- **Where:** in the Sandbox, as the pi TUI was, so its tools run in `/workspace` with nothing routed. The Runner starts it with the pinned Node.js: `node /opt/kndl/mod/<copy>/durable/agent.js`, in a second tmux window, `agent`, that the web terminal doesn't show. The first window, the one the terminal mirrors, is a plain `bash -l` in `/workspace`. No TUI: the web is the interface.
+- **Where:** in the Sandbox, as the pi TUI was, so its tools run in `/workspace` with nothing routed. The Runner starts it with the pinned Node.js: `node /opt/kndl/mod/<copy>/durable/agent.js`, in its own tmux session, `<name>-agent`. A separate tmux session, `<name>`, runs a plain `bash -l` in `/workspace`, restarting the shell when it exits. Only that session is mirrored to the web terminal: agent output and terminal output never share a control-mode stream. No TUI: the web is the interface.
 - **Storage:** `openNodeSqliteStorage("$KNDL_STATE_DIR/durable/session.sqlite")`, on the Session's persistent volume, so sleep and wake keep everything. One process owns it at a time; the Runner starts at most one.
-- **Restart:** the agent opens the storage, installs its extensions, says hello, and calls `harness.resume()`. A run that was going continues. Its Turn was reported ended (`Interrupted`) by the Hub when the process stopped, so the agent reports a new `TurnStarted` with `sender: Resumed`, and the run's events follow under it.
+- **Restart:** the agent opens the storage, installs its extensions, says hello, and calls `harness.resume()`. A run that was going continues. Its Turn was reported ended (`aborted`) by the Hub when the process stopped, so the agent reports a new `TurnStarted` with `sender: Resumed`, and the run's events follow under it.
 - **Its environment:** as pi's was (`KNDL_URL`, `KNDL_MOD_TOKEN`, `KNDL_SESSION_ID`, `KNDL_MODEL`, `KNDL_THINKING`, `KNDL_MCP_SERVERS`, and the Claude bridge's `CLAUDE_CODE_OAUTH_TOKEN`, `KNDL_CLAUDE_CODE`, `CLAUDE_CONFIG_DIR`), with `KNDL_HARNESS=Pi`.
-- **Exit:** a fatal error (`harness.closed` with `failed`) exits non-zero; the Runner sees the window die and reports the Harness stopped, as it does today.
+- **Exit:** a fatal error (`harness.closed` with `failed`) exits non-zero; the Runner watches the agent session's pane and reports the Harness stopped. Exit detection, adoption, signals and crash output target the agent session; terminal input, resizing and snapshots target the shell session.
+- **Modules:** the copied `durable/agent.js` has a sibling `node_modules` symlink into the pinned install under `/opt/kndl/pi`. Node resolves its external `@earendil-works/*` imports there; it does not rely on `NODE_PATH` for ESM.
+- **Secrets:** the Runner supplies the mod token and Claude credential only to the agent session, not the shell. The agent removes them from the environment inherited by coding tools. This is inheritance hygiene, not a security boundary against someone with shell access to the same Sandbox.
 
 ## Conversations
 
 - **Main loop:** `harness.root()`. Its Turns have no `threadId` or `agentId`, as today.
 - **Threads:** ownerless forks of the root, `root.fork(entryId)`. Each has a `ThreadId` the Hub mints. The agent keeps `kndl.threads` (a Session-scope document): `threadId → { conversationId, anchorTurnId, title }`.
-- **Subagents:** conversations owned by a background anchor task of the conversation that started them (Pi Durable's example 23), with a reporter task per message. `kndl.agents` (conversation-scope) keeps `agentId → { conversationId, description, model, reported }`.
+- **Subagents:** conversations owned by a background anchor task of the conversation that started them (Pi Durable's example 23), with a reporter task per message. `kndl.agents` (Session-scope) keeps each agent's conversation, parent conversation, owning task, status and delivered results.
 - **Turns ↔ entries:** `kndl.turns` (conversation-scope) maps each Turn the agent reported to its user entry and final answer entry, so a thread can fork at a Turn's answer, and a resumed run finds its Turn.
 
 ## The protocol, version 5
@@ -68,11 +70,11 @@ The contract is code: `packages/protocol/src/Thread.ts`, and the `threadId`s, `R
 - **Codemode:** `codemode`, with a QuickJS sandbox, namespaces for each MCP server.
 - **MCP:** each of the Session's servers through `@earendil-works/pi-mcp`, at the Gateway as today, its tools `mcp__<server>__<tool>`, deferred; `tool_search` loads them.
 - **kndl:** `attachment(id)`, `ask_user_question` (sync and `async: true`, as ADR 0031; main loop only), `update_plan`, `agent` / `message_agent` / `stop_agent`, `handoff(note)` with `search_history(text)`.
-- **Sections:** a preamble (who kndl is, that several people may be talking, each prompt carries its sender), `<cwd>`, AGENTS.md and CLAUDE.md from `/workspace` (nested ones listed), the skills in `.agents/skills`, `.claude/skills`, `.pi/skills` (name and description; the agent reads the file), and the Plan.
+- **Sections:** a preamble (who kndl is, that several people may be talking, each prompt carries its sender), `<cwd>`, AGENTS.md and CLAUDE.md from `/workspace` (nested ones listed), the skills in `.agents/skills`, `.claude/skills`, `.pi/skills` (name and description; the agent reads the file). The Plan is returned by `update_plan`, not inserted into the system prompt: a held Claude bridge query cannot see section changes midway through its tool rounds.
 
 ## Not in the spike
 
-- Handoffs between Harnesses (ADR 0030): one Harness, so none. The Hub's handoff code is unreachable.
+- Repeated switching between Harnesses (ADR 0030): there is only one Harness. The Hub keeps its handoff code solely for legacy Session migration.
 - Claude Code Sessions already on a dev Hub: they relaunch on the durable agent with a fresh conversation, as a switch to a new Harness would, and get a handoff.
 - A TUI. The terminal is a shell.
 - Questions in threads and subagents.
