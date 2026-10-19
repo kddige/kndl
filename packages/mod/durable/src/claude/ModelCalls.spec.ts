@@ -80,6 +80,14 @@ describe("Pi Durable's chat model calls", () => {
     expect(read("harness/compaction.js")).toMatch(/cacheRetention: "none"/)
   })
 
+  // What tells a run stopped while its tools ran (ToolResults.ts' hasAbortedResult).
+  test("word a call they aborted as the bridge reads it", () => {
+    const tool = read("harness/tool.js")
+    expect(tool).toContain("`Tool ${call.name} was aborted`")
+    expect(tool).toContain("`<harness>\\n${diagnostics")
+    expect(tool).toContain("`[${diagnostic.severity}] ${diagnostic.message}`")
+  })
+
   // The reason a call's signal stops its query only while its turn is open (QueryState.ts).
   test("hand a request the invocation's signal, which ends with the invocation", () => {
     expect(read("harness/generation.js")).toMatch(/signal: runtime\.signal/)
