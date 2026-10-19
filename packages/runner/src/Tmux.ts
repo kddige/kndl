@@ -1,7 +1,11 @@
-// The terminals Sessions run in: one tmux session per Session, on a tmux server inside the
-// Session's Sandbox (ADR 0013). tmux runs through the backend's exec, never the `msb` command
-// line, which returns output only once a command exits. The server dies with the VM, so a
-// Session's terminal lasts as long as its Sandbox runs.
+// What Sessions run in: two tmux sessions per Session, on a tmux server inside the Session's
+// Sandbox (ADR 0013, docs/design/durable-harness.md). One is the Session's terminal, which its
+// people watch and type into: a login shell in the Workspace, started again whenever it exits.
+// The other, `<name>-agent`, runs the durable agent, which nobody watches: the Runner reads only
+// when it exits, and what it printed last. Each control-mode client attaches to one of them, so
+// it sees that session's panes alone: the terminal never shows the agent's output. tmux runs
+// through the backend's exec, never the `msb` command line, which returns output only once a
+// command exits. The server dies with the VM, so both last as long as their Sandbox runs.
 
 import { MaxLastOutputLength, type SessionId, type TerminalSize } from "@kndl/protocol"
 import { Context, Data, Effect, Layer, Queue, type Scope, Stream } from "effect"
@@ -25,40 +29,61 @@ export class TmuxError extends Data.TaggedError("TmuxError")<{
 }> {}
 
 /** What a Session's terminal did, in the order it happened. */
-export type PaneEvent =
+export type TerminalEvent =
   /** The terminal printed `data`, to write after what came before. */
   | { readonly _tag: "Output"; readonly data: string; readonly size: TerminalSize }
-  /** The whole screen, answering {@link Pane.snapshot}: reset a terminal of `size` and draw it. */
+  /** The whole screen, answering {@link Terminal.snapshot}: reset a terminal of `size` and draw it. */
   | { readonly _tag: "Snapshot"; readonly data: string; readonly size: TerminalSize }
-  /** The process in the terminal ended. Always the last event. */
-  | { readonly _tag: "Exited"; readonly exitCode: number | undefined }
+
+/** What a pane did: what its terminal did, then, last, that its process ended. */
+type PaneEvent = TerminalEvent | { readonly _tag: "Exited"; readonly exitCode: number | undefined }
 
 /** A Session's terminal, attached for as long as the scope it was attached in. */
-export interface Pane {
+export interface Terminal {
   /**
-   * Everything the terminal does from now on. Ends after `Exited`, or without it when the tmux
-   * session or its Sandbox is gone. Consume it once.
+   * Everything the terminal does from now on. Its shell is started again whenever it exits, so
+   * this ends only when the tmux session or its Sandbox is gone. Consume it once.
    */
-  readonly events: Stream.Stream<PaneEvent>
+  readonly events: Stream.Stream<TerminalEvent>
   /** Types `data` into the terminal, byte for byte. */
   readonly input: (data: string) => Effect.Effect<void>
   /** Resizes the terminal, then sends a `Snapshot` at the new size. A no-op at the same size. */
   readonly resize: (size: TerminalSize) => Effect.Effect<void>
   /** Asks for a `Snapshot` event, which arrives in order with the output. */
   readonly snapshot: Effect.Effect<void>
-  /** Sends SIGTERM to the process, which lets Claude Code end its session cleanly (spike #4). */
+}
+
+/** A Session's durable agent, watched for as long as the scope it was attached in. */
+export interface Agent {
+  /**
+   * Completes once the agent has exited, with its exit status when tmux knows it, or once its
+   * tmux session or Sandbox is gone. Await it once.
+   */
+  readonly exited: Effect.Effect<number | undefined>
+  /** Sends SIGTERM to the agent, which lets it close its storage cleanly. */
   readonly terminate: Effect.Effect<void>
 }
 
-export interface LaunchSpec {
+/** The Session's terminal: a login shell, in `cwd`, which comes back whenever it exits. */
+export interface TerminalSpec {
+  readonly sessionId: SessionId
+  /** The directory it starts in, in the Sandbox. */
+  readonly cwd: string
+  /** Its environment, over the tmux server's: never the agent's secrets. */
+  readonly env: Readonly<Record<string, string>>
+  readonly size: TerminalSize
+}
+
+/** The Session's durable agent. */
+export interface AgentSpec {
   readonly sessionId: SessionId
   /** The directory it starts in, in the Sandbox. */
   readonly cwd: string
   readonly argv: ReadonlyArray<string>
   /**
    * Its environment, over the tmux server's. Given to this process alone (`new-session -e`),
-   * never to the server or the Sandbox, so it may hold the Session token and the Creator's
-   * setup token (ADR 0026).
+   * never to the server, the terminal or the Sandbox, so it may hold the Session token and the
+   * Creator's setup token (ADR 0026).
    */
   readonly env: Readonly<Record<string, string>>
   /**
@@ -66,29 +91,35 @@ export interface LaunchSpec {
    * Sandbox's image: unset in the server's global environment, which each new process starts from.
    */
   readonly unset?: ReadonlyArray<string>
-  readonly size: TerminalSize
 }
 
-/** The terminals Sessions run in: one tmux session per Session, in the Session's Sandbox. */
+/** What Sessions run in: their terminal and their agent, each in a tmux session in its Sandbox. */
 export class Tmux extends Context.Service<
   Tmux,
   {
-    /** Starts `argv` in a new detached tmux session in the Session's running Sandbox. */
-    readonly launch: (spec: LaunchSpec) => Effect.Effect<void, TmuxError>
-    readonly attach: (sessionId: SessionId) => Effect.Effect<Pane, TmuxError, Scope.Scope>
+    /** Starts the Session's terminal in a new detached tmux session in its running Sandbox. */
+    readonly launchTerminal: (spec: TerminalSpec) => Effect.Effect<void, TmuxError>
+    /** Starts the Session's agent in a new detached tmux session in its running Sandbox. */
+    readonly launchAgent: (spec: AgentSpec) => Effect.Effect<void, TmuxError>
+    readonly attachTerminal: (
+      sessionId: SessionId,
+    ) => Effect.Effect<Terminal, TmuxError, Scope.Scope>
+    readonly attachAgent: (sessionId: SessionId) => Effect.Effect<Agent, TmuxError, Scope.Scope>
     /**
-     * The last lines the Session's terminal shows, as plain text: see {@link lastOutputOf}. Read
-     * from a dead pane, before {@link kill}, it is what Claude Code printed before it exited.
-     * Empty when there is nothing, or no such tmux session or running Sandbox.
+     * The last lines the Session's agent printed, as plain text: see {@link lastOutputOf}. Read
+     * from its dead pane, before {@link kill}, it is what it printed before it exited. Empty when
+     * there is nothing, or no such tmux session or running Sandbox.
      */
     readonly lastOutput: (sessionId: SessionId) => Effect.Effect<string>
     /**
-     * The variable `name` of the environment the Session's process was launched with, while it
-     * runs, as read back after a Runner restart (#157). Undefined once the process has exited, or
+     * The variable `name` of the environment the Session's agent was launched with, while it
+     * runs, as read back after a Runner restart (#157). Undefined once the agent has exited, or
      * with no such variable, tmux session or running Sandbox.
      */
     readonly variable: (sessionId: SessionId, name: string) => Effect.Effect<string | undefined>
-    /** Ends the Session's tmux session and anything still running in it. */
+    /** Ends the Session's agent's tmux session, and the agent if it still runs. */
+    readonly killAgent: (sessionId: SessionId) => Effect.Effect<void>
+    /** Ends both of the Session's tmux sessions, and anything still running in them. */
     readonly kill: (sessionId: SessionId) => Effect.Effect<void>
     /**
      * Stops the Runner's tmux server on the host, where Sessions ran Claude Code before it moved
@@ -97,6 +128,20 @@ export class Tmux extends Context.Service<
     readonly retireHostServer: Effect.Effect<void>
   }
 >()("@kndl/runner/Tmux") {}
+
+/** The tmux session the Session's agent runs in, beside its terminal's. */
+export const agentSessionName = (sessionId: SessionId) => `${tmuxSessionName(sessionId)}-agent`
+
+/**
+ * The terminal's command: a login shell, bash where there is one, and again each time it exits,
+ * so the terminal is never left dead. One that fails at once is started again only after a
+ * second.
+ */
+export const TerminalShell = [
+  "sh",
+  "-c",
+  "while :; do if command -v bash >/dev/null 2>&1; then bash -l; else sh -l; fi || sleep 1; done",
+] as const
 
 /** How many lines of a dead pane {@link lastOutputOf} keeps. */
 export const LastOutputLines = 40
@@ -138,6 +183,12 @@ export function lastOutputOf(
  */
 const guestServer = ["-L", "kndl", "-f", "/dev/null"]
 
+/**
+ * The size of the agent's window, which nobody watches: wide enough that what it prints as it
+ * exits reads back as it printed it.
+ */
+const AgentSize: TerminalSize = { cols: 160, rows: 50 }
+
 /** What the Tmux service needs of a Sandbox backend: running commands. */
 export type TmuxBackend = Pick<SandboxBackendShape, "exec" | "spawn">
 
@@ -147,9 +198,9 @@ const sandboxMessage = (error: SandboxError) =>
     : `${error._tag} (${error.sessionId})`
 
 /**
- * tmux in Sessions' Sandboxes through `backend`: its command line for each command, and one
- * control-mode client (`tmux -C`) per attached Session, which streams the pane's output and takes
- * commands whose replies arrive in order with it.
+ * tmux in Sessions' Sandboxes through `backend`: its command line for each command, and a
+ * control-mode client (`tmux -C`) for each attached terminal or agent, which streams its pane's
+ * output and takes commands whose replies arrive in order with it.
  */
 export const makeTmux = (backend: TmuxBackend) => {
   // A failure's message is tmux's own, never its arguments: a launch's carry the Session token and
@@ -177,44 +228,38 @@ export const makeTmux = (backend: TmuxBackend) => {
     )
   }
 
-  // The server stays up with no sessions, keeps a dead pane so its exit status can be read, sizes
-  // windows only when told to, and has no status line taking a row from the terminal. Focus events
-  // pass through, or Claude Code prints a hint to turn them on in a tmux.conf. Window size is the
-  // window's own, never the server's: tmux 3.3 (Debian 12's) crashes when the global option is
-  // manual and there is no session, which is what a relaunch starts from.
-  //
-  // tmux gives a new session's process the PATH of the client that made it, over `-e PATH=`
-  // (tmux's spawn.c), so the client runs with the launch's PATH: Claude Code and its tools get
-  // the login PATH, not the Sandbox's default one.
-  const launch = (spec: LaunchSpec) =>
-    tmux(
+  // Should the shell's own loop be killed, its pane is started again all the same: it never stays
+  // dead, so the terminal never shows tmux's "Pane is dead".
+  const launchTerminal = (spec: TerminalSpec) => {
+    const name = tmuxSessionName(spec.sessionId)
+    return tmux(
       spec.sessionId,
       sequence([
-        ["start-server"],
-        ["set-option", "-g", "exit-empty", "off"],
-        ["set-option", "-g", "remain-on-exit", "on"],
-        ["set-option", "-g", "status", "off"],
-        ["set-option", "-g", "focus-events", "on"],
-        ...(spec.unset ?? []).map((name) => ["set-environment", "-g", "-u", name]),
-        [
-          "new-session",
-          "-d",
-          "-s",
-          tmuxSessionName(spec.sessionId),
-          "-x",
-          String(spec.size.cols),
-          "-y",
-          String(spec.size.rows),
-          "-c",
-          spec.cwd,
-          ...Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
-          "--",
-          ...spec.argv,
-        ],
-        ["set-option", "-w", "-t", `=${tmuxSessionName(spec.sessionId)}:`, "window-size", "manual"],
+        ...serverCommands(),
+        ...newSessionCommands(name, spec, spec.size, TerminalShell),
+        ["set-hook", "-t", `=${name}:`, "pane-died", "respawn-pane"],
       ]),
-      spec.env.PATH === undefined ? undefined : { PATH: spec.env.PATH },
+      clientEnv(spec.env),
     ).pipe(Effect.asVoid)
+  }
+
+  // The server is readied by a command line of its own, which holds no secret: the client that
+  // starts the server forks it, and the server keeps that client's command line, which `ps` shows
+  // anything in the Sandbox for as long as it runs. The agent's session, and its secrets, come
+  // from a second client, gone once it is made.
+  const launchAgent = (spec: AgentSpec) =>
+    tmux(spec.sessionId, sequence(serverCommands(spec.unset)), clientEnv(spec.env)).pipe(
+      Effect.andThen(
+        tmux(
+          spec.sessionId,
+          sequence(
+            newSessionCommands(agentSessionName(spec.sessionId), spec, AgentSize, spec.argv),
+          ),
+          clientEnv(spec.env),
+        ),
+      ),
+      Effect.asVoid,
+    )
 
   // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
   const lastOutput = (sessionId: SessionId) =>
@@ -225,16 +270,16 @@ export const makeTmux = (backend: TmuxBackend) => {
       "-S",
       String(-LastOutputScrollback),
       "-t",
-      `=${tmuxSessionName(sessionId)}:`,
+      `=${agentSessionName(sessionId)}:`,
     ]).pipe(
       Effect.map(lastOutputOf),
       Effect.orElseSucceed(() => ""),
     )
 
-  // The tmux session's environment is the one `new-session -e` launched the process with. The
+  // The tmux session's environment is the one `new-session -e` launched the agent with. The
   // value is read last, so a failure's output never holds it.
   const variable = (sessionId: SessionId, name: string) => {
-    const target = `=${tmuxSessionName(sessionId)}`
+    const target = `=${agentSessionName(sessionId)}`
     return tmux(
       sessionId,
       sequence([
@@ -250,12 +295,18 @@ export const makeTmux = (backend: TmuxBackend) => {
     )
   }
 
-  const kill = (sessionId: SessionId) =>
-    tmux(sessionId, ["kill-session", "-t", `=${tmuxSessionName(sessionId)}`]).pipe(Effect.ignore)
+  const killSession = (sessionId: SessionId, name: string) =>
+    tmux(sessionId, ["kill-session", "-t", `=${name}`]).pipe(Effect.ignore)
 
-  const attach = (sessionId: SessionId) =>
+  const killAgent = (sessionId: SessionId) => killSession(sessionId, agentSessionName(sessionId))
+
+  const kill = (sessionId: SessionId) =>
+    Effect.andThen(killAgent(sessionId), killSession(sessionId, tmuxSessionName(sessionId)))
+
+  /** A control-mode client of the tmux session `name`, and its pane, as tmux targets it. */
+  const control = (sessionId: SessionId, name: string) =>
     Effect.gen(function* () {
-      const target = `=${tmuxSessionName(sessionId)}`
+      const target = `=${name}`
       const stdout = yield* tmux(sessionId, [
         "display-message",
         "-p",
@@ -280,16 +331,49 @@ export const makeTmux = (backend: TmuxBackend) => {
         cols: Math.max(cols, 1),
         rows: Math.max(rows, 1),
       })
-      yield* pane.issue(`refresh-client -B '${ExitSubscription}::${PaneExitFormat}'`)
-      return pane.toPane(
+      const events = pane.events(
         client.events.pipe(
           Stream.filter((event) => event._tag === "Stdout"),
           Stream.map((event) => event.data),
         ),
       )
+      return { pane, events }
     })
 
-  return { launch, attach, lastOutput, variable, kill }
+  // The shell comes back whenever it exits, so the terminal's exit is never watched for.
+  const attachTerminal = (sessionId: SessionId) =>
+    Effect.map(control(sessionId, tmuxSessionName(sessionId)), ({ pane, events }) =>
+      pane.toTerminal(
+        events.pipe(Stream.filter((event): event is TerminalEvent => event._tag !== "Exited")),
+      ),
+    )
+
+  // What the agent prints is never streamed: only its exit is looked for.
+  const attachAgent = (sessionId: SessionId) =>
+    Effect.gen(function* () {
+      const { pane, events } = yield* control(sessionId, agentSessionName(sessionId))
+      yield* pane.issue(`refresh-client -B '${ExitSubscription}::${PaneExitFormat}'`)
+      return {
+        exited: events.pipe(
+          Stream.runFold(
+            (): number | undefined => undefined,
+            (exitCode, event) => (event._tag === "Exited" ? event.exitCode : exitCode),
+          ),
+        ),
+        terminate: pane.terminate,
+      } satisfies Agent
+    })
+
+  return {
+    launchTerminal,
+    launchAgent,
+    attachTerminal,
+    attachAgent,
+    lastOutput,
+    variable,
+    killAgent,
+    kill,
+  }
 }
 
 /** tmux in the Sandboxes of the Runner's backend. */
@@ -316,6 +400,62 @@ export const TmuxLive = Layer.effect(
     return Tmux.of({ ...makeTmux(backend), retireHostServer })
   }),
 )
+
+/**
+ * Readies the tmux server, starting it if need be. It stays up with no sessions, keeps a dead pane
+ * so its exit status can be read, sizes windows only when told to, and has no status line taking
+ * a row from the terminal. Focus events pass through, or a TUI run in the terminal prints a hint
+ * to turn them on in a tmux.conf. Window size is the window's own, never the server's: tmux 3.3
+ * (Debian 12's) crashes when the global option is manual and there is no session, which is what a
+ * relaunch starts from. `unset` is taken out of the server's environment, which each new process
+ * starts from.
+ */
+function serverCommands(unset: ReadonlyArray<string> = []): Array<ReadonlyArray<string>> {
+  return [
+    ["start-server"],
+    ["set-option", "-g", "exit-empty", "off"],
+    ["set-option", "-g", "remain-on-exit", "on"],
+    ["set-option", "-g", "status", "off"],
+    ["set-option", "-g", "focus-events", "on"],
+    ...unset.map((name) => ["set-environment", "-g", "-u", name]),
+  ]
+}
+
+/** A new detached tmux session `name` running `argv`, its window sized as given. */
+function newSessionCommands(
+  name: string,
+  spec: { readonly cwd: string; readonly env: Readonly<Record<string, string>> },
+  size: TerminalSize,
+  argv: ReadonlyArray<string>,
+): Array<ReadonlyArray<string>> {
+  return [
+    [
+      "new-session",
+      "-d",
+      "-s",
+      name,
+      "-x",
+      String(size.cols),
+      "-y",
+      String(size.rows),
+      "-c",
+      spec.cwd,
+      ...Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+      "--",
+      ...argv,
+    ],
+    ["set-option", "-w", "-t", `=${name}:`, "window-size", "manual"],
+  ]
+}
+
+/**
+ * The environment of the tmux client that makes a session. tmux gives a new session's process the
+ * PATH of the client that made it, over `-e PATH=` (tmux's spawn.c), so the client runs with the
+ * launch's PATH: the shell and the agent get the login PATH, not the Sandbox's default one.
+ */
+function clientEnv(env: Readonly<Record<string, string>>) {
+  return env.PATH === undefined ? undefined : { PATH: env.PATH }
+}
 
 /** tmux commands run as one, separated by `;`. */
 function sequence(commands: ReadonlyArray<ReadonlyArray<string>>): Array<string> {
@@ -389,15 +529,18 @@ class ControlPane {
     Queue.offerUnsafe(this.commands, `${command}\n`)
   }
 
-  toPane(stdout: Stream.Stream<Uint8Array, unknown>): Pane {
-    const events = stdout.pipe(
+  /** What the pane does, from what the client prints. Ends after `Exited`. */
+  events(stdout: Stream.Stream<Uint8Array, unknown>): Stream.Stream<PaneEvent> {
+    return stdout.pipe(
       Stream.map((chunk) => this.parser.push(chunk).flatMap((event) => this.toEvents(event))),
       Stream.flattenIterable,
       Stream.takeUntil((event) => event._tag === "Exited"),
       Stream.catchCause(() => Stream.empty),
       Stream.ensuring(Effect.sync(() => this.stop())),
     )
+  }
 
+  toTerminal(events: Stream.Stream<TerminalEvent>): Terminal {
     const input = (data: string) =>
       Effect.suspend(() => {
         const bytes = encoder.encode(data)
@@ -435,12 +578,12 @@ class ControlPane {
       )
     })
 
-    // The process runs in the Sandbox, so the signal is sent there, by tmux's own shell.
-    const terminate = this.issue(
-      `run-shell -t ${this.pane} '[ #{pane_dead} = 1 ] || kill -TERM #{pane_pid}'`,
-    )
+    return { events, input, resize, snapshot }
+  }
 
-    return { events, input, resize, snapshot, terminate }
+  /** Sends SIGTERM to the pane's process. It runs in the Sandbox, so tmux's own shell sends it. */
+  get terminate(): Effect.Effect<void> {
+    return this.issue(`run-shell -t ${this.pane} '[ #{pane_dead} = 1 ] || kill -TERM #{pane_pid}'`)
   }
 
   /** `Exited`, the first time only. */

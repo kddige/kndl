@@ -15,7 +15,7 @@ import {
   type VariablesFor,
   type VariableValue,
 } from "@kndl/protocol"
-import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
+import { type Cause, type Duration, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
@@ -25,13 +25,15 @@ import { makeSessionTokens, type SessionGrant } from "./relay/SessionTokens.ts"
 import { SandboxError, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
 import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
-import { modPlugins } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
 import {
-  type LaunchSpec,
+  type Agent,
+  type AgentSpec,
   lastOutputOf,
-  type PaneEvent,
+  type Terminal,
+  type TerminalEvent,
+  type TerminalSpec,
   Tmux,
   type TmuxBackend,
   TmuxError,
@@ -133,41 +135,26 @@ export async function eventually(check: () => boolean, timeoutMs = 3_000): Promi
   }
 }
 
-/** One fake tmux session: records what was typed into it, and emits what a test tells it to. */
-export class FakePane {
+/** A Session's terminal: records what was typed into it, and prints what a test tells it to. */
+export class FakeTerminal {
   readonly inputs: Array<string> = []
   readonly resizes: Array<TerminalSize> = []
   snapshots = 0
-  terminated = false
   attached = false
-  /** Its process exited: tmux keeps the dead pane. */
-  exited = false
-  private queue: Queue.Queue<PaneEvent, Cause.Done> | undefined
+  private queue: Queue.Queue<TerminalEvent, Cause.Done> | undefined
 
   constructor(
-    readonly spec: LaunchSpec,
+    readonly spec: TerminalSpec,
     private size: TerminalSize = spec.size,
   ) {}
 
-  /** Makes the terminal print `data`, or its process exit. */
-  emit(event: PaneEvent): void {
-    if (this.queue === undefined) throw new Error("not attached")
-    Queue.offerUnsafe(this.queue, event)
-    if (event._tag === "Exited") {
-      this.exited = true
-      Queue.endUnsafe(this.queue)
-    }
-  }
-
-  /** Everything the terminal printed, as `capture-pane` would read it back. */
-  printed = ""
-
+  /** Makes the terminal print `data`. */
   output(data: string): void {
-    this.printed += data
-    this.emit({ _tag: "Output", data, size: this.size })
+    if (this.queue === undefined) throw new Error("not attached")
+    Queue.offerUnsafe(this.queue, { _tag: "Output", data, size: this.size })
   }
 
-  attach(queue: Queue.Queue<PaneEvent, Cause.Done>) {
+  attach(queue: Queue.Queue<TerminalEvent, Cause.Done>): Terminal {
     this.queue = queue
     this.attached = true
     return {
@@ -181,17 +168,17 @@ export class FakePane {
           this.snapshot()
         }),
       snapshot: Effect.sync(() => this.snapshot()),
-      // Claude Code exits on SIGTERM with 143.
-      terminate: Effect.sync(() => {
-        this.terminated = true
-        this.emit({ _tag: "Exited", exitCode: 143 })
-      }),
     }
   }
 
   private snapshot(): void {
     this.snapshots += 1
-    this.emit({ _tag: "Snapshot", data: `screen of ${this.spec.sessionId}`, size: this.size })
+    if (this.queue === undefined) return
+    Queue.offerUnsafe(this.queue, {
+      _tag: "Snapshot",
+      data: `screen of ${this.spec.sessionId}`,
+      size: this.size,
+    })
   }
 
   /** The tmux session is gone: the attached client's stream ends. */
@@ -200,18 +187,76 @@ export class FakePane {
   }
 }
 
+/**
+ * A Session's agent: prints what a test tells it to, which only `lastOutput` reads back, and
+ * exits when a test says, or on SIGTERM, with 143.
+ */
+export class FakeAgent {
+  terminated = false
+  /** Its process exited: tmux keeps the dead pane. */
+  exited = false
+  /** Everything it printed, as `capture-pane` would read it back. */
+  printed = ""
+  private readonly done = Promise.withResolvers<number | undefined>()
+
+  constructor(readonly spec: AgentSpec) {}
+
+  output(data: string): void {
+    this.printed += data
+  }
+
+  /** Its process exits with `exitCode`. */
+  exit(exitCode: number | undefined): void {
+    this.exited = true
+    this.done.resolve(exitCode)
+  }
+
+  attach(): Agent {
+    return {
+      exited: Effect.promise(() => this.done.promise),
+      terminate: Effect.sync(() => {
+        this.terminated = true
+        this.exit(143)
+      }),
+    }
+  }
+
+  /** The tmux session is gone: the attached client's watch ends. */
+  detach(): void {
+    this.done.resolve(undefined)
+  }
+}
+
 /** tmux, in memory. */
 export class FakeTmux {
-  readonly panes = new Map<SessionId, FakePane>()
-  readonly launched: Array<LaunchSpec> = []
+  readonly terminals = new Map<SessionId, FakeTerminal>()
+  readonly agents = new Map<SessionId, FakeAgent>()
+  /** Every agent launched, in order. */
+  readonly launched: Array<AgentSpec> = []
+  /** Every terminal launched, in order. */
+  readonly launchedTerminals: Array<TerminalSpec> = []
+  /** The Sessions both of whose tmux sessions were killed. */
   readonly killed: Array<SessionId> = []
+  /** The Sessions whose agent's tmux session alone was killed. */
+  readonly killedAgents: Array<SessionId> = []
   /** How often the host's tmux server was retired. */
   retired = 0
 
-  pane(id: string): FakePane {
-    const pane = this.panes.get(sessionId(id))
-    if (pane === undefined) throw new Error(`no tmux session for ${id}`)
-    return pane
+  terminal(id: string): FakeTerminal {
+    const terminal = this.terminals.get(sessionId(id))
+    if (terminal === undefined) throw new Error(`no terminal for ${id}`)
+    return terminal
+  }
+
+  agent(id: string): FakeAgent {
+    const agent = this.agents.get(sessionId(id))
+    if (agent === undefined) throw new Error(`no agent for ${id}`)
+    return agent
+  }
+
+  private killAgent(id: SessionId): void {
+    this.agents.get(id)?.detach()
+    this.agents.delete(id)
   }
 
   readonly layer = Layer.sync(Tmux, () =>
@@ -219,32 +264,55 @@ export class FakeTmux {
       retireHostServer: Effect.sync(() => {
         this.retired += 1
       }),
-      lastOutput: (id) => Effect.sync(() => lastOutputOf(this.panes.get(id)?.printed ?? "")),
+      lastOutput: (id) => Effect.sync(() => lastOutputOf(this.agents.get(id)?.printed ?? "")),
       variable: (id, name) =>
         Effect.sync(() => {
-          const pane = this.panes.get(id)
-          return pane === undefined || pane.exited ? undefined : pane.spec.env[name]
+          const agent = this.agents.get(id)
+          return agent === undefined || agent.exited ? undefined : agent.spec.env[name]
         }),
-      launch: (spec) =>
+      launchTerminal: (spec) =>
         Effect.suspend(() => {
-          if (this.panes.has(spec.sessionId)) {
+          if (this.terminals.has(spec.sessionId)) {
+            return Effect.fail(new TmuxError({ message: "duplicate session" }))
+          }
+          this.launchedTerminals.push(spec)
+          this.terminals.set(spec.sessionId, new FakeTerminal(spec))
+          return Effect.void
+        }),
+      launchAgent: (spec) =>
+        Effect.suspend(() => {
+          if (this.agents.has(spec.sessionId)) {
             return Effect.fail(new TmuxError({ message: "duplicate session" }))
           }
           this.launched.push(spec)
-          this.panes.set(spec.sessionId, new FakePane(spec))
+          this.agents.set(spec.sessionId, new FakeAgent(spec))
           return Effect.void
         }),
-      attach: (id) => {
-        const pane = this.panes.get(id)
-        return pane === undefined
+      attachTerminal: (id) => {
+        const terminal = this.terminals.get(id)
+        return terminal === undefined
           ? Effect.fail(new TmuxError({ message: "no such session" }))
-          : Queue.unbounded<PaneEvent, Cause.Done>().pipe(Effect.map((queue) => pane.attach(queue)))
+          : Queue.unbounded<TerminalEvent, Cause.Done>().pipe(
+              Effect.map((queue) => terminal.attach(queue)),
+            )
       },
+      attachAgent: (id) => {
+        const agent = this.agents.get(id)
+        return agent === undefined
+          ? Effect.fail(new TmuxError({ message: "no such session" }))
+          : Effect.sync(() => agent.attach())
+      },
+      killAgent: (id) =>
+        Effect.sync(() => {
+          this.killedAgents.push(id)
+          this.killAgent(id)
+        }),
       kill: (id) =>
         Effect.sync(() => {
           this.killed.push(id)
-          this.panes.get(id)?.detach()
-          this.panes.delete(id)
+          this.killAgent(id)
+          this.terminals.get(id)?.detach()
+          this.terminals.delete(id)
         }),
     }),
   )
@@ -352,23 +420,19 @@ export function hostTmuxBackend(options: {
 }
 
 /**
- * Builds a stand-in for the Runner's mod into `modDir`, as `bun run mod:build` would, each plugin
- * with a hook that says `build`, and the pi extension saying it too.
+ * Builds a stand-in for the Runner's mod into `modDir`, as `bun run mod:build` would: a durable
+ * agent that says `build`.
  */
 export function writeFakeMod(modDir: string, build = "built") {
-  for (const plugin of modPlugins) {
-    mkdirSync(join(modDir, "plugins", plugin, "hooks"), { recursive: true })
-    writeFileSync(join(modDir, "plugins", plugin, "hooks", "hook.js"), `// ${build}\n`)
-  }
-  mkdirSync(join(modDir, "pi", "dist"), { recursive: true })
-  writeFileSync(join(modDir, "pi", "dist", "kndl.js"), `// pi ${build}\n`)
+  mkdirSync(join(modDir, "durable", "dist"), { recursive: true })
+  writeFileSync(join(modDir, "durable", "dist", "agent.js"), `// agent ${build}\n`)
   return modDir
 }
 
 /** The Claude Code {@link FakeSandboxes} says each Sandbox runs. */
 export const fakeSandboxClaudePath = "/opt/claude-code/claude"
 
-/** The Node.js {@link FakeSandboxes} says each Sandbox runs pi on. */
+/** The Node.js {@link FakeSandboxes} says each Sandbox runs the agent on. */
 export const fakeSandboxNodePath = "/opt/pi/node"
 
 /** Sandboxes that only record calls. */
@@ -378,38 +442,42 @@ export class FakeSandboxes {
   readonly reconciled: Array<Array<SessionId>> = []
   /** What each `start` was given to start the Sandbox from. */
   readonly targets: Array<SandboxTarget> = []
-  /** The conversations Claude Code has a transcript of, to resume. */
-  readonly transcripts = new Set<string>()
   /** The Sessions whose Sandbox runs: started, and not stopped since. */
   readonly running = new Set<SessionId>()
   /** What each Sandbox says Claude Code runs with, as from its Variables. */
   claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
-  /** What each Sandbox says pi runs with: Claude Code's, but for its state. */
+  /** What each Sandbox says the agent and the terminal run with: Claude Code's, but for its state. */
   piEnv: Readonly<Record<string, string>> = { LANG: "C.UTF-8" }
+  /** How long a start takes, as a real Sandbox's boot does; none unless a test says. */
+  startTakes: Duration.Input = 0
   /** The bytes each Session's volumes take, for `diskUsage`; 0 for one not set. */
   readonly diskUsages = new Map<SessionId, number>()
   /** The Sessions whose `diskUsage` fails. */
   readonly diskUsageFails = new Set<SessionId>()
-  /** Why readying a Session's Sandbox for another Harness fails, by Session; it doesn't if unset. */
-  readonly readyFails = new Map<SessionId, string>()
 
-  /** `claudePath`: the Claude Code each Sandbox runs. */
-  constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
+  /** `claudePath` and `nodePath`: the Claude Code and the Node.js each Sandbox runs. */
+  constructor(
+    readonly claudePath: string = fakeSandboxClaudePath,
+    readonly nodePath: string = fakeSandboxNodePath,
+  ) {}
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
       start: (id, _directories, target) =>
-        Effect.sync(() => {
-          this.calls.push(`start ${id}`)
-          this.targets.push(target)
-          this.running.add(id)
-          return {
-            ...(target.environment === undefined
-              ? {}
-              : { environmentVersion: target.environment.version }),
-            claude: { path: this.claudePath, env: this.claudeEnv },
-            pi: { node: fakeSandboxNodePath, env: this.piEnv },
-          }
+        Effect.suspend(() => {
+          const started = Effect.sync(() => {
+            this.calls.push(`start ${id}`)
+            this.targets.push(target)
+            this.running.add(id)
+            return {
+              ...(target.environment === undefined
+                ? {}
+                : { environmentVersion: target.environment.version }),
+              claude: { path: this.claudePath, env: this.claudeEnv },
+              pi: { node: this.nodePath, env: this.piEnv },
+            }
+          })
+          return this.startTakes === 0 ? started : Effect.delay(started, this.startTakes)
         }),
       running: Effect.sync(() => [...this.running]),
       keep: (id) =>
@@ -417,19 +485,9 @@ export class FakeSandboxes {
           this.calls.push(`keep ${id}`)
           return {
             claude: { path: this.claudePath, env: this.claudeEnv },
-            pi: { node: fakeSandboxNodePath, env: this.piEnv },
+            pi: { node: this.nodePath, env: this.piEnv },
           }
         }),
-      readyFor: (id, harness) =>
-        Effect.suspend(() => {
-          this.calls.push(`ready ${id} ${harness}`)
-          const fails = this.readyFails.get(id)
-          return fails === undefined
-            ? Effect.void
-            : Effect.fail(new SandboxError({ message: fails }))
-        }),
-      hasTranscript: (_id, _directories, conversation) =>
-        Effect.sync(() => this.transcripts.has(conversation)),
       stop: (id, reason) =>
         Effect.sync(() => {
           this.calls.push(`stop ${id} ${reason}`)

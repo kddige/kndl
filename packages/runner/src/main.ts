@@ -25,7 +25,7 @@ if (process.env[LoadCheckVariable] === "1" || process.env[FormerName.loadCheckVa
   // above was imported. The mod must be built too, which the Runner refuses to start without.
   const missing = missingModBundle(resolve(import.meta.dir, "../../mod"))
   if (missing !== undefined) {
-    console.error(`The hub-link mod isn't built: ${missing} is missing.`)
+    console.error(`The mod isn't built: ${missing} is missing.`)
     process.exit(1)
   }
   console.log("The Runner loads.")

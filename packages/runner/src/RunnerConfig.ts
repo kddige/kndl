@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 import { runnerTunnelPath, type TunnelId } from "@kndl/protocol"
 import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
-import { modPlugins } from "./sandbox/SessionLayout.ts"
+import { durableAgentBuild } from "./SessionMod.ts"
 
 /** What a Runner is configured with. Read from the environment by {@link RunnerConfigLive}. */
 export interface RunnerSettings {
@@ -17,8 +17,8 @@ export interface RunnerSettings {
   /** The directory holding one directory per Session, with its Workspace. */
   readonly sessionsRoot: string
   /**
-   * The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`, from a
-   * copy made as it starts (SessionMod.ts).
+   * The mod package, whose durable agent each Session runs, from a copy made as it starts
+   * (SessionMod.ts).
    */
   readonly modDir: string
   /** The tmux server (`tmux -L <name>`) that holds the Sessions, kept apart from the user's own. */
@@ -78,9 +78,7 @@ export const RunnerConfigLive = Layer.effect(
     const missing = missingModBundle(modDir)
     if (missing !== undefined) {
       return yield* Effect.die(
-        new Error(
-          `The hub-link mod isn't built: ${missing} is missing. Run \`bun run mod:build\`.`,
-        ),
+        new Error(`The mod isn't built: ${missing} is missing. Run \`bun run mod:build\`.`),
       )
     }
     return RunnerConfig.of({
@@ -91,8 +89,11 @@ export const RunnerConfigLive = Layer.effect(
   }),
 )
 
-/** Each of the mod's plugins' bundle, which `bun run mod:build` writes; none loads without it. */
-export const ModBundles = modPlugins.map((plugin) => `plugins/${plugin}/hooks/hub-link-lib.js`)
+/**
+ * The mod's bundles the Runner runs Sessions with, which `bun run mod:build` writes: the durable
+ * agent (SessionMod.ts).
+ */
+export const ModBundles = [durableAgentBuild]
 
 /** The first of the mod's bundles missing under `modDir`, if any. */
 export const missingModBundle = (modDir: string) =>

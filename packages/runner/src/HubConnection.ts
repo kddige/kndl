@@ -140,8 +140,9 @@ const connectOnce = Effect.scoped(
     const tunnels = yield* Tunnels
     const hub = yield* HubLink
     const makeWebSocket = yield* Socket.WebSocketConstructor
-    // Whether it runs pi Sessions, for the hello: the first connection waits, before it opens,
-    // for the pi bundle the Runner prepares as it starts (PiBundle.ts).
+    // Whether it runs Sessions, for the hello: the first connection waits, before it opens, for
+    // the pi bundle their durable agent runs on, which the Runner prepares as it starts
+    // (PiBundle.ts).
     const pi = yield* (yield* PiBundle).ready
     const url = runnerSocketUrl(config.hubUrl)
     let welcomed = false
@@ -178,8 +179,11 @@ const connectOnce = Effect.scoped(
         asksCloneAccess: true,
         updater: hello.updater,
         ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
+        // What the pinned Claude Code takes, which the agent's Claude bridge runs.
         ...(models !== undefined && { models }),
-        ...(pi !== undefined && { harnesses: ["ClaudeCode", "Pi"] }),
+        // Every Session runs the durable agent, which is pi to the Hub; Claude Code runs only as
+        // the agent's Claude bridge, never as a Harness.
+        ...(pi !== undefined && { harnesses: ["Pi"] }),
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,

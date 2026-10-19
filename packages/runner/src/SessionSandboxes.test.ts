@@ -19,10 +19,10 @@ import {
 } from "./sandbox/SandboxClaude.ts"
 import { sandboxNodePath, sandboxPiGuestDir } from "./sandbox/SandboxPi.ts"
 import {
+  agentStateGuestPath,
   claudeStateGuestPath,
   claudeStateVolumeKey,
   modGuestPath,
-  piStateGuestPath,
   workspaceGuestPath,
 } from "./sandbox/SessionLayout.ts"
 import { ghHostsPath, identityScript, tokenPath } from "./SandboxGitHub.ts"
@@ -499,14 +499,13 @@ describe("SessionSandboxes", () => {
   })
 })
 
-describe("SessionSandboxes with pi (ADR 0029)", () => {
-  test("mounts the pi bundle read-only into every Sandbox, and says how to run pi there", () =>
+describe("SessionSandboxes with the pi bundle, for the durable agent", () => {
+  test("mounts the pi bundle read-only into every Sandbox, and says how to run the agent there", () =>
     withSandboxes(
       (root) =>
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes
           const world = yield* FakeSandboxBackend
-          const backend = yield* SandboxBackend
           const directories = yield* directoriesIn(root)
 
           const started = yield* sandboxes.start(s1, directories, target)
@@ -518,23 +517,20 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
             }),
           )
           // The musl build of Node.js, on the default Alpine image; Claude Code's environment, but
-          // for its state, which pi gets only with a Claude credential.
+          // for its state, which the agent gets only with a Claude credential.
           expect(started.pi).toEqual({
             node: sandboxNodePath("musl"),
             env: expect.objectContaining({ HOME: "/root", LANG: "C.UTF-8" }),
           })
           expect(started.pi.env).not.toHaveProperty("CLAUDE_CONFIG_DIR")
           expect(started.pi.env).not.toHaveProperty("IS_SANDBOX")
-          // A Claude Code Session's Sandbox isn't readied for pi.
-          const piNeeds = backend.readFile(s1, "/tmp/kndl-pi-needs.sh").pipe(Effect.option)
-          expect((yield* piNeeds)._tag).toBe("None")
           // Taken back after a restart, it says the same.
           expect((yield* sandboxes.keep(s1, directories)).pi).toEqual(started.pi)
         }),
       { pi: true },
     ))
 
-  test("readies a pi Session's Sandbox for pi: its Node.js runs there, and its state directory exists", () =>
+  test("readies every Sandbox for the agent: its Node.js runs there, and its state directory exists", () =>
     withSandboxes(
       (root) =>
         Effect.gen(function* () {
@@ -543,7 +539,7 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
           const backend = yield* SandboxBackend
           const directories = yield* directoriesIn(root)
 
-          yield* sandboxes.start(s1, directories, { ...target, harness: "Pi" })
+          yield* sandboxes.start(s1, directories, target)
           const script = new TextDecoder().decode(
             yield* backend.readFile(s1, "/tmp/kndl-pi-needs.sh"),
           )
@@ -551,95 +547,35 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
           // musl's Node.js links libgcc, and its x64 build libstdc++ too, which the default image
           // lacks.
           expect(script).toContain("apk add --no-cache -q libgcc libstdc++")
-          expect(script).toContain(`mkdir -p '${piStateGuestPath}'`)
+          expect(script).toContain(`mkdir -p '${agentStateGuestPath}/durable'`)
           expect(
             world.execCalls.some((call) => call.request.args?.at(-1) === "/tmp/kndl-pi-needs.sh"),
           ).toBe(true)
-        }),
-      { pi: true },
-    ))
-
-  test("readies a Claude Code Session's running Sandbox for pi, and back, as a switch needs (ADR 0030)", () =>
-    withSandboxes(
-      (root) =>
-        Effect.gen(function* () {
-          const sandboxes = yield* Sandboxes
-          const world = yield* FakeSandboxBackend
-          const backend = yield* SandboxBackend
-          const directories = yield* directoriesIn(root)
-          const started = yield* sandboxes.start(s1, directories, target)
-          const config = posix.join(claudeStateGuestPath, ".claude.json")
-          yield* backend.writeFile(s1, config, "{}")
-
-          yield* sandboxes.readyFor(s1, "Pi", started)
-          const script = new TextDecoder().decode(
-            yield* backend.readFile(s1, "/tmp/kndl-pi-needs.sh"),
+          // Claude Code's state is seeded too, for the agent's Claude bridge.
+          const config = yield* backend.readFile(
+            s1,
+            posix.join(claudeStateGuestPath, ".claude.json"),
           )
-          expect(script).toContain(`'${started.pi.node}' --version`)
-          expect(script).toContain(`mkdir -p '${piStateGuestPath}'`)
-          expect(
-            world.execCalls.some((call) => call.request.args?.at(-1) === "/tmp/kndl-pi-needs.sh"),
-          ).toBe(true)
-          // Claude Code's state is seeded as at a start, for pi's Claude bridge.
-          const seeded = () =>
-            Effect.map(backend.readFile(s1, config), (data) =>
-              JSON.parse(new TextDecoder().decode(data)),
-            )
-          expect(yield* seeded()).toMatchObject({ hasCompletedOnboarding: true })
-
-          yield* backend.writeFile(s1, config, "{}")
-          yield* sandboxes.readyFor(s1, "ClaudeCode", started)
-          expect(yield* seeded()).toMatchObject({ hasCompletedOnboarding: true })
+          expect(JSON.parse(new TextDecoder().decode(config))).toMatchObject({
+            hasCompletedOnboarding: true,
+          })
         }),
       { pi: true },
     ))
 
-  test("won't ready for pi a Sandbox kept from before pi's mount, saying why", () => {
-    let withoutPi = false
-    return withSandboxes(
-      (root) =>
-        Effect.gen(function* () {
-          const sandboxes = yield* Sandboxes
-          const backend = yield* SandboxBackend
-          const directories = yield* directoriesIn(root)
-          const started = yield* sandboxes.start(s1, directories, target)
-          withoutPi = true
-
-          const failed = yield* Effect.flip(sandboxes.readyFor(s1, "Pi", started))
-          expect(failed.message).toContain("made before pi")
-          const piNeeds = backend.readFile(s1, "/tmp/kndl-pi-needs.sh").pipe(Effect.option)
-          expect((yield* piNeeds)._tag).toBe("None")
-        }),
-      {
-        pi: true,
-        onExec: ({ request }) =>
-          Effect.succeed(
-            withoutPi && (request.args?.[1] ?? "").includes(`test -d ${sandboxPiGuestDir}`)
-              ? { exitCode: 1 }
-              : {},
-          ),
-      },
-    )
-  })
-
-  test("readying a Sandbox, or taking it back, that is interrupted stays interrupted, not a failure", () => {
+  test("taking a Sandbox back, interrupted, stays interrupted, not a failure", () => {
     let interrupting = false
     return withSandboxes(
       (root) =>
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes
           const directories = yield* directoriesIn(root)
-          const started = yield* sandboxes.start(s1, directories, target)
+          yield* sandboxes.start(s1, directories, target)
           interrupting = true
 
-          const exits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
-            yield* Effect.exit(sandboxes.readyFor(s1, "Pi", started)),
-            yield* Effect.exit(sandboxes.keep(s1, directories)),
-          ]
-          for (const exit of exits) {
-            expect(Exit.hasInterrupts(exit)).toBe(true)
-            expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(false)
-          }
+          const exit = yield* Effect.exit(sandboxes.keep(s1, directories))
+          expect(Exit.hasInterrupts(exit)).toBe(true)
+          expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(false)
         }),
       {
         pi: true,
@@ -649,26 +585,13 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
     )
   })
 
-  test("a Runner without a pi bundle won't ready a Sandbox for pi", () =>
-    withSandboxes((root) =>
-      Effect.gen(function* () {
-        const sandboxes = yield* Sandboxes
-        const directories = yield* directoriesIn(root)
-        const started = yield* sandboxes.start(s1, directories, target)
-        const failed = yield* Effect.flip(sandboxes.readyFor(s1, "Pi", started))
-        expect(failed.message).toContain("have no pi")
-      }),
-    ))
-
-  test("a pi Session's Sandbox where pi's Node.js can't run fails to start, saying why", () =>
+  test("a Sandbox where the agent's Node.js can't run fails to start, saying why", () =>
     withSandboxes(
       (root, sent) =>
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes
           const directories = yield* directoriesIn(root)
-          const failed = yield* Effect.flip(
-            sandboxes.start(s1, directories, { ...target, harness: "Pi" }),
-          )
+          const failed = yield* Effect.flip(sandboxes.start(s1, directories, target))
           expect(failed.message).toContain("Node.js doesn't run")
           expect(sent).toContainEqual(
             expect.objectContaining({ _tag: "SandboxStateReport", state: "Failed" }),
@@ -679,21 +602,21 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
         onExec: ({ request }) =>
           Effect.succeed(
             request.args?.at(-1) === "/tmp/kndl-pi-needs.sh"
-              ? { exitCode: 1, stderr: "pi's Node.js doesn't run in this image.\n" }
+              ? { exitCode: 1, stderr: "The agent's Node.js doesn't run in this image.\n" }
               : {},
           ),
       },
     ))
 
-  test("a Runner without a pi bundle fails a pi Session's start", () =>
+  test("a Runner without a pi bundle readies no Node.js", () =>
     withSandboxes((root) =>
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes
+        const backend = yield* SandboxBackend
         const directories = yield* directoriesIn(root)
-        const failed = yield* Effect.flip(
-          sandboxes.start(s1, directories, { ...target, harness: "Pi" }),
-        )
-        expect(failed.message).toContain("have no pi")
+        yield* sandboxes.start(s1, directories, target)
+        const piNeeds = backend.readFile(s1, "/tmp/kndl-pi-needs.sh").pipe(Effect.option)
+        expect((yield* piNeeds)._tag).toBe("None")
       }),
     ))
 

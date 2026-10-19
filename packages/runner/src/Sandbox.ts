@@ -1,7 +1,6 @@
 import type {
   EnvironmentVersion,
   GitIdentity,
-  Harness,
   RepoName,
   RunTestBuild,
   SessionEnvironment,
@@ -22,11 +21,9 @@ export interface SandboxTarget {
   readonly environment?: SessionEnvironment
   /** Who commits in the Sandbox are by, unless the Environment sets its own (#110). */
   readonly gitIdentity?: GitIdentity
-  /** What the Session runs (ADR 0029): a pi Session's Sandbox is readied for pi too. */
-  readonly harness?: Harness
 }
 
-/** How to run Claude Code in a started Sandbox (ADR 0013). */
+/** How to run Claude Code in a started Sandbox (ADR 0013), as the agent's Claude bridge does. */
 export interface SandboxClaude {
   /** Its executable, in the Sandbox. */
   readonly path: string
@@ -38,13 +35,13 @@ export interface SandboxClaude {
   readonly env: Readonly<Record<string, string>>
 }
 
-/** How to run pi in a started Sandbox (ADR 0029). */
+/** How to run the durable agent, and the Session's terminal, in a started Sandbox. */
 export interface SandboxPi {
-  /** Node.js's executable, in the Sandbox, for its image's libc. pi's CLI is the bundle's. */
+  /** Node.js's executable, in the Sandbox, for its image's libc. */
   readonly node: string
   /**
-   * Its environment over the Sandbox's: Claude Code's, but for Claude Code's state, which pi gets
-   * only with a Claude credential for its Claude bridge.
+   * Their environment over the Sandbox's: Claude Code's, but for Claude Code's state, which the
+   * agent gets only with a Claude credential for its Claude bridge.
    */
   readonly env: Readonly<Record<string, string>>
 }
@@ -62,15 +59,16 @@ export interface SandboxStarted {
  * Code launches in it, and stopped after Claude Code stops.
  *
  * The live one (SessionSandboxes.ts) reports its state to the Hub with `SandboxStateReport`, and
- * readies the Sandbox for Claude Code at each start: tmux, and Claude Code's state (ADR 0013).
+ * readies the Sandbox for its agent at each start: tmux, Node.js, and Claude Code's state, which
+ * the agent's Claude bridge runs on (ADR 0013).
  */
 export class Sandboxes extends Context.Service<
   Sandboxes,
   {
     /**
      * Creates the Session's Sandbox, or reuses its stopped one, and starts it. A Sandbox of
-     * another Environment version, or one without the mounts Claude Code and pi run from, is
-     * recreated, keeping its volumes.
+     * another Environment version, or one without the mounts the agent and Claude Code run from,
+     * is recreated, keeping its volumes.
      */
     readonly start: (
       sessionId: SessionId,
@@ -79,40 +77,19 @@ export class Sandboxes extends Context.Service<
     ) => Effect.Effect<SandboxStarted, SandboxError>
     /**
      * The Sessions whose Sandbox of this Runner's is running, as after a Runner restart, which
-     * leaves them running with their Claude Code in them (#157).
+     * leaves them running with their agent in them (#157).
      */
     readonly running: Effect.Effect<ReadonlyArray<SessionId>>
     /**
-     * Takes back the Session's running Sandbox after a Runner restart, its Claude Code still
-     * running in it (#157): keeps its GitHub token fresh again, and says what it runs, as
-     * {@link start} would, for Claude Code to start again in it with a new model. Fails for one
-     * without the mounts Claude Code runs from, which only its next start makes anew.
+     * Takes back the Session's running Sandbox after a Runner restart, its agent still running in
+     * it (#157): keeps its GitHub token fresh again, and says what it runs, as {@link start}
+     * would, for the agent to start again in it with a new model. Fails for one without the mounts
+     * the agent runs from, which only its next start makes anew.
      */
     readonly keep: (
       sessionId: SessionId,
       directories: SessionDirectories,
     ) => Effect.Effect<SandboxStarted, SandboxError>
-    /**
-     * Readies the Session's running Sandbox for `harness`, one it didn't start with, as its start
-     * would have (ADR 0030): Claude Code's state seeded, and, for pi, Node.js running there and
-     * pi's state directory made. `started` is what its start or {@link keep} said it runs. Fails
-     * for pi in a Sandbox without the pi bundle's mount.
-     */
-    readonly readyFor: (
-      sessionId: SessionId,
-      harness: Harness,
-      started: SandboxStarted,
-    ) => Effect.Effect<void, SandboxError>
-    /**
-     * Whether Claude Code in the Session's started Sandbox has a transcript of conversation `id`
-     * to resume. One Claude Code wrote on the host, before it moved into the Sandbox, is copied
-     * in first (ADR 0013).
-     */
-    readonly hasTranscript: (
-      sessionId: SessionId,
-      directories: SessionDirectories,
-      id: string,
-    ) => Effect.Effect<boolean, SandboxError>
     /**
      * `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it but for the volume
      * with Claude Code's state (ADR 0006).

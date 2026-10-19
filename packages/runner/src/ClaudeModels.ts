@@ -1,7 +1,6 @@
 import type { ModelOption, RunnerModels, ThinkingLevel } from "@kndl/protocol"
 import { ThinkingLevels } from "@kndl/protocol"
 import { Config, Context, Data, Effect, Layer } from "effect"
-import { ClaudeEfforts } from "./ClaudeLaunch.ts"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
 // Which models and thinking levels a Session's Claude Code takes (#128), for the Runner's hello:
@@ -21,6 +20,9 @@ import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 //
 // Claude Code's own `/model` picker has a line on each model, but `-p /model` doesn't print it, so
 // the table's lines are from that picker.
+
+/** The thinking levels Claude Code's `--effort` takes, lowest first. */
+export const ClaudeEfforts: ReadonlyArray<ThinkingLevel> = ["low", "medium", "high", "xhigh", "max"]
 
 /**
  * What Claude Code {@link PinnedClaudeVersion} takes: its default, its aliases most capable first,

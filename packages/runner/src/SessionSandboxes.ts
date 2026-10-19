@@ -1,21 +1,22 @@
 // Sessions' Sandboxes on a SandboxBackend (#9): each Session's Sandbox is created or started
-// around its Workspace before Claude Code launches in it (ADR 0013), and stopped or destroyed when
-// the Session stops. Every Sandbox mounts the Claude Code builds and the Session's copy of the mod
-// (SessionMod.ts) read-only, and keeps Claude Code's state on a volume of its own; each start makes
-// sure it has tmux and seeds that state (ClaudeState.ts). A Sandbox made before Claude Code ran in
+// around its Workspace before its durable agent launches in it (ADR 0013), and stopped or
+// destroyed when the Session stops. Every Sandbox mounts the Claude Code builds, which the
+// agent's Claude bridge runs, and the Session's copy of the mod (SessionMod.ts) read-only, and
+// keeps Claude Code's state, and the agent's, on a volume of its own; each start makes sure it has
+// tmux and seeds Claude Code's state (ClaudeState.ts). A Sandbox made before Claude Code ran in
 // Sandboxes, or before each Session had its own copy of the mod (#159), lacks those mounts, and is
 // made anew on its volumes at its next start.
 //
-// Every Sandbox mounts the pi bundle read-only too (sandbox/SandboxPi.ts), and a pi Session's start
-// readies pi there (ADR 0029). A Sandbox made before then lacks that mount, and is made anew the
-// same way.
+// Every Sandbox mounts the pi bundle read-only too (sandbox/SandboxPi.ts), the Node.js and pi's
+// packages the agent runs on, and each start readies its Node.js there. A Sandbox made before then
+// lacks that mount, and is made anew the same way.
 //
 // A Session of a Repo with an Environment (ADR 0009) boots from that Environment's build, built
 // on this Runner the first time a Session needs it, with the build's output shown in the Session.
 // Each new Sandbox then gets its dependency folders bound and runs the start script; each later
 // boot binds the folders again. A Sandbox of an older version is recreated at its next start,
 // keeping its volumes. The Environment's variables are fetched from the Hub, kept in memory, and
-// passed to each process the Runner starts in the Sandbox, Claude Code included, never set on the
+// passed to each process the Runner starts in the Sandbox, the agent included, never set on the
 // VM, over the login environment its build kept, which each new Sandbox probes again after its
 // start script (#67).
 //
@@ -27,10 +28,9 @@
 
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { availableParallelism, tmpdir, totalmem } from "node:os"
-import { join } from "node:path"
+import { join, posix } from "node:path"
 import type {
   GitAnswer,
-  Harness,
   RepoName,
   RunTestBuild,
   SandboxState,
@@ -43,7 +43,6 @@ import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@kndl/protoc
 import { HomeConfig } from "@kndl/protocol/home"
 import { Cause, Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
-import { ClaudeProjectsDir } from "./ClaudeConfig.ts"
 import {
   buildGroup,
   buildInSandbox,
@@ -65,8 +64,8 @@ import { HubVariables, variablesEnv } from "./HubVariables.ts"
 import { PiBundle } from "./PiBundle.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SandboxError, Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude, SandboxPi, SandboxStarted, SandboxTarget } from "./Sandbox.ts"
-import { claudeStateEnv, ensureTranscript, seedClaudeState } from "./sandbox/ClaudeState.ts"
+import type { SandboxClaude, SandboxPi, SandboxTarget } from "./Sandbox.ts"
+import { claudeStateEnv, seedClaudeState } from "./sandbox/ClaudeState.ts"
 import {
   bindDependencyFoldersScript,
   dependencyDiskGuestPath,
@@ -86,12 +85,12 @@ import {
 import type { Libc, SandboxClaudeError } from "./sandbox/SandboxClaude.ts"
 import { piNeedsScript, sandboxNodePath, sandboxPiGuestDir } from "./sandbox/SandboxPi.ts"
 import {
+  agentStateGuestPath,
   cacheEnv,
   claudeStateGuestPath,
   claudeStateVolumeKey,
   defaults,
   modGuestPath,
-  piStateGuestPath,
   sessionSandboxSpec,
   workspaceGuestPath,
 } from "./sandbox/SessionLayout.ts"
@@ -166,7 +165,7 @@ const claudeMountsScript = `test -d ${modGuestPath} && test -d ${claudeStateGues
 
 /**
  * Tells a Sandbox made before pi ran in Sandboxes (ADR 0029), too: it lacks the bundle's mount,
- * so its next start makes it anew. One kept across a Runner restart is only ever Claude Code's.
+ * which the agent runs from, so its next start makes it anew.
  */
 const piMountsScript = `${claudeMountsScript} && test -d ${sandboxPiGuestDir}`
 
@@ -306,7 +305,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
     const backend = yield* SandboxBackend
     const hub = yield* HubLink
     const hubVariables = yield* HubVariables
-    const projectsDir = yield* ClaudeProjectsDir
     const layerScope = yield* Effect.scope
 
     /** What keeps each running Session's Sandbox with a GitHub token, closed when it stops. */
@@ -591,7 +589,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       })
 
     /**
-     * Whether the running Sandbox has the mounts Claude Code runs from, and, with `pi`, pi too.
+     * Whether the running Sandbox has the mounts Claude Code runs from, and, with `pi`, the
+     * agent's Node.js and packages too.
      */
     const hasRunnerMounts = (sessionId: SessionId, pi: boolean) =>
       backend
@@ -602,8 +601,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         .pipe(Effect.map((result) => result.exitCode === 0))
 
     /**
-     * Destroys the Session's Sandbox, keeping its volumes, when it lacks the mounts Claude Code
-     * and pi run from: it boots it to tell. Says whether it did.
+     * Destroys the Session's Sandbox, keeping its volumes, when it lacks the mounts the agent and
+     * Claude Code run from: it boots it to tell. Says whether it did.
      */
     const replaceOutdated = (sessionId: SessionId, state: SandboxState) =>
       Effect.gen(function* () {
@@ -611,7 +610,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         if (state !== "Running") yield* backend.start(sessionId)
         if (yield* hasRunnerMounts(sessionId, true)) return false
         yield* Effect.logInfo(
-          `Session ${sessionId}: its Sandbox lacks the mounts Claude Code and pi run from, so it is made anew, keeping its volumes`,
+          `Session ${sessionId}: its Sandbox lacks the mounts its agent and Claude Code run from, so it is made anew, keeping its volumes`,
         )
         yield* release(sessionId)
         yield* backend.destroy(sessionId, { keepVolumes: true })
@@ -619,17 +618,17 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       })
 
     /**
-     * Readies the running Sandbox for Claude Code: tmux and bash, installed if the image lacks
-     * them, with what that prints shown in the Session, and Claude Code's state seeded. For a pi
-     * Session, readies it for pi too: Node.js runs there, and pi's state directory exists.
-     * `env` is the Sandbox's for both, without Claude Code's state.
+     * Readies the running Sandbox for the agent: tmux and bash, installed if the image lacks them,
+     * with what that prints shown in the Session, Claude Code's state seeded, which the agent's
+     * Claude bridge runs on, and, on a Runner with the pi bundle, its Node.js running, with libgcc
+     * and libstdc++ installed on musl if it doesn't, and the agent's state directory made. `env`
+     * is the Sandbox's, without Claude Code's state.
      */
     const ready = (
       sessionId: SessionId,
       claudePath: string,
       libc: Libc,
       env: Readonly<Record<string, string>>,
-      harness: SandboxTarget["harness"],
     ) =>
       Effect.gen(function* () {
         yield* runScript(
@@ -643,63 +642,28 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           },
           sessionLog(sessionId),
         )
+        yield* seedClaudeState(backend, sessionId)
         const node = sandboxNodePath(libc)
-        yield* readyHarness(sessionId, node, harness ?? "ClaudeCode")
+        if (piMounts.length > 0)
+          yield* runScript(
+            backend,
+            sessionId,
+            {
+              label: "Readying the agent's Node.js",
+              name: "pi-needs",
+              script: piNeedsScript(node, posix.join(agentStateGuestPath, "durable")),
+              cwd: "/",
+            },
+            sessionLog(sessionId),
+          )
         return {
           claude: { path: claudePath, env: { ...env, ...claudeStateEnv } } satisfies SandboxClaude,
           pi: { node, env } satisfies SandboxPi,
         }
       })
 
-    /**
-     * Readies the running Sandbox for a Harness, once tmux runs there: Claude Code's state seeded,
-     * which pi's Claude bridge runs on too, and, for pi, its `node` running, with libgcc and
-     * libstdc++ installed on musl if it doesn't, and pi's state directory made.
-     */
-    const readyHarness = (sessionId: SessionId, node: string, harness: Harness) =>
-      Effect.gen(function* () {
-        yield* seedClaudeState(backend, sessionId)
-        if (harness !== "Pi") return
-        if (piMounts.length === 0)
-          return yield* new SandboxError({ message: "this Runner's Sandboxes have no pi" })
-        yield* runScript(
-          backend,
-          sessionId,
-          {
-            label: "Readying pi",
-            name: "pi-needs",
-            script: piNeedsScript(node, piStateGuestPath),
-            cwd: "/",
-          },
-          sessionLog(sessionId),
-        )
-      })
-
-    // A Sandbox started for one Harness is readied for the other as the other's start would have
-    // (ADR 0030). One kept across a Runner restart may be older than pi's mount, which only its
-    // next start makes anew.
-    const readyFor = (sessionId: SessionId, harness: Harness, started: SandboxStarted) =>
-      Effect.gen(function* () {
-        if (harness === "Pi" && piMounts.length > 0 && !(yield* hasRunnerMounts(sessionId, true))) {
-          return yield* new SandboxError({
-            message: "its Sandbox was made before pi, so it runs pi once it sleeps and wakes",
-          })
-        }
-        yield* readyHarness(sessionId, started.pi.node, harness)
-      }).pipe(
-        failingAs(
-          (cause) =>
-            `the Sandbox could not be readied for ${harness === "Pi" ? "pi" : "Claude Code"}: ${failureMessage(cause)}`,
-        ),
-      )
-
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
-    const startPlain = (
-      sessionId: SessionId,
-      directories: SessionDirectories,
-      replace: boolean,
-      harness: SandboxTarget["harness"],
-    ) =>
+    const startPlain = (sessionId: SessionId, directories: SessionDirectories, replace: boolean) =>
       Effect.gen(function* () {
         const version = yield* sandboxClaude("musl")
         let state = yield* backend.state(sessionId)
@@ -726,13 +690,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }
         if (!running) yield* report(sessionId, "Running")
         yield* keepToken(sessionId)
-        return yield* ready(
-          sessionId,
-          sandboxClaudePath(version, "musl"),
-          "musl",
-          plainPiEnv,
-          harness,
-        )
+        return yield* ready(sessionId, sandboxClaudePath(version, "musl"), "musl", plainPiEnv)
       })
 
     const startWithEnvironment = (
@@ -741,7 +699,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       repo: string,
       environment: SessionEnvironment,
       record: SandboxRecord | undefined,
-      harness: SandboxTarget["harness"],
     ) =>
       Effect.gen(function* () {
         const snapshots = yield* snapshotsOrFail
@@ -802,7 +759,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             sandboxClaudePath(version, libc),
             libc,
             yield* environmentEnv(sessionId, values),
-            harness,
           )),
         }
       })
@@ -826,14 +782,13 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         yield* Effect.tryPromise(() => chmod(directories.session, 0o700))
         const record = yield* readRecord(directories)
         return target.environment === undefined
-          ? yield* startPlain(sessionId, directories, record !== undefined, target.harness)
+          ? yield* startPlain(sessionId, directories, record !== undefined)
           : yield* startWithEnvironment(
               sessionId,
               directories,
               target.repo,
               target.environment,
               record,
-              target.harness,
             )
       }).pipe(
         // After the start script, so an identity it set is kept.
@@ -869,10 +824,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     // What it runs is worked out again, as nothing of it outlives the Runner but the
     // Environment's record. The Claude Code this Runner would start is in the Sandbox already,
-    // through the mount of the host's builds. A Sandbox made before each Session had its own copy
-    // of the mod (#159) has none to start Claude Code with, so that waits for the Session to sleep.
-    // pi, in a pi Session's Sandbox, is in it through the bundle's mount, which every Sandbox
-    // made since pi has.
+    // through the mount of the host's builds, and the agent's Node.js and packages through the pi
+    // bundle's, which every Sandbox an agent runs in has.
     const keep = (sessionId: SessionId, directories: SessionDirectories) =>
       Effect.gen(function* () {
         const record = yield* readRecord(directories)
@@ -894,16 +847,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           pi: { node, env },
         }
       }).pipe(failingAs(failureMessage))
-
-    const hasTranscript = (sessionId: SessionId, directories: SessionDirectories, id: string) =>
-      ensureTranscript(backend, sessionId, id, { cwd: directories.claude, projectsDir }).pipe(
-        Effect.mapError(
-          (error) =>
-            new SandboxError({
-              message: `could not look for the conversation's transcript: ${errorMessage(error)}`,
-            }),
-        ),
-      )
 
     const stop = (sessionId: SessionId, reason: "Sleep" | "Archive") =>
       Effect.gen(function* () {
@@ -1038,8 +981,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       start,
       running: runningSandboxes,
       keep,
-      readyFor,
-      hasTranscript,
       stop,
       purge,
       diskUsage,

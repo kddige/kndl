@@ -7,14 +7,14 @@ import { Effect, Fiber } from "effect"
 import {
   ensurePiBundle,
   type NodeBuild,
-  piCliInInstall,
+  durableManifestInInstall,
   piPackageDir,
   PinnedNodeBuilds,
   PinnedNodeVersion,
   PinnedPiVersion,
   type RunCommand,
   sandboxNodePath,
-  sandboxPiCliPath,
+  sandboxNodeModulesPath,
 } from "./SandboxPi.ts"
 
 let dir = ""
@@ -62,7 +62,7 @@ const nodeReleases = async () => {
 }
 
 /**
- * Runs `tar` for real, and stands in for `bun install`: lays pi's package and CLI out as an
+ * Runs `tar` for real, and stands in for `bun install`: lays Pi Durable's package out as an
  * install would, at `version`, or fails with `failure`.
  */
 const host = (options: { version?: string; failure?: string } = {}) => {
@@ -74,11 +74,9 @@ const host = (options: { version?: string; failure?: string } = {}) => {
     }
     installs.push({ argv, files: (await readdir(cwd)).toSorted() })
     if (options.failure !== undefined) return { exitCode: 1, stderr: options.failure }
-    const pkg = join(cwd, "node_modules/@earendil-works/pi-coding-agent")
-    await mkdir(join(cwd, piCliInInstall, ".."), { recursive: true })
-    await writeFile(join(cwd, piCliInInstall), "#!/usr/bin/env node\n")
+    await mkdir(join(cwd, durableManifestInInstall, ".."), { recursive: true })
     await writeFile(
-      join(pkg, "package.json"),
+      join(cwd, durableManifestInInstall),
       JSON.stringify({ version: options.version ?? PinnedPiVersion }),
     )
     return { exitCode: 0, stderr: "" }
@@ -106,18 +104,23 @@ describe("the Sandbox's pi", () => {
       expect(build.sha256).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  test("pins pi exactly, in the committed package.json and its lockfile", async () => {
+  test("pins the packages the durable agent loads exactly, in the committed package.json and its lockfile", async () => {
+    const packages = ["chord", "pi-ai", "pi-codemode", "pi-durable", "pi-mcp"].map(
+      (name) => `@earendil-works/${name}`,
+    )
     const manifest = JSON.parse(await readFile(join(piPackageDir, "package.json"), "utf8"))
-    expect(manifest.dependencies).toEqual({ "@earendil-works/pi-coding-agent": PinnedPiVersion })
+    expect(manifest.dependencies).toEqual(
+      Object.fromEntries(packages.map((name) => [name, PinnedPiVersion])),
+    )
     const lockfile = await readFile(join(piPackageDir, "bun.lock"), "utf8")
-    expect(lockfile).toContain(`"@earendil-works/pi-coding-agent@${PinnedPiVersion}"`)
+    for (const name of packages) expect(lockfile).toContain(`"${name}@${PinnedPiVersion}"`)
+    // pi's coding agent, its TUI, is no longer run.
+    expect(lockfile).not.toContain("@earendil-works/pi-coding-agent")
   })
 
-  test("says where Node.js and pi are in the Sandbox", () => {
+  test("says where Node.js and the agent's packages are in the Sandbox", () => {
     expect(sandboxNodePath("musl")).toBe(`/opt/kndl/pi/node-v${PinnedNodeVersion}-musl/bin/node`)
-    expect(sandboxPiCliPath("pi-1.3.0-abc")).toBe(
-      "/opt/kndl/pi/pi-1.3.0-abc/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-    )
+    expect(sandboxNodeModulesPath("pi-1.3.0-abc")).toBe("/opt/kndl/pi/pi-1.3.0-abc/node_modules")
   })
 
   test("gets Node.js for each libc, checked, and installs pi from the lockfile, once", async () => {
@@ -158,7 +161,7 @@ describe("the Sandbox's pi", () => {
     expect(await readFile(join(cacheDir, ready.appDir, "bun.lock"), "utf8")).toBe(
       await readFile(join(piPackageDir, "bun.lock"), "utf8"),
     )
-    expect(await stat(join(cacheDir, ready.appDir, piCliInInstall))).toBeTruthy()
+    expect(await stat(join(cacheDir, ready.appDir, durableManifestInInstall))).toBeTruthy()
     // Nothing left of the work.
     expect((await readdir(cacheDir)).toSorted()).toEqual(
       [ready.appDir, "node-v24.0.0-glibc", "node-v24.0.0-musl"].toSorted(),

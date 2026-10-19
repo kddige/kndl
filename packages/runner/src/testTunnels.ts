@@ -62,21 +62,15 @@ const tmuxSocket = `kndl-tunnel-test-${process.pid}`
 let made: string | undefined
 
 /**
- * The scenes' folder, with a stand-in for Claude Code in it that says it's ready and echoes each
- * line. Made on first use, and again after removeTunnelScenes: test files share this module in one
- * `bun test`, and each removes the scenes after itself.
+ * The scenes' folder, with a stand-in in it for the Node.js that runs the durable agent, which
+ * only waits. Made on first use, and again after removeTunnelScenes: test files share this module
+ * in one `bun test`, and each removes the scenes after itself.
  */
 const sceneDir = () => {
   if (made !== undefined) return made
   const dir = mkdtempSync(join(tmpdir(), "kndl-tunnels-"))
-  writeFileSync(
-    join(dir, "fake-claude"),
-    `#!${process.execPath}
-process.stdout.write("fake claude ready\\n")
-for await (const line of console) process.stdout.write(\`you said: \${line}\\n\`)
-`,
-  )
-  chmodSync(join(dir, "fake-claude"), 0o755)
+  writeFileSync(join(dir, "fake-node"), "#!/bin/sh\nexec sleep 600\n")
+  chmodSync(join(dir, "fake-node"), 0o755)
   made = dir
   return dir
 }
@@ -248,7 +242,10 @@ export async function tunnelScene(options: {
     }),
   )
   const dir = sceneDir()
-  const fakeClaude = join(dir, "fake-claude")
+  const fakeNode = join(dir, "fake-node")
+  // A Sandbox takes a moment to start, as a real one does, so a Session is seen starting.
+  const sandboxes = new FakeSandboxes(undefined, fakeNode)
+  sandboxes.startTakes = "300 millis"
   const sessionsRoot = join(dir, `sessions-${Date.now()}`)
   const layer = TunnelsLive.pipe(
     Layer.provideMerge(SessionsLive.pipe(Layer.provide(openPorts))),
@@ -260,7 +257,7 @@ export async function tunnelScene(options: {
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(StaticClaudeModels(undefined)),
-    Layer.provideMerge(StaticPiBundle(undefined)),
+    Layer.provideMerge(StaticPiBundle({ nodeModules: join(dir, "pi", "node_modules") })),
     Layer.provide([
       Layer.succeed(
         Tmux,
@@ -272,7 +269,7 @@ export async function tunnelScene(options: {
         }),
       ),
       new FakeWorkspaces(sessionsRoot).layer,
-      new FakeSandboxes(fakeClaude).layer,
+      sandboxes.layer,
       new FakeModRelay().layer,
     ]),
     Layer.provideMerge(
