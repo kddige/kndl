@@ -64,7 +64,7 @@ import { HubVariables, variablesEnv } from "./HubVariables.ts"
 import { PiBundle } from "./PiBundle.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SandboxError, Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude, SandboxPi, SandboxStarted, SandboxTarget } from "./Sandbox.ts"
+import type { SandboxClaude, SandboxPi, SandboxTarget } from "./Sandbox.ts"
 import { claudeStateEnv, seedClaudeState } from "./sandbox/ClaudeState.ts"
 import {
   bindDependencyFoldersScript,
@@ -663,11 +663,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       })
 
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
-    const startPlain = (
-      sessionId: SessionId,
-      directories: SessionDirectories,
-      replace: boolean,
-    ) =>
+    const startPlain = (sessionId: SessionId, directories: SessionDirectories, replace: boolean) =>
       Effect.gen(function* () {
         const version = yield* sandboxClaude("musl")
         let state = yield* backend.state(sessionId)
@@ -694,12 +690,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }
         if (!running) yield* report(sessionId, "Running")
         yield* keepToken(sessionId)
-        return yield* ready(
-          sessionId,
-          sandboxClaudePath(version, "musl"),
-          "musl",
-          plainPiEnv,
-        )
+        return yield* ready(sessionId, sandboxClaudePath(version, "musl"), "musl", plainPiEnv)
       })
 
     const startWithEnvironment = (

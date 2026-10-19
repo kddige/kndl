@@ -93,5 +93,4 @@ describe("preparePi", () => {
     expect(logs).toEqual(["Warn: Sessions can't run: getting pi took longer than 5m"])
     expect(stopped).toHaveLength(2)
   })
-
 })

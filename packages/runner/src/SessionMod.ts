@@ -51,7 +51,10 @@ export const copySessionMod = (
       const agent = join(directories.mod, name, durableAgent)
       await mkdir(dirname(agent), { recursive: true })
       await cp(join(modDir, durableAgentBuild), agent)
-      await writeFile(join(dirname(agent), "package.json"), `${JSON.stringify({ type: "module" })}\n`)
+      await writeFile(
+        join(dirname(agent), "package.json"),
+        `${JSON.stringify({ type: "module" })}\n`,
+      )
       await symlink(nodeModules, join(dirname(agent), "node_modules"))
       return posix.join(modGuestPath, name)
     },

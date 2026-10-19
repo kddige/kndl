@@ -293,9 +293,10 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: Abor
     signal.throwIfAborted()
     if (install.exitCode !== 0)
       throw new Error(`installing pi: ${install.stderr.trim() || `exit ${install.exitCode}`}`)
-    const manifest = join(staging, durableManifestInInstall)
-    if (!(await exists(manifest))) throw new Error(`the pi install has no ${durableManifestInInstall}`)
-    const installed = JSON.parse(await readFile(manifest, "utf8")) as { version?: unknown }
+    const durable = join(staging, durableManifestInInstall)
+    if (!(await exists(durable)))
+      throw new Error(`the pi install has no ${durableManifestInInstall}`)
+    const installed = JSON.parse(await readFile(durable, "utf8")) as { version?: unknown }
     if (installed.version !== PinnedPiVersion)
       throw new Error(`installed pi ${String(installed.version)}, not ${PinnedPiVersion}`)
     await settle(staging, target, done)

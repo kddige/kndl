@@ -111,6 +111,12 @@ const settingOf = (request: StartSession | RelaunchSession) => ({
   ...(request.mcpServers === undefined ? {} : { mcpServers: request.mcpServers }),
 })
 
+/**
+ * The conversation the Hub knows the Session's by: the one it asks to resume, or a new one. The
+ * agent resumes from its storage either way; it only says it in its hello.
+ */
+const conversationFor = (request: StartSession | RelaunchSession) => request.resume ?? randomUUID()
+
 /** `text` with every occurrence of each of `values` masked, character for character. */
 export function withoutValues(text: string, values: ReadonlyArray<string> = []): string {
   return values.reduce(
@@ -198,9 +204,10 @@ export const SessionsLive = Layer.effect(
     const watchAgent = (sessionId: SessionId, session: Running) =>
       Effect.gen(function* () {
         const scope = yield* Scope.fork(session.scope)
-        const agent = yield* tmux
-          .attachAgent(sessionId)
-          .pipe(Scope.provide(scope), Effect.onError(() => Scope.close(scope, Exit.void)))
+        const agent = yield* tmux.attachAgent(sessionId).pipe(
+          Scope.provide(scope),
+          Effect.onError(() => Scope.close(scope, Exit.void)),
+        )
         const run: AgentRun = {
           agent,
           stopping: false,
@@ -233,9 +240,10 @@ export const SessionsLive = Layer.effect(
     const watch = (sessionId: SessionId) =>
       Effect.gen(function* () {
         const scope = yield* Scope.make()
-        const terminal = yield* tmux
-          .attachTerminal(sessionId)
-          .pipe(Scope.provide(scope), Effect.onError(() => Scope.close(scope, Exit.void)))
+        const terminal = yield* tmux.attachTerminal(sessionId).pipe(
+          Scope.provide(scope),
+          Effect.onError(() => Scope.close(scope, Exit.void)),
+        )
         const session: Running = { terminal, scope, agent: undefined }
         running.set(sessionId, session)
         yield* terminal.events.pipe(
@@ -314,13 +322,6 @@ export const SessionsLive = Layer.effect(
       )
 
     /**
-     * The conversation the Hub knows the Session's by: the one it asks to resume, or a new one.
-     * The agent resumes from its storage either way; it only says it in its hello.
-     */
-    const conversationFor = (request: StartSession | RelaunchSession) =>
-      request.resume ?? randomUUID()
-
-    /**
      * Starts the Session's durable agent in a new tmux session in its running Sandbox. It holds a
      * new Session token, and its Creator's setup token when it has one, both given to it alone,
      * never set on the Sandbox or its terminal (HarnessEnvironment.ts), and runs a new copy of the
@@ -372,9 +373,7 @@ export const SessionsLive = Layer.effect(
         const { sessionId } = request
         const pi = yield* piBundle.ready
         if (pi === undefined)
-          return yield* Effect.fail(
-            new Error("This Runner can't run Sessions: its log says why."),
-          )
+          return yield* Effect.fail(new Error("This Runner can't run Sessions: its log says why."))
         const credential = yield* retryingTimeouts(hubClaudeCredential.fetch(sessionId)).pipe(
           Effect.map((given): ClaudeCredential | undefined => given),
           Effect.catch((error) =>
@@ -589,7 +588,9 @@ export const SessionsLive = Layer.effect(
         if (!isSafeSessionId(sessionId)) continue
         const token = yield* tmux.variable(sessionId, ModEnvironment.modToken)
         if (token === undefined || !(yield* relay.hold(sessionId, token))) {
-          yield* Effect.logInfo(`Session ${sessionId}: its agent is no longer running, so it sleeps`)
+          yield* Effect.logInfo(
+            `Session ${sessionId}: its agent is no longer running, so it sleeps`,
+          )
           continue
         }
         const setupToken = yield* tmux.variable(sessionId, ClaudeTokenVariable)

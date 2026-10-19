@@ -741,9 +741,11 @@ describe("Sessions", () => {
       expect(spec.env["KNDL_HARNESS"]).toBe("Pi")
     }
     // A relaunch onto Claude Code runs the agent again, in the same Sandbox.
-    h.hub.send(relaunchSession(conversation, "anthropic/claude-opus-5-5", "chm_mod.second", {
-      harness: "ClaudeCode",
-    }))
+    h.hub.send(
+      relaunchSession(conversation, "anthropic/claude-opus-5-5", "chm_mod.second", {
+        harness: "ClaudeCode",
+      }),
+    )
     await eventually(() => h.hub.all("SessionStarted").length === 3)
     expect(h.tmux.launched[2]?.argv[1]).toEndWith("/durable/agent.js")
     expect(h.tmux.launched[2]?.env["KNDL_HARNESS"]).toBe("Pi")
@@ -846,7 +848,8 @@ describe("Sessions", () => {
     await connected(h)
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
-    const agentOf = (launched: number) => readFileSync(join(sessionMod(h, launched), "agent.js"), "utf8")
+    const agentOf = (launched: number) =>
+      readFileSync(join(sessionMod(h, launched), "agent.js"), "utf8")
     expect(agentOf(0)).toBe("// agent built 1\n")
 
     // An update builds the Runner's mod anew while the agent runs: its copy is left alone.

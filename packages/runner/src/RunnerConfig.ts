@@ -78,9 +78,7 @@ export const RunnerConfigLive = Layer.effect(
     const missing = missingModBundle(modDir)
     if (missing !== undefined) {
       return yield* Effect.die(
-        new Error(
-          `The mod isn't built: ${missing} is missing. Run \`bun run mod:build\`.`,
-        ),
+        new Error(`The mod isn't built: ${missing} is missing. Run \`bun run mod:build\`.`),
       )
     }
     return RunnerConfig.of({

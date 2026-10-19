@@ -228,50 +228,6 @@ export const makeTmux = (backend: TmuxBackend) => {
     )
   }
 
-  // The server stays up with no sessions, keeps a dead pane so its exit status can be read, sizes
-  // windows only when told to, and has no status line taking a row from the terminal. Focus events
-  // pass through, or a TUI run in the terminal prints a hint to turn them on in a tmux.conf.
-  // Window size is the window's own, never the server's: tmux 3.3 (Debian 12's) crashes when the
-  // global option is manual and there is no session, which is what a relaunch starts from.
-  const server = (unset: ReadonlyArray<string> = []) => [
-    ["start-server"],
-    ["set-option", "-g", "exit-empty", "off"],
-    ["set-option", "-g", "remain-on-exit", "on"],
-    ["set-option", "-g", "status", "off"],
-    ["set-option", "-g", "focus-events", "on"],
-    ...unset.map((name) => ["set-environment", "-g", "-u", name]),
-  ]
-
-  const newSession = (
-    name: string,
-    spec: { readonly cwd: string; readonly env: Readonly<Record<string, string>> },
-    size: TerminalSize,
-    argv: ReadonlyArray<string>,
-  ) => [
-    [
-      "new-session",
-      "-d",
-      "-s",
-      name,
-      "-x",
-      String(size.cols),
-      "-y",
-      String(size.rows),
-      "-c",
-      spec.cwd,
-      ...Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
-      "--",
-      ...argv,
-    ],
-    ["set-option", "-w", "-t", `=${name}:`, "window-size", "manual"],
-  ]
-
-  // tmux gives a new session's process the PATH of the client that made it, over `-e PATH=`
-  // (tmux's spawn.c), so the client runs with the launch's PATH: the shell and the agent get the
-  // login PATH, not the Sandbox's default one.
-  const clientEnv = (env: Readonly<Record<string, string>>) =>
-    env.PATH === undefined ? undefined : { PATH: env.PATH }
-
   // Should the shell's own loop be killed, its pane is started again all the same: it never stays
   // dead, so the terminal never shows tmux's "Pane is dead".
   const launchTerminal = (spec: TerminalSpec) => {
@@ -279,23 +235,31 @@ export const makeTmux = (backend: TmuxBackend) => {
     return tmux(
       spec.sessionId,
       sequence([
-        ...server(),
-        ...newSession(name, spec, spec.size, TerminalShell),
-        ["set-hook", "-t", `=${name}`, "pane-died", "respawn-pane"],
+        ...serverCommands(),
+        ...newSessionCommands(name, spec, spec.size, TerminalShell),
+        ["set-hook", "-t", `=${name}:`, "pane-died", "respawn-pane"],
       ]),
       clientEnv(spec.env),
     ).pipe(Effect.asVoid)
   }
 
+  // The server is readied by a command line of its own, which holds no secret: the client that
+  // starts the server forks it, and the server keeps that client's command line, which `ps` shows
+  // anything in the Sandbox for as long as it runs. The agent's session, and its secrets, come
+  // from a second client, gone once it is made.
   const launchAgent = (spec: AgentSpec) =>
-    tmux(
-      spec.sessionId,
-      sequence([
-        ...server(spec.unset),
-        ...newSession(agentSessionName(spec.sessionId), spec, AgentSize, spec.argv),
-      ]),
-      clientEnv(spec.env),
-    ).pipe(Effect.asVoid)
+    tmux(spec.sessionId, sequence(serverCommands(spec.unset)), clientEnv(spec.env)).pipe(
+      Effect.andThen(
+        tmux(
+          spec.sessionId,
+          sequence(
+            newSessionCommands(agentSessionName(spec.sessionId), spec, AgentSize, spec.argv),
+          ),
+          clientEnv(spec.env),
+        ),
+      ),
+      Effect.asVoid,
+    )
 
   // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
   const lastOutput = (sessionId: SessionId) =>
@@ -337,10 +301,7 @@ export const makeTmux = (backend: TmuxBackend) => {
   const killAgent = (sessionId: SessionId) => killSession(sessionId, agentSessionName(sessionId))
 
   const kill = (sessionId: SessionId) =>
-    Effect.andThen(
-      killAgent(sessionId),
-      killSession(sessionId, tmuxSessionName(sessionId)),
-    )
+    Effect.andThen(killAgent(sessionId), killSession(sessionId, tmuxSessionName(sessionId)))
 
   /** A control-mode client of the tmux session `name`, and its pane, as tmux targets it. */
   const control = (sessionId: SessionId, name: string) =>
@@ -439,6 +400,62 @@ export const TmuxLive = Layer.effect(
     return Tmux.of({ ...makeTmux(backend), retireHostServer })
   }),
 )
+
+/**
+ * Readies the tmux server, starting it if need be. It stays up with no sessions, keeps a dead pane
+ * so its exit status can be read, sizes windows only when told to, and has no status line taking
+ * a row from the terminal. Focus events pass through, or a TUI run in the terminal prints a hint
+ * to turn them on in a tmux.conf. Window size is the window's own, never the server's: tmux 3.3
+ * (Debian 12's) crashes when the global option is manual and there is no session, which is what a
+ * relaunch starts from. `unset` is taken out of the server's environment, which each new process
+ * starts from.
+ */
+function serverCommands(unset: ReadonlyArray<string> = []): Array<ReadonlyArray<string>> {
+  return [
+    ["start-server"],
+    ["set-option", "-g", "exit-empty", "off"],
+    ["set-option", "-g", "remain-on-exit", "on"],
+    ["set-option", "-g", "status", "off"],
+    ["set-option", "-g", "focus-events", "on"],
+    ...unset.map((name) => ["set-environment", "-g", "-u", name]),
+  ]
+}
+
+/** A new detached tmux session `name` running `argv`, its window sized as given. */
+function newSessionCommands(
+  name: string,
+  spec: { readonly cwd: string; readonly env: Readonly<Record<string, string>> },
+  size: TerminalSize,
+  argv: ReadonlyArray<string>,
+): Array<ReadonlyArray<string>> {
+  return [
+    [
+      "new-session",
+      "-d",
+      "-s",
+      name,
+      "-x",
+      String(size.cols),
+      "-y",
+      String(size.rows),
+      "-c",
+      spec.cwd,
+      ...Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+      "--",
+      ...argv,
+    ],
+    ["set-option", "-w", "-t", `=${name}:`, "window-size", "manual"],
+  ]
+}
+
+/**
+ * The environment of the tmux client that makes a session. tmux gives a new session's process the
+ * PATH of the client that made it, over `-e PATH=` (tmux's spawn.c), so the client runs with the
+ * launch's PATH: the shell and the agent get the login PATH, not the Sandbox's default one.
+ */
+function clientEnv(env: Readonly<Record<string, string>>) {
+  return env.PATH === undefined ? undefined : { PATH: env.PATH }
+}
 
 /** tmux commands run as one, separated by `;`. */
 function sequence(commands: ReadonlyArray<ReadonlyArray<string>>): Array<string> {

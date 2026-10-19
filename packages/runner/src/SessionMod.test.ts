@@ -38,6 +38,12 @@ function scene(agent = "// the durable agent\n") {
   return { root, modDir, directories: sessionDirectories(join(root, "sessions"), sessionId("s-1")) }
 }
 
+/** Writes `text` to `path`, making its directory. */
+const write = (path: string, text: string) => {
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, text)
+}
+
 /** Where the copy is on the host, from where the Sandbox sees it. */
 const onHost = (mod: string, guest: string) => join(mod, posix.relative(modGuestPath, guest))
 
@@ -69,10 +75,7 @@ test("lets Node resolve the agent's @earendil-works imports, and theirs, in the 
   // of the mod linked where the mount puts it.
   const guestRoot = join(root, "guest")
   const install = join(guestRoot, "opt", "kndl", "pi", "pi-1.3.0-abc", "node_modules")
-  const write = (path: string, text: string) => {
-    mkdirSync(join(path, ".."), { recursive: true })
-    writeFileSync(path, text)
-  }
+
   write(
     join(install, "@earendil-works", "fake", "package.json"),
     JSON.stringify({ name: "@earendil-works/fake", type: "module", exports: "./index.js" }),
