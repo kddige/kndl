@@ -25,12 +25,7 @@ import {
   defineTool,
   LiveDoc,
 } from "@earendil-works/pi-durable"
-import type {
-  ConversationId,
-  Extension,
-  TaskId,
-  Tx,
-} from "@earendil-works/pi-durable"
+import type { ConversationId, Extension, TaskId, Tx } from "@earendil-works/pi-durable"
 import { deliveredPrompt } from "../../src/HubMessages.ts"
 import type { Command } from "../../src/HubMessages.ts"
 import { AgentsDoc } from "./Docs.ts"
@@ -369,7 +364,9 @@ export const agentsExtension = ({ runtime, withheld }: SubagentsOptions): Extens
     } catch (error) {
       // Stopped with the Turn, as a foreground agent is; a shutdown leaves it to the restart.
       if (!runtime.closing())
-        await (await harness().conversation(record.conversationId, runtime.context))
+        await (
+          await harness().conversation(record.conversationId, runtime.context)
+        )
           ?.abort(runtime.context)
           .catch(() => undefined)
       throw error
@@ -427,7 +424,9 @@ export const agentsExtension = ({ runtime, withheld }: SubagentsOptions): Extens
       const created = await api.commit(async (tx) => {
         const doc = await tx.doc(AgentsDoc)
         const known = doc.agents[agentId]
-        if (known !== undefined) return { record: known, fresh: false }
+        // A draft is read only inside its commit: a copy goes out.
+        if (known !== undefined)
+          return { record: JSON.parse(JSON.stringify(known)) as AgentRecord, fresh: false }
         const anchorTaskId = await tx.createTask(AnchorTask, null, {
           ownership: { kind: "conversation" },
           background: true,
@@ -480,9 +479,9 @@ export const agentsExtension = ({ runtime, withheld }: SubagentsOptions): Extens
         if (now === undefined) throw new Error(`The agent ${agentId} is gone.`)
         const sent = now.calls[api.callId]
         if (sent !== undefined) return sent as TaskId<MessageResult>
-        const created = await createMessage(tx, now, { agentId, text: args.prompt, report: !wait })
-        now.calls[api.callId] = created
-        return created
+        const message = await createMessage(tx, now, { agentId, text: args.prompt, report: !wait })
+        now.calls[api.callId] = message
+        return message
       }, context)
       if (!wait) return text(`Started the agent ${agentId} in the background. ${comesLater}`)
       const result = await waitFor(taskId, record, context)
@@ -551,8 +550,8 @@ export const agentsExtension = ({ runtime, withheld }: SubagentsOptions): Extens
         throw new Error("The agent isn't running.")
       // Its end is this call's to say, not a notification's.
       await harness().commit(async (tx) => {
-        const agent = (await tx.doc(AgentsDoc)).agents[args.agentId]
-        if (agent !== undefined) agent.quiet = [...agent.pending]
+        const stopped = (await tx.doc(AgentsDoc)).agents[args.agentId]
+        if (stopped !== undefined) stopped.quiet = [...stopped.pending]
       }, context)
       await child?.abort(context)
       const said = await harness().commit((tx) => lastSaid(tx, record.conversationId), context)

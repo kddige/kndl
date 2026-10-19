@@ -58,7 +58,11 @@ const pathOf = (baseUrl: string | undefined) => {
 export const gatewayModels = (
   base: Pick<Provider, "getModels">,
   ids: ReadonlyArray<string>,
-  options: { readonly hubUrl: string; readonly provider: ModelProvider; readonly signedIn: boolean },
+  options: {
+    readonly hubUrl: string
+    readonly provider: ModelProvider
+    readonly signedIn: boolean
+  },
 ): { readonly models: Array<Model<Api>>; readonly missing: Array<string> } => {
   const gateway = `${options.hubUrl.replace(/\/+$/, "")}${modelGatewayPath(options.provider)}`
   const catalogue = base.getModels()
@@ -177,7 +181,9 @@ export interface Catalog {
    * The model `name` is, or the first the agent has without one; asks the Hub again, once, when
    * the agent doesn't have it (a Provider connected since it started).
    */
-  resolve(name: string | undefined): Promise<{ readonly model: ModelRef } | { readonly why: string }>
+  resolve(
+    name: string | undefined,
+  ): Promise<{ readonly model: ModelRef } | { readonly why: string }>
   /** Lets go of what the Models hold, as the Claude bridge's Claude Code. */
   close(): Promise<void>
 }
@@ -270,9 +276,11 @@ export const gatewayCatalog = async (options: {
         provider: name,
         signedIn,
       })
-      if (missing.length > 0) options.log(`kndl: pi-ai doesn't know ${name}'s ${missing.join(", ")}`)
+      if (missing.length > 0)
+        options.log(`kndl: pi-ai doesn't know ${name}'s ${missing.join(", ")}`)
       // One the Hub no longer lists stays, at the Gateway, which refuses it: never pi-ai's own.
-      if (atGateway.length > 0) models.setProvider(gatewayProvider(base, atGateway, options.modToken))
+      if (atGateway.length > 0)
+        models.setProvider(gatewayProvider(base, atGateway, options.modToken))
     }
     claude ??= installClaude(models, providers.models, {
       env: options.env,

@@ -16,7 +16,7 @@ import { attachmentTool } from "./Attachments.ts"
 /** The section that says what kndl is, and how people talk to the agent through it. */
 export const preambleText = [
   "This session is shared through kndl: several people may be watching it and talking to you, live, in a web UI, and any of them can prompt you, steer you while you work, stop you, or answer your questions.",
-  'A prompt from the web UI starts with its sender\'s name in brackets, such as "[Ada Lovelace] ...": answer the person who asked, and keep in mind that the others read along. A prompt without one came from the session itself, such as a subagent\'s result.',
+  "A prompt from the web UI starts with its sender's name in brackets, such as \"[Ada Lovelace] ...\": answer the person who asked, and keep in mind that the others read along. A prompt without one came from the session itself, such as a subagent's result.",
   `A line such as "[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for a file its sender attached: to see it, call the ${attachmentTool} tool with its id.`,
   "You run in a sandbox VM where the repository is checked out, and your work there survives the VM sleeping and your process restarting: a turn cut off by a restart continues where it stopped.",
   "People can also reply in threads: a thread is a fork of this conversation at one of your answers, which runs beside it with its own context.",
@@ -65,7 +65,9 @@ const nestedTtlMs = 60_000
  */
 export const contextFilesSection = (): PromptSection => {
   const cache = new FileCache()
-  let nested: { readonly at: number; readonly cwd: string; readonly paths: Array<string> } | undefined
+  let nested:
+    | { readonly at: number; readonly cwd: string; readonly paths: Array<string> }
+    | undefined
   const listNested = async (env: ExecutionEnv, cwd: string, context: Context) => {
     if (nested !== undefined && nested.cwd === cwd && Date.now() - nested.at < nestedTtlMs)
       return nested.paths
@@ -73,7 +75,11 @@ export const contextFilesSection = (): PromptSection => {
     const listed = await env
       .exec(
         ["git", "ls-files", "-z", "--", ...contextFileNames.map((name) => `*${name}`)],
-        { cwd, timeout: 5, onOutput: (text, _context, info) => void (info.stream === "stdout" && (output += text)) },
+        {
+          cwd,
+          timeout: 5,
+          onOutput: (text, _context, info) => void (info.stream === "stdout" && (output += text)),
+        },
         context,
       )
       .catch(() => undefined)
@@ -82,35 +88,32 @@ export const contextFilesSection = (): PromptSection => {
         ? output
             .split("\0")
             .filter((path) => path.includes("/"))
-            .sort()
+            .toSorted()
             .slice(0, 50)
         : []
     nested = { at: Date.now(), cwd, paths }
     return paths
   }
-  return section(
-    "context_files",
-    async (input, context) => {
-      const env = input.env
-      if (env === undefined) return undefined
-      const parts: Array<string> = []
-      for (const name of contextFileNames) {
-        const text = await cache.read(env, join(env.cwd, name), context)
-        if (text !== undefined && text.trim() !== "")
-          parts.push(`<file path="${name}">\n${text.trim()}\n</file>`)
-      }
-      const more = await listNested(env, env.cwd, context)
-      if (more.length > 0)
-        parts.push(
-          `Directories have their own instructions too; read the one for where you work before you change anything there:\n${more.map((path) => `- ${path}`).join("\n")}`,
-        )
-      if (parts.length === 0) return undefined
-      return [
-        "The repository's instructions for agents. Follow them; where they conflict with the people's requests, the people win.",
-        ...parts,
-      ].join("\n\n")
-    },
-  )
+  return section("context_files", async (input, context) => {
+    const env = input.env
+    if (env === undefined) return undefined
+    const parts: Array<string> = []
+    for (const name of contextFileNames) {
+      const text = await cache.read(env, join(env.cwd, name), context)
+      if (text !== undefined && text.trim() !== "")
+        parts.push(`<file path="${name}">\n${text.trim()}\n</file>`)
+    }
+    const more = await listNested(env, env.cwd, context)
+    if (more.length > 0)
+      parts.push(
+        `Directories have their own instructions too; read the one for where you work before you change anything there:\n${more.map((path) => `- ${path}`).join("\n")}`,
+      )
+    if (parts.length === 0) return undefined
+    return [
+      "The repository's instructions for agents. Follow them; where they conflict with the people's requests, the people win.",
+      ...parts,
+    ].join("\n\n")
+  })
 }
 
 /** Where a Repo keeps its skills, in the order they are listed. */
@@ -126,7 +129,8 @@ export interface Skill {
 /** A value of front matter: unquoted, on one line. */
 const unquote = (value: string) => {
   const text = value.trim()
-  return (text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))
+  return (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
     ? text.slice(1, -1)
     : text
 }
@@ -166,7 +170,7 @@ export const findSkills = async (
   for (const dir of skillDirectories) {
     const listed = await env.listDir(join(env.cwd, dir), context)
     if (!listed.ok) continue
-    const entries = [...listed.value].sort((a, b) => a.name.localeCompare(b.name))
+    const entries = listed.value.toSorted((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
       if (entry.kind === "file") continue
       const path = join(join(join(env.cwd, dir), entry.name), "SKILL.md")

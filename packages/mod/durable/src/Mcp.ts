@@ -28,7 +28,10 @@ import { Exit, Schema } from "effect"
 export const McpServersVariable = "KNDL_MCP_SERVERS"
 
 /** An MCP server of the Session's: its Installation and its server's name. */
-export type McpServerSpec = typeof GatewayServer.Type
+export interface McpServerSpec {
+  readonly installationId: string
+  readonly server: string
+}
 
 const decodeServers = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Array(GatewayServer)))
 
@@ -116,7 +119,9 @@ class Connection {
   /** Calls a tool; a session the server forgot is made again, and the call made once more. */
   async call(name: string, args: Record<string, unknown>, signal: AbortSignal | undefined) {
     try {
-      return await (await this.connected()).callTool(name, args, signal === undefined ? {} : { signal })
+      return await (
+        await this.connected()
+      ).callTool(name, args, signal === undefined ? {} : { signal })
     } catch (error) {
       if (!(error instanceof McpSessionExpiredError || error instanceof McpConnectionClosedError))
         throw error

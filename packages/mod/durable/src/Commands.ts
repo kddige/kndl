@@ -30,7 +30,9 @@ export interface CommandsOptions {
 /** The model a conversation runs on, as `<provider>/<id>`. */
 export const conversationModel = async (runtime: Runtime, conversation: Conversation) => {
   const model = (await conversation.agent(runtime.context)).model
-  return model === undefined ? undefined : modelName({ provider: model.provider, id: model.modelId })
+  return model === undefined
+    ? undefined
+    : modelName({ provider: model.provider, id: model.modelId })
 }
 
 /**
@@ -87,9 +89,9 @@ export class Commands {
         return this.steer(command)
       case "StopTurn": {
         const root = await this.root()
-        void root.abort(this.runtime.context).catch((error: unknown) =>
-          this.runtime.log(`kndl: stopping the Turn failed: ${error}`),
-        )
+        void root
+          .abort(this.runtime.context)
+          .catch((error: unknown) => this.runtime.log(`kndl: stopping the Turn failed: ${error}`))
         return
       }
       case "SwitchModel": {
@@ -208,7 +210,8 @@ export class Commands {
       command.threadId === undefined
         ? await this.root()
         : await threadConversation(runtime, command.threadId)
-    if (conversation === undefined) return runtime.log("kndl: Compact for a thread the agent hasn't")
+    if (conversation === undefined)
+      return runtime.log("kndl: Compact for a thread the agent hasn't")
     const instructions = command.instructions?.trim()
     await conversation.compact(instructions === "" ? undefined : instructions, runtime.context)
     runtime.report({

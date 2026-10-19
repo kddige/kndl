@@ -68,9 +68,15 @@ const roleOf = (entry: EntryRecord) => {
 /** The part of `text` around the first of `terms`, on one line. */
 const snippet = (text: string, terms: ReadonlyArray<string>, width = 300) => {
   const lower = text.toLowerCase()
-  const at = Math.max(0, Math.min(...terms.map((term) => lower.indexOf(term)).filter((i) => i >= 0)))
+  const at = Math.max(
+    0,
+    Math.min(...terms.map((term) => lower.indexOf(term)).filter((i) => i >= 0)),
+  )
   const start = Math.max(0, at - Math.floor(width / 3))
-  const piece = text.slice(start, start + width).replace(/\s+/g, " ").trim()
+  const piece = text
+    .slice(start, start + width)
+    .replace(/\s+/g, " ")
+    .trim()
   return `${start > 0 ? "…" : ""}${piece}${start + width < text.length ? "…" : ""}`
 }
 
@@ -84,8 +90,15 @@ export const searchEntries = async (
   query: string,
   options: { readonly limit: number; readonly before?: number | undefined },
   context: Context,
-): Promise<{ readonly found: Array<string>; readonly searched: number; readonly next?: EntryId }> => {
-  const terms = query.toLowerCase().split(/\s+/).filter((term) => term !== "")
+): Promise<{
+  readonly found: Array<string>
+  readonly searched: number
+  readonly next?: EntryId
+}> => {
+  const terms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term !== "")
   const conversation = await harness.conversation(conversationId, context)
   if (conversation === undefined || terms.length === 0) return { found: [], searched: 0 }
   const found: Array<string> = []

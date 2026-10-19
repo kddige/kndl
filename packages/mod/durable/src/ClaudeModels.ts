@@ -9,7 +9,11 @@
 
 import type { MutableModels } from "@earendil-works/pi-ai"
 import type { ProviderModel } from "@kndl/protocol"
-import { claudeBridgeOptionsFromEnv, ClaudeProvider, createClaudeBridgeProvider } from "./claude/index.ts"
+import {
+  claudeBridgeOptionsFromEnv,
+  ClaudeProvider,
+  createClaudeBridgeProvider,
+} from "./claude/index.ts"
 import type { ClaudeBridgeOptions, ClaudeBridgeProvider } from "./claude/index.ts"
 
 /** The Claude bridge installed into the agent's Models, while it is. */

@@ -6,8 +6,8 @@
 // when the process stopped continues where it was, reported as a Turn `Resumed` (Loops.ts).
 
 import { randomUUID } from "node:crypto"
-import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context"
 import type { Context } from "@earendil-works/chord"
+import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context"
 import {
   createRegistry,
   defineExtension,
@@ -23,8 +23,8 @@ import type {
   ToolExecutionResult,
 } from "@earendil-works/pi-durable"
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node"
-import { createCodingTools } from "@earendil-works/pi-durable/tools"
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search"
+import { createCodingTools } from "@earendil-works/pi-durable/tools"
 import { ConversationId } from "@kndl/protocol"
 import type { ThinkingLevel } from "@kndl/protocol"
 import { Schema } from "effect"
@@ -193,12 +193,12 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
 
   const catalog = await options.catalog(fetchHub)
 
-  let link: HubLink | undefined
-  const report = (event: Record<string, unknown>) => link?.report(event)
-  let harness: Harness | undefined
+  // The link and the Harness, once made: tools and reporters are made before either.
+  const made: { link?: HubLink; harness?: Harness } = {}
+  const report = (event: Record<string, unknown>) => made.link?.report(event)
   const openHarness = () => {
-    if (harness === undefined) throw new Error("the Harness hasn't opened")
-    return harness
+    if (made.harness === undefined) throw new Error("the Harness hasn't opened")
+    return made.harness
   }
   const loops = new Loops({
     harness: openHarness,
@@ -237,9 +237,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
         sessionHistoryToolDefinition(runtime),
         handoffToolDefinition(),
       ],
-      hooks: [
-        hook(ToolTask, { afterTool: (_call, result) => redactResult(result, secrets) }),
-      ],
+      hooks: [hook(ToolTask, { afterTool: (_call, result) => redactResult(result, secrets) })],
     }),
   )
   const images = options.images === false ? undefined : await imageProcessor(log)
@@ -273,7 +271,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     },
     context,
   )
-  harness = opened
+  made.harness = opened
 
   // The root, on the Session's model: the Hub keeps it, so a stored one that differs gives way.
   const wanted = options.model === undefined ? undefined : await catalog.resolve(options.model)
@@ -292,7 +290,10 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     (stored?.provider !== model.provider || stored.modelId !== model.modelId)
   )
     await root.configure(
-      { model, ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }) },
+      {
+        model,
+        ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
+      },
       context,
     )
 
@@ -311,13 +312,13 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   const commands = new Commands({
     runtime,
     questions,
-    takesAlreadySubmitted: () => link?.takesAlreadySubmitted === true,
+    takesAlreadySubmitted: () => made.link?.takesAlreadySubmitted === true,
     threadWithheld: () => [questionsExtension],
     modelChanged: (name) => {
       sessionModel = name
     },
   })
-  link = new HubLink({
+  const link = new HubLink({
     hubUrl,
     modToken: options.modToken,
     hello: () => ({
@@ -338,14 +339,19 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   })
 
   // Every conversation the Session has, followed before anything runs.
-  await loops.attach(root.id, { kind: "main" })
+  await loops.attach(root.id, { kind: "main" }, true)
   const threads = (await opened.snapshot(ThreadsDoc, context))?.threads ?? {}
   for (const [threadId, thread] of Object.entries(threads))
-    await loops.attach(thread.conversationId, { kind: "thread", threadId })
+    await loops.attach(thread.conversationId, { kind: "thread", threadId }, true)
   const known = (await opened.snapshot(AgentsDoc, context))?.agents ?? {}
   for (const [agentId, agent] of Object.entries(known))
-    await loops.attach(agent.conversationId, { kind: "agent", agentId, reported: agent.reported })
+    await loops.attach(
+      agent.conversationId,
+      { kind: "agent", agentId, reported: agent.reported },
+      true,
+    )
 
+  made.link = link
   link.start()
   await questions.reaskAsync()
   opened.resume()
@@ -370,8 +376,8 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     clearInterval(refreshOffered)
     await opened.close(BACKGROUND_CONTEXT).catch((error: unknown) => log(`kndl: closing: ${error}`))
     await loops.stop()
-    await link?.flushNow().catch(() => undefined)
-    link?.stop()
+    await link.drain().catch(() => undefined)
+    link.stop()
     lifetime.cancel()
     for (const controller of inFlight) controller.abort()
     await mcp.close()

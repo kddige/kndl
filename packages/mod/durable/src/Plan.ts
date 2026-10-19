@@ -37,13 +37,21 @@ export const planEvent = (plan: Readonly<PlanState>) => ({
 })
 
 /** Tells the Hub of a conversation's Plan. */
-export const reportPlan = (runtime: Runtime, conversationId: ConversationId, plan: Readonly<PlanState>) => {
+export const reportPlan = (
+  runtime: Runtime,
+  conversationId: ConversationId,
+  plan: Readonly<PlanState>,
+) => {
   const loop = runtime.loops.loopOf(conversationId)
   if (loop === undefined || (loop.kind === "agent" && !loop.reported)) return
   runtime.report({ _tag: "PlanChanged", ...loopFields(loop), plan: planEvent(plan) })
 }
 
-const stepStatus = Type.Union([Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("done")])
+const stepStatus = Type.Union([
+  Type.Literal("pending"),
+  Type.Literal("in_progress"),
+  Type.Literal("done"),
+])
 
 /** The tool: the whole Plan each time, as it is now. Replay-safe: it writes the same Plan again. */
 export const planToolDefinition = (runtime: Runtime) =>

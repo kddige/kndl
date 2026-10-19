@@ -15,7 +15,7 @@
 // which the reporter reconciles with what it reported.
 
 import type { Context } from "@earendil-works/chord"
-import { InboxDoc } from "@earendil-works/pi-durable"
+import { InboxDoc, watchEvents } from "@earendil-works/pi-durable"
 import type {
   AgentEvent,
   AgentEventStream,
@@ -30,7 +30,6 @@ import type {
   TaskId,
   UsageState,
 } from "@earendil-works/pi-durable"
-import { watchEvents } from "@earendil-works/pi-durable"
 import { clip, isRecord } from "../../src/HubMessages.ts"
 import { AgentsDoc, TurnsDoc } from "./Docs.ts"
 import { contentText, inputOrigin, inputText } from "./Inputs.ts"
@@ -139,15 +138,22 @@ export class LoopReporter {
     return this.turn?.turnId
   }
 
-  /** Follows the conversation from now on. */
-  async attach() {
-    const stream = await watchEvents(this.options.harness(), this.conversationId, this.options.context)
+  /**
+   * Follows the conversation from now on; at the agent's start, a subagent found idle whose run
+   * the Hub didn't hear end is said Done.
+   */
+  async attach(startup = false) {
+    const stream = await watchEvents(
+      this.options.harness(),
+      this.conversationId,
+      this.options.context,
+    )
     if (this.stopped) {
       await stream.stop()
       return
     }
     this.stream = stream
-    await this.reconcile(stream.snapshot, true)
+    await this.reconcile(stream.snapshot, true, startup)
     stream.start(async (events) => {
       try {
         await this.batch(events)
@@ -264,7 +270,8 @@ export class LoopReporter {
     if (id === undefined) return undefined
     const { context } = this.options
     const harness = this.options.harness()
-    const record = facts.submissions.get(id) ?? (await (await harness.submission(id, context))?.status(context))
+    const record =
+      facts.submissions.get(id) ?? (await (await harness.submission(id, context))?.status(context))
     const entryId = record?.entry
     if (entryId === undefined) return undefined
     const found = facts.entries.get(entryId) ?? known.find((entry) => entry.id === entryId)
@@ -453,7 +460,7 @@ export class LoopReporter {
    * Squares what was reported with a snapshot: at attachment, where a run still going is a
    * Turn resumed (or one never reported, reported now), and after the stream fell behind.
    */
-  private async reconcile(snapshot: SnapshotEvent, initial: boolean) {
+  private async reconcile(snapshot: SnapshotEvent, initial: boolean, startup = false) {
     this.usage = snapshot.usage
     if (initial) this.usageSent = JSON.stringify(conversationUsage(snapshot.usage))
     const facts: BatchFacts = { submissions: new Map(), entries: new Map() }
@@ -477,12 +484,16 @@ export class LoopReporter {
       const resumed = initial && (await this.reportedBefore(run.inputs[0]))
       await this.startTurn(run.inputs, facts, resumed, snapshot.entries)
     }
-    if (initial && run === undefined && this.loop.kind === "agent") await this.settleAgent()
+    if (startup && run === undefined && this.loop.kind === "agent") await this.settleAgent()
     // What the in-flight message says already, which this reporter may not have reported.
     const partial = snapshot.generation?.message
     if (partial !== undefined && this.turn !== undefined) this.emitText(partial.content)
     for (const slot of snapshot.tools)
-      if (slot.status === "running" && this.turn !== undefined && !this.turn.started.has(slot.callId))
+      if (
+        slot.status === "running" &&
+        this.turn !== undefined &&
+        !this.turn.started.has(slot.callId)
+      )
         this.toolStarted(slot.callId, slot.name, {})
   }
 
@@ -514,7 +525,10 @@ export class LoopReporter {
         if (change.block.type === "text") this.emitBlock(change.contentIndex, change.block.text)
         return
       case "text_delta":
-        this.emitted.set(change.contentIndex, (this.emitted.get(change.contentIndex) ?? "") + change.delta)
+        this.emitted.set(
+          change.contentIndex,
+          (this.emitted.get(change.contentIndex) ?? "") + change.delta,
+        )
         this.textDelta(change.delta)
         return
       case "block":
@@ -579,7 +593,8 @@ export class LoopReporter {
     const turn = this.turn
     if (turn === undefined) return
     // One that never ran (not offered, invalid, blocked) ends without a start: it starts here.
-    if (!turn.started.has(toolCallId)) this.toolStarted(toolCallId, tool, turn.calls.get(toolCallId))
+    if (!turn.started.has(toolCallId))
+      this.toolStarted(toolCallId, tool, turn.calls.get(toolCallId))
     const message = entry?.model?.[0]
     const result = message?.role === "toolResult" ? message : undefined
     this.report({
@@ -683,12 +698,15 @@ export class Loops {
 
   constructor(private readonly options: LoopsOptions) {}
 
-  /** Follows a conversation, once: attached already, it is left as it is. */
-  attach(conversationId: ConversationId, loop: Loop): Promise<LoopReporter> {
+  /**
+   * Follows a conversation, once: attached already, it is left as it is. `startup` says the agent
+   * is starting, and finds the conversation as the last process left it.
+   */
+  attach(conversationId: ConversationId, loop: Loop, startup = false): Promise<LoopReporter> {
     const known = this.attaching.get(conversationId)
     if (known !== undefined) return known
     const reporter = new LoopReporter(conversationId, loop, this.options)
-    const attached = reporter.attach().then(() => {
+    const attached = reporter.attach(startup).then(() => {
       this.reporters.set(conversationId, reporter)
       return reporter
     })

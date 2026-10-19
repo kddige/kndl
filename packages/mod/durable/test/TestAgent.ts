@@ -5,16 +5,23 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Type } from "@earendil-works/pi-ai"
 import type { AssistantMessage, Message, TranscriptContext } from "@earendil-works/pi-ai"
 import { createModels } from "@earendil-works/pi-ai/models"
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux"
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux"
+import { defineExtension, defineTool } from "@earendil-works/pi-durable"
 import type { Extension, HarnessSettings } from "@earendil-works/pi-durable"
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node"
 import type { ModAttachmentEncoded } from "@kndl/protocol"
 import { startDurableAgent } from "../src/DurableAgent.ts"
 import type { DurableAgent, DurableAgentOptions } from "../src/DurableAgent.ts"
 import type { McpServerSpec } from "../src/Mcp.ts"
-import { catalogOf } from "../src/Providers.ts"
+import { catalogOf, gatewayCatalog } from "../src/Providers.ts"
 import { FakeHub } from "./FakeHub.ts"
 
 export { fauxAssistantMessage, fauxText, fauxToolCall }
@@ -78,6 +85,8 @@ export interface TestAgentOptions {
   readonly attachments?: Record<string, ModAttachmentEncoded>
   /** Streamed this fast, in tokens a second; at once without. */
   readonly tokensPerSecond?: number
+  /** Runs on the Gateway's catalogue of the fake Hub's `/mod/providers`, not the faux models. */
+  readonly gateway?: boolean
 }
 
 /** The Creator's Models, as the Hub lists them. */
@@ -89,8 +98,12 @@ export class TestAgent {
   agent: DurableAgent | undefined
   /** The model names the requests ran on, in order. */
   readonly requests: Array<Request> = []
-  /** The Creator's Models the catalogue lists; a test may add one, as a Provider connected later. */
+  /** The Creator's Models the catalogue lists. */
   listed = [...listedModels]
+  /** Models the Hub lists once asked again, as of a Provider connected after the agent started. */
+  connectedLater: Array<string> = []
+  /** How often the agent asked for the Creator's Models again. */
+  refreshes = 0
 
   constructor(private readonly options: TestAgentOptions) {
     this.hub = new FakeHub({
@@ -106,8 +119,14 @@ export class TestAgent {
     const providers = [
       fauxProvider({
         provider: "openai",
-        models: [{ id: "gpt-test", contextWindow: 200_000 }, { id: "gpt-other" }, { id: "gpt-later" }],
-        ...(this.options.tokensPerSecond === undefined ? {} : { tokensPerSecond: this.options.tokensPerSecond }),
+        models: [
+          { id: "gpt-test", contextWindow: 200_000 },
+          { id: "gpt-other" },
+          { id: "gpt-later" },
+        ],
+        ...(this.options.tokensPerSecond === undefined
+          ? {}
+          : { tokensPerSecond: this.options.tokensPerSecond }),
       }),
       fauxProvider({ provider: "xai", models: [{ id: "grok-test" }] }),
     ]
@@ -115,18 +134,27 @@ export class TestAgent {
     for (const faux of providers) {
       models.setProvider(faux.provider)
       faux.setResponses(
-        Array.from({ length: 500 }, () => async (context: TranscriptContext, _options: unknown, _state: unknown, model: { provider: string; id: string }) => {
-          const last = context.messages.findLast((message) => message.role !== "system")
-          const request: Request = {
-            context,
-            model: `${model.provider}/${model.id}`,
-            last,
-            text: textOf(last),
-            system: systemOf(context),
-          }
-          this.requests.push(request)
-          return this.options.reply(request)
-        }),
+        Array.from(
+          { length: 500 },
+          () =>
+            async (
+              context: TranscriptContext,
+              _options: unknown,
+              _state: unknown,
+              model: { provider: string; id: string },
+            ) => {
+              const last = context.messages.findLast((message) => message.role !== "system")
+              const request: Request = {
+                context,
+                model: `${model.provider}/${model.id}`,
+                last,
+                text: textOf(last),
+                system: systemOf(context),
+              }
+              this.requests.push(request)
+              return this.options.reply(request)
+            },
+        ),
       )
     }
     this.agent = await startDurableAgent({
@@ -137,7 +165,28 @@ export class TestAgent {
       model: this.options.model ?? "openai/gpt-test",
       cwd: this.dir,
       storage: await openNodeSqliteStorage(join(this.dir, "session.sqlite")),
-      catalog: async () => catalogOf(models, () => this.listed, async () => true),
+      catalog:
+        this.options.gateway === true
+          ? (fetch) =>
+              gatewayCatalog({
+                hubUrl: this.hub.url,
+                modToken,
+                fetch,
+                env: {},
+                cwd: this.dir,
+                log: () => {},
+              })
+          : async () =>
+              catalogOf(
+                models,
+                () => this.listed,
+                async () => {
+                  this.refreshes++
+                  this.listed = [...this.listed, ...this.connectedLater]
+                  this.connectedLater = []
+                  return true
+                },
+              ),
       log: (text) => {
         if (process.env.KNDL_TEST_LOG) console.log(text)
       },
@@ -172,7 +221,11 @@ export class TestAgent {
   }
 
   /** The events of the Hub from the `from`th on, once one matches `check`. */
-  until(check: (event: Record<string, unknown> & { _tag: string }) => boolean, from = 0, ms?: number) {
+  until(
+    check: (event: Record<string, unknown> & { _tag: string }) => boolean,
+    from = 0,
+    ms?: number,
+  ) {
     return this.hub.eventsUntil(from, check, ms)
   }
 
@@ -184,12 +237,72 @@ export class TestAgent {
 }
 
 /** Waits until `check` holds, up to `ms`. */
-export const eventually = async <T>(check: () => T | undefined | Promise<T | undefined>, ms = 10_000) => {
+export const eventually = async <T>(
+  check: () => T | undefined | Promise<T | undefined>,
+  ms = 10_000,
+) => {
   const deadline = Date.now() + ms
   for (;;) {
     const value = await check()
     if (value !== undefined && value !== false) return value
     if (Date.now() > deadline) throw new Error("timed out")
     await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+/**
+ * A tool that holds its call until the test lets it go, `hold`: so a Turn stays busy for as long
+ * as a test needs. Replay-safe, so a call a restart cut off runs again.
+ */
+export const holdTool = () => {
+  let released = false
+  let release!: () => void
+  let gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const calls: Array<string> = []
+  let called!: () => void
+  const firstCall = new Promise<void>((resolve) => {
+    called = resolve
+  })
+  const extension = defineExtension({
+    name: "test-hold",
+    tools: [
+      defineTool({
+        name: "hold",
+        description: "Waits.",
+        parameters: Type.Object({ label: Type.Optional(Type.String()) }),
+        replay: "safe",
+        execute: async (args, api, context) => {
+          calls.push(args.label ?? api.callId)
+          called()
+          if (!released)
+            await new Promise<void>((resolve, reject) => {
+              void gate.then(resolve)
+              context.abortSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+                once: true,
+              })
+            })
+          return { output: [{ type: "text", text: `held ${args.label ?? ""}`.trim() }] }
+        },
+      }),
+    ],
+  })
+  return {
+    extension,
+    calls,
+    /** Resolves once a call has started. */
+    firstCall,
+    release: () => {
+      released = true
+      release()
+    },
+    /** Holds the next calls again. */
+    rearm: () => {
+      released = false
+      gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+    },
   }
 }

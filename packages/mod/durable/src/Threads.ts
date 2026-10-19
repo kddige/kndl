@@ -73,10 +73,7 @@ const promptThread = async (
   )
   if (given !== undefined) return
   const steer = await busy(runtime, thread)
-  const submission = await thread.submit(
-    promptInput(command, { steer, attachmentTool }),
-    context,
-  )
+  const submission = await thread.submit(promptInput(command, { steer, attachmentTool }), context)
   const status = await submission.status(context)
   const reporter = runtime.loops.get(thread.id)
   const turnId = reporter?.turnId
@@ -127,7 +124,10 @@ export const startThread = async (
       runtime.report({
         _tag: "ModelSwitchFailed",
         asked: command.model,
-        model: current === undefined ? command.model : modelName({ provider: current.provider, id: current.modelId }),
+        model:
+          current === undefined
+            ? command.model
+            : modelName({ provider: current.provider, id: current.modelId }),
         message: found.why,
         threadId: command.threadId,
       })

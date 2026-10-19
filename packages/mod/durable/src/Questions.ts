@@ -12,10 +12,10 @@
 // into the run going, or starting a Turn from whoever answered. One async question is open at a
 // time.
 
+import type { JsonValue } from "@earendil-works/chord"
 import { Type } from "@earendil-works/pi-ai"
 import { defineExtension, defineTool } from "@earendil-works/pi-durable"
 import type { Extension } from "@earendil-works/pi-durable"
-import type { JsonValue } from "@earendil-works/chord"
 import type { Question, QuestionOutcome } from "@kndl/protocol"
 import { askedQuestions } from "../../src/HubMessages.ts"
 import type { Command } from "../../src/HubMessages.ts"
@@ -59,6 +59,9 @@ export const questionParameters = Type.Object({
 })
 
 const cancelled = { outcome: { _tag: "Cancelled" } } as const
+
+/** A record out of a commit's draft, to keep after it. */
+const copy = (record: QuestionRecord): QuestionRecord => JSON.parse(JSON.stringify(record))
 
 /** The Session's Open questions, and the calls that wait for theirs. */
 export class Questions {
@@ -110,7 +113,7 @@ export class Questions {
           if (known !== undefined) {
             // A call run again after a restart: its question, asked again under this Turn.
             if (turnId !== undefined && known.closed === undefined) known.turnId = turnId
-            return { record: structuredClone(known) as QuestionRecord, again: true }
+            return { record: copy(known), again: true }
           }
           const otherAsync = Object.values(doc.open).some(
             (record) => record.async && record.closed === undefined,
@@ -199,7 +202,7 @@ export class Questions {
       const doc = await tx.doc(QuestionsDoc)
       const open = doc.open[toolCallId]
       if (open === undefined || open.closed !== undefined) return undefined
-      const taken = structuredClone(open) as QuestionRecord
+      const taken = copy(open)
       if (open.async) delete doc.open[toolCallId]
       else open.closed = { outcome: closed.outcome as unknown as JsonValue, by }
       return taken
@@ -222,7 +225,10 @@ export class Questions {
     })
     if (!record.async) return this.waiting.get(toolCallId)?.()
     // The model reads the answer at its next step, or as a Turn of its own from whoever answered.
-    const conversation = await this.harness.conversation(record.conversationId, this.runtime.context)
+    const conversation = await this.harness.conversation(
+      record.conversationId,
+      this.runtime.context,
+    )
     await conversation?.submit(
       {
         type: "input",
