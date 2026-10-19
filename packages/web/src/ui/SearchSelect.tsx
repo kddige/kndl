@@ -41,6 +41,8 @@ export interface SearchSelectProps {
   empty?: ReactNode
   side?: MenuSide
   align?: MenuAlign
+  /** A note under the list, such as whose accounts the options are. */
+  footer?: ReactNode
   /** Sizing overrides for the popup. */
   sx?: stylex.StyleXStyles
 }
@@ -105,6 +107,16 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   check: { display: "inline-flex", width: "1rem", flexShrink: 0, color: color.text },
+  footer: {
+    flexShrink: 0,
+    paddingBlock: space.s2,
+    paddingInline: space.s3,
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+    color: color.textSecondary,
+    fontSize: text.sm,
+  },
   message: {
     margin: 0,
     paddingBlock: space.s3,
@@ -152,6 +164,7 @@ export function SearchSelect({
   empty,
   side = "bottom",
   align = "start",
+  footer,
   sx,
 }: SearchSelectProps) {
   const [query, setQuery] = useState("")
@@ -233,6 +246,7 @@ export function SearchSelect({
                 </BaseCombobox.List>
               </>
             )}
+            {footer !== undefined && <div {...stylex.props(styles.footer)}>{footer}</div>}
           </BaseCombobox.Popup>
         </BaseCombobox.Positioner>
       </BaseCombobox.Portal>

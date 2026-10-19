@@ -166,21 +166,18 @@ const styles = stylex.create({
 })
 
 /**
- * A question Claude asked (#193), docked above the prompt box: the card to answer it, or, once
- * someone else has, who did and how. Only the Session's Creator answers (ADR 0026): anyone else
- * sees the question, and what the Creator picks, without the controls to answer it.
+ * A question the agent asked (#193), docked above the prompt box: the card to answer it, or, once
+ * someone else has, who did and how. Anyone in the Session answers it, as everyone drives it in
+ * the Pi Durable spike (docs/design/durable-harness.md); each sees what the others pick.
  */
 export function QuestionDock({
   summary,
   questions,
   picks,
-  drives,
 }: {
   summary: SessionSummary
   questions: ReadonlyMap<ToolCallId, QuestionView>
   picks: QuestionPicksState | null
-  /** Whether the signed-in person drives the Session, and so answers it. */
-  drives: boolean
 }) {
   const hub = useHub()
   const you = useHubState((state) => state.you)
@@ -200,16 +197,12 @@ export function QuestionDock({
         open={open}
         picks={picks?.toolCallId === open.toolCallId ? picks.picks : []}
         you={you}
-        {...(drives
-          ? {
-              onAnswer: (answer: QuestionAnswerFromWeb) => {
-                const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
-                if (!sent) notSent("Answer")
-                return sent
-              },
-              onPick,
-            }
-          : { answerer: summary.creator.name })}
+        onAnswer={(answer: QuestionAnswerFromWeb) => {
+          const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
+          if (!sent) notSent("Answer")
+          return sent
+        }}
+        onPick={onPick}
       />
     )
   }

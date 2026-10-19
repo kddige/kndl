@@ -1,5 +1,7 @@
 import {
   type AgentId,
+  type ThreadId,
+  type TurnId,
   branchNameProblem,
   InviteOnlyPath,
   InvitePath,
@@ -59,27 +61,35 @@ const homeRoute = createRoute({
 
 const nonEmpty = (value: unknown): value is string => typeof value === "string" && value !== ""
 
-/** Where the Session view is: its chat, one of its agents' views, or its terminal. */
+/** Where the Session view is: its chat, one of its agents' views or threads, or its terminal. */
 interface SessionSearch {
   tab?: SessionTab
   /** A subagent whose view is open (ADR 0014), in the chat. */
   agent?: string
+  /** A thread whose panel is open (docs/design/durable-harness.md), beside the chat. */
+  thread?: string
+  /** A Turn a new thread is being written off, in the thread panel. */
+  fork?: string
 }
 
 const sessionRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/sessions/$sessionId",
-  // ?tab=terminal opens the terminal and ?agent= an agent's view, so either can be linked to and
-  // stays open on reload.
+  // ?tab=terminal opens the terminal, ?agent= an agent's view, ?thread= a thread and ?fork= a new
+  // one off a Turn, so each can be linked to and stays open on reload.
   validateSearch: (search: Record<string, unknown>): SessionSearch =>
     search["tab"] === "terminal"
       ? { tab: "terminal" }
       : nonEmpty(search["agent"])
         ? { agent: search["agent"] }
-        : {},
+        : nonEmpty(search["thread"])
+          ? { thread: search["thread"] }
+          : nonEmpty(search["fork"])
+            ? { fork: search["fork"] }
+            : {},
   component: function SessionRoute() {
     const { sessionId } = sessionRoute.useParams()
-    const { tab, agent } = sessionRoute.useSearch()
+    const { tab, agent, thread, fork } = sessionRoute.useSearch()
     const navigate = sessionRoute.useNavigate()
     // Remount per Session, so the composer's draft and the scroll position don't carry over.
     return (
@@ -93,6 +103,15 @@ const sessionRoute = createRoute({
         {...(agent !== undefined && { agentId: agent as AgentId })}
         onAgentChange={(next) =>
           void navigate({ search: next === undefined ? {} : { agent: next } })
+        }
+        {...(thread !== undefined && { threadId: thread as ThreadId })}
+        {...(fork !== undefined && { forkOf: fork as TurnId })}
+        onThreadChange={(next, options) =>
+          void navigate({
+            search:
+              next === undefined ? {} : "thread" in next ? { thread: next.thread } : { fork: next.fork },
+            ...(options?.replace === true && { replace: true }),
+          })
         }
       />
     )
@@ -130,8 +149,6 @@ interface SetupSearch {
   from?: string
   direct?: true
   runner?: string
-  /** `claude-code` where New Session was asked for Claude Code on a Runner that runs pi (ADR 0029). */
-  harness?: "claude-code"
   /** Its model and thinking level (#128); the Hub checks them when it starts it. */
   model?: string
   thinking?: ThinkingLevel
@@ -141,7 +158,7 @@ interface SetupSearch {
  * The setup's search, read: a branch git would refuse is left out, as if the search had none.
  */
 function readSetupSearch(search: Record<string, unknown>): SetupSearch {
-  const { branch, from, direct, runner, harness, model, thinking } = search
+  const { branch, from, direct, runner, model, thinking } = search
   const refused = nonEmpty(from)
     ? newBranchProblem(String(branch), from) !== undefined || branchNameProblem(from) !== undefined
     : branchNameProblem(String(branch)) !== undefined
@@ -151,7 +168,6 @@ function readSetupSearch(search: Record<string, unknown>): SetupSearch {
         ...(nonEmpty(from) && { from }),
         ...((direct === true || direct === "true") && !nonEmpty(from) && { direct: true as const }),
         ...(nonEmpty(runner) && { runner }),
-        ...(harness === "claude-code" && { harness }),
         ...(nonEmpty(model) && { model }),
         ...(ThinkingLevels.some((level) => level === thinking) && {
           thinking: thinking as ThinkingLevel,
@@ -162,7 +178,7 @@ function readSetupSearch(search: Record<string, unknown>): SetupSearch {
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?from=, ?direct=, ?runner=, ?harness=, ?model=, ?thinking=)
+ * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?thinking=)
  * once the Environment is applied.
  */
 const environmentRoute = createRoute({
@@ -172,7 +188,7 @@ const environmentRoute = createRoute({
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
     // Read again: the router merges in its parents' search as the URL had it, whatever this refused.
-    const { branch, from, direct, runner, harness, model, thinking } = readSetupSearch(
+    const { branch, from, direct, runner, model, thinking } = readSetupSearch(
       environmentRoute.useSearch(),
     )
     return (
@@ -189,7 +205,6 @@ const environmentRoute = createRoute({
                   ...(direct !== undefined && { direct }),
                 }),
                 ...(runner !== undefined && { runnerId: runner as RunnerId }),
-                ...(harness !== undefined && { harness: "ClaudeCode" as const }),
                 ...(model !== undefined && { model }),
                 ...(thinking !== undefined && { thinkingLevel: thinking }),
               }
