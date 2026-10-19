@@ -193,6 +193,8 @@ export class FakeTerminal {
  */
 export class FakeAgent {
   terminated = false
+  /** A stuck process that must be killed after the stop grace period. */
+  ignoreTerminate = false
   /** Its process exited: tmux keeps the dead pane. */
   exited = false
   /** Everything it printed, as `capture-pane` would read it back. */
@@ -216,7 +218,7 @@ export class FakeAgent {
       exited: Effect.promise(() => this.done.promise),
       terminate: Effect.sync(() => {
         this.terminated = true
-        this.exit(143)
+        if (!this.ignoreTerminate) this.exit(143)
       }),
     }
   }
@@ -526,6 +528,8 @@ export class FakeOpenPorts {
   /** The Open ports each Session's Sandbox has, by Session. */
   readonly ports = new Map<SessionId, ReadonlyArray<OpenPort>>()
   readonly watched = new Set<SessionId>()
+  /** Lets a test hold the start lock while an agent exits or another request queues. */
+  watchTakes: Duration.Input = 0
 
   private has(id: SessionId) {
     return (this.ports.get(id)?.length ?? 0) > 0
@@ -542,7 +546,8 @@ export class FakeOpenPorts {
             this.calls.push(`watch ${id}`)
             if (this.watched.has(id)) return Effect.void
             this.watched.add(id)
-            return this.has(id) ? report(id, this.ports.get(id) ?? []) : Effect.void
+            const reported = this.has(id) ? report(id, this.ports.get(id) ?? []) : Effect.void
+            return this.watchTakes === 0 ? reported : Effect.delay(reported, this.watchTakes)
           }),
         unwatch: (id) =>
           Effect.suspend(() => {

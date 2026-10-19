@@ -29,8 +29,8 @@ export interface SessionDirectories {
   /** The Workspace: the Repo's checkout on the Work branch, mounted into the Sandbox. */
   readonly workspace: string
   /**
-   * The mod as the Session's Claude Code last started with it, copied from the Runner's at each
-   * start (SessionMod.ts), and mounted read-only into the Sandbox.
+   * The mod as the Session's agent last started with it, copied from the Runner's at each start
+   * (SessionMod.ts), and mounted read-only into the Sandbox.
    */
   readonly mod: string
 }
