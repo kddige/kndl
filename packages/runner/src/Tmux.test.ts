@@ -5,9 +5,10 @@ import { readFileSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { BunServices } from "@effect/platform-bun"
 import type { SessionId } from "@kndl/protocol"
-import { Effect, Fiber, Layer, Redacted, Stream } from "effect"
+import { Effect, Fiber, Layer, Queue, Redacted, Stream } from "effect"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
+import type { ExecEvent } from "./sandbox/SandboxBackend.ts"
 import { hostTmuxBackend, sessionId, waitFor } from "./testSupport.ts"
 import {
   agentSessionName,
@@ -144,6 +145,49 @@ describe.skipIf(tmuxMissing)("the agent's tmux session", () => {
 
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
+
+  test("waits for attachment before subscribing, even with another control client active", async () => {
+    const program = Effect.gen(function* () {
+      const stdout = yield* Queue.unbounded<ExecEvent>()
+      const commands: Array<string> = []
+      // tmux can read stdin before the initial attach-session completes. Before attachment,
+      // refresh-client defaults to the most active client, which can be the terminal's.
+      const tmux = makeTmux({
+        exec: () => Effect.succeed({ exitCode: 0, stdout: "160 50", stderr: "" }),
+        spawn: () =>
+          Effect.succeed({
+            events: Stream.fromQueue(stdout),
+            write: (command) =>
+              Effect.sync(
+                () =>
+                  void commands.push(
+                    typeof command === "string" ? command : new TextDecoder().decode(command),
+                  ),
+              ),
+            closeStdin: Effect.void,
+          }),
+      })
+      const agent = yield* tmux.attachAgent(sessionId("agent-attach-race"))
+      const exited = yield* agent.exited.pipe(Effect.forkChild)
+      yield* Effect.sleep("50 millis")
+      expect(commands).toEqual([])
+      yield* Queue.offer(stdout, {
+        _tag: "Stdout",
+        data: new TextEncoder().encode(
+          "%begin 1 1 0\n%end 1 1 0\n%session-changed $0 hub-agent-attach-race-agent\n",
+        ),
+      })
+      yield* waitFor(Effect.sync(() => commands.length === 1))
+      expect(commands[0]).toContain("refresh-client -B")
+      yield* Queue.offer(stdout, {
+        _tag: "Stdout",
+        data: new TextEncoder().encode("%subscription-changed kndl-exit $0 : 1 7 \n"),
+      })
+      expect(yield* Fiber.join(exited)).toBe(7)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped))
+  }, 10_000)
 
   test("gives the agent the launch's PATH, which tmux takes from its client", async () => {
     const id = sessionId("agent-path")
