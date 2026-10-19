@@ -60,6 +60,29 @@ const sessionEvents = [
     text: "fix the tests",
     message: "Only the Creator prompts a Session now",
   },
+  { _tag: "TurnStopRequested", by: bob, threadId: "thr-1" },
+  {
+    _tag: "ThreadStarted",
+    threadId: "thr-1",
+    anchorTurnId: "t-1",
+    title: "what about Windows?",
+    startedBy: bob,
+    model: "openai/gpt-6-luna",
+  },
+  {
+    _tag: "ThreadPromptSent",
+    threadId: "thr-1",
+    promptId: "p-7",
+    sender: bob,
+    text: "what about Windows?",
+  },
+  {
+    _tag: "ThreadModelChanged",
+    threadId: "thr-1",
+    by: alice,
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "high",
+  },
 ]
 
 const webToHub = [
@@ -335,6 +358,30 @@ const webToHub = [
     requestId: "q-42",
     mcpServerId: "@acme/linear-mcp",
     readId: "read-2",
+  },
+  {
+    _tag: "CreateThread",
+    sessionId: "s-1",
+    anchorTurnId: "t-1",
+    text: "what about Windows?",
+    model: "openai/gpt-6-luna",
+  },
+  { _tag: "CreateThread", sessionId: "s-1", anchorTurnId: "t-1", text: "", attachments: ["att-1"] },
+  { _tag: "PromptThread", sessionId: "s-1", threadId: "thr-1", text: "and macOS" },
+  { _tag: "StopThread", sessionId: "s-1", threadId: "thr-1" },
+  {
+    _tag: "SetThreadModel",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "high",
+  },
+  { _tag: "CompactConversation", sessionId: "s-1" },
+  {
+    _tag: "CompactConversation",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    instructions: "Keep the test names",
   },
 ]
 
@@ -1111,6 +1158,20 @@ const hubToWeb = [
     },
     upgrades: "@acme/linear-mcp",
   },
+  { _tag: "ThreadCreated", sessionId: "s-1", threadId: "thr-1" },
+  {
+    _tag: "SessionModels",
+    sessionId: "s-1",
+    models: [
+      {
+        provider: "openai",
+        id: "gpt-6-sol",
+        label: "GPT-6-Sol",
+        thinkingLevels: ["low", "medium", "high"],
+      },
+    ],
+  },
+  { _tag: "SessionModels", sessionId: "s-1", models: [] },
 ]
 
 describe("SessionEvent", () => {

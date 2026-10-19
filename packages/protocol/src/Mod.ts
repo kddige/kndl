@@ -8,10 +8,18 @@ import {
   ParticipantId,
   PromptId,
   SessionId,
+  ThreadId,
   ToolCallId,
 } from "./Ids.ts"
 import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { Participant, PresenceChanged, QuestionAnswer, StopAgent, StopTurn } from "./Session.ts"
+import {
+  Compact,
+  DeliverThreadPrompt,
+  StartThread,
+  StopThread,
+  SwitchThreadModel,
+} from "./Thread.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -75,6 +83,11 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    * optional, until the Hub no longer reads it and the mods no longer send it; then it goes.
    */
   takesHandoffs: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It is the durable agent (docs/design/durable-harness.md): it takes the thread commands and
+   * Compact, and resumes a run its restart cut off, as a Turn `Resumed`.
+   */
+  durable: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
@@ -133,6 +146,8 @@ export const ModelSwitchFailed = Schema.TaggedStruct("ModelSwitchFailed", {
   /** The model it runs on still. */
   model: ModelName,
   message: Schema.String,
+  /** The thread whose model it was, for a SwitchThreadModel; absent for the Session's. */
+  threadId: Schema.optionalKey(ThreadId),
 })
 export type ModelSwitchFailed = typeof ModelSwitchFailed.Type
 
@@ -305,6 +320,11 @@ export const HubToMod = Schema.Union([
   DeliverAnswer,
   SwitchModel,
   DeliverHandoff,
+  StartThread,
+  DeliverThreadPrompt,
+  StopThread,
+  SwitchThreadModel,
+  Compact,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
 export type HubToModEncoded = typeof HubToMod.Encoded
@@ -327,6 +347,11 @@ export const ModCommand = Schema.Union([
   DeliverAnswer,
   SwitchModel,
   DeliverHandoff,
+  StartThread,
+  DeliverThreadPrompt,
+  StopThread,
+  SwitchThreadModel,
+  Compact,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
 

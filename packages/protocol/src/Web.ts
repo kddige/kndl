@@ -27,6 +27,7 @@ import {
   RequestId,
   RunnerId,
   SessionId,
+  ThreadId,
   ToolCallId,
 } from "./Ids.ts"
 import {
@@ -59,6 +60,13 @@ import {
 } from "./Session.ts"
 import { MaxDiskUsageSessions, RunnerHistoryPoint, SessionDiskSize } from "./Sysinfo.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
+import {
+  ThreadCommand,
+  ThreadMessage,
+  ThreadModelChanged,
+  ThreadPromptSent,
+  ThreadStarted,
+} from "./Thread.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -91,6 +99,8 @@ export type SessionStateChanged = typeof SessionStateChanged.Type
 /** A Participant asked to stop the current Turn. */
 export const TurnStopRequested = Schema.TaggedStruct("TurnStopRequested", {
   by: Participant,
+  /** The thread whose Turn they asked to stop; absent for the main loop's. */
+  threadId: Schema.optionalKey(ThreadId),
 })
 export type TurnStopRequested = typeof TurnStopRequested.Type
 
@@ -171,6 +181,9 @@ export const SessionEvent = Schema.Union([
   SandboxNoted,
   ModelSwitched,
   PromptCancelled,
+  ThreadStarted,
+  ThreadPromptSent,
+  ThreadModelChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 
@@ -621,6 +634,7 @@ export const WebToHub = Schema.Union([
   CloseTerminal,
   TerminalInput,
   TerminalResize,
+  ThreadCommand,
   GetEnvironment,
   CheckEnvironmentDraft,
   StartTestBuild,
@@ -977,6 +991,7 @@ export const HubToWeb = Schema.Union([
   QuestionPicks,
   SessionStartLogged,
   TerminalFrame,
+  ThreadMessage,
   CommandFailed,
   EnvironmentState,
   EnvironmentDraftChecked,

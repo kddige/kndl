@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { attachmentCount, PromptAttachments, textOrAttachments } from "./Attachment.ts"
-import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
+import { AgentId, PromptId, ThreadId, ToolCallId, TurnId } from "./Ids.ts"
 import {
   AgentStatus,
   BranchName,
@@ -9,6 +9,7 @@ import {
   Question,
   QuestionOutcome,
 } from "./Session.ts"
+import { CompactionEnded, CompactionStarted, PlanChanged, UsageChanged } from "./Thread.ts"
 
 // Turn events: what happens in a Turn, as the mod reports it to the Hub. The Hub appends each to
 // the Session's event log and relays it to web clients unchanged.
@@ -16,6 +17,12 @@ import {
 // Events from a subagent (ADR 0014) carry its `agentId`; events from the main loop have none. A
 // subagent's TextDelta, ToolCallStarted, ToolCallEnded and TurnEnded have its own run's `turnId`,
 // new each time it runs or is resumed, never its parent's: they belong together by `agentId`.
+//
+// Events from a thread (docs/design/durable-harness.md) carry its `threadId`: a TurnStarted or
+// TurnEnded with one starts or ends that thread's Turn, and leaves the main loop as it was.
+
+/** The thread an event is from; absent for the main loop and its subagents. */
+const threadIdField = Schema.optionalKey(ThreadId)
 
 /**
  * The longest tool input or output summary, in characters. The mod clips to this (the prototype
@@ -38,12 +45,18 @@ export const PromptSender = Schema.Union([
   Schema.TaggedStruct("FromAgent", { agentId: AgentId }),
   /** Another Session, before ADR 0014: history only. */
   FromSession,
+  /**
+   * A run the durable agent continued after it restarted (its Sandbox slept, it crashed, or its
+   * Runner restarted) where it had stopped: the Turn the stop ended goes on as this one.
+   */
+  Schema.TaggedStruct("Resumed", {}),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PromptSender = typeof PromptSender.Type
 
-/** A Turn began on the main loop. Subagent loops have no start of their own. */
+/** A Turn began on the main loop, or in a thread. Subagent loops have no start of their own. */
 export const TurnStarted = Schema.TaggedStruct("TurnStarted", {
   turnId: TurnId,
+  threadId: threadIdField,
   /** The prompt as the model reads it; "" for a Turn that continues without one. */
   text: Schema.String,
   sender: PromptSender,
@@ -65,6 +78,7 @@ export type TurnStarted = typeof TurnStarted.Type
  */
 export const PromptSteered = Schema.TaggedStruct("PromptSteered", {
   turnId: TurnId,
+  threadId: threadIdField,
   /** The Prompt queue entry it came from. */
   promptId: PromptId,
   /** The prompt as its sender wrote it; empty for a prompt of attachments alone. */
@@ -84,6 +98,7 @@ export type PromptSteered = typeof PromptSteered.Type
  */
 export const SteeredPromptRead = Schema.TaggedStruct("SteeredPromptRead", {
   turnId: TurnId,
+  threadId: threadIdField,
   promptId: PromptId,
 })
 export type SteeredPromptRead = typeof SteeredPromptRead.Type
@@ -92,6 +107,7 @@ export type SteeredPromptRead = typeof SteeredPromptRead.Type
 export const TextDelta = Schema.TaggedStruct("TextDelta", {
   turnId: TurnId,
   agentId: Schema.optionalKey(AgentId),
+  threadId: threadIdField,
   text: Schema.NonEmptyString,
 })
 export type TextDelta = typeof TextDelta.Type
@@ -100,6 +116,7 @@ export type TextDelta = typeof TextDelta.Type
 export const ToolCallStarted = Schema.TaggedStruct("ToolCallStarted", {
   turnId: TurnId,
   agentId: Schema.optionalKey(AgentId),
+  threadId: threadIdField,
   toolCallId: ToolCallId,
   /** The tool's name as the model sees it, such as `Bash`. */
   tool: Schema.NonEmptyString,
@@ -119,6 +136,7 @@ export type ToolCallOutcome = typeof ToolCallOutcome.Type
 export const ToolCallEnded = Schema.TaggedStruct("ToolCallEnded", {
   turnId: TurnId,
   agentId: Schema.optionalKey(AgentId),
+  threadId: threadIdField,
   toolCallId: ToolCallId,
   tool: Schema.NonEmptyString,
   outcome: ToolCallOutcome,
@@ -161,6 +179,7 @@ export type TurnUsage = typeof TurnUsage.Type
 export const TurnEnded = Schema.TaggedStruct("TurnEnded", {
   turnId: TurnId,
   agentId: Schema.optionalKey(AgentId),
+  threadId: threadIdField,
   reason: TurnEndReason,
   durationMs: Schema.Natural,
   /** Absent when no request counted, such as on an early stop or an API error. */
@@ -175,8 +194,10 @@ export type TurnEnded = typeof TurnEnded.Type
  * are reported: Claude Code's own, such as its progress summaries, never are.
  */
 export const AgentStarted = Schema.TaggedStruct("AgentStarted", {
-  /** The main loop's Turn that started it. */
+  /** The main loop's Turn that started it, or the thread's. */
   turnId: TurnId,
+  /** The thread whose Turn started it; absent for the main loop. */
+  threadId: threadIdField,
   agentId: AgentId,
   /** The Agent call that started it. */
   toolCallId: ToolCallId,
@@ -255,6 +276,10 @@ export const TurnEvent = Schema.Union([
   QuestionClosed,
   PromptSteered,
   SteeredPromptRead,
+  CompactionStarted,
+  CompactionEnded,
+  PlanChanged,
+  UsageChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
 

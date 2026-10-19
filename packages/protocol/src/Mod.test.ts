@@ -50,6 +50,13 @@ const modToHub = [
     message: "pi has no Model openai/gpt-6-sol",
   },
   { _tag: "ModelSwitchFailed", model: "openai/gpt-6-luna", message: "No default Model" },
+  {
+    _tag: "ModelSwitchFailed",
+    asked: "openai/gpt-6-sol",
+    model: "openai/gpt-6-luna",
+    message: "No Model openai/gpt-6-sol",
+    threadId: "thr-1",
+  },
 ]
 
 const hubToMod = [
@@ -110,6 +117,35 @@ const hubToMod = [
     earlierBefore: 12,
   },
   { _tag: "DeliverHandoff", sessionId: "s-1", from: "ClaudeCode", text: "" },
+  {
+    _tag: "StartThread",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    anchorTurnId: "t-1",
+    promptId: "p-7",
+    text: "what about Windows?",
+    sender: bob,
+    model: "openai/gpt-6-luna",
+    thinkingLevel: "low",
+  },
+  {
+    _tag: "DeliverThreadPrompt",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    promptId: "p-8",
+    text: "and macOS",
+    sender: alice,
+  },
+  { _tag: "StopThread", sessionId: "s-1", threadId: "thr-1" },
+  { _tag: "SwitchThreadModel", sessionId: "s-1", threadId: "thr-1", model: "openai/gpt-6-sol" },
+  { _tag: "Compact", sessionId: "s-1", sender: alice },
+  {
+    _tag: "Compact",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    instructions: "Keep the test names",
+    sender: bob,
+  },
 ]
 
 describe("ModToHub", () => {
