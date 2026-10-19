@@ -95,12 +95,13 @@ export class SessionLog extends Context.Service<
       ) {
         const after = range.after ?? -1
         const before = range.before ?? Number.MAX_SAFE_INTEGER
-        // The main loop's: a subagent's Turn says its agent.
+        // The main loop's: a subagent's Turn says its agent, a thread's its thread.
         const starts = yield* sql<{ readonly seq: number }>`
           SELECT seq FROM session_events
           WHERE session_id = ${sessionId} AND seq > ${after} AND seq < ${before}
             AND json_extract(event, '$._tag') = 'TurnStarted'
             AND json_extract(event, '$.agentId') IS NULL
+            AND json_extract(event, '$.threadId') IS NULL
           ORDER BY seq DESC
           LIMIT ${range.count + 1}
         `

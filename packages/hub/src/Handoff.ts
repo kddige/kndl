@@ -3,7 +3,7 @@
 // - Its Turns: each Turn on the main loop, from its TurnStarted, as who prompted it and what, the
 //   tools its agent called (`tool: input`), what it answered (its TextDeltas joined, what it said
 //   either side of a tool call apart) and the model it ran on, each clipped. A subagent's work
-//   isn't its own. `GET /mod/history` serves them a page at a time.
+//   isn't its own, nor is a thread's. `GET /mod/history` serves them a page at a time.
 // - The context handoff: after a switch of Harness, the Turns the new Harness hasn't seen, and the
 //   model switches among them, in kndl's voice, oldest first, kept within a budget: the newest
 //   that fit, and where the earlier ones start, for the agent to read with its history tool. The
@@ -51,6 +51,8 @@ const promptedBy = (sender: PromptSender) => {
       return `subagent ${sender.agentId}`
     case "FromSession":
       return "another Session"
+    case "Resumed":
+      return "the agent, going on after it restarted"
   }
 }
 
@@ -81,8 +83,9 @@ const readLog = (entries: ReadonlyArray<SessionLogEntry>) => {
   const notes: Array<Note> = []
   const byId = new Map<string, LoggedTurn>()
   for (const { seq, at, event } of entries) {
-    // A subagent's work is its own.
+    // A subagent's work is its own, and so is a thread's (docs/design/durable-harness.md).
     if ("agentId" in event && event.agentId !== undefined) continue
+    if ("threadId" in event && event.threadId !== undefined) continue
     switch (event._tag) {
       case "TurnStarted": {
         const files = event.attachments?.length ?? 0
