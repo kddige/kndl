@@ -21,17 +21,22 @@ bun run lint
 bun run format:check
 ```
 
-Start the Hub with the data-directory settings you normally use for an isolated developer Hub:
+For example, use a fresh home for the experiment. Generate a secrets key once, keep it outside the repository, and give the same key to this Hub on every start; connecting accounts requires it:
 
 ```sh
+export KNDL_HOME="$HOME/.kndl-durable-spike"
+bun run secrets-key
+# Set HUB_SECRETS_KEY to the value printed above, then:
 HUB_PUBLIC_URL=http://127.0.0.1:7777 KNDL_DEV_LOGIN=1 bun run hub
 ```
 
-In another terminal, issue a token for this test Runner and start it:
+In another terminal, use the same test home, issue a token for this test Runner and start it:
 
 ```sh
+export KNDL_HOME="$HOME/.kndl-durable-spike"
 bun run runner-token "durable-spike"
-RUNNER_TOKEN=<the-printed-token> bun run runner
+# Set RUNNER_TOKEN to the printed token, then:
+bun run runner
 ```
 
 Open <http://127.0.0.1:7777>, sign in, connect a Provider on Account, configure a Repo's Environment, and start a Session. Claude subscription Models still need a Claude setup token connected on Account; OpenAI and other Providers use their own connected accounts. The Session's Model picker lists its **Creator's** Models for everyone, not the viewing Member's accounts.
@@ -84,6 +89,14 @@ The durable agent's tests include real Pi Durable Harnesses with scripted Models
 - Real Sandbox tests are opt-in with `KNDL_SANDBOX_IT=1` and require the host's hypervisor/microsandbox setup.
 - The live Claude bridge test is opt-in with `KNDL_CLAUDE_IT=1` and uses a real Claude credential. It can spend the account's allowance.
 - UI fake-Hub scenes exercise the new states without model calls; they are visual fixtures, not evidence that the Runner booted a Sandbox.
+
+## Current boundaries
+
+- A thread and its Subagents share files and processes with the main conversation; forks isolate context, not the Workspace.
+- Questions are offered only in the main conversation.
+- PDF attachments are downloaded outside the Workspace and their path is returned to the Model. Native PDF tool results are not supported; extracting their contents needs a tool such as `pdftotext` in the Sandbox.
+- The Claude bridge rebuilds its mirror after a restart or compaction. Durable conversation state survives, but a provider-side prompt-cache hit is not guaranteed.
+- Live repository-instruction changes reach the next fresh Claude query, not a Claude query already held open across tool calls.
 
 ## Diagnose a failure
 
