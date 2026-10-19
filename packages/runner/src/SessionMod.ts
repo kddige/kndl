@@ -1,47 +1,37 @@
-// The mod a Session's Claude Code loads (ADR 0013, ADR 0014) is a copy of the Runner's, in the
-// Session's directory, made as its Claude Code starts (#159).
+// The mod a Session runs, its durable agent (docs/design/durable-harness.md), is a copy of the
+// Runner's, in the Session's directory, made as the agent starts (#159). A Sandbox that mounted
+// the Runner's own mod would have an update, or a `bun run mod:build`, change it under every
+// running Session. The Session's copy changes only as its agent starts again, at the Session's
+// start, wake or relaunch, so a new mod reaches each Session then. The copy goes when the Session
+// is purged, with its directory.
 //
-// Claude Code reloads a plugin whenever its files change, and a reload in the middle of a Turn
-// loses the end of that Turn: the web is left at Working. A Sandbox that mounted the Runner's own
-// mod would have an update, or a `bun run mod:build`, change it under every running Session. The
-// Session's copy changes only as its Claude Code starts again, at the Session's start, wake or
-// relaunch, so a new mod reaches each Session then, when Claude Code starts fresh anyway. The copy
-// goes when the Session is purged, with its directory.
-//
-// Beside the mod's plugins, the copy holds one the Runner writes for a Session with Installations
-// (ADR 0020), `kndl`: their MCP servers, all at the Hub's Gateway. Its Installations too change
-// only as its Claude Code starts again.
-//
-// The copy holds the mod's pi extension too, `pi/kndl.js` (ADR 0029), which a pi Session's pi
-// loads with `-e`, so a pi Session takes a new mod as a Claude Code Session does. A mod built
-// without it still copies, for Claude Code Sessions; the Runner then runs no pi Sessions
-// (PiBundle.ts).
+// The agent is one ESM file, `durable/agent.js`, holding everything it needs but pi's packages
+// (`@earendil-works/*`), which it imports by name from the pi bundle mounted in the Sandbox
+// (sandbox/SandboxPi.ts). ESM resolves a bare name only through `node_modules` directories, never
+// `NODE_PATH`, so beside the agent the copy holds `durable/node_modules`: a symlink to the bundle's
+// `node_modules`, at its path in the Sandbox. On the host it points at nothing; in the Sandbox,
+// where the copy is mounted at `/opt/kndl/mod`, Node finds each package through it, and each
+// package's own dependencies from where the symlink leads. A `package.json` there says the agent
+// is an ES module.
 
 import { randomUUID } from "node:crypto"
-import { existsSync } from "node:fs"
-import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { dirname, join, posix } from "node:path"
-import type { GatewayServer } from "@kndl/protocol"
 import { Data, Effect } from "effect"
-import { gatewayMcpServers } from "./ClaudeLaunch.ts"
-import { gatewayPlugin, modGuestPath, modPlugins, piExtension } from "./sandbox/SessionLayout.ts"
+import { durableAgent, modGuestPath } from "./sandbox/SessionLayout.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 
-/** Where `bun run mod:build` writes the mod's pi extension, in the mod package. */
-export const piExtensionBuild = "pi/dist/kndl.js"
-
-/** Whether the mod under `modDir` has its pi extension built. */
-export const hasPiExtension = (modDir: string) => existsSync(join(modDir, piExtensionBuild))
+/** Where `bun run mod:build` writes the durable agent, in the mod package. */
+export const durableAgentBuild = "durable/dist/agent.js"
 
 export class SessionModError extends Data.TaggedError("SessionModError")<{
   readonly message: string
 }> {}
 
 /**
- * Copies the Runner's mod, its plugins under `modDir`, into the Session's `mod/`, in place of the
- * copy there, with the {@link gatewayPlugin} plugin for the MCP servers of its Installations, if
- * any, and the {@link piExtension}, when it is built, and returns where the Sandbox sees the new
- * copy. Run only while the Session's Harness is stopped.
+ * Copies the Runner's mod's durable agent, under `modDir`, into the Session's `mod/`, in place of
+ * the copy there, with its `node_modules` linked to `nodeModules`, the pi bundle's in the Sandbox,
+ * and returns where the Sandbox sees the new copy. Run only while the Session's agent is stopped.
  *
  * Each copy has a new name: the Sandbox may still hold the last one's paths, and a directory
  * replaced under a mount stays stale. `mod/` itself stays, as the Sandbox mounts it.
@@ -49,7 +39,7 @@ export class SessionModError extends Data.TaggedError("SessionModError")<{
 export const copySessionMod = (
   modDir: string,
   directories: SessionDirectories,
-  mcpServers: ReadonlyArray<GatewayServer> = [],
+  nodeModules: string,
 ) =>
   Effect.tryPromise({
     try: async () => {
@@ -58,28 +48,11 @@ export const copySessionMod = (
         await rm(join(directories.mod, old), { recursive: true, force: true })
       }
       const name = randomUUID().slice(0, 8)
-      for (const plugin of modPlugins) {
-        await cp(join(modDir, "plugins", plugin), join(directories.mod, name, plugin), {
-          recursive: true,
-        })
-      }
-      if (hasPiExtension(modDir)) {
-        const extension = join(directories.mod, name, piExtension)
-        await mkdir(dirname(extension), { recursive: true })
-        await cp(join(modDir, piExtensionBuild), extension)
-      }
-      if (mcpServers.length > 0) {
-        const plugin = join(directories.mod, name, gatewayPlugin)
-        await mkdir(join(plugin, ".claude-plugin"), { recursive: true })
-        await writeFile(
-          join(plugin, ".claude-plugin", "plugin.json"),
-          JSON.stringify({
-            name: gatewayPlugin,
-            description: "The MCP servers of the Installations on for this Session's Repo.",
-          }),
-        )
-        await writeFile(join(plugin, ".mcp.json"), JSON.stringify(gatewayMcpServers(mcpServers)))
-      }
+      const agent = join(directories.mod, name, durableAgent)
+      await mkdir(dirname(agent), { recursive: true })
+      await cp(join(modDir, durableAgentBuild), agent)
+      await writeFile(join(dirname(agent), "package.json"), `${JSON.stringify({ type: "module" })}\n`)
+      await symlink(nodeModules, join(dirname(agent), "node_modules"))
       return posix.join(modGuestPath, name)
     },
     catch: (error) =>

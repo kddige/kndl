@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Fiber, Logger } from "effect"
@@ -12,14 +12,10 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-/** A Runner's mod, with its pi extension built or not. */
-const modDir = (built: boolean) => {
+/** An empty directory, for a cache. */
+const tempDir = () => {
   const dir = mkdtempSync(join(tmpdir(), "kndl-pi-bundle-"))
   dirs.push(dir)
-  if (built) {
-    mkdirSync(join(dir, "pi", "dist"), { recursive: true })
-    writeFileSync(join(dir, "pi", "dist", "kndl.js"), "// built\n")
-  }
   return dir
 }
 
@@ -40,34 +36,30 @@ const run = <A>(effect: Effect.Effect<A>, logs: Array<string>) =>
   )
 
 describe("preparePi", () => {
-  test("says where pi's CLI is in the Sandbox once the bundle is ready", async () => {
+  test("says where the agent's packages are in the Sandbox once the bundle is ready", async () => {
     const logs: Array<string> = []
-    const ready = await run(
-      preparePi({ modDir: modDir(true), ensure: Effect.succeed({ appDir: "pi-1.3.0-abc" }) }),
-      logs,
-    )
-    expect(ready).toEqual({
-      cli: "/opt/kndl/pi/pi-1.3.0-abc/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-    })
-    expect(logs).toEqual([expect.stringMatching(/^Info: Sessions can run pi 1\.3\.0/)])
+    const ready = await run(preparePi({ ensure: Effect.succeed({ appDir: "pi-1.3.0-abc" }) }), logs)
+    expect(ready).toEqual({ nodeModules: "/opt/kndl/pi/pi-1.3.0-abc/node_modules" })
+    expect(logs).toEqual([
+      expect.stringMatching(/^Info: Sessions can run the durable agent on pi 1\.3\.0/),
+    ])
   })
 
-  test("runs Claude Code alone, saying why, when the bundle couldn't be had", async () => {
+  test("runs no Sessions, saying why, when the bundle couldn't be had", async () => {
     const logs: Array<string> = []
     const ready = await run(
       preparePi({
-        modDir: modDir(true),
         ensure: Effect.fail(new SandboxPiError({ message: "could not get pi: offline" })),
       }),
       logs,
     )
     expect(ready).toBeUndefined()
-    expect(logs).toEqual(["Warn: Sessions run Claude Code alone: could not get pi: offline"])
+    expect(logs).toEqual(["Warn: Sessions can't run: could not get pi: offline"])
   })
 
-  test("runs Claude Code alone once getting pi takes too long, and stops getting it", async () => {
+  test("runs no Sessions once getting pi takes too long, and stops getting it", async () => {
     const logs: Array<string> = []
-    const cacheDir = modDir(false)
+    const cacheDir = tempDir()
     const stopped: Array<string> = []
     const asked: Array<string> = []
     /** A download or an install that never ends by itself: it ends when its signal aborts. */
@@ -83,7 +75,6 @@ describe("preparePi", () => {
       Effect.gen(function* () {
         const preparing = yield* Effect.forkChild(
           preparePi({
-            modDir: modDir(true),
             ensure: ensurePiBundle({
               cacheDir,
               libcs: ["musl"],
@@ -99,26 +90,8 @@ describe("preparePi", () => {
       logs,
     )
     expect(ready).toBeUndefined()
-    expect(logs).toEqual(["Warn: Sessions run Claude Code alone: getting pi took longer than 5m"])
+    expect(logs).toEqual(["Warn: Sessions can't run: getting pi took longer than 5m"])
     expect(stopped).toHaveLength(2)
   })
 
-  test("runs Claude Code alone when the mod's pi extension isn't built, getting nothing", async () => {
-    const logs: Array<string> = []
-    let asked = false
-    const ready = await run(
-      preparePi({
-        modDir: modDir(false),
-        ensure: Effect.sync(() => {
-          asked = true
-          return { appDir: "pi-1.3.0-abc" }
-        }),
-      }),
-      logs,
-    )
-    expect(ready).toBeUndefined()
-    expect(asked).toBe(false)
-    expect(logs[0]).toContain("the mod's pi extension")
-    expect(logs[0]).toContain("bun run mod:build")
-  })
 })

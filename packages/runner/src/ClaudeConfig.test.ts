@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   chmodSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -14,7 +13,7 @@ import {
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { claudeConfigPath, forgetDirectories, hostTranscriptPath } from "./ClaudeConfig.ts"
+import { claudeConfigPath, forgetDirectories } from "./ClaudeConfig.ts"
 
 const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "kndl-config-")))
 
@@ -117,48 +116,4 @@ test("Claude Code's config file is where Claude Code reads it", () => {
       none,
     ),
   ).toBe("/cfg/.claude-custom-oauth.json")
-})
-
-/** A Session's `claude` directory, also reached through a symlink, as macOS's /tmp is. */
-function setupProjects() {
-  const dir = tempDir()
-  const real = join(dir, "real", "s-1", "claude")
-  mkdirSync(real, { recursive: true })
-  symlinkSync(join(dir, "real"), join(dir, "link"))
-  return { projects: join(dir, "projects"), real, linked: join(dir, "link", "s-1", "claude") }
-}
-
-function writeTranscript(projects: string, cwd: string, id: string) {
-  const folder = join(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"))
-  mkdirSync(folder, { recursive: true })
-  writeFileSync(join(folder, `${id}.jsonl`), "{}\n")
-}
-
-const conversation = "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f"
-const otherConversation = "9f8e7d6c-5b4a-4321-8fed-cba987654321"
-
-describe("hostTranscriptPath", () => {
-  test("is undefined until Claude Code wrote the conversation's transcript for the directory", () => {
-    const { projects, real } = setupProjects()
-    expect(hostTranscriptPath(real, conversation, projects)).toBeUndefined()
-    writeTranscript(projects, real, otherConversation)
-    expect(hostTranscriptPath(real, conversation, projects)).toBeUndefined()
-    writeTranscript(projects, real, conversation)
-    expect(hostTranscriptPath(real, conversation, projects)).toBe(
-      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), `${conversation}.jsonl`),
-    )
-  })
-
-  test("finds the transcript under the directory's real path", () => {
-    const { projects, real, linked } = setupProjects()
-    writeTranscript(projects, real, conversation)
-    expect(hostTranscriptPath(linked, conversation, projects)).toBe(
-      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), `${conversation}.jsonl`),
-    )
-  })
-
-  test("finds none for a directory too long to name the way Claude Code does", () => {
-    const { projects } = setupProjects()
-    expect(hostTranscriptPath(`/${"a".repeat(240)}`, conversation, projects)).toBeUndefined()
-  })
 })

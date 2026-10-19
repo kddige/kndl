@@ -29,11 +29,11 @@ export const hostFromGuest = "host.microsandbox.internal"
 export const claudeStateGuestPath = "/var/lib/kndl/claude"
 
 /**
- * pi's state in the Sandbox, its `PI_CODING_AGENT_DIR` (ADR 0029): its settings and its
- * sessions, the conversations `--session-id` resumes. On the `claude` volume beside Claude Code's,
- * so it survives sleep, and an Archived Session keeps it.
+ * The durable agent's state directory in the Sandbox, its `KNDL_STATE_DIR`: the `claude` volume,
+ * beside Claude Code's state, so it survives sleep, and an Archived Session keeps it. The agent
+ * keeps its storage, `durable/session.sqlite`, and its log, `durable/agent.log`, under it.
  */
-export const piStateGuestPath = `${claudeStateGuestPath}/pi`
+export const agentStateGuestPath = claudeStateGuestPath
 
 /**
  * The key of the volume holding Claude Code's state. Archiving keeps it, as it keeps the
@@ -42,29 +42,17 @@ export const piStateGuestPath = `${claudeStateGuestPath}/pi`
 export const claudeStateVolumeKey = "claude"
 
 /**
- * Where the Session's copy of the mod is mounted read-only in the Sandbox, its plugins under
- * `<copy>/` (SessionMod.ts). Not where a Sandbox made before #159 mounted the Runner's own mod, so such a
- * Sandbox is made anew at its next start.
+ * Where the Session's copy of the mod is mounted read-only in the Sandbox, the durable agent
+ * under `<copy>/` (SessionMod.ts). Not where a Sandbox made before #159 mounted the Runner's own
+ * mod, so such a Sandbox is made anew at its next start.
  */
 export const modGuestPath = "/opt/kndl/mod"
 
 /**
- * The mod's plugins, each loaded with its own `--plugin-dir`: hub-link reports the Session to the
- * Hub, and hub-link-commands runs the Hub's commands in it (ADR 0014).
+ * The durable agent in the Session's copy of the mod, which the pinned Node.js runs: one file,
+ * which `bun run mod:build` writes to `durable/dist/agent.js` in the mod package (SessionMod.ts).
  */
-export const modPlugins = ["hub-link", "hub-link-commands"] as const
-
-/**
- * The plugin the Runner writes beside the mod's for a Session with Installations (ADR 0020): the
- * MCP server of each, which Claude Code names `plugin:kndl:<server>`.
- */
-export const gatewayPlugin = "kndl"
-
-/**
- * The mod's pi extension (ADR 0029) in the Session's copy of the mod, which pi loads with `-e`:
- * one file, which `bun run mod:build` writes to `pi/dist/kndl.js` in the mod package.
- */
-export const piExtension = "pi/kndl.js"
+export const durableAgent = "durable/agent.js"
 
 export interface SessionLayoutOptions {
   readonly sessionId: SessionId
