@@ -340,7 +340,7 @@ export function createBridge(config: BridgeConfig): Bridge {
       for (const c of contexts.values()) {
         if (c.activeQuery === null || c.activeQuery === WaitingForExit || c.currentPiStream)
           continue
-        if (now - c.lastCallAt < config.idleQueryMs) continue
+        if (now - c.idleSince < config.idleQueryMs) continue
         log.debug(`reaper: no call came back to ${c.piSessionId}'s held query: stopping it`)
         c.stop?.()
       }
@@ -591,7 +591,7 @@ export function createBridge(config: BridgeConfig): Bridge {
         // This call's signal stops the query while its turn is open: the last turn's was the
         // generation task's that ended with it.
         held.bindSignal(options?.signal)
-        held.lastCallAt = Date.now()
+        held.idleSince = Date.now()
         // A message steered in while the tool ran comes after its results.
         const steer = lastMsgRole === "user" ? steerBlocks(context.messages, log) : null
         // After the steer's write, so detached: the stream goes back now.
@@ -648,7 +648,7 @@ export function createBridge(config: BridgeConfig): Bridge {
     queryCtx.latestHistory = context.messages
     queryCtx.latestPrefixHash = prefixHash(context.messages, context.messages.length)
     queryCtx.toolsKey = toolsKey
-    queryCtx.lastCallAt = Date.now()
+    queryCtx.idleSince = Date.now()
 
     const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context)
     const cwd = config.cwd(options?.sessionId)
@@ -870,7 +870,8 @@ export function createBridge(config: BridgeConfig): Bridge {
         settle()
       }
     }
-    const before = holding ? held.settled : undefined
+    // Any query of the conversation's still going, stopped or not, ends before this one starts.
+    const before = held !== undefined && held.activeQuery !== null ? held.settled : undefined
     if (before === undefined && !stoppingQueries.has(key)) {
       start()
       return stream

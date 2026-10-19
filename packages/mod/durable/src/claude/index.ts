@@ -164,7 +164,8 @@ export function createClaudeBridgeProvider(options: ClaudeBridgeOptions): Claude
     auth: {
       apiKey: {
         name: "Claude Code",
-        resolve: async () => ({ auth: {}, source: ClaudeTokenVariable }),
+        resolve: async () =>
+          options.oauthToken ? { auth: {}, source: ClaudeTokenVariable } : undefined,
       },
     },
     models,

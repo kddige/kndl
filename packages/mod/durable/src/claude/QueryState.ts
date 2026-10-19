@@ -137,8 +137,11 @@ export class QueryContext {
   latestPrefixHash: string | undefined
   /** The served tools' declarations, as the query was opened with them: its MCP server's. */
   toolsKey = ""
-  /** When the latest call into the query came, for the reaper of queries no call comes back to. */
-  lastCallAt = 0
+  /**
+   * Since when the query has had no turn open (or the latest call came), for the reaper of held
+   * queries no call comes back to.
+   */
+  idleSince = 0
   readonly pendingToolCalls = new Map<string, PendingToolCall>()
   readonly pendingResults = new Map<string, McpResult>()
   /**
@@ -268,6 +271,7 @@ export class QueryContext {
     const live = this.turnOutput
     if (!stream || !live) return undefined
     this.unbindSignal()
+    this.idleSince = Date.now()
     this.ensureTurnStarted()
     const message = finalMessage(live, change)
     if (message.stopReason === "error" || message.stopReason === "aborted") {
