@@ -283,7 +283,7 @@ describe("a Session's Claude credential", () => {
     expect(runner.texts.join("\n")).not.toContain(token)
   })
 
-  test("a Session whose Creator has none doesn't start: there is no other to run on", async () => {
+  test("a Session whose Creator has none, nor other Models, doesn't start: there is no other to run on", async () => {
     const { web, runner } = await scene()
     expect(
       await request(web, {
@@ -293,7 +293,7 @@ describe("a Session's Claude credential", () => {
       }),
     ).toMatchObject({
       _tag: "CommandFailed",
-      message: "You have no Claude credential: add your setup token on the Account page.",
+      message: "You have no Models to run a Session on: connect a Provider on the Account page.",
     })
     expect(await runner.untaken("StartSession")).toEqual([])
 

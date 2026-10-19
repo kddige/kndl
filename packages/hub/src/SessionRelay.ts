@@ -1745,7 +1745,7 @@ export class SessionRelay extends Context.Service<
         verb: "message" | "stop",
       ) {
         const agent = yield* sessions.agentOf(session.id, agentId)
-        if (Option.isNone(agent) || agent.value.harness === harnessNow(session)) return undefined
+        if (Option.isNone(agent) || agent.value.harness === "Pi") return undefined
         return `${agent.value.description} ran on Claude Code, which no longer runs this Session: the agent can't ${verb} it.`
       })
 

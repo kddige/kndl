@@ -197,21 +197,21 @@ describe("uploading an attachment", () => {
     )
   })
 
-  test("is refused anyone but the Session's Creator, who alone prompts it (ADR 0026)", async () => {
+  test("is taken from anyone who sees the Session, as anyone prompts it (the Pi Durable spike)", async () => {
     const { hub, web, sessionId } = await scene()
     const bob = await openWeb(hub, "bob")
-    const refused = await upload(hub, bob.cookie, sessionId, png)
-    expect(refused.status).toBe(403)
-    expect(await refused.json()).toEqual({
-      error:
-        "Only alice, who started this Session, can drive it: it runs on their Claude credential.",
-    })
-    // What alice attaches, bob still sees.
+    const bobs = await uploaded(await upload(hub, bob.cookie, sessionId, png))
+    // What either attaches, the other sees.
     const id = await uploaded(await upload(hub, web.cookie, sessionId, png))
-    const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${id}`, {
-      headers: { cookie: bob.cookie },
-    })
-    expect(served.status).toBe(200)
+    for (const [cookie, attachment] of [
+      [bob.cookie, id],
+      [web.cookie, bobs],
+    ] as const) {
+      const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${attachment}`, {
+        headers: { cookie },
+      })
+      expect(served.status).toBe(200)
+    }
   })
 
   test("is refused past 5 MB, for what isn't an image Claude reads, and from another site", async () => {
