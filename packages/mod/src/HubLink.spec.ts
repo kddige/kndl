@@ -127,21 +127,6 @@ describe("HubLink", () => {
     expect(handled).toEqual(["StopTurn", "StopTurn"])
   })
 
-  test("knows a Hub takes PromptAlreadySubmitted only once its welcome says so (#323)", async () => {
-    const takes = { _tag: "ModWelcome", protocolVersion: ProtocolVersion, alreadySubmitted: true }
-    for (const [reply, expected] of [
-      [welcome, false],
-      [{ status: 200, text: JSON.stringify(takes) }, true],
-    ] as const) {
-      const { link } = harness((request) => (request.path === "/mod/hello" ? reply : undefined))
-      expect(link.takesAlreadySubmitted).toBe(false)
-      link.start()
-      await settle()
-      link.stop()
-      expect(link.takesAlreadySubmitted).toBe(expected)
-    }
-  })
-
   test("without onCommand only says hello, and never polls", async () => {
     const { link, requests, statuses } = harness(() => welcome, { runsCommands: false })
     link.start()
@@ -380,6 +365,81 @@ describe("HubLink", () => {
       expect(handled).toEqual(["StopTurn", "StopTurn"])
       expect(posted(requests)).toEqual(["a"])
     })
+  })
+})
+
+/** A link whose polls are held until the test answers them, one by one. */
+const held = (onCommand: (command: ModCommand) => Promise<void>) => {
+  const requests: Array<Request> = []
+  const polls: Array<(reply: Reply) => void> = []
+  const link = new HubLink({
+    hubUrl: "http://hub.test",
+    modToken: "secret",
+    hello: {
+      sessionId: "s1",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      model: "claude-test",
+    },
+    fetch: (url, init) => {
+      const request = {
+        method: init.method,
+        path: url.replace("http://hub.test", ""),
+        ...(init.body === undefined ? {} : { body: init.body }),
+      }
+      requests.push(request)
+      if (request.path === "/mod/hello") return Promise.resolve(welcome)
+      if (request.path === "/mod/events") return Promise.resolve({ status: 204, text: "" })
+      return new Promise<Reply>((resolve) => polls.push(resolve))
+    },
+    after: (_ms, fn) => queueMicrotask(fn),
+    onCommand,
+    onStatus: () => undefined,
+    log: () => undefined,
+    flushDelayMs: 0,
+  })
+  return { link, requests, polls }
+}
+
+describe("stopPolling", () => {
+  test("never runs a command the Hub answers a held poll with afterwards, and still posts events", async () => {
+    const handled: Array<ModCommand["_tag"]> = []
+    const { link, requests, polls } = held(async (command) => void handled.push(command._tag))
+    link.start()
+    await settle()
+    expect(polls).toHaveLength(1)
+    await link.stopPolling()
+    polls[0]?.(commands({ seq: 1, message: stop }))
+    await settle()
+    expect(handled).toEqual([])
+    link.report(delta("a"))
+    await link.drain()
+    link.stop()
+    expect(posted(requests)).toEqual(["a"])
+    expect(requests.filter((r) => r.path.startsWith("/mod/commands"))).toHaveLength(1)
+  })
+
+  test("waits for the command being run, runs no other of its batch, and polls no more", async () => {
+    const handled: Array<number> = []
+    const gate = Promise.withResolvers<void>()
+    const { link, requests, polls } = held(async () => {
+      handled.push(handled.length + 1)
+      await gate.promise
+    })
+    link.start()
+    await settle()
+    polls[0]?.(commands({ seq: 1, message: stop }, { seq: 2, message: stop }))
+    await settle()
+    expect(handled).toEqual([1])
+    let stopped = false
+    const stopping = link.stopPolling().then(() => void (stopped = true))
+    await settle()
+    expect(stopped).toBe(false)
+    gate.resolve()
+    await stopping
+    await settle()
+    link.stop()
+    expect(handled).toEqual([1])
+    expect(requests.filter((r) => r.path.startsWith("/mod/commands"))).toHaveLength(1)
   })
 })
 

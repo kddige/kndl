@@ -78,28 +78,28 @@ export class HubLink {
   private greeting: Promise<boolean> | undefined
   private isGreeted = false
   private isStopped = false
+  private isPollingStopped = false
+  /** Settles when polling stops, so a poll held at the Hub is let go of at once. */
+  private readonly pollingStopped: Promise<"Stopped">
+  private stopPoll: () => void = () => undefined
+  /** The command being run, if one is. */
+  private handling: Promise<void> | undefined
   private isFlushing = false
   /** The flush timer set and not yet fired, and when it is due. */
   private flushTimer: { readonly dueAt: number } | undefined
   private flushFailures = 0
   /** The seq of the last command handled. */
   private after = 0
-  private hubTakesAlreadySubmitted = false
 
   constructor(private readonly options: HubLinkOptions) {
+    this.pollingStopped = new Promise((resolve) => {
+      this.stopPoll = () => resolve("Stopped")
+    })
     this.url = options.hubUrl.replace(/\/+$/, "")
     this.headers = {
       authorization: `Bearer ${options.modToken}`,
       "content-type": "application/json",
     }
-  }
-
-  /**
-   * Whether the Hub's welcome said it takes a PromptAlreadySubmitted (#323). A Hub from before
-   * would refuse the post it came in, and the events beside it.
-   */
-  get takesAlreadySubmitted() {
-    return this.hubTakesAlreadySubmitted
   }
 
   /** Says hello and starts polling for commands, if it runs them, from a timer of its own. */
@@ -108,6 +108,18 @@ export class HubLink {
     const begin = () =>
       void (this.options.onCommand === undefined ? this.sayHello() : this.pollLoop())
     if (!this.later(0, begin)) begin()
+  }
+
+  /**
+   * Stops taking commands, but not posting: what a process does before it closes what the
+   * commands act on. The poll under way is let go of, and a command it brings, or any other of its
+   * batch, is never run or acknowledged, so the Hub brings it again to the next link. Resolves once
+   * the command being run, if one is, has finished.
+   */
+  async stopPolling() {
+    this.isPollingStopped = true
+    this.stopPoll()
+    await this.handling
   }
 
   /** Stops polling and posting. */
@@ -168,10 +180,7 @@ export class HubLink {
     if (response.status === 401 || response.status === 403)
       return { rejected: `the Hub refused the mod token (${response.status})` }
     const reply = readHelloReply(response.text)
-    if (reply?._tag === "ModWelcome") {
-      this.hubTakesAlreadySubmitted = reply.alreadySubmitted === true
-      return "Welcomed"
-    }
+    if (reply?._tag === "ModWelcome") return "Welcomed"
     if (reply?._tag === "HandshakeRejected") return { rejected: reply.message }
     this.options.log(`hub-link: the Hub answered the hello with ${response.status}`)
     return "Retry"
@@ -213,16 +222,23 @@ export class HubLink {
       this.options.onStatus({ _tag: "Offline" })
       await this.wait(retryDelay(failures++))
     }
-    while (!this.isStopped) {
+    while (!this.isStopped && !this.isPollingStopped) {
       if (!this.isGreeted && !(await this.sayHello())) return
+      if (this.isPollingStopped) return
       const after = this.after
       let response: { readonly status: number; readonly text: string }
       try {
-        response = await this.options.fetch(
-          `${this.url}/mod/commands?after=${after}&waitMs=${MaxCommandWaitMs}`,
-          { method: "GET", headers: this.headers },
-        )
+        const polled = await Promise.race([
+          this.options.fetch(`${this.url}/mod/commands?after=${after}&waitMs=${MaxCommandWaitMs}`, {
+            method: "GET",
+            headers: this.headers,
+          }),
+          this.pollingStopped,
+        ])
+        if (polled === "Stopped") return
+        response = polled
       } catch (error) {
+        if (this.isPollingStopped) return
         await failed(String(error))
         continue
       }
@@ -244,12 +260,21 @@ export class HubLink {
       // A hello while this poll was out started the numbering over: this answer is stale.
       if (this.after !== after) continue
       for (const { seq, message } of commands.messages) {
-        if (this.isStopped || seq <= this.after) continue
-        try {
-          await onCommand(message)
-        } catch (error) {
-          this.options.log(`hub-link: ${message._tag} failed: ${error}`)
-        }
+        if (this.isStopped || this.isPollingStopped || seq <= this.after) continue
+        let threw = false
+        this.handling = (async () => {
+          try {
+            await onCommand(message)
+          } catch (error) {
+            threw = true
+            this.options.log(`hub-link: ${message._tag} failed: ${error}`)
+          }
+        })()
+        await this.handling
+        this.handling = undefined
+        // A command that failed because polling stopped under it (what it acts on closed) is
+        // left unacknowledged for the Hub to bring again; one that failed otherwise is not.
+        if (threw && this.isPollingStopped) return
         this.after = seq
       }
     }

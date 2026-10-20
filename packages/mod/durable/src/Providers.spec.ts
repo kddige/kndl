@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { createModels } from "@earendil-works/pi-ai/models"
+import type { ModProviders, ProviderModel } from "@kndl/protocol"
 import { textReply, toolCallReply } from "../test/FakeHub.ts"
-import { TestAgent, ada, modToken, say } from "../test/TestAgent.ts"
+import { TestAgent, ada, eventually, modToken, say } from "../test/TestAgent.ts"
 import { builtinProvider } from "./Builtins.ts"
-import type { ClaudeBridgeOptions } from "./claude/index.ts"
+import type { ClaudeBridgeOptions, ClaudeBridgeProvider } from "./claude/index.ts"
 import { installClaude } from "./ClaudeModels.ts"
-import { gatewayModels, gatewayProvider } from "./Providers.ts"
+import { gatewayCatalog, gatewayModels, gatewayProvider } from "./Providers.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -103,6 +104,76 @@ describe("Gateway providers", () => {
   })
 })
 
+/** A catalogue over a Hub that answers `/mod/providers` as `answer` says, each try in turn. */
+const catalogOver = (answer: (attempt: number) => ModProviders | undefined) => {
+  let attempts = 0
+  const waits: Array<number> = []
+  const catalog = gatewayCatalog({
+    hubUrl,
+    modToken,
+    env: {},
+    cwd: "/workspace",
+    log: () => {},
+    // Waits end at once, so the backoff is recorded and not slept.
+    wait: async (ms) => void waits.push(ms),
+    fetch: async () => {
+      const providers = answer(attempts++)
+      return providers === undefined
+        ? { status: 503, text: "" }
+        : { status: 200, text: JSON.stringify(providers) }
+    },
+  })
+  return { catalog, waits, attempts: () => attempts }
+}
+
+describe("the Gateway's catalogue", () => {
+  const gpt = { provider: "openai" as const, id: "gpt-4.1", label: "GPT-4.1", thinkingLevels: [] }
+  test("keeps asking the Hub in the background when it can't answer at startup", async () => {
+    // The first four tries are the startup's own; the Hub is back for the fifth.
+    const { catalog: made, waits } = catalogOver((attempt) =>
+      attempt < 4 ? undefined : { models: [gpt] },
+    )
+    const catalog = await made
+    const changes: Array<ReadonlyArray<string>> = []
+    catalog.onChange(() => changes.push(catalog.names()))
+    await eventually(() => catalog.names().length > 0 || undefined)
+    expect(catalog.names()).toEqual(["openai/gpt-4.1"])
+    expect(changes).toEqual([["openai/gpt-4.1"]])
+    expect(await catalog.resolve(undefined)).toEqual({
+      model: { provider: "openai", modelId: "gpt-4.1" },
+    })
+    // Three waits between the startup's four tries, then one before the background's first.
+    expect(waits).toEqual([500, 1_000, 2_000, 1_000])
+    await catalog.close()
+  })
+
+  test("keeps asking while the Hub lists no Models, and stops once it lists some", async () => {
+    const { catalog: made, attempts } = catalogOver((attempt) =>
+      attempt < 2 ? { models: [] } : { models: [gpt] },
+    )
+    const catalog = await made
+    await eventually(() => catalog.names().length > 0 || undefined)
+    expect(attempts()).toBe(3)
+    await Bun.sleep(20)
+    expect(attempts()).toBe(3)
+    await catalog.close()
+  })
+
+  test("tells a listener when asking again finds Models", async () => {
+    let listed: ModProviders = { models: [gpt] }
+    const { catalog: made } = catalogOver(() => listed)
+    const catalog = await made
+    let changes = 0
+    catalog.onChange(() => changes++)
+    expect(await catalog.refresh()).toBe(true)
+    expect(changes).toBe(0)
+    listed = { models: [gpt, { ...gpt, id: "gpt-4.1-mini" }] }
+    expect(await catalog.refresh()).toBe(true)
+    expect(changes).toBe(1)
+    await catalog.close()
+  })
+})
+
 describe("switching the Session's model", () => {
   test("runs the next Turn on it, and says why it can't when it can't", async () => {
     agent = new TestAgent({ reply: () => say("Ok.") })
@@ -180,6 +251,7 @@ describe("Claude's Models", () => {
   test("go to the Claude bridge, for the Claude Models the Hub lists", async () => {
     const made: Array<ClaudeBridgeOptions> = []
     const closed: Array<string> = []
+    const served: Array<Array<string>> = []
     const models = createModels()
     const anthropic = builtinProvider("anthropic")
     if (anthropic === undefined) throw new Error("no anthropic")
@@ -189,15 +261,20 @@ describe("Claude's Models", () => {
       log: () => {},
       create: (options) => {
         made.push(options)
-        return Object.assign(
+        const provider: ClaudeBridgeProvider = Object.assign(
           { ...anthropic },
           {
             models: [],
             missing: [],
-            forget: () => {},
+            withModels: (next: ReadonlyArray<ProviderModel>) => {
+              served.push(next.map((model) => model.id))
+              return provider
+            },
+            runSettled: () => {},
             close: async () => void closed.push("closed"),
           },
         )
+        return provider
       },
     })
     expect(install).toBeDefined()
@@ -211,8 +288,17 @@ describe("Claude's Models", () => {
     expect(models.getProvider("anthropic")).toBeDefined()
     install?.update(listed)
     expect(made).toHaveLength(1)
+    // Other Claude Models are served around the same bridge, which only the agent's end closes.
+    install?.update([
+      ...listed,
+      { provider: "anthropic" as const, id: "claude-haiku-5", label: "Haiku", thinkingLevels: [] },
+    ])
+    expect(made).toHaveLength(1)
+    expect(served).toEqual([["claude-fable-5", "claude-haiku-5"]])
     install?.update(listed.slice(1))
     expect(models.getProvider("anthropic")).toBeUndefined()
+    expect(closed).toEqual([])
+    await install?.close()
     expect(closed).toEqual(["closed"])
   })
 

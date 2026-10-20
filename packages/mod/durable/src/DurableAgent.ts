@@ -217,7 +217,6 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     hubGet,
     catalog,
     secrets,
-    takesAlreadySubmitted: () => made.link?.takesAlreadySubmitted === true,
     newId: randomUUID,
     log,
     closing: () => closing,
@@ -257,6 +256,10 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     return extension
   }
   let agents = installAgents()
+  // The agent tool offers the Creator's Models as the catalogue has them now.
+  catalog.onChange(() => {
+    if (!closing) agents = installAgents()
+  })
   for (const extension of options.extensions ?? []) registry.install(extension)
   registry.install(defineExtension({ name: "kndl-plan", tools: [planToolDefinition(runtime)] }))
   const mcp = new McpServers(servers, { hubUrl, modToken: options.modToken, log })
@@ -372,20 +375,21 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
   link.start()
   await questions.reaskAsync()
   opened.resume()
-  // The agent tool offers the Creator's Models as the catalogue has them now.
-  const offered = () => catalog.names().join("\n")
-  let offeredNow = offered()
-  const refreshOffered = setInterval(() => {
-    if (offered() === offeredNow) return
-    offeredNow = offered()
-    agents = installAgents()
-  }, 5_000)
-  refreshOffered.unref?.()
 
   const shutdown = async () => {
     if (closing) return
     closing = true
-    clearInterval(refreshOffered)
+    // No more commands from here: one that arrived once the Harness closed would fail and be
+    // taken off the Hub's queue, where left unacknowledged it is delivered again at the next start.
+    // The command being run is let finish, but not for long.
+    let patience: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      link.stopPolling(),
+      new Promise((resolve) => {
+        patience = setTimeout(resolve, 2_000)
+      }),
+    ])
+    clearTimeout(patience)
     await opened.close(BACKGROUND_CONTEXT).catch((error: unknown) => log(`kndl: closing: ${error}`))
     await loops.stop()
     await link.drain().catch(() => undefined)

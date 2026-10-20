@@ -17,6 +17,7 @@ import { createModels } from "@earendil-works/pi-ai/models"
 import { modelGatewayPath, ModProviders, parseProviderModelName } from "@kndl/protocol"
 import type { ModelProvider } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
+import { retryDelay } from "../../src/HubLink.ts"
 import type { HubFetch } from "../../src/HubLink.ts"
 import { builtinProvider } from "./Builtins.ts"
 import { installClaude } from "./ClaudeModels.ts"
@@ -177,6 +178,13 @@ export interface Catalog {
   readonly models: MutableModels
   /** The Creator's Models the agent has, as `<provider>/<id>`, in the Hub's order. */
   names(): ReadonlyArray<string>
+  /** Calls `listener` whenever asking the Hub again changes the Creator's Models. */
+  onChange(listener: () => void): void
+  /**
+   * Asks the Hub for the Creator's Models again; false when it doesn't answer. Listeners hear of
+   * what changed.
+   */
+  refresh(): Promise<boolean>
   /**
    * The model `name` is, or the first the agent has without one; asks the Hub again, once, when
    * the agent doesn't have it (a Provider connected since it started).
@@ -199,14 +207,22 @@ const lookup = (models: MutableModels, name: string): ModelRef | undefined => {
 
 /**
  * A catalogue over `models`, whose names are `listed` (the Creator's, as `<provider>/<id>`), and
- * which `refresh` asks the Hub for again.
+ * which `ask` asks the Hub for again.
  */
 export const catalogOf = (
   models: MutableModels,
   listed: () => ReadonlyArray<string>,
-  refresh: () => Promise<boolean>,
+  ask: () => Promise<boolean>,
   close: () => Promise<void> = async () => undefined,
 ): Catalog => {
+  const names = () => listed().filter((name) => lookup(models, name) !== undefined)
+  const listeners: Array<() => void> = []
+  const refresh = async () => {
+    const before = names().join("\n")
+    if (!(await ask())) return false
+    if (names().join("\n") !== before) for (const listener of listeners) listener()
+    return true
+  }
   const resolveNow = (name: string | undefined) => {
     if (name === undefined) {
       for (const each of listed()) {
@@ -226,7 +242,9 @@ export const catalogOf = (
   }
   return {
     models,
-    names: () => listed().filter((name) => lookup(models, name) !== undefined),
+    names,
+    onChange: (listener) => void listeners.push(listener),
+    refresh,
     resolve: async (name) => {
       const found = resolveNow(name)
       if ("model" in found) return found
@@ -248,15 +266,20 @@ export const gatewayCatalog = async (options: {
   readonly env: NodeJS.ProcessEnv
   readonly cwd: string
   readonly log: (text: string) => void
+  /** Waits `ms`; a timer by default. */
+  readonly wait?: (ms: number) => Promise<void>
 }): Promise<Catalog> => {
   const models = createModels()
   let listed: ModProviders = { models: [] }
   let claude: ClaudeInstall | undefined
-  const ask = () =>
-    fetchProviders({
-      ...options,
-      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    })
+  const wait =
+    options.wait ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        // A wait this long must not keep a shutting down agent alive.
+        setTimeout(resolve, ms).unref?.()
+      }))
+  const ask = () => fetchProviders({ ...options, wait })
   const register = (providers: ModProviders) => {
     listed = providers
     const byProvider = new Map<ModelProvider, Array<string>>()
@@ -289,8 +312,10 @@ export const gatewayCatalog = async (options: {
     })
     claude?.update(providers.models)
   }
-  register((await ask()) ?? { models: [] })
-  return catalogOf(
+  const first = await ask()
+  if (first !== undefined) register(first)
+  let isClosed = false
+  const catalog = catalogOf(
     models,
     () => listed.models.map((model) => `${model.provider}/${model.id}`),
     async () => {
@@ -300,7 +325,19 @@ export const gatewayCatalog = async (options: {
       return true
     },
     async () => {
+      isClosed = true
       await claude?.close()
     },
   )
+  // A Hub that couldn't answer at startup, or listed no Models yet (it was starting too), is asked
+  // again until it lists some: only a Model switch would otherwise ask, so until then every Turn
+  // would fail for want of a Provider.
+  void (async () => {
+    for (let attempt = 0; listed.models.length === 0; attempt++) {
+      await wait(retryDelay(attempt))
+      if (isClosed) return
+      await catalog.refresh()
+    }
+  })()
+  return catalog
 }
