@@ -2,15 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@kndl/protocol"
 import { Schema } from "effect"
 import {
-  agentWorktree,
   askedQuestions,
   attachmentContext,
   attachmentPart,
   attachmentPartPath,
   attachmentResult,
-  attachmentToolName,
   maxAttachmentParts,
-  backgroundedByStop,
   checkEvent,
   clip,
   deliveredPrompt,
@@ -21,15 +18,7 @@ import {
   promptFromParticipant,
   readCommands,
   readHelloReply,
-  resultSummary,
-  sharedSessionNote,
-  sharedSessionNoteFor,
-  startsDelivered,
   steeredPrompt,
-  taskNotificationAgent,
-  toolArguments,
-  turnEndReason,
-  turnUsage,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
 
@@ -326,51 +315,6 @@ test("clip keeps text within the protocol's limit and says how much it cut", () 
   expect(clipped).toContain("more chars")
 })
 
-test("resultSummary shows a command's output", () => {
-  expect(resultSummary("Bash", { stdout: "out", stderr: "err", interrupted: false })).toBe(
-    "out\nerr",
-  )
-  expect(resultSummary("Write", { type: "create", filePath: "/workspace/a" })).toBe(
-    '{"type":"create","filePath":"/workspace/a"}',
-  )
-})
-
-test("backgroundedByStop is a command a Stop moved to the background, still running", () => {
-  const result = { stdout: "", stderr: "", interrupted: false, backgroundTaskId: "b1" }
-  expect(backgroundedByStop({ ...result, backgroundedByTurnAbort: true })).toBe(true)
-  expect(backgroundedByStop({ ...result, backgroundedByUser: true })).toBe(false)
-  expect(backgroundedByStop(result)).toBe(false)
-  expect(backgroundedByStop("done")).toBe(false)
-  expect(backgroundedByStop(null)).toBe(false)
-})
-
-test("turnEndReason names every way a Turn ends as pi-ai's stop reasons: a refusal is an error", () => {
-  expect(["answer", "aborted", "refusal", "error"].map((r) => turnEndReason(r as never))).toEqual([
-    "stop",
-    "aborted",
-    "error",
-    "error",
-  ])
-})
-
-test("turnUsage names Claude Code's usage as pi-ai does, without a cost Claude Code doesn't report", () => {
-  expect(
-    turnUsage({
-      model: "claude-sonnet-5-5",
-      input_tokens: 12,
-      output_tokens: 345,
-      cache_read_input_tokens: 6789,
-      cache_creation_input_tokens: 101,
-    }),
-  ).toEqual({
-    model: "claude-sonnet-5-5",
-    input: 12,
-    output: 345,
-    cacheRead: 6789,
-    cacheWrite: 101,
-  })
-})
-
 test("a prompt from a Participant is led by their name", () => {
   expect(promptFromParticipant(participant as never, "fix it")).toBe("[Ada Lovelace] fix it")
 })
@@ -386,71 +330,6 @@ test("a steered prompt is framed as Claude Code frames one typed while it works 
       "</system-reminder>",
     ].join("\n"),
   )
-})
-
-test("the shared Session's note says where the model runs, and leaves `!` alone (ADR 0013)", () => {
-  expect(sharedSessionNote).toContain(
-    "You run in a sandbox VM where the repository is checked out.",
-  )
-  expect(sharedSessionNote).not.toContain("!")
-})
-
-test("the shared Session's note says others watch, and only its starter prompts (ADR 0026)", () => {
-  expect(sharedSessionNote).toContain("other people may watch it")
-  expect(sharedSessionNote).toContain("only the person who started it sends it prompts")
-  expect(sharedSessionNote).not.toContain("several people")
-  expect(sharedSessionNote).not.toContain("address people")
-})
-
-const notification = [
-  "<task-notification>",
-  "<task-id>a1b2c3</task-id>",
-  "<tool-use-id>toolu_1</tool-use-id>",
-  "<status>completed</status>",
-  "</task-notification>",
-].join("\n")
-
-test("taskNotificationAgent reads the agent from a task notification, and nothing else", () => {
-  expect(taskNotificationAgent(notification)).toBe("a1b2c3")
-  expect(taskNotificationAgent(`\n${notification}\nAlso: more`)).toBe("a1b2c3")
-  expect(taskNotificationAgent("[Ada Lovelace] what is <task-id>x</task-id>?")).toBeUndefined()
-  expect(taskNotificationAgent("<task-notification></task-notification>")).toBeUndefined()
-})
-
-test("a delivered prompt starts the next Turn with a prompt, but not an agent's notification", () => {
-  const delivered = "[Ada Lovelace] fix it"
-  expect(startsDelivered(delivered, delivered)).toBe(true)
-  // Typed at the terminal while the prompt was on its way: Claude Code runs them in order.
-  expect(startsDelivered("ls", delivered)).toBe(true)
-  expect(startsDelivered("", delivered)).toBe(false)
-  expect(startsDelivered(notification, delivered)).toBe(false)
-  expect(startsDelivered(`${notification}\n${delivered}`, delivered)).toBe(true)
-})
-
-test("agentWorktree finds an agent's worktree and branch from where it starts", () => {
-  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2")).toEqual({
-    path: "/workspace/.claude/worktrees/agent-a1b2",
-    branch: "worktree-agent-a1b2",
-  })
-  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2/")).toEqual({
-    path: "/workspace/.claude/worktrees/agent-a1b2",
-    branch: "worktree-agent-a1b2",
-  })
-  expect(agentWorktree("/workspace")).toBeUndefined()
-  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2/src")).toBeUndefined()
-})
-
-test("toolArguments drops the keys Claude Code adds beside a tool's own", () => {
-  expect(
-    toolArguments({
-      tool: "Bash",
-      tool_use_id: "toolu_1",
-      agentId: "a1",
-      consent: "yes",
-      command: "ls",
-      timeout: 5,
-    }),
-  ).toEqual({ command: "ls", timeout: 5 })
 })
 
 describe("AskUserQuestion (#193)", () => {
@@ -517,20 +396,11 @@ describe("attachments (#276)", () => {
   })
 
   test("Claude is told, out of sight, to open each file with the tool", () => {
-    const context = attachmentContext([shot, photo])
+    const context = attachmentContext([shot, photo], "attachment")
     expect(context).toContain("2 images")
-    expect(context).toContain(attachmentToolName)
+    expect(context).toContain("by calling attachment once per file")
     expect(context).toContain("Image #1 shot.png: id att-1")
     expect(context).toContain("Image #2 photo.jpg: id att-2")
-    expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
-  })
-
-  test("another Harness names its own attachment tool in what Claude is told (ADR 0029)", () => {
-    const context = attachmentContext([shot], "attachment")
-    expect(context).toContain("by calling attachment once per file")
-    expect(context).not.toContain(attachmentToolName)
-    expect(sharedSessionNoteFor("attachment")).toContain("call attachment with its id")
-    expect(sharedSessionNoteFor(attachmentToolName)).toBe(sharedSessionNote)
   })
 
   test("a steered prompt marks its files inside the frame, for Claude to open by marker alone (#278)", () => {
@@ -552,7 +422,7 @@ describe("attachments (#276)", () => {
     expect(deliveredPrompt(participant, "read it", [shot, spec])).toBe(
       "[Ada Lovelace] read it\n[Image #1: shot.png (attachment att-1)]\n[PDF #1: spec.pdf (attachment att-3)]",
     )
-    const context = attachmentContext([shot, spec])
+    const context = attachmentContext([shot, spec], "attachment")
     expect(context).toContain("1 image and 1 PDF")
     expect(context).toContain("Image #1 shot.png: id att-1; PDF #1 spec.pdf: id att-3")
   })
@@ -644,22 +514,5 @@ describe("attachments (#276)", () => {
         throw new Error("offline")
       }),
     ).toEqual({ deny: "Could not open the attachment: Error: offline" })
-  })
-
-  test("the transcript shows the tool's image as a note, not its bytes", () => {
-    const blocks = [
-      { type: "text", text: "shot.png" },
-      {
-        type: "image",
-        source: { type: "base64", media_type: "image/png", data: "A".repeat(9_000) },
-      },
-    ]
-    expect(resultSummary(attachmentToolName, blocks)).toBe("shot.png\n[image/png]")
-  })
-
-  test("the model is told what a marker is", () => {
-    expect(sharedSessionNote).toContain("[Image #1: name (attachment id)]")
-    expect(sharedSessionNote).toContain("[PDF #1: name (attachment id)]")
-    expect(sharedSessionNote).toContain(attachmentToolName)
   })
 })

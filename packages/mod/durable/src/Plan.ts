@@ -13,10 +13,10 @@ import { defineTool } from "@earendil-works/pi-durable"
 import type { ConversationId } from "@earendil-works/pi-durable"
 import { PlanDoc } from "./Docs.ts"
 import type { PlanState } from "./Docs.ts"
-import { loopFields } from "./Loops.ts"
+import { loopFields } from "./Runtime.ts"
 import type { Runtime } from "./Runtime.ts"
 
-export const planTool = "update_plan"
+const planTool = "update_plan"
 
 const marks = { pending: "[ ]", in_progress: "[~]", done: "[x]" } as const
 
@@ -31,7 +31,7 @@ export const planText = (plan: Readonly<PlanState> | undefined): string | undefi
 }
 
 /** The Plan as the Hub carries it. */
-export const planEvent = (plan: Readonly<PlanState>) => ({
+const planEvent = (plan: Readonly<PlanState>) => ({
   steps: plan.steps.map((step) => ({ text: step.text, status: step.status })),
   ...(plan.explanation === undefined ? {} : { explanation: plan.explanation }),
 })

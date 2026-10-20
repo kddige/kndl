@@ -17,8 +17,8 @@ The standalone durable typecheck isolates this runtime from unrelated workspace 
 
 The suite uses scripted models, not paid requests:
 
-- `src/*.spec.ts`: the runtime over temporary SQLite databases and an HTTP fake Hub; tools really run. Includes main/thread concurrency, Plan forks, steering, subagents, questions, Gateway requests, deferred MCP discovery, compaction and handoff.
-- `test/agent.e2e.spec.ts`: builds and starts the real bundle under Node, then sends SIGTERM and SIGKILL. Covers interrupted unsafe commands; simultaneous main/thread recovery while another thread finishes; and a background subagent interrupted inside code mode. The journal test checks that a finished nested shell command is not repeated after SIGKILL. This is not a real-Hub or real-provider test. It skips when Node's SQLite support is unavailable (Node 22.19+ required).
+- `src/*.spec.ts`, `src/hub/*.spec.ts`: the runtime over temporary SQLite databases and an HTTP fake Hub; tools really run. Includes main/thread concurrency, Plan forks, steering, subagents, questions, Gateway requests, deferred MCP discovery, compaction and handoff.
+- `test/agent.e2e.spec.ts`: builds and starts the real bundle under Node, then sends SIGTERM and SIGKILL. Covers interrupted unsafe commands; simultaneous main/thread recovery while another thread finishes; and a background subagent interrupted inside code mode. The journal test checks that a finished nested shell command is not repeated after SIGKILL. This is not a real-Hub or real-provider test. It skips when Node's SQLite support is unavailable (Node 22.19+ required); CI installs Node 24.22.0, the version a Runner pins for Sessions, so it runs there.
 - `src/claude/*.spec.ts`: the Claude bridge with scripted Claude Code queries. Its real subscription test is **opt-in**, `KNDL_CLAUDE_IT=1`, and needs the credentials and pinned binary described in `src/claude/Live.spec.ts`. A default green suite does not establish real-Claude end-to-end compatibility.
 
 ## Recovery contract

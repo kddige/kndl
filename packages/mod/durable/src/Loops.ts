@@ -10,11 +10,10 @@
 // Events derive from commits, so they hold after a restart: a reporter attached to a conversation
 // whose run is still going (it was going when the process stopped, and Pi Durable continues it)
 // reports a new Turn, `Resumed`, since the Hub ended the old one when the process stopped. Which
-// run the agent reported is kept in `kndl.turns`, so a run that started but never reached the Hub
-// is reported as itself. A stream that falls far behind gets a snapshot instead of its events,
+// run the agent reported is kept in `kndl.turns` (TurnLedger.ts), so a run that started but never
+// reached the Hub is reported as itself. A stream that falls far behind gets a snapshot instead of its events,
 // which the reporter reconciles with what it reported.
 
-import type { Context } from "@earendil-works/chord"
 import { InboxDoc, LiveDoc, ProviderDoc, watchEvents } from "@earendil-works/pi-durable"
 import type {
   AgentEvent,
@@ -22,7 +21,6 @@ import type {
   ConversationId,
   EntryId,
   EntryRecord,
-  Harness,
   MessageChange,
   SnapshotEvent,
   SubmissionId,
@@ -30,11 +28,15 @@ import type {
   TaskId,
   UsageState,
 } from "@earendil-works/pi-durable"
-import { clip, isRecord } from "../../src/HubMessages.ts"
-import type { Sender } from "../../src/HubMessages.ts"
-import { AgentsDoc, TurnsDoc } from "./Docs.ts"
-import { contentText, inputOrigin, inputText, NudgeEntry } from "./Inputs.ts"
+import { compactionSummary } from "./Compaction.ts"
+import { clip, isRecord } from "./hub/HubMessages.ts"
+import type { Sender } from "./hub/HubMessages.ts"
+import { inputOrigin, inputText, NudgeEntry } from "./Inputs.ts"
 import type { InputOrigin } from "./Inputs.ts"
+import { loopFields } from "./Runtime.ts"
+import type { Loop, Runtime } from "./Runtime.ts"
+import { isRecordedRunning, recordAgentStatus } from "./Subagents.ts"
+import { TurnLedger } from "./TurnLedger.ts"
 import type { AssistantEnd } from "./Turns.ts"
 import {
   conversationUsage,
@@ -44,32 +46,13 @@ import {
   turnUsage,
 } from "./Turns.ts"
 
-/** Whose a conversation is, as the Hub tells them apart. */
-export type Loop =
-  | { readonly kind: "main" }
-  | { readonly kind: "thread"; readonly threadId: string }
-  | { readonly kind: "agent"; readonly agentId: string; readonly reported: boolean }
-
-/** What every event of a loop carries of whose it is. */
-export const loopFields = (loop: Loop): { threadId?: string; agentId?: string } =>
-  loop.kind === "thread"
-    ? { threadId: loop.threadId }
-    : loop.kind === "agent"
-      ? { agentId: loop.agentId }
-      : {}
-
-export interface LoopsOptions {
-  /** The open Harness. */
-  readonly harness: () => Harness
-  readonly report: (event: Record<string, unknown>) => void
-  readonly newId: () => string
+/** What a reporter needs of the Runtime, and what only it needs besides. */
+export interface LoopsOptions extends Pick<
+  Runtime,
+  "harness" | "report" | "newId" | "secrets" | "log" | "context"
+> {
   /** Milliseconds, for a Turn's duration. */
   readonly now: () => number
-  /** What must never reach the Hub in an error's message. */
-  readonly secrets: ReadonlyArray<string>
-  readonly log: (text: string) => void
-  /** The agent's lifetime: cancelled as it shuts down. */
-  readonly context: Context
   /** A conversation's run settled, with its provider session id: the Models let go of its query. */
   readonly runSettled: (sessionId: string) => void
 }
@@ -139,12 +122,16 @@ export class LoopReporter {
   private usage: UsageState | undefined
   private usageSent = ""
   private stopped = false
+  /** The Turns reported; a subagent's runs are not Turns, so it keeps none. */
+  private readonly ledger: TurnLedger | undefined
 
   constructor(
     readonly conversationId: ConversationId,
     readonly loop: Loop,
     private readonly options: LoopsOptions,
-  ) {}
+  ) {
+    this.ledger = loop.kind === "agent" ? undefined : new TurnLedger(options, conversationId)
+  }
 
   /** The Turn running, if one is. */
   get turnId(): string | undefined {
@@ -339,7 +326,7 @@ export class LoopReporter {
       this.steers.delete(input)
       this.report({ _tag: "SteeredPromptRead", turnId: turn.turnId, ...this.fields, promptId })
     }
-    void this.recordCurrent(turn.firstInput, [turn.turnId], false, undefined, true)
+    void this.ledger?.recordCurrent(turn.firstInput, [turn.turnId], false, undefined, true)
   }
 
   private async startTurn(
@@ -365,7 +352,7 @@ export class LoopReporter {
     // A startup snapshot's committed entries belong to the old process's Turn, not this one.
     const last = known.at(-1)?.id ?? entry?.id
     if (last !== undefined) this.turn.lastEntry = last
-    await this.recordCurrent(first, [turnId], resumed, entry?.id)
+    await this.ledger?.recordCurrent(first, [turnId], resumed, entry?.id)
     if (this.loop.kind === "agent") return this.agentStatus("Running")
     const origin: InputOrigin = resumed ? { _tag: "Other" } : inputOrigin(entry)
     // The handoff's follow-up is the agent's own, with no sender and nothing to say: when it
@@ -389,40 +376,6 @@ export class LoopReporter {
       ...(origin._tag === "Prompt" &&
         origin.attachments !== undefined && { attachments: origin.attachments }),
     })
-  }
-
-  /** Keeps which run the agent reported, so a restart knows it (`kndl.turns`). */
-  private async recordCurrent(
-    input: SubmissionId,
-    turnIds: ReadonlyArray<string>,
-    resumed: boolean,
-    entry?: EntryId,
-    carried = false,
-  ) {
-    if (this.loop.kind === "agent") return
-    const { context } = this.options
-    const harness = this.options.harness()
-    try {
-      await harness.commit(async (tx) => {
-        const doc = await tx.doc(TurnsDoc, this.conversationId)
-        // A Turn carried on to a new first input keeps the Turns it goes on from: they end with it.
-        const earlier =
-          (resumed && doc.current?.input === input) || carried ? (doc.current?.turnIds ?? []) : []
-        doc.current = {
-          input,
-          turnIds: [...earlier, ...turnIds.filter((id) => !earlier.includes(id))],
-        }
-        // Chord copies assigned values. Mutating the RHS returned by `??= {}` would change
-        // a detached plain object, not the newly inserted draft, and lose the prompt anchor.
-        for (const turnId of turnIds)
-          doc.turns[turnId] = { ...doc.turns[turnId], ...(entry === undefined ? {} : { entry }) }
-        // A resumed Turn anchors where the Turn it goes on from does.
-        const from = earlier[0] === undefined ? undefined : doc.turns[earlier[0]]?.entry
-        if (from !== undefined) for (const turnId of turnIds) doc.turns[turnId] = { entry: from }
-      }, context)
-    } catch (error) {
-      this.options.log(`kndl: couldn't record a Turn of ${this.conversationId}: ${error}`)
-    }
   }
 
   private endTurn(inputs: Iterable<SubmissionId>, facts: BatchFacts) {
@@ -471,7 +424,7 @@ export class LoopReporter {
     // places it, or, if a stop withdrew it, Stopping.ts kept it in the conversation, unread, for
     // the model to read with the next prompt.
     for (const id of this.steers.keys()) if (turn.inputs.has(id)) this.steers.delete(id)
-    void this.recordEnd(answer, turn.lastEntry)
+    void this.ledger?.recordEnd(answer, turn.lastEntry)
     if (reason === "error") void this.placeQueued(turn.turnId)
     void this.settled()
     if (this.loop.kind === "agent") void this.agentStatus(aborted ? "Stopped" : "Done")
@@ -523,42 +476,12 @@ export class LoopReporter {
     }
   }
 
-  /** The Turn's answer, or its last entry, for a thread forked at it. */
-  private async recordEnd(answer: EntryId | undefined, last: EntryId | undefined) {
-    if (this.loop.kind === "agent") return
-    const { context } = this.options
-    const harness = this.options.harness()
-    try {
-      await harness.commit(async (tx) => {
-        const doc = await tx.doc(TurnsDoc, this.conversationId)
-        for (const turnId of doc.current?.turnIds ?? [])
-          doc.turns[turnId] = {
-            ...doc.turns[turnId],
-            ...(answer === undefined ? {} : { answer }),
-            ...(last === undefined ? {} : { last }),
-          }
-        delete doc.current
-      }, context)
-    } catch (error) {
-      this.options.log(`kndl: couldn't record a Turn's end in ${this.conversationId}: ${error}`)
-    }
-  }
-
   /** A subagent's status, as the Hub and `kndl.agents` keep it. */
   private async agentStatus(status: "Running" | "Done" | "Stopped") {
     if (this.loop.kind !== "agent") return
     const { agentId } = this.loop
     this.report({ _tag: "AgentStatusChanged", agentId, status })
-    const { context } = this.options
-    const harness = this.options.harness()
-    try {
-      await harness.commit(async (tx) => {
-        const agent = (await tx.doc(AgentsDoc)).agents[agentId]
-        if (agent !== undefined) agent.status = status
-      }, context)
-    } catch (error) {
-      this.options.log(`kndl: couldn't record agent ${agentId}'s status: ${error}`)
-    }
+    await recordAgentStatus(this.options, agentId, status)
   }
 
   /**
@@ -599,12 +522,13 @@ export class LoopReporter {
     }
     if (run !== undefined && this.turn === undefined) {
       // A subagent running again after a restart is Running again: the Hub marked it Interrupted.
-      const resumed = initial && (await this.reportedBefore(run.inputs[0]))
+      const resumed = initial && ((await this.ledger?.reportedBefore(run.inputs[0])) ?? true)
       await this.startTurn(run.inputs, facts, resumed, initial ? snapshot.entries : [])
       if (!initial) this.recoverEntries(snapshot.entries)
     }
-    if (initial && run === undefined) await this.settleCurrent()
-    if (startup && run === undefined && this.loop.kind === "agent") await this.settleAgent()
+    if (initial && run === undefined) await this.ledger?.settleCurrent()
+    if (startup && run === undefined && this.loop.kind === "agent")
+      await this.settleAgent(this.loop.agentId)
     // What the in-flight message says already, which this reporter may not have reported.
     const partial = snapshot.generation?.message
     if (partial !== undefined && this.turn !== undefined) this.emitText(partial.content)
@@ -638,36 +562,9 @@ export class LoopReporter {
     }
   }
 
-  /** A crash after a run settled but before recordEnd must not leave its fork anchor at the prompt. */
-  private async settleCurrent() {
-    if (this.loop.kind === "agent") return
-    const { context } = this.options
-    const harness = this.options.harness()
-    const current = (await harness.snapshot(TurnsDoc, this.conversationId, context))?.current
-    if (current === undefined) return
-    const record = await (await harness.submission(current.input, context))?.status(context)
-    if (record?.status !== "done" && record?.status !== "unanswered") return
-    const conversation = await harness.conversation(this.conversationId, context)
-    const last = (await conversation?.entries({}, 1, undefined, context))?.items[0]?.id
-    await this.recordEnd(record.status === "done" ? record.answer : undefined, last)
-  }
-
-  /** Whether the agent reported the run starting with `input` before it restarted. */
-  private async reportedBefore(input: SubmissionId | undefined) {
-    if (input === undefined || this.loop.kind === "agent") return true
-    const { context } = this.options
-    const harness = this.options.harness()
-    const doc = await harness.snapshot(TurnsDoc, this.conversationId, context)
-    return doc?.current?.input === input
-  }
-
   /** A subagent found idle at a restart whose last run ended unreported is Done. */
-  private async settleAgent() {
-    if (this.loop.kind !== "agent") return
-    const { context } = this.options
-    const harness = this.options.harness()
-    const record = (await harness.snapshot(AgentsDoc, context))?.agents[this.loop.agentId]
-    if (record?.status === "Running") await this.agentStatus("Done")
+  private async settleAgent(agentId: string) {
+    if (await isRecordedRunning(this.options, agentId)) await this.agentStatus("Done")
   }
 
   // ── Within a Turn ───────────────────────────────────────────────────────
@@ -810,47 +707,15 @@ export class LoopReporter {
       })
       return
     }
-    const summary = await this.summaryOf(taskId).catch(() => undefined)
+    const summary = await compactionSummary(this.options, this.conversationId, taskId).catch(
+      () => undefined,
+    )
     this.report({
       _tag: "CompactionEnded",
       ...this.fields,
       outcome: summary === undefined ? "skipped" : "compacted",
       ...(summary === undefined || summary === "" ? {} : { summary: clip(summary) }),
     })
-  }
-
-  /** The summary a compaction made, wherever it is now; undefined when it made none. */
-  private async summaryOf(taskId: TaskId): Promise<string | undefined> {
-    const { context } = this.options
-    const harness = this.options.harness()
-    const task = await harness.getTask(taskId, context)
-    const outcome = task?.state.status === "terminal" ? task.state.outcome : undefined
-    const result =
-      outcome?.status === "completed" && isRecord(outcome.result) ? outcome.result : undefined
-    if (result === undefined) return undefined
-    const conversation = await harness.conversation(this.conversationId, context)
-    const entryText = async (id: unknown) => {
-      if (typeof id !== "number" || conversation === undefined) return undefined
-      const page = await conversation.entries(
-        { minEntryId: id as EntryId, maxEntryId: id as EntryId },
-        1,
-        undefined,
-        context,
-      )
-      return contentText(page.items[0]?.model?.[0]?.content)
-    }
-    if (result.entryId !== undefined) return (await entryText(result.entryId)) ?? ""
-    if (typeof result.submissionId !== "number") return undefined
-    const placed = await (
-      await harness.submission(result.submissionId as SubmissionId, context)
-    )?.status(context)
-    if (placed?.entry !== undefined) return (await entryText(placed.entry)) ?? ""
-    // Still queued, for the next boundary: its entry waits in the inbox.
-    const inbox = await harness.snapshot(InboxDoc, this.conversationId, context)
-    const item = inbox?.items.find((each) => each.id === result.submissionId)
-    const draft = item?.mode === "write" ? item.entry : undefined
-    const model = isRecord(draft) && Array.isArray(draft.model) ? draft.model[0] : undefined
-    return isRecord(model) ? contentText(model.content) : ""
   }
 
   /** The conversation's running total, once it changed since it was last sent. */
@@ -898,20 +763,6 @@ export class Loops {
   /** The loop a conversation is, if the agent follows it. */
   loopOf(conversationId: ConversationId): Loop | undefined {
     return this.reporters.get(conversationId)?.loop
-  }
-
-  /** The main loop's reporter, once attached. */
-  get main(): LoopReporter | undefined {
-    for (const reporter of this.reporters.values())
-      if (reporter.loop.kind === "main") return reporter
-    return undefined
-  }
-
-  /** The thread's conversation, if the agent follows it. */
-  thread(threadId: string): LoopReporter | undefined {
-    for (const reporter of this.reporters.values())
-      if (reporter.loop.kind === "thread" && reporter.loop.threadId === threadId) return reporter
-    return undefined
   }
 
   async stop() {

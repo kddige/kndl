@@ -6,19 +6,20 @@
 // delivers again runs once.
 
 import { LiveDoc } from "@earendil-works/pi-durable"
-import type { Conversation, EntryId, Extension } from "@earendil-works/pi-durable"
+import type { Conversation, Extension } from "@earendil-works/pi-durable"
 import { threadTitleFrom } from "@kndl/protocol"
-import type { Command } from "../../src/HubMessages.ts"
 import { attachmentTool } from "./Attachments.ts"
-import { PlanDoc, ThreadsDoc, TurnsDoc } from "./Docs.ts"
+import { PlanDoc, ThreadsDoc } from "./Docs.ts"
+import type { Command } from "./hub/HubMessages.ts"
 import { admitPrompt, promptInput } from "./Inputs.ts"
 import { reportPlan } from "./Plan.ts"
 import type { Runtime } from "./Runtime.ts"
 import { stopConversation } from "./Stopping.ts"
+import { forkPoint } from "./TurnLedger.ts"
 import { modelName } from "./Turns.ts"
 
 /** What a thread's model is told of where it is. */
-export const threadNote = (title: string) =>
+const threadNote = (title: string) =>
   [
     `This is a thread of the session, "${title}": a fork of the main conversation at one of your answers, where people follow up on it.`,
     "Answer the people in this thread. The main conversation goes on separately and doesn't see this thread, and this thread doesn't see what happens there after the fork.",
@@ -34,29 +35,6 @@ export const threadConversation = async (
   return record === undefined
     ? undefined
     : harness.conversation(record.conversationId, runtime.context)
-}
-
-/**
- * Where a thread off `anchorTurnId` forks the main loop: that Turn's answer, its newest entry if
- * it has none yet, or the main loop's newest entry for a Turn the agent doesn't know.
- */
-export const forkPoint = async (
-  runtime: Runtime,
-  root: Conversation,
-  anchorTurnId: string,
-): Promise<EntryId | undefined> => {
-  const turns = await runtime.harness().snapshot(TurnsDoc, root.id, runtime.context)
-  // A running Turn has no answer/last yet. Fork at its newest committed progress, never an
-  // in-flight partial, rather than at the prompt recordCurrent saved when it began.
-  if (turns?.current?.turnIds.includes(anchorTurnId)) {
-    const newest = await root.entries({}, 1, undefined, runtime.context)
-    return newest.items[0]?.id
-  }
-  const turn = turns?.turns[anchorTurnId]
-  const known = turn?.answer ?? turn?.last ?? turn?.entry
-  if (known !== undefined) return known
-  const newest = await root.entries({}, 1, undefined, runtime.context)
-  return newest.items[0]?.id
 }
 
 /** Whether a conversation runs now. */

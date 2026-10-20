@@ -1,6 +1,5 @@
 // The attachment tool (ADR 0024, amended by ADR 0029): opens a file a Participant attached, by
-// the id its marker gives, fetched from the Hub in parts (`GET /mod/attachments/<id>`), as
-// hub-link-commands' tool does for Claude Code.
+// the id its marker gives, fetched from the Hub in parts (`GET /mod/attachments/<id>`).
 //
 // A tool's result carries text and images only, so an image reaches the model as itself, and a
 // PDF can't: it is saved outside the Workspace, where `git add` won't find it, and the model is
@@ -12,17 +11,20 @@ import { join } from "node:path"
 import { Type } from "@earendil-works/pi-ai"
 import { defineTool } from "@earendil-works/pi-durable"
 import { AttachmentKinds } from "@kndl/protocol"
-import { attachmentToolSpec, openAttachment as openFromHub } from "../../src/HubMessages.ts"
-import type { HubGet } from "../../src/HubMessages.ts"
+import { openAttachment as openFromHub } from "./hub/HubMessages.ts"
+import type { HubGet } from "./hub/HubMessages.ts"
 
 /** The tool's name, as the model calls it. */
 export const attachmentTool = "attachment"
+
+const attachmentToolDescription =
+  'Opens a file someone in this shared session attached to a message, by the id its marker gives: "[Image #1: shot.png (attachment <id>)]" or "[PDF #1: spec.pdf (attachment <id>)]". Returns the image or PDF itself. Call it once per file.'
 
 /**
  * The name a PDF is saved under, in a directory of its own: its own, as one path segment, or the
  * name an unnamed PDF goes by when its own isn't one (`.`, `..`).
  */
-export const pdfFileName = (name: string) => {
+const pdfFileName = (name: string) => {
   const segment = name.replace(/[/\\]/g, "_")
   return segment === "" || segment === "." || segment === ".."
     ? AttachmentKinds.pdf.fallbackName
@@ -30,7 +32,7 @@ export const pdfFileName = (name: string) => {
 }
 
 /** Writes a PDF's base64 `data` to a file of its own, outside the Workspace; its path. */
-export const savePdf = async (id: string, name: string, data: string) => {
+const savePdf = async (id: string, name: string, data: string) => {
   const dir = join(tmpdir(), "kndl-attachments", id.replace(/[^A-Za-z0-9_-]/g, "_"))
   await mkdir(dir, { recursive: true })
   const path = join(dir, pdfFileName(name))
@@ -74,7 +76,7 @@ export const attachmentToolDefinition = (
 ) =>
   defineTool({
     name: attachmentTool,
-    description: attachmentToolSpec.description,
+    description: attachmentToolDescription,
     parameters: Type.Object({
       id: Type.String({ description: "The attachment id from the marker." }),
     }),

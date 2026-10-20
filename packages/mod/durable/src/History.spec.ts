@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { InboxDoc } from "@earendil-works/pi-durable"
 import {
@@ -13,10 +11,18 @@ import {
   fauxText,
   fauxToolCall,
   holdTool,
-  modToken,
   say,
 } from "../test/TestAgent.ts"
 import { TurnsDoc } from "./Docs.ts"
+import {
+  handoffNote,
+  historyAnswer,
+  historyInputSchema,
+  historyPath,
+  historyRequest,
+  historyText,
+  historyToolDescription,
+} from "./History.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -24,167 +30,123 @@ afterEach(async () => {
   agent = undefined
 })
 
-/** A 1x1 PNG. */
-const png =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+const tool = "session_history"
 
-describe("MCP servers", () => {
-  test("their tools are deferred, found with tool_search, and called at the Gateway", async () => {
-    agent = new TestAgent({
-      mcpServers: [{ installationId: "inst1", server: "fake" }],
-      reply: (request) => {
-        const offered = JSON.stringify(request.context.messages)
-        if (request.last?.role === "toolResult" && request.last.toolName === "mcp__fake__echo")
-          return say(`It said: ${request.text}`)
-        if (request.last?.role === "toolResult")
-          return offered.includes('"name":"mcp__fake__echo"')
-            ? callTool("mcp__fake__echo", { text: "hi" })
-            : say("Discovery wasn't ready.")
-        return callTool("tool_search", { query: "echo text back" })
+describe("the handoff note", () => {
+  test("frames the Hub's text as context for the next prompt, from the Harness before, and says where the left-out Turns are", () => {
+    const note = handoffNote(
+      {
+        from: "Pi",
+        text: "Turn #12, prompted by Ada Lovelace\nPrompt: add a health check",
+        earlierBefore: 12,
       },
-    })
-    agent.hub.mcpListDelayMs = 100
-    await agent.start()
-    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Echo it", sender: ada })
-    const events = await agent.until((event) => event._tag === "TurnEnded")
-    // Not offered at first: the first request lists no MCP tool.
-    expect(JSON.stringify(agent.requests[0]?.context.messages)).not.toContain(
-      '"name":"mcp__fake__echo"',
+      tool,
     )
-    expect(
-      events.filter((event) => event._tag === "ToolCallStarted").map((event) => event.tool),
-    ).toEqual(["tool_search", "mcp__fake__echo"])
-    expect(
-      events
-        .filter((event) => event._tag === "TextDelta")
-        .map((event) => event.text)
-        .join(""),
-    ).toBe("It said: echo: hi")
-    const call = agent.hub.mcpRequests.find((request) => request.method === "tools/call")
-    expect(call).toMatchObject({ installationId: "inst1", authorization: `Bearer ${modToken}` })
+    expect(note).toStartWith("<context-handoff>\n")
+    expect(note).toEndWith("\n</context-handoff>")
+    expect(note).toContain("ran on another agent harness, pi,")
+    expect(note).toContain("not a request of its own")
+    expect(note).toContain("Turns before #12 were left out")
+    expect(note).toContain("call session_history with before=12")
+    expect(note).toContain("\n\nTurn #12, prompted by Ada Lovelace\nPrompt: add a health check\n")
+  })
+
+  test("names Claude Code, and the tool for any earlier Turn when none were left out", () => {
+    const note = handoffNote({ from: "ClaudeCode", text: "Turn #1 …" }, tool)
+    expect(note).toContain("ran on another agent harness, Claude Code,")
+    expect(note).not.toContain("left out")
+    expect(note).toContain(`call ${tool}`)
+  })
+
+  test("is nothing when there's nothing to hand over", () => {
+    expect(handoffNote({ from: "Pi", text: " \n" }, tool)).toBeUndefined()
+    expect(handoffNote({ from: "Pi", text: "", earlierBefore: 4 }, tool)).toContain("before=4")
   })
 })
 
-describe("code mode", () => {
-  test("runs a script that calls the agent's tools", async () => {
-    agent = new TestAgent({
-      codemode: true,
-      reply: (request) =>
-        request.last?.role === "toolResult"
-          ? say(`Script said: ${request.text}`)
-          : callTool("codemode", {
-              code: 'const out = await tools.bash({ command: "echo from-a-script" }); console.log(out.output.trim())',
-            }),
+describe("the history tool", () => {
+  test("says what a handoff is and when to read more", () => {
+    expect(historyToolDescription).toContain("handoff")
+    expect(historyToolDescription).toContain("before")
+    expect(Object.keys(historyInputSchema.properties)).toEqual(["before", "limit"])
+    expect(historyInputSchema).not.toHaveProperty("required")
+  })
+
+  test("reads its arguments leniently, and refuses ones that aren't numbers", () => {
+    expect(historyRequest({})).toEqual({ limit: 10 })
+    expect(historyRequest({ before: 12, limit: 5 })).toEqual({ before: 12, limit: 5 })
+    expect(historyRequest({ before: "12", limit: "500" })).toEqual({ before: 12, limit: 50 })
+    expect(historyRequest({ limit: 0 })).toEqual({ limit: 1 })
+    expect(historyRequest({ before: null })).toEqual({ limit: 10 })
+    expect(historyRequest({ before: -1 })).toEqual({
+      error: "`before` must be a Turn number, a whole number from 0 up.",
     })
-    await agent.start()
-    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Script it", sender: ada })
-    const events = await agent.until((event) => event._tag === "TurnEnded")
-    expect(
-      events.filter((event) => event._tag === "ToolCallStarted").map((event) => event.tool),
-    ).toEqual(["codemode"])
-    expect(
-      events
-        .filter((event) => event._tag === "TextDelta")
-        .map((event) => event.text)
-        .join(""),
-    ).toContain("from-a-script")
+    expect(historyRequest({ limit: "lots" })).toEqual({
+      error: "`limit` must be a whole number of Turns.",
+    })
+  })
+
+  test("asks the Hub for the Turns before one, or the latest", () => {
+    expect(historyPath({ before: 12, limit: 5 })).toBe("/mod/history?before=12&limit=5")
+    expect(historyPath({ limit: 10 })).toBe("/mod/history?limit=10")
   })
 })
 
-describe("the attachment tool", () => {
-  test("opens a prompt's image from the Hub", async () => {
-    agent = new TestAgent({
-      attachments: { a1: { id: "a1", name: "shot.png", mediaType: "image/png", data: png } },
-      reply: (request) =>
-        request.last?.role === "toolResult"
-          ? say("A tiny image.")
-          : callTool("attachment", { id: "a1" }),
-    })
-    await agent.start()
-    agent.send({
-      _tag: "DeliverPrompt",
-      promptId: "q1",
-      text: "Look",
-      sender: ada,
-      attachments: [{ id: "a1", name: "shot.png", mediaType: "image/png", size: 68 }],
-    })
-    const events = await agent.until((event) => event._tag === "TurnEnded")
-    expect(events.find((event) => event._tag === "TurnStarted")).toMatchObject({
-      text: "[Ada Lovelace] Look\n[Image #1: shot.png (attachment a1)]",
-      attachments: [{ id: "a1" }],
-    })
-    // The model was told to open it.
-    expect(JSON.stringify(agent.requests[0]?.context.messages)).toContain(
-      "the attachment tool once per file",
+describe("the Session's history as the agent reads it", () => {
+  const turns = [
+    {
+      seq: 3,
+      by: "Ada Lovelace",
+      prompt: "Add a health check.",
+      tools: ["bash: curl localhost:8080/health", "edit: src/server.ts"],
+      answer: "Added GET /health.",
+      model: "openai/gpt-6-sol",
+    },
+    { seq: 4, by: "terminal", prompt: "thanks", tools: [], answer: "You're welcome." },
+  ]
+
+  test("each Turn with its number, who prompted it, its tools and its answer, oldest first; and where the earlier ones are", () => {
+    expect(historyText({ turns, earlierBefore: 3 }, { limit: 2 }, tool)).toBe(
+      [
+        "Turn #3, prompted by Ada Lovelace, on openai/gpt-6-sol",
+        "Prompt: Add a health check.",
+        "Tools called:",
+        "- bash: curl localhost:8080/health",
+        "- edit: src/server.ts",
+        "Answer: Added GET /health.",
+        "",
+        "Turn #4, prompted by terminal",
+        "Prompt: thanks",
+        "Answer: You're welcome.",
+        "",
+        "There are earlier Turns: call session_history with before=3 to read them.",
+      ].join("\n"),
     )
-    expect(events.find((event) => event._tag === "ToolCallEnded")).toMatchObject({
-      tool: "attachment",
-      outcome: "Succeeded",
-      output: "shot.png\n[image/png]",
-    })
   })
 
-  test("says why it can't open an unknown file", async () => {
-    agent = new TestAgent({
-      reply: (request) =>
-        request.last?.role === "toolResult"
-          ? say("Couldn't.")
-          : callTool("attachment", { id: "nope" }),
-    })
-    await agent.start()
-    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Look", sender: ada })
-    const events = await agent.until((event) => event._tag === "TurnEnded")
-    expect(events.find((event) => event._tag === "ToolCallEnded")).toMatchObject({
-      outcome: "Failed",
-      output: expect.stringContaining("No such attachment."),
-    })
-  })
-})
-
-describe("the system prompt", () => {
-  test("has the Repo's AGENTS.md and skills, read again as they change", async () => {
-    agent = new TestAgent({ reply: () => say("Ok.") })
-    writeFileSync(join(agent.dir, "AGENTS.md"), "Always write tests first.\n")
-    mkdirSync(join(agent.dir, ".agents/skills/tdd"), { recursive: true })
-    writeFileSync(
-      join(agent.dir, ".agents/skills/tdd/SKILL.md"),
-      "---\nname: tdd\ndescription: Test-driven development, red-green-refactor.\n---\n\nSteps...\n",
+  test("says when it reached the Session's start, or found nothing", () => {
+    expect(historyText({ turns }, { limit: 10 }, tool)).toEndWith(
+      "\n\nThis is the start of the session: there are no earlier Turns.",
     )
-    await agent.start()
-    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
-    await agent.event((event) => event._tag === "TurnEnded")
-    const first = agent.requests[0]?.system ?? ""
-    expect(first).toContain("This session is shared through kndl")
-    expect(first).toContain("Always write tests first.")
-    expect(first).toContain("<name>tdd</name>")
-    expect(first).toContain(
-      "<description>Test-driven development, red-green-refactor.</description>",
+    expect(historyText({ turns: [] }, { before: 1, limit: 10 }, tool)).toBe(
+      "There are no Turns before #1.",
     )
-    expect(first).toContain(`<cwd>\n${agent.dir}\n</cwd>`)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    writeFileSync(join(agent.dir, "AGENTS.md"), "Never write tests.\n")
-    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Again", sender: ada })
-    await eventually(() => (agent?.requests.length ?? 0) >= 2 || undefined)
-    expect(agent.requests[1]?.system).toContain("Never write tests.")
+    expect(historyText({ turns: [] }, { limit: 10 }, tool)).toBe("This session has no Turns yet.")
   })
-})
 
-describe("the agent's secrets", () => {
-  test("never reach the model or the Hub in a tool's result", async () => {
-    agent = new TestAgent({
-      reply: (request) =>
-        request.last?.role === "toolResult"
-          ? say(`Saw ${request.text}`)
-          : callTool("bash", { command: `echo ${modToken}` }),
+  test("reads the Hub's answer, or says why there's none", () => {
+    expect(historyAnswer(200, JSON.stringify({ turns: [turns[1]] }), { limit: 10 }, tool)).toEqual({
+      text: expect.stringContaining("Turn #4"),
     })
-    await agent.start()
-    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Leak it", sender: ada })
-    const events = await agent.until((event) => event._tag === "TurnEnded")
     expect(
-      JSON.stringify(events.filter((event) => event._tag !== "ToolCallStarted")),
-    ).not.toContain(modToken)
-    expect(events.find((event) => event._tag === "ToolCallEnded")?.output).toContain("[redacted]")
-    expect(agent.requests[1]?.text).not.toContain(modToken)
+      historyAnswer(404, JSON.stringify({ error: "No such Session." }), { limit: 1 }, tool),
+    ).toEqual({ error: "Could not read the session's history: No such Session." })
+    expect(historyAnswer(502, "Bad Gateway", { limit: 1 }, tool)).toEqual({
+      error: "Could not read the session's history: the Hub answered 502.",
+    })
+    expect(historyAnswer(200, "{}", { limit: 1 }, tool)).toEqual({
+      error: "Could not read the session's history: the Hub's answer was not one.",
+    })
   })
 })
 

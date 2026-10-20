@@ -28,8 +28,6 @@ import { createCodingTools } from "@earendil-works/pi-durable/tools"
 import { ConversationId } from "@kndl/protocol"
 import type { ThinkingLevel } from "@kndl/protocol"
 import { Schema } from "effect"
-import { HubLink } from "../../src/HubLink.ts"
-import type { HubFetch, LinkStatus } from "../../src/HubLink.ts"
 import { attachmentToolDefinition } from "./Attachments.ts"
 import { Commands, conversationModel } from "./Commands.ts"
 import { AgentsDoc, PlanDoc, SessionDoc, ThreadsDoc } from "./Docs.ts"
@@ -38,6 +36,8 @@ import {
   searchHistoryToolDefinition,
   sessionHistoryToolDefinition,
 } from "./History.ts"
+import { HubLink } from "./hub/HubLink.ts"
+import type { HubFetch, LinkStatus } from "./hub/HubLink.ts"
 import { Loops } from "./Loops.ts"
 import { McpServers, mcpNamespaces } from "./Mcp.ts"
 import type { McpServerSpec } from "./Mcp.ts"
@@ -98,7 +98,7 @@ const isConversationId = Schema.is(ConversationId)
  * A tool result without the agent's secrets, as a Provider or a command might say them back: the
  * model, the transcript and the Hub never read them.
  */
-export const redactResult = (
+const redactResult = (
   result: ToolExecutionResult,
   secrets: ReadonlyArray<string>,
 ): ToolExecutionResult | undefined => {
@@ -115,7 +115,7 @@ export const redactResult = (
 }
 
 /** The agent's run policy: tools at once, retries, and compaction in the background. */
-export const agentSettings: HarnessSettings = {
+const agentSettings: HarnessSettings = {
   toolExecution: "parallel",
   retry: { enabled: true, maxRetries: 3 },
   compaction: { enabled: true, backgroundTokens: 32_768 },

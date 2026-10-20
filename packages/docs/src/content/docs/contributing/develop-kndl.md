@@ -40,7 +40,7 @@ bun test
 | `bun run typecheck` | `tsc --noEmit` in each code package and in `scripts/`, and `astro check` in `packages/docs`. |
 | `bun run lint` | [oxlint](https://oxc.rs/docs/guide/usage/linter), configured in `.oxlintrc.json`. |
 | `bun run format:check` | [oxfmt](https://oxc.rs/docs/guide/usage/formatter), configured in `.oxfmtrc.json`: formatting and import order. |
-| `bun test` | Every package's tests, including the mod's pure modules (`packages/mod/src/*.spec.ts`). `KNDL_SANDBOX_IT=1` adds the tests that boot real Sandboxes. |
+| `bun test` | Every package's tests, including the durable agent's (`packages/mod/durable`), over SQLite and a fake Hub. `KNDL_SANDBOX_IT=1` adds the tests that boot real Sandboxes. |
 | `bun run mod:check` | Builds and type-checks the durable agent and runs the mod's shared and runtime tests. No Claude Code binary or sign-in is needed. |
 
 ## Find your way around

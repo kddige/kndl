@@ -53,10 +53,10 @@ export const mcpServerSpecs = (
 const toolNamePart = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, "_")
 
 /** The prefix of a server's tools. */
-export const mcpPrefix = (server: string) => `mcp__${toolNamePart(server)}__`
+const mcpPrefix = (server: string) => `mcp__${toolNamePart(server)}__`
 
 /** A server's tool as the model calls it, at most 64 characters, as Providers allow. */
-export const mcpToolName = (server: string, tool: string) =>
+const mcpToolName = (server: string, tool: string) =>
   `${mcpPrefix(server)}${toolNamePart(tool)}`.slice(0, 64)
 
 /** Each server's tools as a code mode namespace, so scripts find them by server. */
@@ -141,7 +141,7 @@ class Connection {
 }
 
 /** A server's tool as a Pi Durable tool: deferred, never replayed. */
-export const mcpTool = (connection: Connection, tool: Tool): ToolRegistration =>
+const mcpTool = (connection: Connection, tool: Tool): ToolRegistration =>
   defineTool({
     name: mcpToolName(connection.spec.server, tool.name),
     description: `[${connection.spec.server}] ${tool.description ?? tool.title ?? tool.name}`,

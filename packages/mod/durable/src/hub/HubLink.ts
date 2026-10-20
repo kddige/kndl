@@ -132,7 +132,7 @@ export class HubLink {
     if (this.isStopped) return
     const checked = checkEvent(event)
     if (checked._tag === "Invalid") {
-      this.options.log(`hub-link: dropped an event the protocol rejects: ${checked.reason}`)
+      this.options.log(`kndl: dropped an event the protocol rejects: ${checked.reason}`)
       return
     }
     this.outbox.push(checked.event)
@@ -160,7 +160,7 @@ export class HubLink {
   private stopRejected(reason: string) {
     this.isStopped = true
     this.options.onStatus({ _tag: "Rejected", reason })
-    this.options.log(`hub-link: the Hub refused the link: ${reason}`)
+    this.options.log(`kndl: the Hub refused the link: ${reason}`)
   }
 
   private async helloOnce(): Promise<HelloOutcome> {
@@ -174,7 +174,7 @@ export class HubLink {
         ),
       })
     } catch (error) {
-      this.options.log(`hub-link: hello failed: ${error}`)
+      this.options.log(`kndl: hello failed: ${error}`)
       return "Retry"
     }
     if (response.status === 401 || response.status === 403)
@@ -182,7 +182,7 @@ export class HubLink {
     const reply = readHelloReply(response.text)
     if (reply?._tag === "ModWelcome") return "Welcomed"
     if (reply?._tag === "HandshakeRejected") return { rejected: reply.message }
-    this.options.log(`hub-link: the Hub answered the hello with ${response.status}`)
+    this.options.log(`kndl: the Hub answered the hello with ${response.status}`)
     return "Retry"
   }
 
@@ -218,7 +218,7 @@ export class HubLink {
     if (onCommand === undefined) return
     let failures = 0
     const failed = async (why: string) => {
-      if (failures === 0) this.options.log(`hub-link: polling for commands failed: ${why}`)
+      if (failures === 0) this.options.log(`kndl: polling for commands failed: ${why}`)
       this.options.onStatus({ _tag: "Offline" })
       await this.wait(retryDelay(failures++))
     }
@@ -267,7 +267,7 @@ export class HubLink {
             await onCommand(message)
           } catch (error) {
             threw = true
-            this.options.log(`hub-link: ${message._tag} failed: ${error}`)
+            this.options.log(`kndl: ${message._tag} failed: ${error}`)
           }
         })()
         await this.handling
@@ -286,7 +286,7 @@ export class HubLink {
       this.options.after(ms, fn)
       return true
     } catch (error) {
-      this.options.log(`hub-link: couldn't set a timer: ${error}`)
+      this.options.log(`kndl: couldn't set a timer: ${error}`)
       return false
     }
   }
@@ -334,7 +334,7 @@ export class HubLink {
           })
         ).status
       } catch (error) {
-        if (this.flushFailures === 0) this.options.log(`hub-link: posting events failed: ${error}`)
+        if (this.flushFailures === 0) this.options.log(`kndl: posting events failed: ${error}`)
         status = 0
       }
       if (status >= 200 && status < 300) {
@@ -345,7 +345,7 @@ export class HubLink {
         this.outbox.putBack(batch)
       } else if (status === 400) {
         // Every event was checked against the protocol, so this is a Hub on another version.
-        this.options.log(`hub-link: the Hub refused ${batch.length} events as malformed`)
+        this.options.log(`kndl: the Hub refused ${batch.length} events as malformed`)
       } else if (status === 401 || status === 403) {
         this.stopRejected(`the Hub refused the mod token (${status})`)
       } else {

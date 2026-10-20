@@ -1,6 +1,8 @@
 // The preamble each kind of conversation reads (Sections.ts): who can do what to it.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { TestAgent, ada, callTool, eventually, say } from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
 import { preambleFor } from "./Sections.ts"
@@ -72,5 +74,33 @@ describe("the preamble", () => {
     expect(seen.agent).not.toContain("answer your questions")
     expect(seen.thread).toContain("steer you while you work, or stop you.")
     expect(seen.thread).not.toContain("answer your questions")
+  })
+})
+
+describe("the system prompt", () => {
+  test("has the Repo's AGENTS.md and skills, read again as they change", async () => {
+    agent = new TestAgent({ reply: () => say("Ok.") })
+    writeFileSync(join(agent.dir, "AGENTS.md"), "Always write tests first.\n")
+    mkdirSync(join(agent.dir, ".agents/skills/tdd"), { recursive: true })
+    writeFileSync(
+      join(agent.dir, ".agents/skills/tdd/SKILL.md"),
+      "---\nname: tdd\ndescription: Test-driven development, red-green-refactor.\n---\n\nSteps...\n",
+    )
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded")
+    const first = agent.requests[0]?.system ?? ""
+    expect(first).toContain("This session is shared through kndl")
+    expect(first).toContain("Always write tests first.")
+    expect(first).toContain("<name>tdd</name>")
+    expect(first).toContain(
+      "<description>Test-driven development, red-green-refactor.</description>",
+    )
+    expect(first).toContain(`<cwd>\n${agent.dir}\n</cwd>`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    writeFileSync(join(agent.dir, "AGENTS.md"), "Never write tests.\n")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Again", sender: ada })
+    await eventually(() => (agent?.requests.length ?? 0) >= 2 || undefined)
+    expect(agent.requests[1]?.system).toContain("Never write tests.")
   })
 })

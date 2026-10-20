@@ -35,9 +35,6 @@ export const preambleFor = (kind: ConversationKind): string =>
     "Your context is summarized automatically when it grows long; everything before stays searchable with the search_history tool. For very long work you can also hand off to yourself with the handoff tool: write down everything the next stretch needs, and you carry on from that note with a fresh context, in the same turn.",
   ].join("\n\n")
 
-/** The main loop's preamble. */
-export const preambleText = preambleFor("main")
-
 /** Whose a conversation is: a subagent's or a thread's if the Session says so, else the main loop's. */
 const conversationKind = async (
   input: PromptInput,
@@ -82,7 +79,7 @@ export class FileCache {
 const join = (dir: string, name: string) => `${dir.replace(/\/+$/, "")}/${name}`
 
 /** The context files the agent reads whole, at the Workspace's root. */
-export const contextFileNames = ["AGENTS.md", "CLAUDE.md"] as const
+const contextFileNames = ["AGENTS.md", "CLAUDE.md"] as const
 
 /** How long a listing of the Workspace's nested context files is kept. */
 const nestedTtlMs = 60_000
@@ -91,7 +88,7 @@ const nestedTtlMs = 60_000
  * The Repo's AGENTS.md and CLAUDE.md at the Workspace's root, whole, and the paths of nested
  * ones, which the agent reads itself when it works there.
  */
-export const contextFilesSection = (): PromptSection => {
+const contextFilesSection = (): PromptSection => {
   const cache = new FileCache()
   let nested:
     | { readonly at: number; readonly cwd: string; readonly paths: Array<string> }
@@ -145,7 +142,7 @@ export const contextFilesSection = (): PromptSection => {
 }
 
 /** Where a Repo keeps its skills, in the order they are listed. */
-export const skillDirectories = [".agents/skills", ".claude/skills", ".pi/skills"] as const
+const skillDirectories = [".agents/skills", ".claude/skills", ".pi/skills"] as const
 
 /** A skill as its SKILL.md's front matter says. */
 export interface Skill {
@@ -164,7 +161,7 @@ const unquote = (value: string) => {
 }
 
 /** The name and description a SKILL.md's front matter gives; undefined without a description. */
-export const skillFrontMatter = (
+const skillFrontMatter = (
   text: string,
 ): { readonly name?: string; readonly description: string } | undefined => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
@@ -188,7 +185,7 @@ export const skillFrontMatter = (
 }
 
 /** The skills in the Workspace, as their front matter says, in directory order. */
-export const findSkills = async (
+const findSkills = async (
   env: ExecutionEnv,
   cache: FileCache,
   context: Context,
@@ -219,7 +216,7 @@ const escape = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 
 /** The Repo's skills: each one's name and description, and where its file is. */
-export const skillsSection = (): PromptSection => {
+const skillsSection = (): PromptSection => {
   const cache = new FileCache()
   return section(
     "skills",

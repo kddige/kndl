@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { TestAgent, ada, callTool, holdTool, say } from "../test/TestAgent.ts"
+import { TestAgent, ada, callTool, holdTool, modToken, say } from "../test/TestAgent.ts"
 import { deferred } from "./claude/testing/Durable.ts"
 
 let agent: TestAgent | undefined
@@ -83,5 +83,24 @@ describe("the agent tool", () => {
       (each) => each.name === "agent",
     )
     expect(JSON.stringify(tool?.parameters)).toContain("openai/gpt-later")
+  })
+})
+
+describe("the agent's secrets", () => {
+  test("never reach the model or the Hub in a tool's result", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        request.last?.role === "toolResult"
+          ? say(`Saw ${request.text}`)
+          : callTool("bash", { command: `echo ${modToken}` }),
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Leak it", sender: ada })
+    const events = await agent.until((event) => event._tag === "TurnEnded")
+    expect(
+      JSON.stringify(events.filter((event) => event._tag !== "ToolCallStarted")),
+    ).not.toContain(modToken)
+    expect(events.find((event) => event._tag === "ToolCallEnded")?.output).toContain("[redacted]")
+    expect(agent.requests[1]?.text).not.toContain(modToken)
   })
 })

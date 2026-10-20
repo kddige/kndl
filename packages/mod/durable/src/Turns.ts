@@ -2,7 +2,7 @@
 // results. Plain functions over pi-ai's shapes, as kndl's pi extension had them (pi/src/Turns.ts).
 
 import type { ConversationUsage, TurnEndReason, TurnUsage } from "@kndl/protocol"
-import { clip, isRecord } from "../../src/HubMessages.ts"
+import { clip, isRecord } from "./hub/HubMessages.ts"
 
 /**
  * A model's name as kndl names a Session's model everywhere the mod says one (its hello, a Turn's
@@ -49,7 +49,7 @@ export const turnEndReason = (aborted: boolean, stopReason: string | undefined):
 }
 
 /** The longest a Turn's error message is, after which it is clipped. */
-export const turnErrorMessageLength = 500
+const turnErrorMessageLength = 500
 
 /**
  * What looks like a credential in a Provider's message: a bearer token, or a key of a shape

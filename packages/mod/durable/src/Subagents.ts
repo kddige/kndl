@@ -26,25 +26,25 @@ import {
   LiveDoc,
 } from "@earendil-works/pi-durable"
 import type { ConversationId, Extension, TaskId, Tx } from "@earendil-works/pi-durable"
-import { deliveredPrompt } from "../../src/HubMessages.ts"
-import type { Command } from "../../src/HubMessages.ts"
 import { AgentsDoc } from "./Docs.ts"
 import type { AgentRecord, SenderJson } from "./Docs.ts"
+import { deliveredPrompt } from "./hub/HubMessages.ts"
+import type { Command } from "./hub/HubMessages.ts"
 import { AgentMessageEntry, AgentResultEntry, contentText } from "./Inputs.ts"
-import { loopFields } from "./Loops.ts"
+import { loopFields } from "./Runtime.ts"
 import type { Runtime } from "./Runtime.ts"
 import { modelName } from "./Turns.ts"
 
 /** The tools' names, as the model calls them. */
-export const agentTool = "agent"
-export const messageAgentTool = "message_agent"
-export const stopAgentTool = "stop_agent"
+const agentTool = "agent"
+const messageAgentTool = "message_agent"
+const stopAgentTool = "stop_agent"
 
 /** The kind of agent the web shows; there is only one. */
 const agentType = "general-purpose"
 
 /** What a subagent is told of itself, after the session's own sections. */
-export const subagentNote = [
+const subagentNote = [
   "You are an agent that another agent started to do one task, which its first message describes. Do it with your tools, without asking anyone: no one answers you but that agent.",
   "When you are done, answer with a concise report of what you did and found, with the paths and details it needs. Your last message is all it reads.",
   "It may message you later, with more to do: carry on from where you were.",
@@ -64,7 +64,7 @@ const summaries: Record<RunOutcome, string> = {
  * The message the parent is given when an agent's run ends, in the shape of Claude Code's task
  * notification, which the web shows as from the agent: its summary and result.
  */
-export const agentNotification = (
+const agentNotification = (
   agentId: string,
   description: string,
   outcome: RunOutcome,
@@ -618,6 +618,29 @@ export const stopFromCreator = async (runtime: Runtime, command: Command<"StopAg
   void child?.abort(runtime.context).catch((error: unknown) => failed(String(error)))
 }
 
-/** The subagents the Session has, for the agent to follow at start. */
-export const knownAgents = async (runtime: Runtime) =>
-  Object.entries((await runtime.harness().snapshot(AgentsDoc, runtime.context))?.agents ?? {})
+/** Keeps a subagent's status in `kndl.agents`, where a restart finds it. */
+export const recordAgentStatus = async (
+  runtime: Pick<Runtime, "harness" | "context" | "log">,
+  agentId: string,
+  status: "Running" | "Done" | "Stopped",
+) => {
+  const { context } = runtime
+  const harness = runtime.harness()
+  try {
+    await harness.commit(async (tx) => {
+      const agent = (await tx.doc(AgentsDoc)).agents[agentId]
+      if (agent !== undefined) agent.status = status
+    }, context)
+  } catch (error) {
+    runtime.log(`kndl: couldn't record agent ${agentId}'s status: ${error}`)
+  }
+}
+
+/** Whether `kndl.agents` has the subagent Running, as of its last recorded status. */
+export const isRecordedRunning = async (
+  runtime: Pick<Runtime, "harness" | "context">,
+  agentId: string,
+) => {
+  const record = (await runtime.harness().snapshot(AgentsDoc, runtime.context))?.agents[agentId]
+  return record?.status === "Running"
+}

@@ -17,11 +17,11 @@ import { createModels } from "@earendil-works/pi-ai/models"
 import { modelGatewayPath, ModProviders, parseProviderModelName } from "@kndl/protocol"
 import type { ModelProvider } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
-import { retryDelay } from "../../src/HubLink.ts"
-import type { HubFetch } from "../../src/HubLink.ts"
 import { builtinProvider } from "./Builtins.ts"
 import { installClaude } from "./ClaudeModels.ts"
 import type { ClaudeInstall } from "./ClaudeModels.ts"
+import { retryDelay } from "./hub/HubLink.ts"
+import type { HubFetch } from "./hub/HubLink.ts"
 
 /** A model as Pi Durable names one. */
 export interface ModelRef {
@@ -126,7 +126,7 @@ export const gatewayProvider = (
 const decodeProviders = Schema.decodeUnknownExit(Schema.fromJsonString(ModProviders))
 
 /** Reads the Hub's answer to `GET /mod/providers`; undefined when it isn't one. */
-export const readProviders = (text: string): ModProviders | undefined => {
+const readProviders = (text: string): ModProviders | undefined => {
   const providers = decodeProviders(text)
   return Exit.isSuccess(providers) ? providers.value : undefined
 }
@@ -138,7 +138,7 @@ const retryDelays = [500, 1_000, 2_000]
  * Asks the Hub for the Creator's Models, trying a few times while it can't answer; undefined when
  * it never answers, or refuses the token.
  */
-export const fetchProviders = async (options: {
+const fetchProviders = async (options: {
   readonly hubUrl: string
   readonly modToken: string
   readonly fetch: HubFetch

@@ -3,7 +3,7 @@
 // what, and a run's Turn knows its sender from its first input alone, also after a restart.
 //
 // The model reads each input's `content`: a prompt with its sender's name and a marker per file
-// (HubMessages.deliveredPrompt), as hub-link words it for Claude Code.
+// (hub/HubMessages.deliveredPrompt).
 
 import type { Context, JsonValue } from "@earendil-works/chord"
 import type {
@@ -13,14 +13,9 @@ import type {
   SubmissionRecord,
 } from "@earendil-works/pi-durable"
 import type { PromptAttachments } from "@kndl/protocol"
-import {
-  attachmentContext,
-  deliveredPrompt,
-  isRecord,
-  steeredPrompt,
-} from "../../src/HubMessages.ts"
-import type { Sender } from "../../src/HubMessages.ts"
 import type { SenderJson } from "./Docs.ts"
+import { attachmentContext, deliveredPrompt, isRecord, steeredPrompt } from "./hub/HubMessages.ts"
+import type { Sender } from "./hub/HubMessages.ts"
 import type { Runtime } from "./Runtime.ts"
 
 /** A Participant's prompt: from the Prompt queue, steered into a Turn, or posted in a thread. */

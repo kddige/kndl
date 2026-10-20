@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.ts",
-    "check": "bun run build && bun run typecheck && bun test src scripts durable",
+    "check": "bun run build && bun run typecheck && bun test scripts durable",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p durable",
     "typecheck:durable": "tsc --noEmit -p durable",
     "test:durable": "bun test durable"

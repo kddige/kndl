@@ -23,8 +23,6 @@ import type {
   ModEventsEncoded,
   Participant,
   Question,
-  TurnEndReason,
-  TurnUsage,
 } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
 
@@ -118,79 +116,6 @@ export const readCommands = (text: string): ModCommands | undefined => {
   return Exit.isSuccess(commands) ? commands.value : undefined
 }
 
-/** Claude Code's `turn.complete` reason, as pi-ai names a stop: a refusal is an error. */
-export const turnEndReason = (
-  reason: "answer" | "aborted" | "refusal" | "error",
-): TurnEndReason => {
-  switch (reason) {
-    case "answer":
-      return "stop"
-    case "aborted":
-      return "aborted"
-    case "refusal":
-    case "error":
-      return "error"
-  }
-}
-
-/** Claude Code's turn usage, as pi-ai names it. Claude Code reports no cost. */
-export const turnUsage = (usage: {
-  readonly model: string
-  readonly input_tokens: number
-  readonly output_tokens: number
-  readonly cache_read_input_tokens: number
-  readonly cache_creation_input_tokens: number
-}): TurnUsage => ({
-  model: usage.model,
-  input: usage.input_tokens,
-  output: usage.output_tokens,
-  cacheRead: usage.cache_read_input_tokens,
-  cacheWrite: usage.cache_creation_input_tokens,
-})
-
-/** The keys Claude Code adds to a tool call's input that the tool itself never sees. */
-const reservedKeys: ReadonlySet<string> = new Set(["tool", "tool_use_id", "agentId", "consent"])
-
-/** A tool call's own arguments, without the keys Claude Code adds beside them. */
-export const toolArguments = (input: Readonly<Record<string, unknown>>): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(input).filter(([key]) => !reservedKeys.has(key)))
-
-/** A tool's result as the web UI shows it: a command's output, or the record as JSON. */
-export const resultSummary = (tool: string, result: unknown) => {
-  if (tool === "Bash" && typeof result === "object" && result !== null) {
-    const { stdout, stderr } = result as { stdout?: unknown; stderr?: unknown }
-    const parts = [stdout, stderr].filter(
-      (part): part is string => typeof part === "string" && part !== "",
-    )
-    return clip(parts.join("\n"))
-  }
-  if (Array.isArray(result) && result.every(isRecord)) return clip(blocksSummary(result))
-  return clip(typeof result === "string" ? result : (JSON.stringify(result) ?? ""))
-}
-
-/**
- * Content blocks, as a tool such as the attachment tool answers: their text, and a note of each
- * image or other block, never its bytes.
- */
-const blocksSummary = (blocks: ReadonlyArray<Readonly<Record<string, unknown>>>) =>
-  blocks
-    .map((block) => {
-      if (block.type === "text") return text(block.text)
-      const source = isRecord(block.source) ? block.source : {}
-      return `[${text(source.media_type) || text(block.type) || "block"}]`
-    })
-    .join("\n")
-
-/**
- * Whether a Stop moved this call to the background instead of ending it. Claude Code does that to a
- * running Bash command when its Turn is aborted: the result says the command still runs, not how it
- * ended (#165). That end comes later, in a task-notification Turn of its own.
- */
-export const backgroundedByStop = (result: unknown) =>
-  typeof result === "object" &&
-  result !== null &&
-  (result as { backgroundedByTurnAbort?: unknown }).backgroundedByTurnAbort === true
-
 /**
  * A prompt from a Participant, or their message to a subagent, as the model reads it: led by the
  * sender's name.
@@ -201,7 +126,7 @@ export const promptFromParticipant = (sender: Pick<Participant, "name">, text: s
 /**
  * A prompt a Participant steered into the running Turn (#195, ADR 0018), as the model reads it: as
  * Claude Code frames a prompt typed while it works, with the sender's name and a marker for each
- * file it carries (#278), which Claude opens by the marker alone.
+ * file it carries (#278), which the model opens by the marker alone.
  */
 export const steeredPrompt = (
   sender: Pick<Participant, "name">,
@@ -219,30 +144,8 @@ export const steeredPrompt = (
 
 // ── Attachments (#276, ADR 0024) ───────────────────────────────────────────
 
-/** The tool hub-link-commands registers, by its short name. */
-export const attachmentTool = "attachment"
-
-/** The tool as Claude calls it: Claude Code names a plugin's tools after the plugin. */
-export const attachmentToolName = `mcp__hub-link-commands__${attachmentTool}`
-
 /**
- * The tool, as `$.tool.register` takes it: in the tool list from the first request on, not behind
- * ToolSearch, so Claude can open a file without first searching for how.
- */
-export const attachmentToolSpec = {
-  name: attachmentTool,
-  description:
-    'Opens a file someone in this shared session attached to a message, by the id its marker gives: "[Image #1: shot.png (attachment <id>)]" or "[PDF #1: spec.pdf (attachment <id>)]". Returns the image or PDF itself. Call it once per file.',
-  inputSchema: {
-    type: "object",
-    properties: { id: { type: "string", description: "The attachment id from the marker." } },
-    required: ["id"],
-  },
-  isDeferred: false,
-}
-
-/**
- * A prompt from the Prompt queue as Claude reads it: its sender's name, then each file's marker. A
+ * A prompt from the Prompt queue as the model reads it: its sender's name, then each file's marker. A
  * message to a subagent, and a reply to a question, read the same (#278).
  */
 export const deliveredPrompt = (
@@ -252,13 +155,10 @@ export const deliveredPrompt = (
 ) => promptFromParticipant(sender, withAttachmentMarkers(text, attachments))
 
 /**
- * What Claude reads beside a prompt with files, and the people never see: to open each one before
+ * What the model reads beside a prompt with files, and the people never see: to open each one before
  * answering. The marker alone would do; this makes sure it isn't skipped.
  */
-export const attachmentContext = (
-  attachments: ReadonlyArray<MarkedFile>,
-  toolName: string = attachmentToolName,
-) => {
+export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>, toolName: string) => {
   const labels = attachmentLabels(attachments)
   const files = attachments.map((file, index) => `${labels[index]} ${file.name}: id ${file.id}`)
   return [
@@ -369,58 +269,6 @@ export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): Attachmen
         ? [name, { type: "image", source }]
         : [name, { type: "document", title: first.name, source }],
   }
-}
-
-/**
- * What the model is told about the Session being shared, in the system prompt: others watch, and
- * only the person who started it drives it (ADR 0026); with the name its Harness gives the
- * attachment tool.
- */
-export const sharedSessionNoteFor = (toolName: string) =>
-  [
-    "This session is shared through kndl: other people may watch it, and your subagents, live in a",
-    "web UI, but only the person who started it sends it prompts, answers your questions, and",
-    "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
-    '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
-    "You run in a sandbox VM where the repository is checked out. A line such as",
-    '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
-    `a file its sender attached: to see it, call ${toolName} with its id.`,
-  ].join(" ")
-
-/** {@link sharedSessionNoteFor} the Claude Code plugins' attachment tool. */
-export const sharedSessionNote = sharedSessionNoteFor(attachmentToolName)
-
-/**
- * Whether a Turn that starts with `text` is the one a delivered prompt, `delivered`, started.
- * The Hub delivers one prompt at a time, only while the Session is idle, so it is the next Turn
- * with a prompt; but not a task notification Claude Code starts when a background agent ends,
- * unless the prompt rides along in it.
- */
-export const startsDelivered = (text: string, delivered: string) =>
-  text !== "" && (taskNotificationAgent(text) === undefined || text.includes(delivered))
-
-/**
- * The agent a task notification is about, when `text` is one: the prompt Claude Code starts a
- * main-loop Turn with when a background agent ends or is stopped, with the agent's id as its
- * task id (spike #148).
- */
-export const taskNotificationAgent = (text: string): string | undefined => {
-  if (!text.trimStart().startsWith("<task-notification>")) return undefined
-  const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(text)?.[1]
-  return id === undefined || id === "" ? undefined : id
-}
-
-/**
- * The worktree an agent runs in, from the directory it starts in: `isolation: "worktree"` makes
- * `<workspace>/.claude/worktrees/<name>` on the branch `worktree-<name>` (ADR 0014). Undefined
- * for an agent that runs in the Workspace itself.
- */
-export const agentWorktree = (
-  cwd: string,
-): { readonly path: string; readonly branch: string } | undefined => {
-  const match = /^(.*\/\.claude\/worktrees\/([^/]+))\/?$/.exec(cwd)
-  if (match?.[1] === undefined || match[2] === undefined) return undefined
-  return { path: match[1], branch: `worktree-${match[2]}` }
 }
 
 // ── AskUserQuestion (#193) ─────────────────────────────────────────────────

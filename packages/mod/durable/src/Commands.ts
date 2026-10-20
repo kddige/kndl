@@ -6,9 +6,9 @@
 import { LiveDoc } from "@earendil-works/pi-durable"
 import type { Conversation, Extension } from "@earendil-works/pi-durable"
 import type { ModCommand, ThinkingLevel } from "@kndl/protocol"
-import type { Command } from "../../src/HubMessages.ts"
 import { attachmentTool } from "./Attachments.ts"
 import { deliverHandoff } from "./History.ts"
+import type { Command } from "./hub/HubMessages.ts"
 import { admitPrompt, promptInput } from "./Inputs.ts"
 import type { Questions } from "./Questions.ts"
 import type { Runtime } from "./Runtime.ts"
@@ -39,7 +39,7 @@ export const conversationModel = async (runtime: Runtime, conversation: Conversa
  * Creator's Models without one, and the thinking level given, or its default. One the agent can't
  * run is said to the Hub (ModelSwitchFailed), which keeps it on the model it runs on.
  */
-export const switchModel = async (
+const switchModel = async (
   runtime: Runtime,
   conversation: Conversation,
   asked: string | undefined,
