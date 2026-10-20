@@ -207,6 +207,21 @@ describe("a restart", () => {
       .join("")
     expect(said).toContain("interrupted")
   })
+
+  test("streams all of an answer whose first committed partial already holds text", async () => {
+    // Pi Durable commits the partial every 100 ms: streamed for longer than that, its first has words.
+    const answer = Array.from({ length: 12 }, (_, n) => `Sentence ${n} of the answer.`).join(" ")
+    agent = new TestAgent({ reply: () => say(answer), tokensPerSecond: 300 })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    const events = await agent.until((event) => event._tag === "TurnEnded")
+    expect(
+      events
+        .filter((event) => event._tag === "TextDelta")
+        .map((event) => event.text)
+        .join(""),
+    ).toBe(answer)
+  })
 })
 
 describe("the boundary between storage and the Hub's projection", () => {

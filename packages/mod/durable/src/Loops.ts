@@ -197,7 +197,11 @@ export class LoopReporter {
           await this.reconcile(event, false)
           break
         case "message_start":
-          if (event.message.role === "assistant") this.emitted = new Map()
+          // Its first partial already holds the text streamed before Pi Durable committed it.
+          if (event.message.role === "assistant") {
+            this.emitted = new Map()
+            this.emitText(event.message.content)
+          }
           break
         case "message_update":
           for (const change of event.changes) this.messageChange(change)
