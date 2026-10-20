@@ -69,6 +69,8 @@ Use a disposable Session for process-kill tests. The agent's tmux session is `<n
 4. **Crash with a thread/subagent running:** repeat with concurrent work. Each recovered conversation should report to its own transcript; a thread must not replace the main current Turn.
 5. **Hub restart:** restart only the Hub while a prompt to a thread is being admitted. The agent should say hello again; undelivered commands are re-sent, and a prompt id is submitted only once.
 
+After a SIGKILL, the web transcript may miss events the agent had queued for the Hub but not yet posted: its link to the Hub keeps them in memory. The conversation itself is intact in SQLite, and a prompt is never run twice, but a Turn that finished just before the kill may show no answer in the web. That's a known gap, not a regression to report; the [runtime's recovery contract](../../packages/mod/durable/README.md#recovery-contract) lists exactly what survives which crash.
+
 Durable admission is not exactly-once execution of external side effects. A shell command or remote service request cut off after doing its work may have an uncertain outcome; unsafe tools must not blindly replay. The existing bundle test specifically checks that a killed bash call is reported as interrupted, rather than silently executing it again.
 
 ## Automated evidence

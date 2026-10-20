@@ -1,6 +1,6 @@
 # The durable agent (experimental)
 
-The headless Node runtime for the spike in [`docs/design/durable-harness.md`](../../../docs/design/durable-harness.md), pinned to Pi Durable / pi-ai **1.3.0**. `src/agent.ts` opens `$KNDL_STATE_DIR/durable/session.sqlite`; one process must own that database. The Runner and web are separate integration work.
+The headless Node runtime for the spike in [`docs/design/durable-harness.md`](../../../docs/design/durable-harness.md), pinned to Pi Durable / pi-ai **1.3.0**. `src/agent.ts` opens `$KNDL_STATE_DIR/durable/session.sqlite`; one process must own that database. The Runner starts it in its own tmux session beside the Session's shell; [`docs/design/durable-testing.md`](../../../docs/design/durable-testing.md) covers trying the whole spike locally.
 
 ## Checking it
 
