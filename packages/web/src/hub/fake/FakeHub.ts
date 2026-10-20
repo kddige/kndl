@@ -3803,10 +3803,14 @@ export class FakeHub implements HubTransport {
     this.#sessionModelsChanged()
   }
 
+  /** The Creator's Models changed: those who joined their Sessions are sent them again, as the Hub does. */
   #sessionModelsChanged(): void {
     for (const session of this.sessions.values()) {
       if (session.summary.creator.id !== this.#you.id) continue
-      this.#toJoined(session.summary.id, { _tag: "SessionModels", sessionId: session.summary.id, models: [...this.#sessionModels(session)] })
+      const models = [...this.#sessionModels(session)]
+      for (const socket of this.#joinedSockets(session)) {
+        socket.deliver({ _tag: "SessionModels", sessionId: session.summary.id, models })
+      }
     }
   }
 
