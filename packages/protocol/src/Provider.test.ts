@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   defaultProviderModel,
   findProviderModel,
-  harnessForNewSession,
-  harnessOfModel,
   modelGatewayPath,
   parseProviderModelName,
   providerModelName,
@@ -90,75 +88,5 @@ describe("a pi Session's model among its Creator's Models (ADR 0029)", () => {
     expect(thinkingLevelRefusal(grok, undefined)).toBeUndefined()
     expect(thinkingLevelRefusal(gpt, "max")).toBe("GPT-6-Sol has no thinking level 'max'.")
     expect(thinkingLevelRefusal(grok, "low")).toBe("Grok 5 takes no thinking level.")
-  })
-})
-
-test("a model name says its Harness: a Provider's Model is pi's, anything else Claude Code's", () => {
-  expect(harnessOfModel("openai/gpt-6-sol")).toBe("Pi")
-  expect(harnessOfModel("anthropic/claude-opus-5-5")).toBe("Pi")
-  for (const model of ["opus", "opus[1m]", "claude-sonnet-5-5", "default", undefined])
-    expect(harnessOfModel(model)).toBe("ClaudeCode")
-})
-
-test("a model name is pi's exactly when it names a Provider's Model", () => {
-  for (const name of [
-    "openai/gpt-6-sol",
-    "openrouter/anthropic/claude-sonnet-4",
-    "foo/bar",
-    "amazon-bedrock/claude-x",
-    "openai/",
-    "/x",
-    "sonnet",
-  ])
-    expect(harnessOfModel(name)).toBe(
-      parseProviderModelName(name) === undefined ? "ClaudeCode" : "Pi",
-    )
-})
-
-describe("the Harness a new Session runs on until a model is picked (ADR 0030)", () => {
-  const claude = [{ provider: "anthropic" }, { provider: "openai" }] as const
-  const others = [{ provider: "openai" }] as const
-  const both = { pi: true, claudeCode: true } as const
-
-  test("is the one offered, where only one is", () => {
-    for (const claudeHarness of ["ClaudeCode", "Pi"] as const) {
-      expect(
-        harnessForNewSession({ pi: false, claudeCode: true, models: claude, claudeHarness }),
-      ).toBe("ClaudeCode")
-      expect(
-        harnessForNewSession({ pi: true, claudeCode: false, models: claude, claudeHarness }),
-      ).toBe("Pi")
-      expect(
-        harnessForNewSession({
-          pi: false,
-          claudeCode: false,
-          models: claude,
-          claudeHarness,
-          asked: "Pi",
-        }),
-      ).toBe("ClaudeCode")
-    }
-  })
-
-  test("is the one asked for, where both are offered", () => {
-    expect(
-      harnessForNewSession({ ...both, models: claude, claudeHarness: "Pi", asked: "ClaudeCode" }),
-    ).toBe("ClaudeCode")
-    expect(
-      harnessForNewSession({ ...both, models: claude, claudeHarness: "ClaudeCode", asked: "Pi" }),
-    ).toBe("Pi")
-  })
-
-  test("is pi only when Claude's Models are the Creator's, and their claudeHarness says pi", () => {
-    expect(harnessForNewSession({ ...both, models: claude, claudeHarness: "Pi" })).toBe("Pi")
-    expect(harnessForNewSession({ ...both, models: claude, claudeHarness: "ClaudeCode" })).toBe(
-      "ClaudeCode",
-    )
-    expect(harnessForNewSession({ ...both, models: others, claudeHarness: "Pi" })).toBe(
-      "ClaudeCode",
-    )
-    expect(harnessForNewSession({ ...both, models: undefined, claudeHarness: "Pi" })).toBe(
-      "ClaudeCode",
-    )
   })
 })

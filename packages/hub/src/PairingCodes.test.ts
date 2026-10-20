@@ -255,27 +255,15 @@ describe("Runners", () => {
             lastSeenAt: null,
             openSessions: 0,
             updater: null,
-            models: null,
             sysinfo: null,
-            harnesses: null,
+            // Not known before its first hello since the Hub started.
+            runsAgent: null,
           },
         ])
 
         const version = { commit: "a".repeat(40), branch: "main", release: "2026.10.1" }
         const updater = { self: false, reason: "it runs from a developer's checkout" }
-        const opus = {
-          alias: "opus",
-          id: "claude-opus-5-5",
-          label: "Opus 5.5",
-          description: "Best for everyday, complex tasks",
-          reasoning: true,
-        }
-        const models = {
-          default: { ...opus, alias: "default" },
-          models: [opus],
-          thinkingLevels: ["low", "medium"] as const,
-        }
-        yield* runners.recordHello(studio.runnerId, { version, updater, models }, 10)
+        yield* runners.recordHello(studio.runnerId, { version, updater, runsAgent: true }, 10)
         yield* runners.recordSeen(studio.runnerId, 20)
         expect(yield* runners.get(studio.runnerId)).toEqual(
           Option.some({
@@ -285,26 +273,36 @@ describe("Runners", () => {
             lastSeenAt: 20,
             openSessions: 0,
             updater,
-            models,
             sysinfo: null,
-            // A hello that doesn't say runs Claude Code alone.
-            harnesses: ["ClaudeCode"],
+            runsAgent: true,
           }),
         )
 
         // On a commit after the Release, it says no Release, and none is kept from before.
         const after = { commit: "b".repeat(40), branch: "main" }
-        yield* runners.recordHello(studio.runnerId, { version: after, updater }, 25)
+        yield* runners.recordHello(
+          studio.runnerId,
+          { version: after, updater, runsAgent: false },
+          25,
+        )
         expect(Option.map(yield* runners.get(studio.runnerId), (r) => r.version)).toEqual(
           Option.some(after),
         )
 
-        // A Runner from before the version and the updater were in the hello. Its models are
-        // kept: a hello without them is from a Claude Code that couldn't say this time (#128).
-        yield* runners.recordHello(studio.runnerId, { version: undefined, updater: undefined }, 30)
+        // A Runner from before the version and the updater were in the hello. Whether it can run
+        // the agent is what its last hello said, which here is that it can't.
+        yield* runners.recordHello(
+          studio.runnerId,
+          { version: undefined, updater: undefined, runsAgent: false },
+          30,
+        )
         expect(
-          Option.map(yield* runners.get(studio.runnerId), (r) => [r.version, r.updater, r.models]),
-        ).toEqual(Option.some([null, null, models]))
+          Option.map(yield* runners.get(studio.runnerId), (r) => [
+            r.version,
+            r.updater,
+            r.runsAgent,
+          ]),
+        ).toEqual(Option.some([null, null, false]))
       }),
     ))
 })

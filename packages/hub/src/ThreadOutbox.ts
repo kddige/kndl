@@ -97,7 +97,8 @@ export const makeThreadOutbox = Effect.fnUntraced(function* (live: LiveSessions)
     }
   })
 
-  /** Sends an already kept command now, if the durable agent is ready for it. */
+  /** Sends an already kept command now, if the durable agent is ready for it: it has said hello since
+   * the Hub started or relaunched it. Until then the command waits for the hello's replay. */
   const send = Effect.fn("ThreadOutbox.send")(function* (
     sessionId: SessionId,
     kept: number,
@@ -107,7 +108,7 @@ export const makeThreadOutbox = Effect.fnUntraced(function* (live: LiveSessions)
     if (Option.isNone(session)) return
     const { state } = session.value
     const running = state === "Active" || state === "Frozen"
-    if (!running || live.awaitingHello(sessionId) || live.modDurable(sessionId) !== true) return
+    if (!running || live.awaitingHello(sessionId) || !live.modGreeted(sessionId)) return
     yield* enqueue(sessionId, kept, command)
   })
 

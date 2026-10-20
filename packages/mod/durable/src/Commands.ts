@@ -7,6 +7,8 @@ import { LiveDoc } from "@earendil-works/pi-durable"
 import type { Conversation, Extension } from "@earendil-works/pi-durable"
 import type { ModCommand, ThinkingLevel } from "@kndl/protocol"
 import { attachmentTool } from "./Attachments.ts"
+import { compactionError } from "./Compaction.ts"
+import { CompactionsDoc, HandledCompactionsKept } from "./Docs.ts"
 import { deliverHandoff } from "./History.ts"
 import type { Command } from "./hub/HubMessages.ts"
 import { admitPrompt, promptInput } from "./Inputs.ts"
@@ -181,7 +183,7 @@ export class Commands {
             _tag: "ModelSwitchFailed",
             asked: command.model,
             model: command.model,
-            message: "The Session has no such thread.",
+            message: "The Session has no such Thread.",
             threadId: command.threadId,
           })
         await switchModel(
@@ -247,9 +249,27 @@ export class Commands {
     }
   }
 
-  /** Compact: summarizes the main loop's or a thread's older messages now, as someone asked. */
+  /**
+   * Compact: summarizes the main loop's or a thread's older messages now, as someone asked. The
+   * Hub sends one again until it knows the agent took it, and Pi Durable's compact() has no
+   * request id, so the ids handled are kept beside the conversation: a repeat is acknowledged, not
+   * run. Recorded before it runs, so a crash in between loses a compaction, which can be asked
+   * for again, rather than running it twice.
+   */
   private async compact(command: Command<"Compact">) {
     const { runtime } = this
+    const fresh = await runtime.harness().commit(async (tx) => {
+      const doc = await tx.doc(CompactionsDoc)
+      if (doc.handled.includes(command.requestId)) return false
+      doc.handled.push(command.requestId)
+      if (doc.handled.length > HandledCompactionsKept)
+        doc.handled.splice(0, doc.handled.length - HandledCompactionsKept)
+      return true
+    }, runtime.context)
+    if (!fresh) {
+      runtime.log(`kndl: Compact ${command.requestId} was handled already`)
+      return
+    }
     const conversation =
       command.threadId === undefined
         ? await this.root()
@@ -264,14 +284,14 @@ export class Commands {
       by: command.sender,
     })
     try {
-      if (conversation === undefined) throw new Error("The Session has no such thread.")
+      if (conversation === undefined) throw new Error("The Session has no such Thread.")
       await conversation.compact(instructions === "" ? undefined : instructions, runtime.context)
     } catch (error) {
       runtime.report({
         _tag: "CompactionEnded",
         ...(command.threadId === undefined ? {} : { threadId: command.threadId }),
         outcome: "failed",
-        error: turnErrorMessage(String(error), runtime.secrets) ?? "Compaction failed.",
+        error: compactionError(error, runtime.secrets),
       })
     }
   }

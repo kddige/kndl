@@ -38,10 +38,6 @@ describe("a prompt's Turn", () => {
       sessionId: "s-durable",
       conversationId: "conv-1",
       model: "openai/gpt-test",
-      switchesModels: true,
-      steers: true,
-      attaches: true,
-      durable: true,
     })
     agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "What's here?", sender: ada })
     const events = await agent.until((event) => event._tag === "TurnEnded")

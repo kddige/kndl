@@ -23,8 +23,8 @@ import {
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
-// The mod ↔ Hub channel, over plain HTTP: Claude Code's mod runtime has `fetch`, with request
-// headers, but no WebSockets and no streaming. Every request carries the Session's mod token as
+// The mod ↔ Hub channel, over plain HTTP: the durable agent's mod has `fetch`, with request
+// headers, and the Hub needs no WebSocket to it. Every request carries the Session's mod token as
 // `Authorization: Bearer` (issue #7).
 //
 // - `POST /mod/hello`, body ModHello: answered with a ModHelloReply (200 for ModWelcome, 400 for
@@ -38,11 +38,8 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 // Both answer 409 when the Hub hasn't heard this Session's hello since it started: the mod then
 // says hello again and polls from `after=0`, since the Hub's numbering started over too.
 //
-// The mod runs in Claude Code's mod runtime, which may not run Effect (spike #4). Until #4
-// answers, the mod imports the *types* only (`import type { ModToHub } from
-// "@kndl/protocol"`) and does no runtime validation of its own; the Hub validates
-// everything the mod sends. `ModToHubEncoded` and `HubToModEncoded` are the plain JSON shapes,
-// without brands, for building and reading messages without the schemas.
+// The Hub validates everything the mod sends. `ModToHubEncoded` and `HubToModEncoded` are the plain
+// JSON shapes, without brands, for building and reading messages without the schemas.
 
 // ── mod to Hub ─────────────────────────────────────────────────────────────
 
@@ -53,46 +50,15 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 export const ModHello = Schema.TaggedStruct("ModHello", {
   protocolVersion: CurrentProtocolVersion,
   sessionId: SessionId,
-  /**
-   * Its Harness's conversation, to resume when the Session wakes on it: `claude --resume` and pi's
-   * `--session-id` take it.
-   */
+  /** The agent's conversation, to resume when the Session wakes on it. */
   conversationId: ConversationId,
-  /** The model the Harness runs, as it names it: Claude Code's id, or pi's `<provider>/<id>`. */
+  /** The model the agent runs, as `<provider>/<id>`. */
   model: Schema.NonEmptyString,
-  /**
-   * It takes a {@link DeliverIntoTurn} (#195). A mod from before doesn't say so, and the Hub
-   * refuses to steer a prompt to it.
-   */
-  steers: Schema.optionalKey(Schema.Literal(true)),
-  /**
-   * It marks the files a {@link DeliverIntoTurn}, {@link DeliverAgentMessage} or a reply's
-   * {@link DeliverAnswer} carries (#278). A mod from before doesn't say so, and the Hub refuses to
-   * send it files those ways.
-   */
-  attaches: Schema.optionalKey(Schema.Literal(true)),
-  /**
-   * It takes a {@link SwitchModel} (ADR 0029): a pi Session's. The Hub then switches its model
-   * between Turns that way, instead of restarting its Harness with a RelaunchSession.
-   */
-  switchesModels: Schema.optionalKey(Schema.Literal(true)),
-  /**
-   * It takes a {@link DeliverHandoff} (ADR 0030), and serves its agent `GET /mod/history`.
-   *
-   * @deprecated Every mod of this protocol version takes one, so the Hub need not ask. Kept, still
-   * optional, until the Hub no longer reads it and the mods no longer send it; then it goes.
-   */
-  takesHandoffs: Schema.optionalKey(Schema.Literal(true)),
-  /**
-   * It is the durable agent (docs/design/durable-harness.md): it takes the thread commands and
-   * Compact, and resumes a run its restart cut off, as a Turn `Resumed`.
-   */
-  durable: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
 /**
- * A {@link DeliverPrompt} could not be submitted to Claude Code, so it never started a Turn; or a
+ * A {@link DeliverPrompt} could not be submitted to the agent, so it never started a Turn; or a
  * {@link DeliverIntoTurn} could not join the running Turn, as when that Turn had ended.
  */
 export const PromptFailed = Schema.TaggedStruct("PromptFailed", {
@@ -102,10 +68,9 @@ export const PromptFailed = Schema.TaggedStruct("PromptFailed", {
 export type PromptFailed = typeof PromptFailed.Type
 
 /**
- * A {@link DeliverPrompt} for a prompt the mod gave Claude Code already (#323), so it didn't again:
+ * A {@link DeliverPrompt} for a prompt the mod gave the agent already (#323), so it didn't again:
  * the Hub delivers the head of the queue again when it doesn't know it was delivered, as after it
  * restarted, or when the mod never reported the Turn it started. The Hub takes it out of the queue.
- * Sent only to a Hub whose {@link ModWelcome} says it takes it.
  */
 export const PromptAlreadySubmitted = Schema.TaggedStruct("PromptAlreadySubmitted", {
   promptId: PromptId,
@@ -114,7 +79,7 @@ export type PromptAlreadySubmitted = typeof PromptAlreadySubmitted.Type
 
 /**
  * A {@link DeliverAgentMessage} or {@link StopAgent} failed, as when the agent is unknown to
- * Claude Code: named by the web command it came from, with who sent the message, if anyone did.
+ * the agent: named by the web command it came from, with who sent the message, if anyone did.
  */
 export const AgentCommandFailed = Schema.TaggedStruct("AgentCommandFailed", {
   agentId: AgentId,
@@ -125,8 +90,8 @@ export const AgentCommandFailed = Schema.TaggedStruct("AgentCommandFailed", {
 export type AgentCommandFailed = typeof AgentCommandFailed.Type
 
 /**
- * A {@link DeliverAnswer} came too late (#193): the question had closed, answered first at the
- * terminal or by another Participant, or cancelled. The sender is told so.
+ * A {@link DeliverAnswer} came too late (#193): the question had closed, answered first by
+ * another Participant, or cancelled. The sender is told so.
  */
 export const AnswerFailed = Schema.TaggedStruct("AnswerFailed", {
   toolCallId: ToolCallId,
@@ -185,11 +150,6 @@ export type ModEventsEncoded = typeof ModEvents.Encoded
 /** The Hub accepted the mod's hello. */
 export const ModWelcome = Schema.TaggedStruct("ModWelcome", {
   protocolVersion: CurrentProtocolVersion,
-  /**
-   * It takes a {@link PromptAlreadySubmitted} (#323). A Hub from before doesn't say so, and would
-   * refuse the post it came in, with the events beside it.
-   */
-  alreadySubmitted: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModWelcome = typeof ModWelcome.Type
 
@@ -210,8 +170,8 @@ export type DeliverPrompt = typeof DeliverPrompt.Type
 
 /**
  * A prompt from the Prompt queue a Participant steered (web SteerPrompt, #195), sent while a Turn
- * runs, and only to a mod whose hello says it `steers`. The mod adds it to the running Turn with
- * the sender's name, as Claude Code adds a prompt typed while it works, and reports PromptSteered;
+ * runs. The mod adds it to the running Turn with
+ * the sender's name, and reports PromptSteered;
  * or PromptFailed, when no Turn runs to take it. Its files (#278) are marked in the row it adds,
  * and Claude opens them by the markers alone.
  */
@@ -243,7 +203,7 @@ export type DeliverAgentMessage = typeof DeliverAgentMessage.Type
 /**
  * A Participant's answer to the Session's Open question (web AnswerQuestion, #193), which the Hub
  * sends only for a question the mod reported asked. The mod answers the AskUserQuestion call with
- * it, closing Claude Code's dialog, unless the call was answered first; then it reports
+ * it, unless the question was closed first; then it reports
  * {@link AnswerFailed}.
  */
 export const DeliverAnswer = Schema.TaggedStruct("DeliverAnswer", {
@@ -256,7 +216,7 @@ export type DeliverAnswer = typeof DeliverAnswer.Type
 
 /**
  * The most bytes of an attachment one {@link ModAttachment} carries: base64 of it is 3.2 MB, under
- * the 4 MiB the mod runtime's fetch reads of a body (Claude Code 2.1.296), which a 5 MB image's
+ * the 4 MiB the mod runtime's fetch reads of a body, which a 5 MB image's
  * would be over. A multiple of 3, so the parts' base64 joins into the whole file's.
  */
 export const MaxModAttachmentPartBytes = 2_400_000
@@ -297,7 +257,7 @@ export type DeliverHandoff = typeof DeliverHandoff.Type
 
 /**
  * Run the Session's next Turns on this model and thinking level (ADR 0029), sent only while no
- * Turn runs, and only to a mod whose hello says it `switchesModels`. Absent, each is the
+ * Turn runs. Absent, each is the
  * Harness's default.
  */
 export const SwitchModel = Schema.TaggedStruct("SwitchModel", {
@@ -368,7 +328,7 @@ export const HistoryTurn = Schema.Struct({
   /** Each tool call, as `<tool>: <input>`, clipped. */
   tools: Schema.Array(Schema.String),
   answer: Schema.String,
-  /** The model it ran on, `<provider>/<id>` or a Claude Code model, when known. */
+  /** The model it ran on, `<provider>/<id>` or a Claude Code model from before, when known. */
   model: Schema.optionalKey(Schema.String),
 })
 export type HistoryTurn = typeof HistoryTurn.Type

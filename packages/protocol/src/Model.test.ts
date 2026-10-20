@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { findModel, ModelName, modelNotFoundText, RunnerModels, sameModel } from "./Model.ts"
-import { expectRejected, expectRoundTrips, runnerModels } from "./testSupport.ts"
+import { ModelName, modelNotFoundText, sameModel } from "./Model.ts"
+import { expectRejected } from "./testSupport.ts"
 
 describe("ModelName", () => {
   test("takes Claude Code's aliases and full model names", () => {
@@ -25,26 +25,8 @@ describe("ModelName", () => {
   })
 })
 
-describe("RunnerModels", () => {
-  test("round-trips, and refuses a thinking level pi-ai doesn't have", () => {
-    expectRoundTrips(RunnerModels, [
-      runnerModels,
-      { ...runnerModels, models: [], thinkingLevels: [] },
-    ])
-    expectRejected(RunnerModels, { ...runnerModels, thinkingLevels: ["low", "auto"] })
-  })
-})
-
-describe("findModel", () => {
-  const models = Schema.decodeUnknownSync(RunnerModels)(runnerModels)
-
-  test("finds a model by alias, by id, or the default, and nothing it doesn't list", () => {
-    expect(findModel(models, "sonnet")?.label).toBe("Sonnet 5.5")
-    expect(findModel(models, "claude-haiku-4-5-20251001")?.alias).toBe("haiku")
-    expect(findModel(models, "default")).toBe(models.default)
-    expect(findModel(models, "bogus")).toBeUndefined()
-    expect(modelNotFoundText("bogus")).toBe("Model 'bogus' not found")
-  })
+test("modelNotFoundText says what Claude Code says of a model it doesn't know", () => {
+  expect(modelNotFoundText("bogus")).toBe("Model 'bogus' not found")
 })
 
 describe("sameModel", () => {

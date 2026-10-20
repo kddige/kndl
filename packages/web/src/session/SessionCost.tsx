@@ -100,7 +100,7 @@ export function SessionCost({
           </button>
         }
         title="Spent so far"
-        description={`The main conversation, its threads and its agents, on ${accounts}.`}
+        description={`The main conversation, its Threads and its agents, on ${accounts}.`}
         align="start"
       >
         <ul aria-label="Spent" {...stylex.props(styles.list)}>

@@ -113,7 +113,6 @@ async function scene(reply: Reply, extensions: ReadonlyArray<Extension> = []) {
     requestId: "create-durable-integration",
     repo: "kddige/kndl",
     branch: { _tag: "Existing", name: "main", newWorkBranch: true },
-    harness: "Pi",
     model: "openai/gpt-test",
   })
   const start = await runner.take("StartSession")

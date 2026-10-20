@@ -137,11 +137,11 @@ alice, who started this Session, has no Models to run it on: they can connect a 
 **What you see.** A Session's transcript says one of:
 
 ```
-The Session is Asleep: Put to sleep: the Claude credential it ran on was removed
-The Session is Asleep: Put to sleep, to wake on a new Claude credential: the one it ran on was replaced
+The Session is Asleep: Put to sleep: the Claude credential its agent started with was removed
+The Session is Asleep: Put to sleep, to wake on a new Claude credential: the one its agent started with was replaced
 ```
 
-**Why.** Removing or replacing a Claude credential puts its owner's awake Sessions to sleep, even mid-Turn. So does removing the owner as a Member.
+**Why.** Removing or replacing a Claude credential puts its owner's awake Sessions to sleep, even mid-Turn, those on other Providers' Models too: each agent holds the credential it started with. So does removing the owner as a Member.
 
 **Fix.** The Creator [adds a credential](/guides/add-your-claude-credential/) if they removed theirs, and anyone wakes the Session. A Session whose Creator is no longer a Member stays readable, but can't wake.
 
@@ -163,11 +163,11 @@ The Session's Creator hasn't connected OpenAI: they connect it on the Account pa
 
 ```
 build-box hasn't connected since the Hub started, so it isn't known to run the durable agent.
-build-box runs a version from before the durable agent: update it on the Runners page.
+build-box can't run the durable agent: it couldn't prepare Node.js and the agent's packages. Its log says why; restart it once that is fixed.
 The Session is Asleep: The agent could not start on build-box: This Runner can't run Sessions: its log says why.
 ```
 
-**Why.** A Runner runs Sessions once it has the agent's Node.js and packages. It gets them as it starts. If it couldn't, its log says `Sessions can't run: …`, and it runs none until it next starts. The Hub gives that Runner the second message, since it can't tell it from one that is out of date.
+**Why.** A Runner runs Sessions once it has the agent's Node.js and packages. It gets them as it starts. If it couldn't, its log says `Sessions can't run: …`, and it runs none until it next starts. Its hello says so, and the Hub gives that Runner the second message.
 
 **Fix.** On the Runner's machine, find why in its log:
 

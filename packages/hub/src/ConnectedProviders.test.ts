@@ -240,7 +240,6 @@ describe("connecting a Provider with an API key", () => {
       connected: [],
       connectable: expect.any(Array),
       models: [],
-      claudeHarness: "ClaudeCode",
     })
     // The most used first, each as pi-ai names it and signs in to it.
     expect(welcomed.connectable.slice(0, 5)).toEqual([
@@ -317,7 +316,6 @@ describe("connecting a Provider with an API key", () => {
       ],
       connectable: expect.any(Array),
       models,
-      claudeHarness: "ClaudeCode",
     })
     expect(fakes.seen).toContainEqual(
       expect.objectContaining({
@@ -1171,40 +1169,6 @@ describe("the Models", () => {
     const fine = await request(web, { _tag: "RefreshProviderModels", provider: "openai" })
     if (fine._tag !== "ProvidersState") throw new Error(JSON.stringify(fine))
     expect(fine.connected[0]?.modelsProblem).toBeUndefined()
-  })
-})
-
-describe("the Harness for Claude's Models (ADR 0030)", () => {
-  test("is Claude Code until the Member chooses pi, on each of their connections, and kept", async () => {
-    const dir = testDatabaseDir("kndl-providers-")
-    dirs.push(dir)
-    const database = databaseAt(join(dir, "hub.db"))
-    const hub = await startHub({ config: withKey, providerApis: fakeProviders().layer, database })
-    const web = await openWeb(hub, "alice", undefined, { setupToken: false })
-    expect((await web.take("ProvidersState")).claudeHarness).toBe("ClaudeCode")
-    const elsewhere = await openWeb(hub, "alice", web.cookie)
-    await elsewhere.take("ProvidersState")
-    const bob = await openWeb(hub, "bob", undefined, { setupToken: false })
-    await bob.take("ProvidersState")
-
-    expect(await request(web, { _tag: "SetClaudeHarness", harness: "Pi" })).toMatchObject({
-      _tag: "ProvidersState",
-      claudeHarness: "Pi",
-    })
-    expect((await elsewhere.take("ProvidersState")).claudeHarness).toBe("Pi")
-    // Each Member's own.
-    expect(await bob.untaken("ProvidersState")).toEqual([])
-    expect((await request(bob, { _tag: "GetProviders" })) as unknown).toMatchObject({
-      claudeHarness: "ClaudeCode",
-    })
-    await stopAll()
-
-    const later = await startHub({ config: withKey, providerApis: fakeProviders().layer, database })
-    const again = await openWeb(later, "alice", undefined, { setupToken: false })
-    expect((await again.take("ProvidersState")).claudeHarness).toBe("Pi")
-    expect(await request(again, { _tag: "SetClaudeHarness", harness: "ClaudeCode" })).toMatchObject(
-      { claudeHarness: "ClaudeCode" },
-    )
   })
 })
 

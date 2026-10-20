@@ -53,29 +53,16 @@ export interface HelloFields {
   readonly sessionId: string
   readonly conversationId: string
   readonly model: string
-  /** It takes SwitchModel in place, rather than requiring a process relaunch (ADR 0029). */
-  readonly switchesModels?: true
-  /** It is the durable agent (docs/design/durable-harness.md): it takes threads and Compact. */
-  readonly durable?: true
 }
 
-/**
- * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), marks the
- * files of a steered prompt, a message to a subagent and a reply (#278), and takes a context
- * handoff, serving its agent the Session's earlier Turns (ADR 0030).
- */
-export const helloBody = ({ switchesModels, durable, ...hello }: HelloFields) =>
+/** The body of `POST /mod/hello`, in the protocol's shape. */
+export const helloBody = (hello: HelloFields) =>
   JSON.stringify(
     Schema.encodeSync(ModHello)(
       Schema.decodeUnknownSync(ModHello)({
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
         ...hello,
-        steers: true,
-        attaches: true,
-        takesHandoffs: true,
-        ...(switchesModels === true && { switchesModels }),
-        ...(durable === true && { durable }),
       }),
     ),
   )

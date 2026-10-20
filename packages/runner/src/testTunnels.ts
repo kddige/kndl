@@ -32,7 +32,6 @@ import {
   type TestHub,
   webOrigin,
 } from "../../hub/src/testSupport.ts"
-import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLink, HubLinkLive } from "./HubLink.ts"
@@ -256,7 +255,6 @@ export async function tunnelScene(options: {
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provideMerge(StaticPiBundle({ nodeModules: join(dir, "pi", "node_modules") })),
     Layer.provide([
       Layer.succeed(

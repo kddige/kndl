@@ -52,17 +52,17 @@ export function planChanges(
 /** One line on what a change did, for the Turn's marker. */
 export function planChangeText(plan: Plan, previous: Plan | undefined): string {
   const { finished, started, added } = planChanges(plan, previous)
-  if (plan.steps.length === 0) return "Cleared the plan"
+  if (plan.steps.length === 0) return "Cleared the Plan"
   // A plan mostly of steps the last one didn't have is a new one.
   if (previous === undefined || added.length * 2 > plan.steps.length)
-    return `Made a plan of ${counted(plan.steps.length, { one: "step", other: "steps" })}`
+    return `Made a Plan of ${counted(plan.steps.length, { one: "step", other: "steps" })}`
   if (finished.length > 0 && started.length > 0)
     return `Finished “${finished.at(-1)}”, started “${started[0]}”`
   if (finished.length > 0) return `Finished “${finished.at(-1)}”`
   if (started.length > 0) return `Started “${started[0]}”`
   if (added.length > 0)
     return `Added “${added[0]}”${added.length > 1 ? ` and ${added.length - 1} more` : ""}`
-  return "Updated the plan"
+  return "Updated the Plan"
 }
 
 const statusWords: Record<PlanStepStatus, string> = {

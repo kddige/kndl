@@ -21,7 +21,6 @@ import {
   type EnvironmentState,
   type EnvironmentVersion,
   type GitHubLogin,
-  type Harness,
   type HeaderValueInput,
   HubToWeb,
   type Channel,
@@ -87,15 +86,8 @@ export interface NewSession {
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   /**
-   * What runs its agent (ADR 0029, 0030), as CreateSession takes it: a model names its own, which
-   * this must agree with; absent with no model, the Hub picks. New Session sets it for Claude
-   * Code's default alone, where the Runner might run pi.
-   */
-  readonly harness?: Harness
-  /**
-   * The model to start it on: one of the Runner's Claude Code's, or, for a pi Session, one of the
-   * Creator's Models, as `openai/gpt-6-sol`. Absent, Claude Code's default, or on pi the Creator's
-   * default Model (#128).
+   * The model to start it on: one of the Creator's Models, as `openai/gpt-6-sol`. Absent, the
+   * Creator's default Model (#128).
    */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
@@ -332,7 +324,7 @@ export class HubClient {
   ): Promise<ThreadId> {
     const trimmed = text.trim()
     if (trimmed === "" && attachments.length === 0)
-      throw new CommandError("Write something to start the thread with.")
+      throw new CommandError("Write something to start the Thread with.")
     // Answered, or refused, with its request id: not mixed up with another CreateThread's.
     const created = await this.#request(
       {
@@ -573,7 +565,6 @@ export class HubClient {
         repo: input.repo,
         branch: input.branch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
-        ...(input.harness !== undefined && { harness: input.harness }),
         ...(input.model !== undefined && { model: input.model }),
         ...(input.thinkingLevel !== undefined && { thinkingLevel: input.thinkingLevel }),
       },
@@ -985,14 +976,6 @@ export class HubClient {
       { _tag: "RefreshProviderModels", ...(provider !== undefined && { provider }) },
       "ProvidersState",
     )
-  }
-
-  /**
-   * Sets which Harness runs Claude's Models in the person's new Sessions (ADR 0030): Claude Code,
-   * on their setup token, or pi. Sessions already started keep theirs.
-   */
-  setClaudeHarness(harness: Harness): Promise<ProvidersState> {
-    return this.#request({ _tag: "SetClaudeHarness", harness }, "ProvidersState")
   }
 
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────

@@ -30,7 +30,6 @@ import {
   CliLoginCodeLifetimeMs,
   QuestionClosed,
   questionClosedText,
-  findModel,
   formatCliLoginCode,
   formatPairingCode,
   deliveryBlocked,
@@ -212,11 +211,6 @@ export interface FakeHubOptions {
    * its Models.
    */
   providers?: ReadonlyArray<ConnectedProviderWire>
-  /**
-   * Which Harness runs Claude's Models in the signed-in person's new Sessions, as their Account
-   * page sets it (ADR 0030). Default Claude Code.
-   */
-  claudeHarness?: Harness
   /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
@@ -246,13 +240,6 @@ interface FakeSession {
    * or failed: each keeps its place in the queue until then.
    */
   steering: Set<string>
-  /** Whether its mod said in its hello that it steers (#195): one from before steering doesn't. */
-  modSteers: boolean
-  /**
-   * Whether its mod said in its hello that it marks the attachments of a steered prompt, a
-   * message to a subagent and a reply (#278): one from before doesn't.
-   */
-  modAttaches: boolean
   /** People the script puts in the Session, besides whoever is connected. */
   guests: Array<PresentParticipantWire>
   /** Cancels the running Turn's remaining steps. */
@@ -550,7 +537,7 @@ export class FakeHub implements HubTransport {
     this.#hubUpdateRun = options.hubUpdateRun ?? null
     this.#hubUpdateOutcome = options.hubUpdateOutcome ?? "Succeeded"
     this.#reply = options.reply ?? replyTo
-    this.providers = new FakeProviders(options.providers ?? seedProviders(), options.claudeHarness)
+    this.providers = new FakeProviders(options.providers ?? seedProviders())
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -570,8 +557,6 @@ export class FakeHub implements HubTransport {
         queue: [],
         inFlight: null,
         steering: new Set(),
-        modSteers: true,
-        modAttaches: true,
         guests: [],
         stopTurn: null,
         terminal: null,
@@ -758,29 +743,6 @@ export class FakeHub implements HubTransport {
   creatorPrompts(sessionId: string, text: string): void {
     const session = this.sessions.get(sessionId)
     if (session) this.#prompt(session, session.summary.creator, text, this.#reply(text))
-  }
-
-  /**
-   * The Session's Claude Code runs a mod from before steering (#195), as on a Runner not updated
-   * yet: its queued prompts can't be steered. In the browser,
-   * `fakeHub.modFromBeforeSteering("s-demo")` in the console.
-   */
-  modFromBeforeSteering(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (session) {
-      session.modSteers = false
-      session.modAttaches = false
-    }
-  }
-
-  /**
-   * The Session's Claude Code runs a mod from before attachments went beyond prompts (#278): it
-   * steers, but files can't be steered, sent to a subagent or replied with. In the browser,
-   * `fakeHub.modFromBeforeAttaching("s-demo")` in the console.
-   */
-  modFromBeforeAttaching(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (session) session.modAttaches = false
   }
 
   /**
@@ -1182,11 +1144,6 @@ export class FakeHub implements HubTransport {
         this.providers.refresh(message.provider)
         this.#providersChanged(socket, message.requestId)
         break
-      // Which Harness runs Claude's Models in the person's new Sessions (ADR 0030).
-      case "SetClaudeHarness":
-        this.providers.claudeHarness = message.harness
-        this.#providersChanged(socket, message.requestId)
-        break
       case "StartSignIn":
         this.#startSignIn(socket, message.requestId, message.provider)
         break
@@ -1341,7 +1298,6 @@ export class FakeHub implements HubTransport {
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
-          ...(message.harness !== undefined && { harness: message.harness }),
           ...(message.model !== undefined && { model: message.model }),
           ...(message.thinkingLevel !== undefined && { thinkingLevel: message.thinkingLevel }),
         })
@@ -1460,7 +1416,7 @@ export class FakeHub implements HubTransport {
           this.#fail(
             socket,
             message._tag,
-            "There is no such Turn in the Session to start a thread off.",
+            "There is no such Turn in the Session to start a Thread off.",
             message.sessionId,
             requestId,
           )
@@ -1486,7 +1442,7 @@ export class FakeHub implements HubTransport {
           break
         }
         // Woken first, then marked sent, then logged, in the Hub's order.
-        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a thread", this.#you)
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a Thread", this.#you)
         const attachments = this.#markSentOrRefuse(socket, message, "prompt")
         if (!attachments) break
         const threadId = `thr-${++this.#ids}`
@@ -1536,7 +1492,7 @@ export class FakeHub implements HubTransport {
         }
         const thread = this.#threadFor(socket, session, message)
         if (!thread) break
-        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a thread", this.#you)
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a Thread", this.#you)
         const attachments = this.#markSentOrRefuse(socket, message, "prompt")
         if (!attachments) break
         this.#threadPrompt(session, thread, this.#you, message.text, attachments, message.requestId)
@@ -1549,7 +1505,7 @@ export class FakeHub implements HubTransport {
         if (!thread) break
         // As on the Hub, there is nothing to stop in a thread that isn't replying.
         if (!thread.summary.running) {
-          this.#fail(socket, message._tag, "No Turn runs in the thread.", message.sessionId)
+          this.#fail(socket, message._tag, "No Turn runs in the Thread.", message.sessionId)
           break
         }
         this.#append(session, {
@@ -1668,10 +1624,6 @@ export class FakeHub implements HubTransport {
             session.summary.state === "Active" &&
             session.summary.currentTurn !== null &&
             !this.#goingToSleep(session),
-          modSteers: session.modSteers,
-          hasAttachments:
-            (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1717,7 +1669,6 @@ export class FakeHub implements HubTransport {
         const cantAttach = answerAttachmentsRefusal({
           replied: answer._tag === "Replied",
           hasAttachments: (message.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (cantAttach !== undefined) {
           this.#fail(socket, message._tag, cantAttach.refusal, message.sessionId)
@@ -1750,8 +1701,6 @@ export class FakeHub implements HubTransport {
           state: session.summary.state,
           goingToSleep: this.#goingToSleep(session),
           agentKnown: session.agents.has(message.agentId),
-          hasAttachments: (message.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -2262,21 +2211,11 @@ export class FakeHub implements HubTransport {
     return [...claudeModels, ...providerModels("openai")]
   }
 
-  /**
-   * The model a Session's Turns run, as their usage names it (TurnUsage.model): as its Runner's
-   * Claude Code resolves its setting, or, on pi, its model name, `<provider>/<id>`.
-   */
+  /** The model a Session's Turns run, as their usage names it (TurnUsage.model): `<provider>/<id>`. */
   #modelId(session: FakeSession): string {
-    if (session.summary.harness === "Pi") {
-      if (session.summary.model !== undefined) return session.summary.model
-      const first = defaultProviderModel(this.#sessionModels(session))
-      return first ? providerModelName(first) : "anthropic/claude-opus-5-5"
-    }
-    const models = this.runners.find((runner) => runner.id === session.summary.runnerId)?.models
-    const { model } = session.summary
-    if (models === undefined) return model ?? "claude-opus-5-5"
-    const option = model === undefined ? models.default : findModel(models, model)
-    return option?.id ?? model ?? models.default.id
+    if (session.summary.model !== undefined) return session.summary.model
+    const first = defaultProviderModel(this.#sessionModels(session))
+    return first ? providerModelName(first) : "anthropic/claude-opus-5-5"
   }
 
   #create(
@@ -2286,7 +2225,6 @@ export class FakeHub implements HubTransport {
     branch: BranchChoice,
     runnerId: string | undefined,
     asked: {
-      readonly harness?: Harness
       readonly model?: string
       readonly thinkingLevel?: ThinkingLevel
     },
@@ -2341,8 +2279,6 @@ export class FakeHub implements HubTransport {
       queue: [],
       inFlight: null,
       steering: new Set(),
-      modSteers: true,
-      modAttaches: true,
       guests: [],
       stopTurn: null,
       terminal: null,
@@ -3227,7 +3163,7 @@ export class FakeHub implements HubTransport {
       this.#fail(
         socket,
         message._tag,
-        "The Session has no such thread.",
+        "The Session has no such Thread.",
         message.sessionId,
         message.requestId,
       )
@@ -3446,7 +3382,7 @@ export class FakeHub implements HubTransport {
   ): FakeSession | undefined {
     const session = this.#sessionFor(socket, message)
     if (!session) return undefined
-    const refused = driveRefusal(this.#you, session.summary.creator, session.summary.harness)
+    const refused = driveRefusal(this.#you, session.summary.creator)
     if (refused === undefined) return session
     this.#fail(socket, message._tag, refused.refusal, message.sessionId, requestIdOf(message))
     return undefined

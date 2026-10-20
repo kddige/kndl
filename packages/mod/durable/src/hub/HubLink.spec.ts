@@ -148,7 +148,6 @@ describe("HubLink", () => {
         sessionId: "s1",
         conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model,
-        switchesModels: true,
       }),
       fetch: async (url, init) => {
         const request = {
@@ -175,9 +174,8 @@ describe("HubLink", () => {
     link.stop()
     const said = requests
       .filter((r) => r.path === "/mod/hello")
-      .map((r) => JSON.parse(r.body ?? "") as { model: string; switchesModels?: true })
+      .map((r) => JSON.parse(r.body ?? "") as { model: string })
     expect(said.map((hello) => hello.model)).toEqual(["openai/gpt-a", "xai/grok-b"])
-    expect(said.every((hello) => hello.switchesModels === true)).toBe(true)
   })
 
   test("on 409 says hello again and polls from after=0", async () => {

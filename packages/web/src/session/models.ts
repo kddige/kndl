@@ -64,7 +64,7 @@ export function threadModelChangedText(
 ): string {
   const level =
     event.thinkingLevel === undefined ? "" : `, ${thinkingLevelNames[event.thinkingLevel]}`
-  return `${event.by.name} switched this thread to ${nameModel(event.model)}${level}`
+  return `${event.by.name} switched this Thread to ${nameModel(event.model)}${level}`
 }
 
 /**

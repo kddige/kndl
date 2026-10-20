@@ -6,8 +6,8 @@
 // own Session has a prompt of Alice's the Hub cancelled, from before. The demo's Turn starts a subagent in the foreground and one in the
 // background that outlives it, and Release 0.4 has subagents that finished, were stopped and were
 // interrupted (ADR 0014). The demo has dev servers listening in its Sandbox: a Docker one, and one
-// on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193). pi-box runs
-// pi as well as Claude Code (ADR 0029), and Alice's pi Session there runs on her ChatGPT sign-in.
+// on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193). Alice's
+// Session on pi-box runs on her ChatGPT sign-in (ADR 0029).
 
 import type {
   AppPermissionsCheckWire,
@@ -196,59 +196,6 @@ export function seedInvites(): Array<PendingInviteWire> {
 /** The commit the fake Hub runs. */
 export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
 
-/**
- * What the fake Runners' Claude Code has (#128), as a Runner on Claude Code 2.1.289 said it in its
- * hello. Kept from that build, whose Haiku 4.5 takes no thinking level, so the UI shows a model
- * that takes none; the pinned build's are PinnedClaudeModels (packages/runner/src/ClaudeModels.ts).
- */
-export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
-  default: {
-    alias: "default",
-    id: "claude-opus-5-5",
-    label: "Opus 5.5",
-    description: "Best for everyday, complex tasks",
-    reasoning: true,
-  },
-  models: [
-    {
-      alias: "opus",
-      id: "claude-opus-5-5",
-      label: "Opus 5.5",
-      description: "Best for everyday, complex tasks",
-      reasoning: true,
-    },
-    {
-      alias: "fable",
-      id: "claude-fable-5-1",
-      label: "Fable 5.1",
-      description: "Most capable for your hardest and longest-running tasks",
-      reasoning: true,
-    },
-    {
-      alias: "sonnet",
-      id: "claude-sonnet-5-5",
-      label: "Sonnet 5.5",
-      description: "Efficient for routine tasks",
-      reasoning: true,
-    },
-    {
-      alias: "haiku",
-      id: "claude-haiku-4-5-20251001",
-      label: "Haiku 4.5",
-      description: "Fastest for quick answers",
-      reasoning: false,
-    },
-    {
-      alias: "opus[1m]",
-      id: "claude-opus-5-5[1m]",
-      label: "Opus 5.5 (1M context)",
-      description: "Opus with a 1M-token context, for long sessions",
-      reasoning: true,
-    },
-  ],
-  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
-}
-
 const GiB = 1024 ** 3
 
 /** What a Runner's host looked like at `at` (#350): `diskFreeGiB` free of `diskTotalGiB`. */
@@ -334,7 +281,6 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       lastSeenAt: now,
       openSessions: 0,
       updater: { self: true },
-      models: fakeModels,
       sysinfo: fakeSysinfo(now - 8_000, { freeGiB: 186, totalGiB: 500 }),
     },
     {
@@ -346,7 +292,6 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       lastSeenAt: now - 3 * 60 * 60 * 1000,
       openSessions: 0,
       updater: { self: true },
-      models: fakeModels,
       // Nearly full when it was last heard from: the page warns.
       sysinfo: fakeSysinfo(
         now - 3 * 60 * 60 * 1000,
@@ -355,7 +300,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       ),
     },
     {
-      // Runs pi as well as Claude Code (ADR 0029): a new Session there is a pi Session.
+      // A second Runner online, for a Session started on one by name.
       id: "r-pi",
       name: "pi-box",
       isOnline: true,
@@ -364,8 +309,6 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       lastSeenAt: now,
       openSessions: 0,
       updater: { self: true },
-      models: fakeModels,
-      harnesses: ["ClaudeCode", "Pi"],
       sysinfo: fakeSysinfo(now - 5_000, { freeGiB: 412, totalGiB: 1_000 }),
     },
   ]

@@ -149,32 +149,6 @@ test("shows a saved token, replaces it, and removes it after asking", async () =
   expect(button("Add setup token", section() as HTMLElement)).toBeDefined()
 })
 
-// Which Harness runs Claude's Models in new Sessions (ADR 0030), chosen under Anthropic's row.
-
-const harnessChoice = () =>
-  section()?.querySelector<HTMLElement>(
-    '[role="radiogroup"][aria-label="Run Claude\'s Models with"]',
-  )
-test("Anthropic's setup token has no obsolete Harness choice", async () => {
-  const { hub } = await openAccount({
-    claudeCredential: { kind: "OAuthToken", last4: "c3d4", addedAt: 1_760_000_000_000 },
-  })
-  await eventually(() => expect(saved()).not.toBeNull())
-  expect(harnessChoice()).toBeNull()
-  expect(
-    hub.received.flatMap((message) =>
-      message._tag === "SetClaudeHarness" ? [message.harness] : [],
-    ),
-  ).toEqual([])
-})
-
-test("without a Claude credential, Anthropic's line has no Harness to choose", async () => {
-  await openAccount()
-  await addSetupToken()
-  await eventually(() => expect(secretField()).not.toBeNull())
-  expect(harnessChoice()).toBeNull()
-})
-
 const tokensSection = () => sectionTitled("CLI tokens")
 const tokenList = () => tokensSection()?.querySelector('[aria-label="Your CLI tokens"]')
 const listedMachines = () =>

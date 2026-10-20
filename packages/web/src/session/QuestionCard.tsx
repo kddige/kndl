@@ -222,8 +222,8 @@ export function QuestionDock({
 }
 
 /**
- * The question last shown here, once someone else has closed it: answered at the terminal or by
- * another Participant first, or dismissed. Not a Stop's, which the transcript says.
+ * The question last shown here, once someone else has closed it: answered by another
+ * Participant first, or dismissed. Not a Stop's, which the transcript says.
  */
 function useClosedQuestion(
   open: OpenQuestion | undefined,
@@ -241,9 +241,9 @@ function useClosedQuestion(
 }
 
 /**
- * Answers Claude's questions, one at a time, as Claude Code's dialog does: an option, several for
- * a multi-select question, or something else typed in. Picking the last question's answer sends
- * them all; Skip leaves a question unanswered, and × dismisses them, as Esc does at the terminal.
+ * Answers the agent's questions, one at a time: an option, several for a multi-select question,
+ * or something else typed in. Picking the last question's answer sends them all; Skip leaves a
+ * question unanswered, and × dismisses them.
  * Without `onAnswer`, it only shows them, waiting on `answerer`.
  */
 export function QuestionCard({
@@ -305,7 +305,7 @@ function AnsweredQuestion({
   const waitsFor =
     open.async === true
       ? "The agent works on meanwhile, and reads your answer when it comes."
-      : "It waits for an answer here or at the terminal."
+      : "It waits for an answer."
 
   // Everyone sees what the others have picked so far, a moment after they pick it.
   const shared = useRef<Record<string, string>>({})
@@ -656,8 +656,8 @@ function WatchedQuestion({
           {open.async === true
             ? `${answerer === undefined ? "An answer" : `${answerer}'s answer`} reaches the agent when it comes: it works on meanwhile.`
             : answerer === undefined
-              ? "Waiting on an answer, here or at the terminal."
-              : `Waiting on ${answerer} to answer, here or at the terminal.`}
+              ? "Waiting on an answer."
+              : `Waiting on ${answerer} to answer.`}
         </span>
       </div>
     </div>

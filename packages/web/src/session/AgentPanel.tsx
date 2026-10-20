@@ -152,7 +152,7 @@ export function AgentPanel({
       </div>
       <div {...stylex.props(styles.column, styles.dock)}>
         {agent.plan !== undefined && (
-          <PlanDock plan={agent.plan} live={running} label="Agent's plan" />
+          <PlanDock plan={agent.plan} live={running} label="Agent's Plan" />
         )}
         <Composer
           copy={copy}

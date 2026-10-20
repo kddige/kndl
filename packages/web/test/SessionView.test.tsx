@@ -633,8 +633,8 @@ test("a Session shows the Installations it runs with, by the names of their serv
   await eventually(() => expect(installationRows()).toHaveLength(2))
   expect(installationRows()[0]).toContain("Docs")
   expect(installationRows()[0]).toContain("Docs search")
-  expect(installationRows()[0]).toContain("plugin:kndl:docs")
-  expect(installationRows()[1]).toContain("plugin:kndl:sentry")
+  expect(installationRows()[0]).toContain("mcp__docs__")
+  expect(installationRows()[1]).toContain("mcp__sentry__")
 })
 
 test("a change to its Repo's Installations shows that a Restart applies it, and the Restart does", async () => {

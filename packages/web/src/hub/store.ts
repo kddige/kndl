@@ -143,14 +143,8 @@ export interface RepoEnvironment {
   readonly versions: ReadonlyArray<EnvironmentVersionInfo>
 }
 
-/**
- * The signed-in person's Connected providers, as the Hub last sent them (ADR 0029), and which
- * Harness runs Claude's Models in their new Sessions (ADR 0030).
- */
-export type Providers = Pick<
-  ProvidersState,
-  "connected" | "connectable" | "models" | "claudeHarness"
->
+/** The signed-in person's Connected providers, as the Hub last sent them (ADR 0029). */
+export type Providers = Pick<ProvidersState, "connected" | "connectable" | "models">
 
 /**
  * A sign-in to a Provider this client started (ADR 0029): the steps the Hub sent for it so far, and
@@ -537,7 +531,6 @@ export function reduce(state: HubState, action: HubAction): HubState {
           connected: action.connected,
           connectable: action.connectable,
           models: action.models,
-          claudeHarness: action.claudeHarness,
         },
       }
     case "SignInStarted":

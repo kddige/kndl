@@ -804,7 +804,7 @@ function TurnFooter({
       {...stylex.props(styles.replyButton, focus.ring)}
     >
       <ThreadIcon />
-      Reply in thread
+      Reply in Thread
     </button>
   )
   if (turn.end === null) {

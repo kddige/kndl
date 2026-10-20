@@ -256,11 +256,10 @@ test("leaves a branch git would refuse out of the Environment setup's search", a
   expect(document.body.textContent).not.toContain("starts once it's applied")
 })
 
-// On a Runner that runs pi as well as Claude Code (ADR 0030), New Session offers every Model of
-// either: Claude's on the Harness the Creator's Account page says, unless they pick another, or the
-// URL asks for Claude Code. A model says its Harness, so only Claude Code's default needs it said.
+// New Session offers every Model of the Creator's, Claude's through the durable agent's bridge. It
+// says no Harness: there is only one, and an old `?harness=claude-code` in the URL selects nothing.
 
-/** Opens New Session at `path` on a fake Hub whose only online Runner is pi-box, which runs both. */
+/** Opens New Session at `path` on a fake Hub whose only online Runner is pi-box. */
 async function openOnPi(options: ConstructorParameters<typeof FakeHub>[0] = {}, path = "/archive") {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, ...options })
   hub.patchRunner("r-studio", { isOnline: false })
@@ -352,8 +351,8 @@ test("starts Claude's Models through the durable agent's bridge, with no Harness
   await settle(200)
 })
 
-test("with pi chosen for Claude on the Account page, preselects Claude through pi", async () => {
-  const opened = await openOnPi({ claudeHarness: "Pi" })
+test("preselects Claude's first Model", async () => {
+  const opened = await openOnPi()
   await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Claude Opus 5.5"))
   expect(modelButton(opened.dialog)?.getAttribute("title")).toBe("Claude Opus 5.5")
   const sent = await startWith(opened)
@@ -383,7 +382,7 @@ test("on a pi Runner without Models, says to connect a Provider on the Account p
 })
 
 test("an obsolete harness URL cannot select a retired Harness", async () => {
-  const opened = await openOnPi({ claudeHarness: "Pi" }, "/archive?harness=claude-code")
+  const opened = await openOnPi({}, "/archive?harness=claude-code")
   await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Claude Opus 5.5"))
   const sent = await startWith(opened)
   expect(sent).toMatchObject({ model: "anthropic/claude-opus-5-5" })

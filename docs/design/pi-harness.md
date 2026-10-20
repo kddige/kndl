@@ -159,7 +159,7 @@ A Session moves between pi and Claude Code when its Creator picks a model of the
   - For Claude's Models, the Claude bridge provider (`anthropic`), when the credential is there.
   - Register the Session's MCP servers, which the Runner names in `KNDL_MCP_SERVERS` (Installation ids and server names, nothing secret), as `kndl-<server>` at `${KNDL_URL}/gateway/<installationId>`. Their `Authorization` header is `Bearer ${KNDL_MOD_TOKEN}`, which pi fills in from its environment as it connects, so the token is never written down.
   - Add the Repo's `.claude/skills` to pi's skills (`resources_discover`), beside `.pi/skills` and `.agents/skills`.
-  - Say hello: `conversationId` is pi's session id, `model` is `<provider>/<id>`, and the flags are `steers`, `attaches` and `switchesModels` (and the deprecated `takesHandoffs`).
+  - Say hello: `conversationId` is pi's session id and `model` is `<provider>/<id>`. The hello once carried capability flags (`steers`, `attaches`, `switchesModels`, `takesHandoffs`); protocol version 5 dropped them, as every mod is the durable agent.
 - **Events** (as hub-link reports them for Claude Code):
   - `TurnStarted` and `TurnEnded`, the latter with pi-ai's stop reason, the Turn's usage summed with its cost, its `model` named `<provider>/<id>` as `providerModelName` names it, and, for an error, the Provider's reason (`errorMessage`, one line, at most 500 characters, with tokens and key-shaped strings redacted).
   - `TextDelta`, and `ToolCallStarted`/`ToolCallEnded`.

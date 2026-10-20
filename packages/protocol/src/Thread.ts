@@ -202,10 +202,16 @@ export const DeliverThreadPrompt = Schema.TaggedStruct("DeliverThreadPrompt", {
 }).check(textOrAttachments)
 export type DeliverThreadPrompt = typeof DeliverThreadPrompt.Type
 
-/** Web to Hub, then Hub to mod: stop the Turn running in a thread. Any Participant may. */
+/**
+ * Web to Hub, then Hub to mod: stop the Turn running in a thread. Any Participant may. The Hub
+ * sets `turnId` to the Turn running when it was asked, which the web leaves out: the Hub keeps
+ * the command until the agent has taken it and may deliver it again after a restart, by which
+ * time another Turn may run there, and a stop is for the Turn it was asked for alone.
+ */
 export const StopThread = Schema.TaggedStruct("StopThread", {
   sessionId: SessionId,
   threadId: ThreadId,
+  turnId: Schema.optionalKey(TurnId),
 })
 export type StopThread = typeof StopThread.Type
 
@@ -218,8 +224,13 @@ export const SwitchThreadModel = Schema.TaggedStruct("SwitchThreadModel", {
 })
 export type SwitchThreadModel = typeof SwitchThreadModel.Type
 
-/** Summarize the older messages of the main loop, or of a thread, now, with these instructions. */
+/**
+ * Summarize the older messages of the main loop, or of a thread, now, with these instructions. The
+ * Hub mints a `requestId` for each ask and delivers it again after a restart until the agent has
+ * polled past it, so the agent keeps the ids it has handled and compacts once for each.
+ */
 export const Compact = Schema.TaggedStruct("Compact", {
+  requestId: RequestId,
   sessionId: SessionId,
   threadId: Schema.optionalKey(ThreadId),
   instructions: Schema.optionalKey(Schema.String),

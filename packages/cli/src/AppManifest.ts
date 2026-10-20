@@ -59,7 +59,7 @@ export function appManifest(options: {
   return {
     name: appName(options.machine),
     url: hub,
-    description: `kndl at ${hub}: Claude Code Sessions on its Runners, watched and driven together.`,
+    description: `kndl at ${hub}: coding-agent Sessions on its Runners, watched and driven together.`,
     redirect_url: options.redirectUrl,
     callback_urls: [`${hub}/auth/github/callback`],
     public: false,

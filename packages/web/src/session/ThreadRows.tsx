@@ -140,7 +140,7 @@ export function ThreadRows({
               {...stylex.props(styles.row, current && styles.current, focus.ring)}
             >
               {thread.people.length > 0 ? (
-                <AvatarStack people={people} size="sm" max={3} label="In this thread" />
+                <AvatarStack people={people} size="sm" max={3} label="In this Thread" />
               ) : (
                 <ThreadIcon {...stylex.props(styles.icon)} />
               )}
@@ -156,7 +156,7 @@ export function ThreadRows({
               </span>
               <span {...stylex.props(styles.end)} />
               {thread.model !== undefined && (
-                <span title="The model this thread runs on" {...stylex.props(styles.model)}>
+                <span title="The model this Thread runs on" {...stylex.props(styles.model)}>
                   {nameModel(thread.model)}
                 </span>
               )}

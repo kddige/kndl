@@ -692,7 +692,7 @@ describe("everyone drives a durable Session", () => {
     expect(made.status).toBe("fulfilled")
     expect(refused).toMatchObject({
       status: "rejected",
-      reason: { message: "There is no such Turn in the Session to start a thread off." },
+      reason: { message: "There is no such Turn in the Session to start a Thread off." },
     })
     // A refusal that names its request doesn't reach the listeners of those with none to answer.
     expect(failures).toEqual([])
@@ -725,7 +725,7 @@ describe("everyone drives a durable Session", () => {
                     _tag: "CommandFailed",
                     command: "CreateThread",
                     requestId: message.requestId,
-                    message: "There is no such Turn in the Session to start a thread off.",
+                    message: "There is no such Turn in the Session to start a Thread off.",
                   }),
                 0,
               )
@@ -769,7 +769,7 @@ describe("everyone drives a durable Session", () => {
     client.stopThread(demo, ThreadId.make("thr-backoff"))
     await eventually(() =>
       expect(failures).toMatchObject([
-        { command: "StopThread", message: "No Turn runs in the thread." },
+        { command: "StopThread", message: "No Turn runs in the Thread." },
       ]),
     )
 
@@ -1397,7 +1397,6 @@ describe("Connected providers (ADR 0029)", () => {
       thinkingLevel: "high",
     })
     expect(pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol", thinkingLevel: "high" })
-    // A Claude Code alias is Claude Code's (ADR 0030).
     const sonnet = await client.createSession({
       repo: "kddige/kndl",
       branch,
@@ -1405,20 +1404,11 @@ describe("Connected providers (ADR 0029)", () => {
       model: "anthropic/claude-sonnet-5-5",
     })
     expect(sonnet).toMatchObject({ harness: "Pi", model: "anthropic/claude-sonnet-5-5" })
-    const claudeCode = await client.createSession({
+    const byDefault = await client.createSession({
       repo: "kddige/kndl",
       branch,
       runnerId: RunnerId.make("r-pi"),
-      harness: "ClaudeCode",
     })
-    expect(claudeCode).toMatchObject({ harness: "Pi", model: "anthropic/claude-opus-5-5" })
-  })
-
-  test("sets which Harness runs Claude's Models in new Sessions, which the store keeps (ADR 0030)", async () => {
-    const { client } = await online()
-    await eventually(() => expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode"))
-    const answered = await client.setClaudeHarness("Pi")
-    expect(answered.claudeHarness).toBe("Pi")
-    expect(client.getState().providers?.claudeHarness).toBe("Pi")
+    expect(byDefault).toMatchObject({ harness: "Pi", model: "anthropic/claude-opus-5-5" })
   })
 })

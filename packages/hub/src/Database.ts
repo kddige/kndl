@@ -926,6 +926,14 @@ const migrations = SqliteMigrator.fromRecord({
       WHERE model IS NULL
     `
   }),
+  // Two columns nothing reads any more: `participants.claude_harness` (0044), which Harness ran
+  // Claude's Models in a Member's new Sessions, and `runners.models` (0015), the models a
+  // Runner's Claude Code said it takes. Every Session runs the durable agent now.
+  "0049_unread_columns": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants DROP COLUMN claude_harness`
+    yield* sql`ALTER TABLE runners DROP COLUMN models`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

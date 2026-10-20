@@ -28,6 +28,7 @@ The suite uses scripted models, not paid requests:
 | Boundary | Current behavior |
 | --- | --- |
 | Input admitted to SQLite | A repeated prompt `requestId` finds the same submission. Main prompts, steers and thread prompts return `PromptAlreadySubmitted` on redelivery. The Hub must consume that receipt by prompt id, including for pending thread prompts. |
+| `Compact` or `StopThread` delivered again | The Hub sends them again after the agent's hello until it has polled past them. A `Compact` carries a `requestId` the agent records in `kndl.compactions` before it runs, so a repeat is acknowledged, not run; one lost to a crash in between is asked for again. A `StopThread` names the Turn it was asked for and is ignored if the thread runs another. |
 | Process dies during a run | The run resumes under a new `TurnStarted` with sender `Resumed`; threads retain their routing, and agent events retain only their `agentId`, never their parent's `threadId`. An agent's result goes to the conversation that started it, including a thread. |
 | Process dies during a tool | Replay-safe tools reattach/replay according to Pi Durable's policy. Unsafe tools such as shell/MCP calls return an interrupted result; external side effects may already have happened. Exactly-once external effects are **not** promised. Code mode journals completed nested calls instead of repeating them. |
 | Question answered, sync result not yet committed | The accepted answer receipt remains in SQLite, so replay returns that answer instead of asking again. |

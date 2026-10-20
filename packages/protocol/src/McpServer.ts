@@ -20,7 +20,7 @@ import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 // where the server offers none, the person connecting enters a client they registered by hand
 // (#218), whose secret is write-only. Only the Hub holds the tokens, and refreshes them; the web is
 // told only whether it is connected, by whom, and the account, if the server says; and for a client
-// entered, its id and whether it has a secret. Claude Code never runs OAuth itself: the Gateway
+// entered, its id and whether it has a secret. The agent never runs OAuth itself: the Gateway
 // answers it.
 //
 // An MCP server is Hub-only, made in the web UI, or packaged: read from a git repo or an upload,
@@ -341,13 +341,13 @@ export type PackagedMcpServer = typeof PackagedMcpServer.Type
 // ── Hub to Runner ──────────────────────────────────────────────────────────
 
 /**
- * An MCP server a Session's Claude Code gets, as StartSession gives it: its name, unique in the
- * Session, and the Installation the Gateway reaches with it. No credential: Claude Code reaches it
+ * An MCP server a Session's agent gets, as StartSession gives it: its name, unique in the
+ * Session, and the Installation the Gateway reaches with it. No credential: the agent reaches it
  * with the Session token, through the Runner's relay.
  */
 export const GatewayServer = Schema.Struct({
   installationId: InstallationId,
-  /** Its name in Claude Code: a slug of the Installation's name. */
+  /** Its name to the agent, the middle of its tools' names: a slug of the Installation's name. */
   server: Schema.String.check(Schema.isPattern(/^[a-z0-9](?:-?[a-z0-9])*$/)),
 })
 export type GatewayServer = typeof GatewayServer.Type
@@ -1034,7 +1034,7 @@ export const failureBlocksStart = (failure: InstallationFailure) =>
 
 /**
  * Why a Session in `repo` didn't start, for the Installations that kept it from starting (#216),
- * and the way out, as its SessionStateChanged says after "Claude Code could not start: ".
+ * and the way out, as its SessionStateChanged says after "The agent could not start: ".
  */
 export const installationsCantStartText = (
   repo: string,

@@ -6,6 +6,7 @@
 // - `kndl.turns` (each conversation): the Turns the agent reported, and the entries they began and
 //   ended with, so a thread can fork at a Turn's answer and a restart knows which run it reported.
 // - `kndl.threads` (Session): each thread's conversation.
+// - `kndl.compactions` (Session): the Compact requests handled, so one the Hub sends again isn't run again.
 // - `kndl.agents` (Session): each subagent's conversation and what the web knows of it.
 // - `kndl.questions` (Session): the Open questions, so an answer that comes across a restart lands.
 // - `kndl.plan` (each conversation, rewindable): the Plan; a fork starts with it as of its fork.
@@ -70,6 +71,17 @@ export const ThreadsDoc = defineDoc<{ threads: Record<string, ThreadRecord> }>({
   version: 1,
   scope: "session",
   initial: () => ({ threads: {} }),
+})
+
+/** How many handled Compact requests are kept: the Hub sends one again only until it is polled past. */
+export const HandledCompactionsKept = 200
+
+/** The Compact commands handled, oldest first, by the Hub's `requestId`. */
+export const CompactionsDoc = defineDoc<{ handled: string[] }>({
+  kind: "kndl.compactions",
+  version: 1,
+  scope: "session",
+  initial: () => ({ handled: [] }),
 })
 
 export type AgentRecord = {

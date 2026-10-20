@@ -40,7 +40,6 @@ import { HubClient } from "../../src/hub/client.ts"
 import { attachmentPath, attachmentsPath, hubPaths } from "../../src/hub/config.ts"
 import { FakeHub } from "../../src/hub/fake/FakeHub.ts"
 import { claudeModels, connectable, providerModels } from "../../src/hub/fake/providers.ts"
-import { fakeModels } from "../../src/hub/fake/script.ts"
 import type { HubTransport } from "../../src/hub/transport.ts"
 
 /** A signed-in client of either Hub, with a new Session that has started, its Claude Code idle. */
@@ -56,12 +55,9 @@ interface Scene {
 }
 
 interface SceneOptions {
-  readonly modSteers?: boolean
-  readonly modAttaches?: boolean
   /**
-   * Its Runner runs pi too, and relaunches a Session on the other Harness (ADR 0030), and its
-   * Creator has Models: Claude's and OpenAI's, as the fake Hub's Alice has them. The Session still
-   * starts on Claude Code, which the Creator's Account page runs Claude's Models on.
+   * Its Runner relaunches an agent, and its Creator has Models: Claude's and OpenAI's, as the fake
+   * Hub's Alice has them. The Session starts on Claude's first.
    */
   readonly pi?: boolean
 }
@@ -87,10 +83,7 @@ const agent = {
 
 interface Adapter {
   readonly name: string
-  /**
-   * A Scene; its mod says it steers unless `modSteers` is false, and marks attachments beyond
-   * prompts unless `modAttaches` is false (#278).
-   */
+  /** A Scene: a Session started, with its mod linked. */
   readonly scene: (options?: SceneOptions) => Promise<Scene>
 }
 
@@ -130,7 +123,7 @@ async function started(client: HubClient, pi = false): Promise<SessionId> {
 
 const fake: Adapter = {
   name: "the fake Hub",
-  scene: async ({ modSteers = true, modAttaches = true, pi = false } = {}) => {
+  scene: async ({ pi = false } = {}) => {
     // Claude works on every prompt until it is stopped, asking or delegating first if told to.
     const working = { kind: "pause", steps: 1e6 } as const
     const hub = new FakeHub({
@@ -154,12 +147,8 @@ const fake: Adapter = {
             : [working],
     })
     cleanups.push(() => hub.dispose())
-    // The Runner the Session starts on, the first online one, runs pi too.
-    if (pi) hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
     const client = startClient(hub)
     const sessionId = await started(client, pi)
-    if (!modSteers) hub.modFromBeforeSteering(sessionId)
-    if (!modAttaches) hub.modFromBeforeAttaching(sessionId)
     return {
       client,
       sessionId,
@@ -324,19 +313,14 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
   }
   let loop: Promise<void> = Promise.resolve()
   return {
-    /**
-     * Says hello, saying whether it steers and marks attachments beyond prompts, and then polls
-     * for the Hub's commands.
-     */
-    hello: async (steers: boolean, attaches: boolean) => {
+    /** Says hello, and then polls for the Hub's commands. */
+    hello: async () => {
       const hello = await request("/mod/hello", {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
         sessionId,
         conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
-        ...(steers && { steers: true }),
-        ...(attaches && { attaches: true }),
       })
       loop = (async () => {
         while (!stopping.signal.aborted) {
@@ -382,7 +366,7 @@ const chatGptSignIn: ProviderApis["Service"]["signIn"] = async (_provider, inter
 
 const real: Adapter = {
   name: "the real Hub",
-  scene: async ({ modSteers = true, modAttaches = true, pi = false } = {}) => {
+  scene: async ({ pi = false } = {}) => {
     const hub = await startHub({
       config: { devLogin: true },
       providerApis: ProviderApis.layerTest({ signIn: chatGptSignIn }),
@@ -398,7 +382,7 @@ const real: Adapter = {
       [],
       undefined,
       true,
-      pi ? { models: fakeModels, relaunches: true, harnesses: ["ClaudeCode", "Pi"] } : {},
+      pi ? { relaunches: true } : {},
     )
     cleanups.push(() => runner.close())
     const transports: Array<ReturnType<typeof realTransport>> = []
@@ -418,7 +402,7 @@ const real: Adapter = {
     const mod = scriptedMod(hub, start.sessionId, start.modToken)
     // Stopped before the clients and the Hub, whose shutdown waits for its held poll.
     cleanups.push(() => mod.stop())
-    expect((await mod.hello(modSteers, modSteers && modAttaches)).status).toBe(200)
+    expect((await mod.hello()).status).toBe(200)
     runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
     return {
       client,
@@ -557,7 +541,7 @@ for (const adapter of [fake, real]) {
       )
     })
 
-    test("a steer is refused without a running Turn, and by a mod from before steering", async () => {
+    test("a steer is refused without a running Turn", async () => {
       const idle = await adapter.scene()
       const idleSession = watch(idle.client, idle.sessionId)
       await eventually(() => expect(idleSession.summary()).toBeDefined())
@@ -567,18 +551,6 @@ for (const adapter of [fake, real]) {
           "No Turn is running to steer the prompt into: it goes next.",
         ]),
       )
-
-      const old = await adapter.scene({ modSteers: false })
-      const session = await turnRunning(old, "one", "two")
-      old.client.steerPrompt(old.sessionId, session.queued("two"))
-      await eventually(() =>
-        expect(session.refusals("SteerPrompt")).toEqual([
-          expect.stringContaining("runs a mod from before steering"),
-        ]),
-      )
-      // It waits in its place, for the Turn to end.
-      expect(session.queue()).toEqual(["two"])
-      expect(session.ofTag("PromptSteered")).toEqual([])
     })
 
     test("a queued prompt can be cancelled, unless it is on its way into the Turn", async () => {
@@ -752,67 +724,48 @@ for (const adapter of [fake, real]) {
       expect(session.queue()).toEqual([])
     })
 
-    test("a message to a subagent carries its attachments, but not to a mod from before (#278)", async () => {
-      for (const modAttaches of [true, false]) {
-        const scene = await adapter.scene({ modAttaches })
-        const session = watch(scene.client, scene.sessionId)
-        scene.client.sendPrompt(scene.sessionId, "delegate")
-        await eventually(() =>
-          expect(session.summary()?.agents?.some((one) => one.id === agent.agentId)).toBe(true),
-        )
-        const id = await uploadShot(scene)
-        expect(
-          scene.client.messageAgent(scene.sessionId, agent.agentId as never, "look", [id]),
-        ).toBe(true)
-        if (modAttaches) {
-          await eventually(() => expect(session.ofTag("AgentMessaged")).toHaveLength(1))
-          expect(session.ofTag("AgentMessaged")[0]).toMatchObject({
-            text: "look",
-            attachments: [shotOf(id)],
-          })
-        } else {
-          await eventually(() =>
-            expect(session.refusals("MessageAgent")).toEqual([
-              expect.stringContaining("a mod from before attachments"),
-            ]),
-          )
-          expect(session.ofTag("AgentMessaged")).toEqual([])
-        }
-      }
+    test("a message to a subagent carries its attachments (#278)", async () => {
+      const scene = await adapter.scene()
+      const session = watch(scene.client, scene.sessionId)
+      scene.client.sendPrompt(scene.sessionId, "delegate")
+      await eventually(() =>
+        expect(session.summary()?.agents?.some((one) => one.id === agent.agentId)).toBe(true),
+      )
+      const id = await uploadShot(scene)
+      expect(scene.client.messageAgent(scene.sessionId, agent.agentId as never, "look", [id])).toBe(
+        true,
+      )
+      await eventually(() => expect(session.ofTag("AgentMessaged")).toHaveLength(1))
+      expect(session.ofTag("AgentMessaged")[0]).toMatchObject({
+        text: "look",
+        attachments: [shotOf(id)],
+      })
     })
 
-    test("a reply to Claude's question carries its attachments, but not to a mod from before (#278)", async () => {
-      for (const modAttaches of [true, false]) {
-        const scene = await adapter.scene({ modAttaches })
-        const session = watch(scene.client, scene.sessionId)
-        scene.client.sendPrompt(scene.sessionId, "ask")
-        await eventually(() => expect(session.summary()?.openQuestion).toBeDefined())
-        const toolCallId = session.summary()?.openQuestion?.toolCallId as ToolCallId
-        const id = await uploadShot(scene)
-        // Only a reply carries attachments.
-        scene.client.answerQuestion(scene.sessionId, toolCallId, { _tag: "Dismissed" }, [id])
-        scene.client.answerQuestion(
-          scene.sessionId,
-          toolCallId,
-          { _tag: "Replied", text: "like this" },
-          [id],
-        )
-        if (modAttaches) {
-          await eventually(() => expect(session.ofTag("QuestionClosed")).toHaveLength(1))
-          expect(session.refusals("AnswerQuestion")).toEqual([
-            "Only a reply to a question carries attachments.",
-          ])
-          expect(session.ofTag("QuestionClosed")[0]?.outcome).toEqual({
-            _tag: "Replied",
-            text: "like this",
-            attachments: [shotOf(id)],
-          })
-        } else {
-          await eventually(() => expect(session.refusals("AnswerQuestion")).toHaveLength(2))
-          expect(session.refusals("AnswerQuestion")[1]).toContain("a mod from before attachments")
-          expect(session.ofTag("QuestionClosed")).toEqual([])
-        }
-      }
+    test("a reply to the agent's question carries its attachments (#278)", async () => {
+      const scene = await adapter.scene()
+      const session = watch(scene.client, scene.sessionId)
+      scene.client.sendPrompt(scene.sessionId, "ask")
+      await eventually(() => expect(session.summary()?.openQuestion).toBeDefined())
+      const toolCallId = session.summary()?.openQuestion?.toolCallId as ToolCallId
+      const id = await uploadShot(scene)
+      // Only a reply carries attachments.
+      scene.client.answerQuestion(scene.sessionId, toolCallId, { _tag: "Dismissed" }, [id])
+      scene.client.answerQuestion(
+        scene.sessionId,
+        toolCallId,
+        { _tag: "Replied", text: "like this" },
+        [id],
+      )
+      await eventually(() => expect(session.ofTag("QuestionClosed")).toHaveLength(1))
+      expect(session.refusals("AnswerQuestion")).toEqual([
+        "Only a reply to a question carries attachments.",
+      ])
+      expect(session.ofTag("QuestionClosed")[0]?.outcome).toEqual({
+        _tag: "Replied",
+        text: "like this",
+        attachments: [shotOf(id)],
+      })
     })
 
     test("a PDF goes with a prompt, and its Turn carries it as one (#277)", async () => {
@@ -832,16 +785,12 @@ for (const adapter of [fake, real]) {
       ])
     })
 
-    // Connected providers (ADR 0029), and switching a Session's Harness (ADR 0030).
+    // Connected providers (ADR 0029).
 
-    test("the Creator's ProvidersState names each Provider as the Hub does, and their claudeHarness", async () => {
+    test("the Creator's ProvidersState names each Provider as the Hub does", async () => {
       const { client } = await adapter.scene()
       await eventually(() => expect(client.getState().providers).toBeDefined())
       expect(client.getState().providers?.connectable).toEqual(connectable)
-      expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode")
-
-      expect((await client.setClaudeHarness("Pi")).claudeHarness).toBe("Pi")
-      expect(client.getState().providers?.claudeHarness).toBe("Pi")
     })
 
     test("a refused answer to a sign-in leaves it running, to end as the Hub says", async () => {

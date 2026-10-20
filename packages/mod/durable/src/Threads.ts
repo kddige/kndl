@@ -91,7 +91,7 @@ export const startThread = async (
     runtime.report({
       _tag: "PromptFailed",
       promptId: command.promptId,
-      message: "The main loop has nothing to fork a thread from yet.",
+      message: "The main loop has nothing to fork a Thread from yet.",
     })
     return
   }
@@ -151,17 +151,28 @@ export const deliverThreadPrompt = async (
     return runtime.report({
       _tag: "PromptFailed",
       promptId: command.promptId,
-      message: "The Session has no such thread.",
+      message: "The Session has no such Thread.",
     })
   await promptThread(runtime, thread, command)
 }
 
-/** StopThread: the thread's Turn stops; its background agents run on. */
+/**
+ * StopThread: the thread's Turn stops; its background agents run on. A stop names the Turn it was
+ * asked for, and the Hub may send it again after a restart, when another Turn runs in the thread:
+ * that one is left alone.
+ */
 export const stopThread = async (runtime: Runtime, command: Command<"StopThread">) => {
   const thread = await threadConversation(runtime, command.threadId)
   if (thread === undefined) {
     // The protocol has no failure for it; the Hub's stop button has nothing to undo.
     runtime.log(`kndl: StopThread: the Session has no thread ${command.threadId}`)
+    return
+  }
+  const running = runtime.loops.get(thread.id)?.turnId
+  if (command.turnId !== undefined && command.turnId !== running) {
+    runtime.log(
+      `kndl: StopThread: thread ${command.threadId} no longer runs Turn ${command.turnId}`,
+    )
     return
   }
   void stopConversation(runtime, thread).catch((error: unknown) =>

@@ -438,12 +438,21 @@ export class Sessions extends Context.Service<
     ) => Effect.Effect<void, SqlError>
     /** Records a thread a Participant started (docs/design/durable-harness.md), idle. */
     readonly threadStarted: (id: SessionId, thread: NewThread) => Effect.Effect<void, SqlError>
-    /** The thread's title, model and whether a Turn runs in it, or none if the Session has no such thread. */
+    /**
+     * The thread's title, model and whether a Turn runs in it, and which, or none if the Session
+     * has no such thread.
+     */
     readonly threadOf: (
       id: SessionId,
       threadId: ThreadId,
     ) => Effect.Effect<
-      Option.Option<ModelSetting & { readonly title: string; readonly running: boolean }>,
+      Option.Option<
+        ModelSetting & {
+          readonly title: string
+          readonly running: boolean
+          readonly runningTurn?: TurnId
+        }
+      >,
       SqlError
     >
     /** The thread's Turn starts: it runs now. False if there is no such thread. */
@@ -956,6 +965,7 @@ export class Sessions extends Context.Service<
           title: row.title,
           ...settingOf(row),
           running: row.runningTurn !== null,
+          ...(row.runningTurn !== null && { runningTurn: TurnId.make(row.runningTurn) }),
         }))
       })
 

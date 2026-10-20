@@ -78,7 +78,7 @@ test("threadModelChangedText says who switched the thread to what", () => {
     thinkingLevel: "low",
   } as unknown as ThreadModelChanged
   expect(threadModelChangedText(event, (model) => modelLabel(models, model))).toBe(
-    "Alice Kim switched this thread to GPT-6-Sol, Low",
+    "Alice Kim switched this Thread to GPT-6-Sol, Low",
   )
 })
 

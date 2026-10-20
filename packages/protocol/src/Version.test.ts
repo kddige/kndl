@@ -11,6 +11,7 @@ const runnerHello = {
   protocolVersion: ProtocolVersion,
   name: "studio",
   sessions: [],
+  runsAgent: true,
 }
 
 describe("checkHandshake", () => {

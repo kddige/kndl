@@ -499,7 +499,7 @@ export function CreateSessionDialog({
         </Field>
         <Field
           label="Model"
-          description="One of your Models, from the Providers on your Account page. Anyone in the Session can change it later, and ask another in a thread."
+          description="One of your Models, from the Providers on your Account page. Anyone in the Session can change it later, and ask another in a Thread."
         >
           <ModelPicker
             models={providerModels}

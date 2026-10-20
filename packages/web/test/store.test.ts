@@ -796,7 +796,6 @@ describe("Connected providers (ADR 0029)", () => {
   } as const
   const providers = hub({
     _tag: "ProvidersState",
-    claudeHarness: "ClaudeCode",
     connected: [
       {
         provider: "openai",
@@ -839,17 +838,9 @@ describe("Connected providers (ADR 0029)", () => {
         connected: [],
         connectable: [],
         models: [],
-        claudeHarness: "Pi",
       }),
     )
-    // With which Harness runs Claude's Models in new Sessions (ADR 0030).
-    expect(state.providers?.claudeHarness).toBe("ClaudeCode")
-    expect(none.providers).toEqual({
-      connected: [],
-      connectable: [],
-      models: [],
-      claudeHarness: "Pi",
-    })
+    expect(none.providers).toEqual({ connected: [], connectable: [], models: [] })
   })
 
   test("a sign-in's steps go to the sign-in in progress, in order; another's are dropped", () => {

@@ -117,9 +117,7 @@ async function scene(
       refresh: (_provider, credential) => fakes.refresh(credential),
     }),
   })
-  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
-    harnesses: ["ClaudeCode", "Pi"],
-  })
+  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
   if (options.openAiFirst === true) {

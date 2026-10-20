@@ -6,6 +6,14 @@ import type { ConversationId, EntryId, SubmissionId, TaskId } from "@earendil-wo
 import { isRecord } from "./hub/HubMessages.ts"
 import { contentText } from "./Inputs.ts"
 import type { Runtime } from "./Runtime.ts"
+import { turnErrorMessage } from "./Turns.ts"
+
+/**
+ * Why a compaction failed, as the Hub shows it, whoever reports it: redacted, on one line, and
+ * clipped as a Turn's error is.
+ */
+export const compactionError = (error: unknown, secrets: ReadonlyArray<string>): string =>
+  turnErrorMessage(String(error), secrets) ?? "Compaction failed."
 
 /** The summary a compaction made, wherever it is now; undefined when it made none. */
 export const compactionSummary = async (

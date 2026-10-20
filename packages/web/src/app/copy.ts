@@ -38,10 +38,10 @@ export const commandText: Partial<Record<string, string>> = {
   RestoreSession: "restore the Session",
   RenameSession: "rename the Session",
   SetSessionModel: "change the Model",
-  CreateThread: "start the thread",
-  PromptThread: "post in the thread",
-  StopThread: "stop the thread",
-  SetThreadModel: "change the thread's Model",
+  CreateThread: "start the Thread",
+  PromptThread: "post in the Thread",
+  StopThread: "stop the Thread",
+  SetThreadModel: "change the Thread's Model",
   CompactConversation: "compact the conversation",
 }
 

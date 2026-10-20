@@ -22,7 +22,6 @@ import {
   webOrigin,
 } from "../../hub/src/testSupport.ts"
 import { ClaudeTokenVariable } from "./ClaudeEnvironment.ts"
-import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -168,7 +167,6 @@ async function startRunner(hub: TestHub) {
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provideMerge(StaticPiBundle({ nodeModules: join(dir, "pi", "node_modules") })),
     Layer.provide([
       Layer.succeed(Tmux, Tmux.of({ ...makeTmux(guestTmux), retireHostServer: Effect.void })),

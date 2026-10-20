@@ -1,5 +1,4 @@
 import { Effect, Layer } from "effect"
-import { ClaudeModelsLive } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -52,7 +51,6 @@ export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(HubClaudeCredentialLive),
-  Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(PiBundleLive),
   Layer.provideMerge(HubLinkLive),
   Layer.provideMerge(ModRelayHost),

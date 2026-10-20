@@ -1,10 +1,10 @@
-// The durable agent as every Session's Harness (docs/design/durable-harness.md), through the
-// module's interface, on a Hub stood in for by plain data: its Runners and its Members' Models.
+// What every Session's durable agent runs on (docs/design/durable-harness.md), through the module's
+// interface, on a Hub stood in for by plain data: its Runners and its Members' Models.
 
 import { describe, expect, test } from "bun:test"
 import { type Participant, ParticipantId, type ProviderModel, RunnerId } from "@kndl/protocol"
 import { Effect } from "effect"
-import { claudeCodeModelText, makeHarnesses, noModelsText } from "./Harnesses.ts"
+import { claudeCodeModelText, makeAgentModels, noModelsText } from "./AgentModels.ts"
 import type { ModelSetting } from "./Sessions.ts"
 
 const alice: Participant = { id: ParticipantId.make("p-alice"), login: "alice", name: "Alice" }
@@ -28,46 +28,42 @@ const claude: ProviderModel = {
 }
 
 /**
- * A Hub where mac said it runs pi, old said it runs Claude Code alone, away hasn't said hello
- * since the Hub started, and alice has `models`.
+ * A Hub where mac said it can run the agent, old said it can't, away hasn't said hello since the
+ * Hub started, and alice has `models`.
  */
 const hub = (models: ReadonlyArray<ProviderModel>) =>
-  makeHarnesses({
+  makeAgentModels({
     runner: (id) =>
       Effect.succeed(
         id === mac
-          ? { name: "mac", harnesses: ["ClaudeCode", "Pi"] as const }
+          ? { name: "mac", runsAgent: true }
           : id === old
-            ? { name: "old", harnesses: ["ClaudeCode"] as const }
+            ? { name: "old", runsAgent: false }
             : id === away
-              ? { name: "away", harnesses: null }
+              ? { name: "away", runsAgent: null }
               : undefined,
       ),
     modelsFor: (creator) => Effect.succeed(creator === alice.id ? models : []),
   })
 
-const check = (harnesses: ReturnType<typeof makeHarnesses>, asked: ModelSetting) =>
-  Effect.runPromise(harnesses.agent.check(asked, { creatorId: alice.id }))
+const check = (agentModels: ReturnType<typeof makeAgentModels>, asked: ModelSetting) =>
+  Effect.runPromise(agentModels.check(asked, { creatorId: alice.id }))
 
-describe("the durable agent", () => {
-  test("is every Session's Harness, said as Pi", () => {
-    expect(hub([]).agent).toMatchObject({
-      harness: "Pi",
-      name: "the agent",
-      flag: { harness: "Pi" },
-    })
-  })
-
-  test("runs on a Runner that said it runs pi; any other is told to update", async () => {
-    const harnesses = hub([])
-    const refusal = (runnerId: RunnerId) => Effect.runPromise(harnesses.runnerRefusal(runnerId))
+describe("the Runner", () => {
+  test("runs the agent when its hello said so; one whose bundle isn't ready is told why", async () => {
+    const agentModels = hub([])
+    const refusal = (runnerId: RunnerId) => Effect.runPromise(agentModels.runnerRefusal(runnerId))
     expect(await refusal(mac)).toBeUndefined()
     expect(await refusal(old)).toBe(
-      "old runs a version from before the durable agent: update it on the Runners page.",
+      "old can't run the durable agent: it couldn't prepare Node.js and the agent's packages. Its log says why; restart it once that is fixed.",
     )
-    // One not heard from since the Hub started isn't told to update.
+    // One not heard from since the Hub started isn't told to fix anything.
     expect(await refusal(away)).toBe(
       "away hasn't connected since the Hub started, so it isn't known to run the durable agent.",
+    )
+    // One the Hub doesn't know is the same.
+    expect(await refusal(RunnerId.make("r-gone"))).toBe(
+      "The Runner hasn't connected since the Hub started, so it isn't known to run the durable agent.",
     )
   })
 })
@@ -89,14 +85,14 @@ describe("its model, against its Creator's Models (ADR 0029)", () => {
   })
 
   test("refuses a Model or level the Creator doesn't have, and anything without Models", async () => {
-    const harnesses = hub([gpt, grok])
-    expect(await check(harnesses, { model: "anthropic/claude-opus-5-5" })).toBe(
+    const agentModels = hub([gpt, grok])
+    expect(await check(agentModels, { model: "anthropic/claude-opus-5-5" })).toBe(
       "Model 'anthropic/claude-opus-5-5' not found",
     )
-    expect(await check(harnesses, { model: "xai/grok-5", thinkingLevel: "low" })).toBe(
+    expect(await check(agentModels, { model: "xai/grok-5", thinkingLevel: "low" })).toBe(
       "Grok 5 takes no thinking level.",
     )
-    expect(await check(harnesses, { model: "openai/gpt-6-sol", thinkingLevel: "max" })).toBe(
+    expect(await check(agentModels, { model: "openai/gpt-6-sol", thinkingLevel: "max" })).toBe(
       "GPT-6-Sol has no thinking level 'max'.",
     )
     expect(await check(hub([]), {})).toBe(noModelsText)
@@ -114,7 +110,7 @@ describe("its model, against its Creator's Models (ADR 0029)", () => {
 
 /** Why a Session can't run for `creator`, on a Hub where alice has Models. */
 const whyNot = (creator: Participant, you?: Participant) =>
-  Effect.runPromise(hub([gpt]).agent.whyNotRunnable(creator, you))
+  Effect.runPromise(hub([gpt]).whyNotRunnable(creator, you))
 
 describe("what a Session runs on", () => {
   test("its Creator's Models, Claude credential or not (ADR 0029)", async () => {

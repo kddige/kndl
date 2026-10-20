@@ -500,7 +500,7 @@ function LoadedSession({
                 ? [
                     {
                       id: "reply-in-thread",
-                      label: "Reply in thread to the latest answer",
+                      label: "Reply in Thread to the latest answer",
                       run: () => reply(latestTurnId),
                     },
                   ]
@@ -665,7 +665,7 @@ function LoadedSession({
                   {items.length === 0 ? (
                     <EmptyState
                       title="Nothing here yet"
-                      description="Send the first prompt. Everyone in the Session sees the answer as it streams, and can reply in a thread off it."
+                      description="Send the first prompt. Everyone in the Session sees the answer as it streams, and can reply in a Thread off it."
                     />
                   ) : (
                     <Transcript
@@ -810,7 +810,7 @@ function findLatestTurn(items: JoinedSession["transcript"]["items"]): TurnView |
 function pausedText(agents: number, threads: number): string {
   const parts = [
     ...(agents > 0 ? [agents === 1 ? "an agent" : `${agents} agents`] : []),
-    ...(threads > 0 ? [threads === 1 ? "a thread" : `${threads} threads`] : []),
+    ...(threads > 0 ? [threads === 1 ? "a Thread" : `${threads} Threads`] : []),
   ]
   const what = parts.join(" and ")
   const one = agents + threads === 1

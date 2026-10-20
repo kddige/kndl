@@ -91,8 +91,6 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
       sessionId: "s-e2e",
       conversationId: "conv-e2e",
       model: "openai/gpt-4.1",
-      durable: true,
-      switchesModels: true,
     })
     // Its MCP server connected, at the Gateway, with the Session token.
     await hub.until(() => hub.mcpRequests.find((request) => request.method === "tools/list"))

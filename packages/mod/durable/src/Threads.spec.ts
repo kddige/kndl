@@ -581,7 +581,7 @@ describe("Compact", () => {
         agent.hub.events.findLastIndex((event) => event._tag === "TurnStarted"),
       )
     }
-    agent.send({ _tag: "Compact", instructions: "Keep the names", sender: bob })
+    agent.send({ _tag: "Compact", requestId: "c-1", instructions: "Keep the names", sender: bob })
     const events = await agent.until((event) => event._tag === "CompactionEnded")
     expect(events.find((event) => event._tag === "CompactionStarted")).toEqual({
       _tag: "CompactionStarted",
@@ -600,15 +600,78 @@ describe("Compact admission", () => {
   test("a skipped compaction starts before it ends, and invalid threads fail explicitly", async () => {
     agent = new TestAgent({ reply: () => say("Hi.") })
     await agent.start()
-    agent.send({ _tag: "Compact", sender: bob })
+    agent.send({ _tag: "Compact", requestId: "c-2", sender: bob })
     let events = await agent.until((event) => event._tag === "CompactionEnded")
     expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
     expect(events.at(-1)?.outcome).toBe("skipped")
     const from = agent.hub.events.length
-    agent.send({ _tag: "Compact", threadId: "missing", sender: bob })
+    agent.send({ _tag: "Compact", requestId: "c-3", threadId: "missing", sender: bob })
     events = await agent.until((event) => event._tag === "CompactionEnded", from)
     expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
     expect(events.at(-1)).toMatchObject({ threadId: "missing", outcome: "failed" })
+  })
+})
+
+describe("a command the Hub delivers again", () => {
+  test("a Compact it already ran is acknowledged, not run again, across a restart too", async () => {
+    agent = new TestAgent({ reply: () => say("Hi.") })
+    await agent.start()
+    agent.send({ _tag: "Compact", requestId: "c-1", sender: bob })
+    await agent.until((event) => event._tag === "CompactionEnded")
+    // Said again: the Hub didn't hear that the agent took it.
+    let from = agent.hub.events.length
+    agent.send({ _tag: "Compact", requestId: "c-1", sender: bob })
+    // A later ask, with an id of its own, is a compaction of its own, and ends the wait.
+    agent.send({ _tag: "Compact", requestId: "c-2", sender: bob })
+    let events = await agent.until((event) => event._tag === "CompactionEnded", from)
+    expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
+
+    // The agent restarts and the Hub, which forgot, sends both again.
+    await agent.stop()
+    agent.hub.forget()
+    await agent.start()
+    from = agent.hub.events.length
+    agent.send({ _tag: "Compact", requestId: "c-1", sender: bob })
+    agent.send({ _tag: "Compact", requestId: "c-2", sender: bob })
+    agent.send({ _tag: "Compact", requestId: "c-3", sender: bob })
+    events = await agent.until((event) => event._tag === "CompactionEnded", from)
+    expect(events.map((event) => event._tag)).toEqual(["CompactionStarted", "CompactionEnded"])
+    expect(agent.hub.ofTag("CompactionStarted")).toHaveLength(3)
+  })
+
+  test("a StopThread is for the Turn it was asked for, and leaves a later one running", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => {
+        if (!inThread(request)) return say("Main.")
+        return request.last?.role === "toolResult" ? say("Done.") : callTool("hold", {})
+      },
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    const first = await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: first.turnId,
+      promptId: "q2",
+      text: "Hold",
+      sender: bob,
+      model: "openai/gpt-test",
+    })
+    const running = await agent.event(
+      (event) => event._tag === "ToolCallStarted" && event.threadId === "t1",
+    )
+    // Asked for a Turn that ended before this one began: the Hub brought it after a restart.
+    agent.send({ _tag: "StopThread", threadId: "t1", turnId: "an-earlier-turn" })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(agent.hub.ofTag("TurnEnded").filter((event) => event.threadId === "t1")).toEqual([])
+    // For this one, it stops.
+    agent.send({ _tag: "StopThread", threadId: "t1", turnId: running.turnId })
+    expect(
+      await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1"),
+    ).toMatchObject({ reason: "aborted" })
   })
 })
 

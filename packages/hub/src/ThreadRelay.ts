@@ -24,7 +24,6 @@ import {
   CommandFailed,
   Compact,
   DeliverThreadPrompt,
-  findProviderModel,
   type HubToWeb,
   type ModEvent,
   type Participant,
@@ -45,7 +44,7 @@ import {
   ThreadStarted,
   threadTitleFrom,
   type ParticipantId,
-  type RequestId,
+  RequestId,
   type ThreadCommand,
   type TurnEnded,
   type TurnId,
@@ -55,8 +54,12 @@ import {
 import { Clock, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
+import {
+  type CheckedModel,
+  modelSwitchFailedText,
+  settingAfterFailedSwitch,
+} from "./AgentModels.ts"
 import { Attachments, carrying } from "./Attachments.ts"
-import { type CheckedModel } from "./Harnesses.ts"
 import type { LiveSessions } from "./LiveSessions.ts"
 import { ModelCatalog } from "./ModelCatalog.ts"
 import type { Peer } from "./Peers.ts"
@@ -141,8 +144,7 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
   // ── The web's commands ─────────────────────────────────────────────────
 
   /**
-   * The Session a thread command names, unless it is Archived or its agent doesn't take threads;
-   * else none, the command refused.
+   * The Session a thread command names, unless it is Archived; else none, the command refused.
    */
   const sessionOf = Effect.fn("ThreadRelay.sessionOf")(function* (
     client: ThreadWebClient,
@@ -158,12 +160,6 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
       refuse(client, message, "The Session is archived: restore it first.")
       return Option.none<SessionSummary>()
     }
-    // A mod from before, of pi or Claude Code, that said hello and runs still.
-    const running = session.value.state === "Active" || session.value.state === "Frozen"
-    if (running && !live.awaitingHello(sessionId) && live.modDurable(sessionId) === false) {
-      refuse(client, message, "This Session's agent doesn't take threads: restart it.")
-      return Option.none<SessionSummary>()
-    }
     return session
   })
 
@@ -175,7 +171,7 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
   ) {
     const thread = yield* sessions.threadOf(message.sessionId, threadId)
     if (Option.isNone(thread)) {
-      refuse(client, message, "The Session has no such thread.")
+      refuse(client, message, "The Session has no such Thread.")
     }
     return thread
   })
@@ -334,7 +330,7 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
           return refuse(
             client,
             message,
-            "There is no such Turn in the Session to start a thread off.",
+            "There is no such Turn in the Session to start a Thread off.",
           )
         }
         const setting = yield* settingFor(client, message, session.value)
@@ -389,9 +385,14 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
         if (Option.isNone(session)) return
         const thread = yield* threadFor(client, message, threadId)
         if (Option.isNone(thread)) return
-        if (!thread.value.running) return refuse(client, message, "No Turn runs in the thread.")
+        const { runningTurn } = thread.value
+        if (runningTurn === undefined) return refuse(client, message, "No Turn runs in the Thread.")
         yield* host.logEvent(sessionId, TurnStopRequested.make({ by: you, threadId }))
-        return yield* outbox.queue(sessionId, StopThread.make({ sessionId, threadId }))
+        // For the Turn running now: a stop the agent takes after a restart is not for a later one.
+        return yield* outbox.queue(
+          sessionId,
+          StopThread.make({ sessionId, threadId, turnId: runningTurn }),
+        )
       }
 
       case "SetThreadModel": {
@@ -440,6 +441,7 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
         return yield* outbox.queue(
           sessionId,
           Compact.make({
+            requestId: RequestId.make(randomId()),
             sessionId,
             ...(threadId !== undefined && { threadId }),
             ...(instructions !== undefined && { instructions }),
@@ -484,7 +486,7 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
           sessionId,
           message: redactText(
             yield* host.needlesFor(sessionId),
-            `The thread could not be started: ${event.message}`,
+            `The Thread could not be started: ${event.message}`,
           ),
         }),
         (client) => client.you.id === sender.id,
@@ -507,24 +509,18 @@ export const makeThreadRelay = Effect.fnUntraced(function* (host: ThreadRelayHos
     const session = yield* sessions.get(sessionId)
     const thread = yield* sessions.threadOf(sessionId, threadId)
     if (Option.isNone(session) || Option.isNone(thread)) return
-    if (thread.value.model === event.asked) {
-      const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
-      const { thinkingLevel } = thread.value
-      // Only a Model of its Creator's is taken as the one it runs on; else the setting stays.
-      if (findProviderModel(creatorModels, event.model) !== undefined) {
-        yield* sessions.setThreadModel(sessionId, threadId, {
-          model: event.model,
-          ...(thinkingLevel !== undefined && { thinkingLevel }),
-        })
-        yield* host.sessionUpdated(sessionId)
-      }
+    const back = settingAfterFailedSwitch(
+      yield* modelCatalog.modelsFor(session.value.creator.id),
+      thread.value,
+      event,
+    )
+    if (back !== undefined) {
+      yield* sessions.setThreadModel(sessionId, threadId, back)
+      yield* host.sessionUpdated(sessionId)
     }
     // The title was redacted when it was kept; a thread from before that is redacted now.
     const needles = yield* host.needlesFor(sessionId)
-    const message = redactText(
-      needles,
-      `Couldn't switch the thread “${thread.value.title}” to ${event.asked ?? "another model"}: ${event.message}. It still runs on ${event.model}.`,
-    )
+    const message = redactText(needles, modelSwitchFailedText(event, thread.value.title))
     const key = `${sessionId}/${threadId}`
     const switcher = modelSwitchers.get(key)
     modelSwitchers.delete(key)

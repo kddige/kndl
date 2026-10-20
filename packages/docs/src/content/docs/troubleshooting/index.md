@@ -97,9 +97,9 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `You don't have access to … on GitHub` | [Sessions](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) |
 | A Sensitive variable can't be saved | [Sessions](/troubleshooting/sessions/#a-sensitive-variable-cant-be-saved) |
 | **Connect a Provider first**, or a Session sleeps for want of Models | [Sessions](/troubleshooting/sessions/#you-have-no-models) |
-| `Put to sleep: the Claude credential it ran on was removed`, or `… was replaced` | [Sessions](/troubleshooting/sessions/#a-session-went-to-sleep-when-its-claude-credential-changed) |
+| `Put to sleep: the Claude credential its agent started with was removed`, or `… was replaced` | [Sessions](/troubleshooting/sessions/#a-session-went-to-sleep-when-its-claude-credential-changed) |
 | A Turn says **Failed** | [Sessions](/troubleshooting/sessions/#a-turn-fails-on-a-providers-model) |
-| `… isn't known to run the durable agent.`, or `… runs a version from before the durable agent: …` | [Sessions](/troubleshooting/sessions/#a-runner-cant-run-the-agent) |
+| `… isn't known to run the durable agent.`, or `… can't run the durable agent: …` | [Sessions](/troubleshooting/sessions/#a-runner-cant-run-the-agent) |
 | A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |
 | `There is no such Session.` | [Sessions](/troubleshooting/sessions/#there-is-no-such-session) |
 | A Session doesn't go to sleep | [Sessions](/troubleshooting/sessions/#a-session-doesnt-go-to-sleep) |

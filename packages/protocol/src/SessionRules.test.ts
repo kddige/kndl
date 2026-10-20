@@ -24,15 +24,12 @@ describe("driving a Session (ADR 0026, lifted by the Pi Durable spike)", () => {
   const alice = { id: "p-alice", name: "Alice" }
   const bob = { id: "p-bob" }
 
-  test("its Creator drives it, whatever its Harness", () => {
+  test("its Creator drives it", () => {
     expect(driveRefusal(alice, alice)).toBeUndefined()
-    expect(driveRefusal(alice, alice, "Pi")).toBeUndefined()
   })
 
   test("everyone else drives it too, on its Creator's accounts", () => {
     expect(driveRefusal(bob, alice)).toBeUndefined()
-    expect(driveRefusal(bob, alice, "ClaudeCode")).toBeUndefined()
-    expect(driveRefusal(bob, alice, "Pi")).toBeUndefined()
   })
 })
 
@@ -42,9 +39,6 @@ describe("steering a queued prompt (ADR 0018)", () => {
     delivered: false,
     steering: false,
     turnRunning: true,
-    modSteers: true,
-    hasAttachments: false,
-    modAttaches: true,
   }
 
   test("hands a queued prompt to a running Turn, once", () => {
@@ -52,34 +46,19 @@ describe("steering a queued prompt (ADR 0018)", () => {
     expect(steerVerdict({ ...queued, steering: true })).toBe("already")
   })
 
-  test("is refused without a running Turn, for a prompt delivered or not queued, and by an old mod", () => {
+  test("is refused without a running Turn, for a prompt delivered or not queued", () => {
     expect(steerVerdict({ ...queued, turnRunning: false })).toEqual(refused("No Turn is running"))
     expect(steerVerdict({ ...queued, delivered: true })).toEqual(refused("already delivered"))
     expect(steerVerdict({ ...queued, queued: false })).toEqual(refused("not in the Prompt queue"))
-    expect(steerVerdict({ ...queued, modSteers: false })).toEqual(
-      refused("a mod from before steering"),
-    )
   })
 
   test("says why in the order the Hub checks", () => {
     // No Turn comes first: the prompt goes next anyway.
-    expect(steerVerdict({ ...queued, turnRunning: false, modSteers: false })).toEqual(
+    expect(steerVerdict({ ...queued, turnRunning: false, queued: false })).toEqual(
       refused("No Turn is running"),
     )
-    // A steer under way is done whatever the mod says now.
-    expect(steerVerdict({ ...queued, steering: true, modSteers: false })).toBe("already")
-    // An old mod is said before a prompt that is gone.
-    expect(steerVerdict({ ...queued, queued: false, modSteers: false })).toEqual(
-      refused("a mod from before steering"),
-    )
-  })
-
-  test("hands a prompt with attachments to the Turn too, unless its mod is from before (#278)", () => {
-    expect(steerVerdict({ ...queued, hasAttachments: true })).toBe("ok")
-    expect(steerVerdict({ ...queued, hasAttachments: true, modAttaches: false })).toEqual(
-      refused("a mod from before attachments"),
-    )
-    expect(steerVerdict({ ...queued, modAttaches: false })).toBe("ok")
+    // A steer under way is done whether or not the prompt is still queued.
+    expect(steerVerdict({ ...queued, steering: true, queued: false })).toBe("already")
   })
 })
 
@@ -90,9 +69,9 @@ describe("cancelling a queued prompt", () => {
     expect(cancelRefusal(queued)).toBeUndefined()
   })
 
-  test("is refused for one on its way to Claude Code, or not queued", () => {
+  test("is refused for one on its way to the agent, or not queued", () => {
     expect(cancelRefusal({ ...queued, delivered: true })).toEqual({
-      refusal: "The prompt was already delivered to Claude Code.",
+      refusal: "The prompt was already delivered to the agent.",
     })
     expect(cancelRefusal({ ...queued, steering: true })).toEqual({
       refusal: "The prompt is being handed to the running Turn.",
@@ -182,7 +161,7 @@ describe("the Session lifecycle", () => {
 
 describe("subagents (ADR 0014)", () => {
   test("a message reaches an agent of an Active Session, and wakes an Asleep one", () => {
-    const known = { ...idle, agentKnown: true, hasAttachments: false, modAttaches: true }
+    const known = { ...idle, agentKnown: true }
     expect(messageAgentVerdict(known)).toBe("deliver")
     expect(messageAgentVerdict({ ...known, state: "Asleep" })).toBe("wake")
     expect(messageAgentVerdict({ ...known, agentKnown: false })).toEqual({
@@ -195,29 +174,11 @@ describe("subagents (ADR 0014)", () => {
     )
   })
 
-  test("a message with attachments goes to a mod that marks them, or wakes a new one (#278)", () => {
-    const known = { ...idle, agentKnown: true, hasAttachments: true, modAttaches: true }
-    expect(messageAgentVerdict(known)).toBe("deliver")
-    expect(messageAgentVerdict({ ...known, modAttaches: false })).toEqual(
-      refused("a mod from before attachments"),
-    )
-    // A woken Session's mod is a new one: a Runner behind the Hub wakes none (ADR 0011).
-    expect(messageAgentVerdict({ ...known, modAttaches: false, state: "Asleep" })).toBe("wake")
-    expect(messageAgentVerdict({ ...known, hasAttachments: false, modAttaches: false })).toBe(
-      "deliver",
-    )
-  })
-
-  test("an answer carries attachments only as a reply, and only to a mod that marks them (#278)", () => {
-    const reply = { replied: true, hasAttachments: true, modAttaches: true }
+  test("an answer carries attachments only as a reply", () => {
+    const reply = { replied: true, hasAttachments: true }
     expect(answerAttachmentsRefusal(reply)).toBeUndefined()
     expect(answerAttachmentsRefusal({ ...reply, replied: false })).toEqual(refused("Only a reply"))
-    expect(answerAttachmentsRefusal({ ...reply, modAttaches: false })).toEqual(
-      refused("a mod from before attachments"),
-    )
-    expect(
-      answerAttachmentsRefusal({ replied: false, hasAttachments: false, modAttaches: false }),
-    ).toBeUndefined()
+    expect(answerAttachmentsRefusal({ replied: false, hasAttachments: false })).toBeUndefined()
   })
 
   test("only a Running agent of an Active Session can be stopped", () => {

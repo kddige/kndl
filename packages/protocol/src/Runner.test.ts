@@ -7,7 +7,6 @@ import {
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
-  runnerModels,
 } from "./testSupport.ts"
 import { ProtocolVersion } from "./Version.ts"
 
@@ -19,6 +18,7 @@ const runnerToHub = [
     protocolVersion: ProtocolVersion,
     name: "studio",
     sessions: ["s-1", "s-2"],
+    runsAgent: true,
   },
   { _tag: "SessionStarted", sessionId: "s-1" },
   { _tag: "SessionStartFailed", sessionId: "s-1", message: "clone failed: repository not found" },
@@ -64,6 +64,7 @@ const runnerToHub = [
     protocolVersion: ProtocolVersion,
     name: "studio",
     sessions: [],
+    runsAgent: false,
     asksCloneAccess: true,
   },
   {
@@ -71,6 +72,7 @@ const runnerToHub = [
     protocolVersion: ProtocolVersion,
     name: "studio",
     sessions: ["s-1", "s-2"],
+    runsAgent: true,
     withoutModToken: ["s-1"],
   },
   { _tag: "TestBuildLog", testBuildId: "b-1", data: "Reading package lists...\n" },
@@ -106,7 +108,7 @@ const runnerToHub = [
     protocolVersion: ProtocolVersion,
     name: "studio",
     sessions: [],
-    models: runnerModels,
+    runsAgent: true,
     relaunches: true,
     forwardsPorts: true,
     relaysMcpServers: true,
@@ -293,7 +295,6 @@ const hubToRunner = [
     repo: "kddige/kndl",
     workBranch: "claude/s-1",
     modToken: "mod-4",
-    harness: "Pi",
     model: "openai/gpt-6-sol",
   },
   {
@@ -322,6 +323,8 @@ describe("RunnerToHub", () => {
     expectRejected(RunnerToHub, { _tag: "SessionAdopted", sessionId: "s-1" })
     expectRejected(RunnerToHub, { sessionId: "s-1" })
     expectRejected(RunnerToHub, { _tag: "SessionStarted", sessionId: "" })
+    // A hello says whether the Runner can run the agent, so the Hub never has to guess.
+    expectRejected(RunnerToHub, { ...runnerToHub[0], runsAgent: undefined })
     expectRejected(RunnerToHub, { _tag: "SessionStarted" })
     expectRejected(RunnerToHub, { _tag: "SandboxStateReport", sessionId: "s-1", state: "Asleep" })
     expectRejected(RunnerToHub, {
@@ -414,14 +417,6 @@ describe("HubToRunner", () => {
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "--dangerously-skip-permissions" })
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "opus plan" })
     expectRejected(HubToRunner, { ...hubToRunner[2], thinkingLevel: "extra" })
-    expectRejected(HubToRunner, {
-      _tag: "RelaunchSession",
-      sessionId: "s-1",
-      repo: "kddige/kndl",
-      workBranch: "claude/s-1",
-      modToken: "m",
-      harness: "Codex",
-    })
   })
 
   test("keeps variable values redacted once decoded", () => {

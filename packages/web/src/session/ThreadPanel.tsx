@@ -427,8 +427,8 @@ export function ThreadPanel({
         ? "Ask about this answer…"
         : running
           ? "Steer the reply…"
-          : "Reply in thread…",
-    send: of.kind === "new" ? "Start thread" : running ? "Steer" : "Send reply",
+          : "Reply in Thread…",
+    send: of.kind === "new" ? "Start Thread" : running ? "Steer" : "Send reply",
     stop: "Stop",
   }
   const hint = archived
@@ -443,7 +443,7 @@ export function ThreadPanel({
   const activity = thread && threadActivity(thread)
   // A link to a thread, or to a Turn to reply to, that the Session doesn't have.
   const missing = of.kind === "thread" ? thread === undefined : anchor === undefined
-  const title = of.kind === "new" ? "New thread" : (thread?.title ?? "Thread")
+  const title = of.kind === "new" ? "New Thread" : (thread?.title ?? "Thread")
   const cost = thread?.usage?.cost
 
   return (
@@ -500,12 +500,12 @@ export function ThreadPanel({
               }
             >
               <MenuItem icon={<CompactIcon />} onClick={() => setCompacting(true)}>
-                Compact thread…
+                Compact Thread…
               </MenuItem>
             </Menu>
           )}
           {layout === "side" && (
-            <IconButton label="Close the thread" size="sm" onClick={onClose}>
+            <IconButton label="Close the Thread" size="sm" onClick={onClose}>
               <CloseIcon />
             </IconButton>
           )}
@@ -533,7 +533,7 @@ export function ThreadPanel({
                   ·
                 </span>
                 <span
-                  title={`What this thread has spent, on ${accounts}`}
+                  title={`What this Thread has spent, on ${accounts}`}
                   {...stylex.props(styles.nowrap)}
                 >
                   {spent(cost)} spent
@@ -547,11 +547,11 @@ export function ThreadPanel({
       {missing ? (
         <div {...stylex.props(styles.missing)}>
           <EmptyState
-            title={of.kind === "thread" ? "No such thread" : "No such Turn"}
+            title={of.kind === "thread" ? "No such Thread" : "No such Turn"}
             description={
               of.kind === "thread"
-                ? "The Session has no thread with this link. It may have failed to start."
-                : "The Session has no Turn with this link, so there is nothing to start a thread off."
+                ? "The Session has no Thread with this link. It may have failed to start."
+                : "The Session has no Turn with this link, so there is nothing to start a Thread off."
             }
             action={
               <Button size="sm" intent="secondary" onClick={onClose}>
@@ -573,7 +573,7 @@ export function ThreadPanel({
               )}
               {of.kind === "new" && creating === null && (
                 <p {...stylex.props(styles.intro)}>
-                  Ask about this answer without derailing the main conversation. The thread starts
+                  Ask about this answer without derailing the main conversation. The Thread starts
                   from everything said up to here, runs beside it, and anyone in the Session can
                   reply.
                 </p>
@@ -632,7 +632,7 @@ export function ThreadPanel({
                       intent="secondary"
                       onClick={() => send(creating.text, creating.attachments)}
                     >
-                      Retry starting thread
+                      Retry starting Thread
                     </Button>
                   )}
                 </div>
@@ -642,7 +642,7 @@ export function ThreadPanel({
 
           <div {...stylex.props(styles.dock, layout === "full" && styles.fullColumn)}>
             {thread?.plan !== undefined && (
-              <PlanDock plan={thread.plan} live={running} label="Thread plan" />
+              <PlanDock plan={thread.plan} live={running} label="Thread Plan" />
             )}
             <Composer
               copy={copy}
@@ -653,7 +653,7 @@ export function ThreadPanel({
                 archived
                   ? "Archived: restore it to reply"
                   : of.kind === "new" && creating !== null && creating.failed === undefined
-                    ? "Starting the thread…"
+                    ? "Starting the Thread…"
                     : undefined
               }
               hint={hint}
@@ -665,7 +665,7 @@ export function ThreadPanel({
                   value={threadSetting}
                   onChange={pickModel}
                   owner={session.creator.id === you?.id ? undefined : session.creator.name}
-                  footer={`Runs on ${accounts}. A thread keeps its own model: it can try a cheaper or smarter one than the Session's, and doesn't follow the Session's switches.`}
+                  footer={`Runs on ${accounts}. A Thread keeps its own model: it can try a cheaper or smarter one than the Session's, and doesn't follow the Session's switches.`}
                   disabled={archived}
                   side="top"
                 />
@@ -713,11 +713,11 @@ function anchorName(turn: TurnView): string {
 function anchorNote(anchor: TurnView, thread: ThreadView | undefined): string | undefined {
   if (thread === undefined)
     return anchor.end === null
-      ? "This Turn is still running: the thread forks from where it has got to."
+      ? "This Turn is still running: the Thread forks from where it has got to."
       : undefined
   const forkedLive = anchor.end === null || thread.at < anchor.at + anchor.end.durationMs
   return forkedLive
-    ? "Forked while this Turn was running: the thread saw less of the answer than this."
+    ? "Forked while this Turn was running: the Thread saw less of the answer than this."
     : undefined
 }
 
@@ -864,11 +864,11 @@ function CreatingPrompt({
     failed === undefined
       ? reply
         ? "Sending reply…"
-        : "Starting the thread…"
+        : "Starting the Thread…"
       : unconfirmed
         ? reply
-          ? `Reply may not have arrived: ${sentence(failed)}Check the thread before retrying.`
-          : `Thread may have started: ${sentence(failed)}Check the threads list before retrying.`
+          ? `Reply may not have arrived: ${sentence(failed)}Check the Thread before retrying.`
+          : `Thread may have started: ${sentence(failed)}Check the Threads list before retrying.`
         : `${reply ? "Reply not sent" : "Thread not started"}: ${sentence(failed)}Retry below.`
   return (
     <div {...stylex.props(styles.sent)}>

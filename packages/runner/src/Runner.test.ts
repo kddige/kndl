@@ -9,7 +9,6 @@ import { readBuildVersion } from "@kndl/protocol/checkout"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
-import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -38,13 +37,6 @@ const token = "chr_test.secret"
 
 /** The Creator's setup token the fake Hub hands out: fake, valid nowhere. */
 const setupToken = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
-
-/** What the Runner's Claude Code takes, as it says in its hello (#128). */
-const models = {
-  default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", reasoning: true },
-  models: [{ alias: "sonnet", id: "claude-sonnet-5-5", label: "Sonnet 5.5", reasoning: true }],
-  thinkingLevels: ["low", "medium", "high"],
-} as const
 
 /** The pi bundle the Runner has ready, unless a test says it has none. */
 const piReady = { nodeModules: "/opt/kndl/pi/pi-1.3.0-abc/node_modules" }
@@ -191,7 +183,6 @@ function sessionMod(h: Harness, launched: number) {
 function startRunner(
   setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {},
   updater: Layer.Layer<Updater> = Updater.manual(),
-  claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
   pi: Layer.Layer<PiBundle> = StaticPiBundle(piReady),
 ): Harness {
   const dir = mkdtempSync(join(tmpdir(), "kndl-runner-"))
@@ -212,7 +203,6 @@ function startRunner(
   return runOn(
     { hub, tmux, sandboxes, workspaces: new FakeWorkspaces(sessionsRoot), settings },
     updater,
-    claudeModels,
     pi,
   )
 }
@@ -236,7 +226,6 @@ async function restartRunner(h: Harness): Promise<Harness> {
 function runOn(
   machine: Pick<Harness, "hub" | "tmux" | "sandboxes" | "workspaces" | "settings">,
   updater: Layer.Layer<Updater> = Updater.manual(),
-  claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
   pi: Layer.Layer<PiBundle> = StaticPiBundle(piReady),
 ): Harness {
   const { hub, tmux, sandboxes, workspaces, settings } = machine
@@ -255,7 +244,6 @@ function runOn(
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(claudeModels),
     Layer.provideMerge(pi),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, relay.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
@@ -316,11 +304,9 @@ describe("connecting", () => {
       asksCloneAccess: true,
       // Whether it updates itself when the Hub asks (#87).
       updater: { self: false, reason: "it runs in a test" },
-      // What the Claude Code its agents' Claude bridge runs takes, and that it restarts an agent
+      // Every Session runs the durable agent, once its pi bundle is ready; it restarts an agent
       // on a new model (#128).
-      models,
-      // Every Session runs the durable agent, which is pi to the Hub, once its pi bundle is ready.
-      harnesses: ["Pi"],
+      runsAgent: true,
       relaunches: true,
       // It opens tunnels to a Session's Open ports (#177).
       forwardsPorts: true,
@@ -346,20 +332,11 @@ describe("connecting", () => {
     await eventually(() => h.hub.connections.length === 2 && h.hub.all("RunnerSysinfo").length >= 2)
   })
 
-  test("leaves the models out of its hello when Claude Code couldn't say", async () => {
-    const h = startRunner(undefined, undefined, StaticClaudeModels(undefined))
+  test("says in its hello that it can't run the agent when its pi bundle isn't ready", async () => {
+    const h = startRunner(undefined, undefined, StaticPiBundle(undefined))
     await connected(h)
 
-    expect(h.hub.current.received[0]).not.toHaveProperty("models")
-    expect(h.hub.current.received[0]).toMatchObject({ relaunches: true })
-  })
-
-  test("leaves its Harnesses out when its pi bundle isn't ready, as it runs no Sessions", async () => {
-    const h = startRunner(undefined, undefined, undefined, StaticPiBundle(undefined))
-    await connected(h)
-
-    expect(h.hub.current.received[0]).toMatchObject({ _tag: "RunnerHello", models })
-    expect(h.hub.current.received[0]).not.toHaveProperty("harnesses")
+    expect(h.hub.current.received[0]).toMatchObject({ _tag: "RunnerHello", runsAgent: false })
   })
 
   test("says in its hello that it updates itself, and how its last update failed", async () => {
@@ -801,7 +778,7 @@ describe("Sessions", () => {
   })
 
   test("fails a start, before its Sandbox starts, when the Runner has no pi bundle", async () => {
-    const h = startRunner(undefined, undefined, undefined, StaticPiBundle(undefined))
+    const h = startRunner(undefined, undefined, StaticPiBundle(undefined))
     await connected(h)
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStartFailed").length === 1)

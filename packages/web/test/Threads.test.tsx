@@ -100,10 +100,10 @@ test("main and thread run beside each other; posting steers only the thread, sto
 test("any Participant forks an answer, selects a Creator-owned Model, and lands in the new thread", async () => {
   const { hub, panel, page, field, router } = await open("/sessions/s-demo")
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => reply?.click())
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   expect(document.activeElement).toBe(field("Reply"))
   const picker = panel().querySelector<HTMLButtonElement>('button[aria-label^="Model:"]')
   await step(() => picker?.click())
@@ -113,7 +113,7 @@ test("any Participant forks an answer, selects a Creator-owned Model, and lands 
   )
   await step(() => model?.click())
   await step(() => type(field("Reply"), "Try this in a fork"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   await eventually(() => expect(router.state.location.search).toHaveProperty("thread"))
   expect(hub.received.find((message) => message._tag === "CreateThread")).toMatchObject({
     anchorTurnId: "t-seed-1",
@@ -129,13 +129,13 @@ test("at narrow widths, closing the thread restores the main draft and its keybo
   const { panel, page, field } = await open("/sessions/s-demo", 400)
   await step(() => type(field("Prompt"), "keep this draft"))
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => {
     reply?.focus()
     reply?.click()
   })
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   expect(field("Prompt").closest("[hidden]")).not.toBeNull()
   await step(() => button("Back to the conversation", panel()).click())
   await eventually(() => expect(panel()).toBeNull())
@@ -149,10 +149,10 @@ test("a new thread is preselected to the Session's Model, with no row that follo
   const { model } = hub.sessions.get(session)?.summary ?? {}
   expect(model).toBeDefined()
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => reply?.click())
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   const picker = panel().querySelector<HTMLButtonElement>('button[aria-label^="Model:"]')
   await step(() => picker?.click())
   await settle()
@@ -164,7 +164,7 @@ test("a new thread is preselected to the Session's Model, with no row that follo
   expect(options.find((each) => each.getAttribute("aria-selected") === "true")).toBeDefined()
   await step(() => options[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })))
   await step(() => type(field("Reply"), "Keep the model"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   await eventually(() =>
     expect(hub.received.find((message) => message._tag === "CreateThread")).toBeDefined(),
   )
@@ -176,15 +176,15 @@ test("a new thread is preselected to the Session's Model, with no row that follo
 test("starting a thread keeps the keyboard in the composer, not on the panel's heading", async () => {
   const { panel, page, field, router } = await open("/sessions/s-demo")
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => reply?.click())
   await eventually(() => expect(document.activeElement).toBe(field("Reply")))
   await step(() => type(field("Reply"), "Try this in a fork"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   await eventually(() => expect(router.state.location.search).toHaveProperty("thread"))
   await eventually(() => expect(panel().querySelectorAll("[data-turn]")).toHaveLength(1))
-  expect(panel().querySelector("h2")?.textContent).not.toBe("New thread")
+  expect(panel().querySelector("h2")?.textContent).not.toBe("New Thread")
   expect(document.activeElement).toBe(field("Reply"))
   expect(field("Reply").disabled).toBe(false)
 })
@@ -264,7 +264,7 @@ test("an Archived Session offers no Reply in thread, as its palette doesn't", as
   await eventually(() => expect(page.querySelector("[data-turn]")).not.toBeNull())
   expect(
     [...page.querySelectorAll("button")].some(
-      (each) => each.textContent?.trim() === "Reply in thread",
+      (each) => each.textContent?.trim() === "Reply in Thread",
     ),
   ).toBe(false)
 })
@@ -283,14 +283,14 @@ test("a thread being started is announced by a region that was empty first, and 
   // The Hub hasn't made it yet.
   client.createThread = () => new Promise(() => {})
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => reply?.click())
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   await step(() => type(field("Reply"), "Try this in a fork"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   const note = panel().querySelector<HTMLElement>("span[class*='sentNote']")
-  expect(panel().querySelector('[role="status"]')?.textContent).toBe("Starting the thread…")
+  expect(panel().querySelector('[role="status"]')?.textContent).toBe("Starting the Thread…")
   expect(note?.getAttribute("aria-hidden")).toBe("true")
 })
 
@@ -314,15 +314,15 @@ test("a thread whose answer the dropped connection took may exist: it says to ch
   client.createThread = () =>
     Promise.reject(new CommandError("Lost the connection to the Hub.", true))
   const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent?.trim() === "Reply in thread",
+    (each) => each.textContent?.trim() === "Reply in Thread",
   )
   await step(() => reply?.click())
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   await step(() => type(field("Reply"), "Try this in a fork"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   await eventually(() => expect(panel().querySelector('[role="alert"]')?.textContent).toBeTruthy())
   expect(panel().querySelector('[role="alert"]')?.textContent).toBe(
-    "Thread may have started: Lost the connection to the Hub. Check the threads list before retrying.",
+    "Thread may have started: Lost the connection to the Hub. Check the Threads list before retrying.",
   )
   expect(panel().textContent).not.toContain("Thread not started")
 })
@@ -335,15 +335,15 @@ test("a thread forked off a Turn that was running says its answer has grown sinc
   )
   const replies = () =>
     [...page.querySelectorAll<HTMLButtonElement>("button")].filter(
-      (each) => each.textContent?.trim() === "Reply in thread",
+      (each) => each.textContent?.trim() === "Reply in Thread",
     )
   await step(() => replies().at(-1)?.click())
-  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New Thread"))
   expect(panel().textContent).toContain(
-    "This Turn is still running: the thread forks from where it has got to.",
+    "This Turn is still running: the Thread forks from where it has got to.",
   )
   await step(() => type(field("Reply"), "Try this in a fork"))
-  await step(() => button("Start thread", panel()).click())
+  await step(() => button("Start Thread", panel()).click())
   await eventually(() =>
     expect(panel().textContent).toContain("Forked while this Turn was running"),
   )

@@ -1,7 +1,6 @@
 // The smoke test for upgrading the pinned Claude Code (PinnedClaudeVersion): Claude Code in a real
 // microsandbox VM, run as the durable agent's Claude bridge runs it, headless, on a setup token and
-// talking to Anthropic directly (ADR 0026). A Turn runs Bash in the Sandbox, and the models and
-// thinking levels it takes are those PinnedClaudeModels says. So it is skipped unless
+// talking to Anthropic directly (ADR 0026). A Turn runs Bash in the Sandbox. So it is skipped unless
 // KNDL_SANDBOX_IT=1, and makes model calls (a few, on haiku) with your own setup token: the one
 // in `CLAUDE_CODE_OAUTH_TOKEN`, or else, on macOS, in the Keychain item `kndl-setup-token`. It
 // needs `msb` installed for the current user, and network access to Docker Hub and to npm the
@@ -22,7 +21,6 @@ import {
 } from "@kndl/protocol"
 import { devHome } from "@kndl/protocol/home"
 import { Effect, Layer, Redacted } from "effect"
-import { modelProbeFlags, PinnedClaudeModels, probeModels } from "./ClaudeModels.ts"
 import { harnessEnvironment } from "./HarnessEnvironment.ts"
 import { HubLink } from "./HubLink.ts"
 import { makeSessionTokens, SessionTokens } from "./relay/SessionTokens.ts"
@@ -58,7 +56,7 @@ const setupToken = (): ClaudeCredential => {
 }
 
 test.skipIf(!enabled)(
-  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox as the Claude bridge runs it: a Turn runs Bash, and it takes the models PinnedClaudeModels says`,
+  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox as the Claude bridge runs it: a Turn runs Bash`,
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
     const root = await mkdtemp(join(tmpdir(), "kndl-it-"))
@@ -94,16 +92,6 @@ test.skipIf(!enabled)(
         "--no-session-persistence",
       ])
       expect(answer.replace(/\s+/g, " ")).toContain("smoke-42 Linux")
-
-      // The models and thinking levels the build takes are those PinnedClaudeModels says, which
-      // the Runner offers its Sessions. Asked in the Sandbox as the Claude bridge runs it.
-      const models = yield* probeModels((args) => claude([...modelProbeFlags, ...args]))
-      if (!Bun.deepEquals(models, PinnedClaudeModels)) {
-        console.error(
-          `Claude Code ${PinnedClaudeVersion} takes, for PinnedClaudeModels:\n${JSON.stringify(models, null, 2)}`,
-        )
-      }
-      expect(models).toEqual(PinnedClaudeModels)
     })
 
     const cleanup = Effect.gen(function* () {

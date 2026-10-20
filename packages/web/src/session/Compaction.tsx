@@ -213,8 +213,8 @@ export function CompactDialog({
         onOpenChange(next)
         if (!next) setInstructions("")
       }}
-      title={thread ? "Compact this thread" : "Compact the conversation"}
-      description={`The agent summarizes the older messages ${thread ? "of this thread" : "of the main conversation"}, so it keeps fitting its model's context. It keeps working meanwhile, and everyone here sees the summary.`}
+      title={thread ? "Compact this Thread" : "Compact the conversation"}
+      description={`The agent summarizes the older messages ${thread ? "of this Thread" : "of the main conversation"}, so it keeps fitting its model's context. It keeps working meanwhile, and everyone here sees the summary.`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>

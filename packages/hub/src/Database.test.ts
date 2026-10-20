@@ -45,12 +45,24 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
+ * Takes the database back to before migration 0049, which dropped two columns nothing reads: they
+ * come back empty.
+ */
+const beforeUnreadColumns = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE participants ADD COLUMN claude_harness TEXT`
+  yield* sql`ALTER TABLE runners ADD COLUMN models TEXT`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'unread_columns'`
+})
+
+/**
  * Takes the database back to before migration 0047, threads (docs/design/durable-harness.md): the
  * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
  * first.
  */
 const beforeThreads = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeUnreadColumns
   yield* sql`DROP TABLE thread_commands`
   yield* sql`DROP TABLE threads`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'thread_models'`
@@ -60,6 +72,7 @@ const beforeThreads = Effect.gen(function* () {
 /** Takes the database back to before migration 0048, a thread's own model. */
 const beforeThreadModels = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeUnreadColumns
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'thread_models'`
 })
 
@@ -584,8 +597,8 @@ describe("migration 0041, Connected providers", () => {
   })
 })
 
-describe("migration 0044, a Member's Harness for Claude", () => {
-  test("keeps every Member, on Claude Code until they choose pi", async () => {
+describe("migration 0049, the columns nothing reads", () => {
+  test("drops a Member's Harness for Claude and a Runner's models, and keeps their rows", async () => {
     const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
@@ -593,25 +606,31 @@ describe("migration 0044, a Member's Harness for Claude", () => {
       file,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
-        yield* beforeClaudeHarness
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('p-1', 'alice', 'Alice', 1, 1), ('p-2', 'bob', 'Bob', 1, 1)`
+        yield* beforeUnreadColumns
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at, claude_harness)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1, 'Pi')`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at, models)
+          VALUES ('r-1', 'build-box', 'hash', 1, '{}')`
       }),
     )
     const after = await onDatabase(
       file,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
-        yield* sql`UPDATE participants SET claude_harness = 'Pi' WHERE id = 'p-2'`
-        return yield* sql<{ readonly id: string; readonly claudeHarness: string | null }>`
-          SELECT id, claude_harness AS claudeHarness FROM participants ORDER BY id
-        `
+        return {
+          participants: yield* sql`SELECT * FROM participants`,
+          runners: yield* sql`SELECT id, name FROM runners`,
+          runnerColumns: (yield* sql<{ readonly name: string }>`PRAGMA table_info(runners)`).map(
+            (column) => column.name,
+          ),
+        }
       }),
     )
-    expect(after).toEqual([
-      { id: "p-1", claudeHarness: null },
-      { id: "p-2", claudeHarness: "Pi" },
-    ])
+    expect(after.participants).toHaveLength(1)
+    expect(after.participants[0]).toMatchObject({ id: "p-1", login: "alice" })
+    expect(after.participants[0]).not.toHaveProperty("claude_harness")
+    expect(after.runners).toEqual([{ id: "r-1", name: "build-box" }])
+    expect(after.runnerColumns).not.toContain("models")
   })
 })
 
@@ -789,7 +808,6 @@ describe("migration 0040, pi-ai's vocabulary", () => {
     const after = await onDatabase(
       file,
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
         const sessions = yield* Sessions
         const log = yield* SessionLog
         const id = SessionId.make("s-1")
@@ -798,7 +816,6 @@ describe("migration 0040, pi-ai's vocabulary", () => {
           history: (yield* log.history(id)).map((entry): unknown => entry.event),
           setting: { model: session.model, thinkingLevel: session.thinkingLevel },
           conversation: yield* sessions.conversationId(id, "ClaudeCode"),
-          runnerModels: yield* sql`SELECT models FROM runners`,
         }
       }).pipe(Effect.provide([SessionsTest, SessionLog.layer])),
     )
@@ -826,8 +843,6 @@ describe("migration 0040, pi-ai's vocabulary", () => {
       ],
       setting: { model: "sonnet", thinkingLevel: "high" },
       conversation: Option.some(conversation),
-      // Its next hello says them again, in the new names.
-      runnerModels: [{ models: null }],
     })
   })
 })

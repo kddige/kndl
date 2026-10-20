@@ -8,7 +8,6 @@ import {
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
-  runnerModels,
   sessionSummary,
   turnEvents,
 } from "./testSupport.ts"
@@ -255,13 +254,11 @@ const webToHub = [
   { _tag: "DisconnectProvider", requestId: "q-43", provider: "openai" },
   { _tag: "RefreshProviderModels", requestId: "q-44" },
   { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
-  { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
   {
     _tag: "CreateSession",
     requestId: "q-46",
     repo: "kddige/kndl",
     branch: { _tag: "Create", name: "feature/pi", from: "main" },
-    harness: "Pi",
     model: "openai/gpt-6-sol",
     thinkingLevel: "minimal",
   },
@@ -645,7 +642,6 @@ const hubToWeb = [
         versionStatus: "Unknown",
         lastSeenAt: 1_790_000_000_000,
         openSessions: 1,
-        models: runnerModels,
         sysinfo: {
           diskFreeBytes: 200 * 1024 ** 3,
           diskTotalBytes: 500 * 1024 ** 3,
@@ -828,7 +824,6 @@ const hubToWeb = [
         thinkingLevels: [],
       },
     ],
-    claudeHarness: "ClaudeCode",
   },
   {
     _tag: "SignInStepped",

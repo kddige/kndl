@@ -1005,7 +1005,7 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
         _tag: "ThreadPromptFailed",
         threadId: "thr-1",
         promptId: "p-1",
-        message: "The main loop has nothing to fork a thread from yet.",
+        message: "The main loop has nothing to fork a Thread from yet.",
         threadDropped: true,
       },
       {

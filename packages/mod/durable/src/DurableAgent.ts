@@ -37,7 +37,7 @@ import {
   sessionHistoryToolDefinition,
 } from "./History.ts"
 import { HubLink } from "./hub/HubLink.ts"
-import type { HubFetch, LinkStatus } from "./hub/HubLink.ts"
+import type { HubFetch } from "./hub/HubLink.ts"
 import { Loops } from "./Loops.ts"
 import { McpServers, mcpNamespaces } from "./Mcp.ts"
 import type { McpServerSpec } from "./Mcp.ts"
@@ -331,15 +331,12 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
       sessionId: options.sessionId,
       conversationId,
       model: sessionModel,
-      switchesModels: true,
-      durable: true,
     }),
     fetch: fetchHub,
     after: (ms, fn) => void setTimeout(fn, ms),
     onCommand: (command) => commands.run(command),
-    onStatus: (status: LinkStatus) => {
-      if (status._tag === "Rejected") log(`kndl: the Hub refused the link: ${status.reason}`)
-    },
+    // The link logs a refusal itself, once.
+    onStatus: () => undefined,
     log,
     ...(options.flushDelayMs === undefined ? {} : { flushDelayMs: options.flushDelayMs }),
   })

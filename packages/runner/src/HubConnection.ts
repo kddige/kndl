@@ -8,7 +8,6 @@ import {
 import { readBuildVersion } from "@kndl/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
-import { ClaudeModels } from "./ClaudeModels.ts"
 import { reportSysinfo } from "./HostSysinfo.ts"
 import { HubLink } from "./HubLink.ts"
 import { PiBundle } from "./PiBundle.ts"
@@ -164,7 +163,6 @@ const connectOnce = Effect.scoped(
     )
     const writer = yield* socket.writer
     const hello = yield* updater.hello
-    const models = yield* (yield* ClaudeModels).current
     const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
     yield* write(
@@ -179,11 +177,8 @@ const connectOnce = Effect.scoped(
         asksCloneAccess: true,
         updater: hello.updater,
         ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
-        // What the pinned Claude Code takes, which the agent's Claude bridge runs.
-        ...(models !== undefined && { models }),
-        // Every Session runs the durable agent, which is pi to the Hub; Claude Code runs only as
-        // the agent's Claude bridge, never as a Harness.
-        ...(pi !== undefined && { harnesses: ["Pi"] }),
+        // Whether the agent's bundle is ready: when it isn't, the Hub starts no Session here.
+        runsAgent: pi !== undefined,
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,

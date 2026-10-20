@@ -107,7 +107,7 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 A side drops a message it can't decode and carries on.
 
-`RunnerHello` carries the Runner's name, the Sessions it runs, `harnesses`, `["Pi"]` for a Runner that prepared the durable agent's runtime and absent for one that couldn't or is older (the Hub starts and wakes no Session on it), and `version`: the commit its checkout is on, the branch, if any ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/)), and `release`, the Release tagged on that commit, if any, such as `2026.10.1` ([ADR 0025](/contributing/decisions/0025-releases-and-channels/)). Every `version`, `target` and `hubVersion` carries `release` the same way. It is optional, and a peer from before it ignores it, so it needed no new protocol version. The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
+`RunnerHello` carries the Runner's name, the Sessions it runs, `runsAgent`, true for a Runner that prepared the durable agent's runtime and false for one that couldn't (the Hub starts and wakes no Session on it, and says its bundle isn't ready), and `version`: the commit its checkout is on, the branch, if any ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/)), and `release`, the Release tagged on that commit, if any, such as `2026.10.1` ([ADR 0025](/contributing/decisions/0025-releases-and-channels/)). Every `version`, `target` and `hubVersion` carries `release` the same way. It is optional, and a peer from before it ignores it, so it needed no new protocol version. The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
 
 After a restart, a Runner lists in `withoutModToken` the Sessions it kept running: their mod tokens went with the old process. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's mod relay answers that Session's requests `503` with `retry-after`, which the agent retries. A Runner that loses the message lists the Session again in its next hello.
 
@@ -147,8 +147,6 @@ A Runner that says `asksCloneAccess` in `RunnerHello` asks how to clone a Test b
 ### Models and thinking levels
 
 A Session's Models are its Creator's: `<provider>/<id>` names, such as `openai/gpt-6-sol`, from their Connected providers, and Claude's with a Claude credential. The Hub sends them in `ProvidersState`, to their owner, and in `SessionModels { sessionId, models }` to everyone who joins a Session ([Model and thinking level](#model-and-thinking-level)). A model name without a `/`, such as Claude Code's `sonnet`, is refused: `'sonnet' is Claude Code's name for a model, and Sessions no longer run on Claude Code: pick one of your Models, named <provider>/<id>, such as anthropic/claude-opus-5-5.`
-
-`RunnerHello.models` is the table of the pinned Claude Code version's models, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts`, written by `bun run --filter @kndl/runner probe-models`. A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends none.
 
 `StartSession` carries the Session's `model` and `thinkingLevel` when they are set, which the Runner gives the agent as `KNDL_MODEL` and `KNDL_THINKING`. Its `resume`, when it wakes a Session, is the `conversationId` the mod's last `ModHello` gave. The agent resumes from its storage either way. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which starts the agent again in the same Sandbox with a fresh mod token; the Hub sends it only to a mod that doesn't say `switchesModels`, which the durable agent does.
 
@@ -268,8 +266,7 @@ A Session whose Creator is no longer a Member, or who has no Models, can't wake.
 | Refused | Message |
 |---|---|
 | No Turn running, or the running one is being stopped | `No Turn is running to steer the prompt into: it goes next.` |
-| The prompt is out for delivery as the next Turn | `The prompt was already delivered to Claude Code.` |
-| A mod that didn't say `steers` | `This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.` |
+| The prompt is out for delivery as the next Turn | `The prompt was already delivered to the agent.` |
 | A prompt that isn't queued | `The prompt is not in the Prompt queue.` |
 
 A Thread has no Prompt queue: a prompt posted into a busy Thread steers it directly, and `ThreadPromptSent` shows it as sent until the agent's `TurnStarted` or `PromptSteered` with the same `promptId`. If the mod can't add the prompt to the Turn, the prompt stays in its place, and the person who steered it gets `The prompt could not join the running Turn, so it waits in the queue: …`. A `CancelPrompt` for a prompt that is being handed over is refused with `The prompt is being handed to the running Turn.`
@@ -380,14 +377,11 @@ The request goes to the MCP server's URL as it is now, its body streaming on unt
 | A thinking level for a model that takes none | `<label> takes no thinking level.` |
 | A level the model doesn't have | `<label> has no thinking level '<level>'.` |
 | A model named as Claude Code names it, with no `/` | `'<model>' is Claude Code's name for a model, and Sessions no longer run on Claude Code: …` |
-| `CreateSession.harness` of `ClaudeCode` | `Claude Code no longer runs Sessions: they run on the durable agent, on your Models.` |
 | `SetSessionModel` on an Archived Session | `The Session is archived: restore it to change its model.` |
 
 Each Session carries its `model` and `thinkingLevel` when set. Each change is logged as `ModelSwitched { by, model?, modelLabel?, thinkingLevel?, harness? }`, where `modelLabel` is the Model's label among its Creator's. Once no Turn runs, the Hub sends the mod `SwitchModel`, and the agent runs its next request on the new Model with its conversation intact. A `TurnEnded.usage.model` is the model a Turn ran. `harness` and `modelPending` remain on the schemas for Sessions from before the durable agent, which move onto it as they next start.
 
 A Thread has its own model: `ThreadStarted.model` is required, the Hub resolving the Session's when the web asks for none, and a fork keeps its parent's model rather than following the Session. `SetThreadModel` switches one ([Threads, the Plan and compaction](#threads-the-plan-and-compaction)).
-
-`SetClaudeHarness` and `ProvidersState.claudeHarness` are left in the schemas; the Account page does not use them.
 
 ### Questions
 
@@ -450,7 +444,7 @@ Plain HTTP from the Session's durable agent, in its Sandbox: one headless proces
 | Mod to Hub | `ModHello`; Turn events (`TurnStarted`, `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`, `AgentStarted`, `AgentStatusChanged`, `QuestionAsked`, `QuestionClosed`, `PromptSteered`, `SteeredPromptRead`, `CompactionStarted`, `CompactionEnded`, `PlanChanged`, `UsageChanged`); `PromptFailed`, `ThreadPromptFailed`, `AgentCommandFailed`, `AnswerFailed`, `ModelSwitchFailed` |
 | Hub to mod | `ModWelcome` or `HandshakeRejected`; `DeliverPrompt`, `DeliverIntoTurn`, `StopTurn`, `DeliverAgentMessage`, `StopAgent`, `DeliverAnswer`, `PresenceChanged`, `SwitchModel`, `DeliverHandoff`; `StartThread`, `DeliverThreadPrompt`, `StopThread`, `SwitchThreadModel`, `Compact` |
 
-The hello says what the mod takes: `steers: true` for [steering](#steering), `attaches`, `switchesModels` for `SwitchModel`, and `durable: true` for the Thread commands, `Compact` and `Resumed` Turns. The durable agent says all four. Only a mod that steers is sent `DeliverIntoTurn { sessionId, promptId, text, sender }`, and only while a Turn runs. The agent appends the prompt to the running Turn's conversation, with its sender's name. If no Turn is running or the append is refused, it answers `PromptFailed`. It reports `PromptSteered` when the prompt joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
+The hello carries no capability flags: every mod of this protocol version is the durable agent, which takes every command. A thread command or `Compact` sent before the Hub has heard the mod's hello is kept, and sent after it. The Hub sends `DeliverIntoTurn { sessionId, promptId, text, sender }` only while a Turn runs, for [steering](#steering). The agent appends the prompt to the running Turn's conversation, with its sender's name. If no Turn is running or the append is refused, it answers `PromptFailed`. It reports `PromptSteered` when the prompt joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
 
 `/mod/events` and `/mod/commands` answer `409` until the mod has said hello.
 
@@ -458,7 +452,7 @@ The hello says what the mod takes: `steers: true` for [steering](#steering), `at
 
 Version 5 adds what the durable agent does beside the main loop. The messages are in `packages/protocol/src/Thread.ts`, and the agent's design is in [the spike's design](https://github.com/kddige/kndl/blob/main/docs/design/durable-harness.md#the-protocol-version-5); this is the shape of it.
 
-- **Threads.** A Thread is a fork of the main loop at one Turn's answer. The web sends `CreateThread` (answered by `ThreadCreated`, with the same `requestId`), then `PromptThread`, `StopThread`, `SetThreadModel` and `CompactConversation`. The Hub mints a `ThreadId`, logs `ThreadStarted`, `ThreadPromptSent` and `ThreadModelChanged` itself, and sends the mod `StartThread`, `DeliverThreadPrompt`, `StopThread`, `SwitchThreadModel` and `Compact`. The agent's Turn events carry the `threadId`, and a Thread's Turns never touch the Session's `currentTurn`. `SessionSummary.threads` lists each Thread with its title, running state and model.
+- **Threads.** A Thread is a fork of the main loop at one Turn's answer. The web sends `CreateThread` (answered by `ThreadCreated`, with the same `requestId`), then `PromptThread`, `StopThread`, `SetThreadModel` and `CompactConversation`. The Hub mints a `ThreadId`, logs `ThreadStarted`, `ThreadPromptSent` and `ThreadModelChanged` itself, and sends the mod `StartThread`, `DeliverThreadPrompt`, `StopThread`, `SwitchThreadModel` and `Compact`. The Hub sets the `turnId` that was running on a `StopThread` and mints a `requestId` for each `Compact`, because it sends them again after the agent's hello until the agent has polled past them: the agent ignores a stop for a Turn that is no longer running, and keeps the `Compact` request ids it has handled, in storage, so a repeat is acknowledged rather than run again. The agent's Turn events carry the `threadId`, and a Thread's Turns never touch the Session's `currentTurn`. `SessionSummary.threads` lists each Thread with its title, running state and model.
 - **A failed Thread prompt.** The agent answers with `ThreadPromptFailed { threadId, promptId, message, threadDropped? }`; a Thread whose first prompt failed is dropped.
 - **Delivery.** A prompt's id is its request id, so a prompt delivered twice runs once. A command not yet delivered when the agent restarts is delivered again after its hello.
 - **The Plan.** `PlanChanged { threadId?, agentId?, plan }` carries a conversation's whole checklist: `steps` of `{ text, status }` with `pending`, `in_progress` or `done`, and an optional `explanation`.

@@ -12,17 +12,17 @@ const step = (text: string, status: "pending" | "in_progress" | "done" = "pendin
 
 test("a new Plan says how many steps it has, in the right number", () => {
   expect(planChangeText({ steps: [step("Add the route")] }, undefined)).toBe(
-    "Made a plan of 1 step",
+    "Made a Plan of 1 step",
   )
   expect(planChangeText({ steps: [step("A"), step("B")] }, undefined)).toBe(
-    "Made a plan of 2 steps",
+    "Made a Plan of 2 steps",
   )
 })
 
 test("a Plan with no steps left says it was cleared", () => {
   const before = { steps: [step("Add the route", "done")] }
-  expect(planChangeText({ steps: [] }, before)).toBe("Cleared the plan")
-  expect(planChangeText({ steps: [] }, undefined)).toBe("Cleared the plan")
+  expect(planChangeText({ steps: [] }, before)).toBe("Cleared the Plan")
+  expect(planChangeText({ steps: [] }, undefined)).toBe("Cleared the Plan")
 })
 
 test("a change names the steps it finished and started", () => {

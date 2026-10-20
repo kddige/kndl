@@ -28,7 +28,7 @@ import type {
   TaskId,
   UsageState,
 } from "@earendil-works/pi-durable"
-import { compactionSummary } from "./Compaction.ts"
+import { compactionError, compactionSummary } from "./Compaction.ts"
 import { clip, isRecord } from "./hub/HubMessages.ts"
 import type { Sender } from "./hub/HubMessages.ts"
 import { inputOrigin, inputText, NudgeEntry } from "./Inputs.ts"
@@ -703,7 +703,7 @@ export class LoopReporter {
         _tag: "CompactionEnded",
         ...this.fields,
         outcome: "failed",
-        error: clip(turnErrorMessage(error, this.options.secrets) ?? "It failed.", 2_000),
+        error: compactionError(error, this.options.secrets),
       })
       return
     }

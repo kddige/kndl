@@ -310,11 +310,7 @@ export class FakeHub {
       this.hellos.push((await request.json()) as Record<string, unknown>)
       this.greeted = true
       this.heard()
-      return Response.json({
-        _tag: "ModWelcome",
-        protocolVersion: ProtocolVersion,
-        alreadySubmitted: true,
-      })
+      return Response.json({ _tag: "ModWelcome", protocolVersion: ProtocolVersion })
     }
     if (url.pathname === "/mod/events") {
       if (this.rejectEvents) return new Response(null, { status: 503 })

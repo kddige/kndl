@@ -172,30 +172,11 @@ describe("checkEvent", () => {
   })
 })
 
-test("helloBody says hello in the protocol's shape: this mod steers (#195), marks files (#278), and takes handoffs (ADR 0030)", () => {
-  const body = helloBody({
-    sessionId: "s1",
-    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
-    model: "claude-test",
-  })
-  expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
-    _tag: "ModHello",
-    protocolVersion: ProtocolVersion,
-    sessionId: "s1",
-    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
-    model: "claude-test",
-    steers: true,
-    attaches: true,
-    takesHandoffs: true,
-  } as never)
-})
-
-test("helloBody says a mod that switches models so (ADR 0029): a pi Session's", () => {
+test("helloBody says hello in the protocol's shape", () => {
   const body = helloBody({
     sessionId: "s1",
     conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "openai/gpt-test",
-    switchesModels: true,
   })
   expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
     _tag: "ModHello",
@@ -203,10 +184,6 @@ test("helloBody says a mod that switches models so (ADR 0029): a pi Session's", 
     sessionId: "s1",
     conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "openai/gpt-test",
-    steers: true,
-    attaches: true,
-    switchesModels: true,
-    takesHandoffs: true,
   } as never)
 })
 
