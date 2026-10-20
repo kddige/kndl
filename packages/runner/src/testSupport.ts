@@ -261,6 +261,13 @@ export class FakeTmux {
     this.agents.delete(id)
   }
 
+  /** The terminal's tmux session is gone, as though killed from inside it. */
+  killTerminal(id: string): void {
+    const terminal = this.terminals.get(sessionId(id))
+    terminal?.detach()
+    this.terminals.delete(sessionId(id))
+  }
+
   readonly layer = Layer.sync(Tmux, () =>
     Tmux.of({
       retireHostServer: Effect.sync(() => {
@@ -446,9 +453,7 @@ export class FakeSandboxes {
   readonly targets: Array<SandboxTarget> = []
   /** The Sessions whose Sandbox runs: started, and not stopped since. */
   readonly running = new Set<SessionId>()
-  /** What each Sandbox says Claude Code runs with, as from its Variables. */
-  claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
-  /** What each Sandbox says the agent and the terminal run with: Claude Code's, but for its state. */
+  /** What each Sandbox says the agent and the terminal run with, as from its Variables. */
   piEnv: Readonly<Record<string, string>> = { LANG: "C.UTF-8" }
   /** How long a start takes, as a real Sandbox's boot does; none unless a test says. */
   startTakes: Duration.Input = 0
@@ -475,7 +480,7 @@ export class FakeSandboxes {
               ...(target.environment === undefined
                 ? {}
                 : { environmentVersion: target.environment.version }),
-              claude: { path: this.claudePath, env: this.claudeEnv },
+              claude: { path: this.claudePath },
               pi: { node: this.nodePath, env: this.piEnv },
             }
           })
@@ -486,7 +491,7 @@ export class FakeSandboxes {
         Effect.sync(() => {
           this.calls.push(`keep ${id}`)
           return {
-            claude: { path: this.claudePath, env: this.claudeEnv },
+            claude: { path: this.claudePath },
             pi: { node: this.nodePath, env: this.piEnv },
           }
         }),

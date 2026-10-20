@@ -613,6 +613,22 @@ describe("restarting under running Sessions (#157)", () => {
     expect(h.hub.current.received[0]).not.toHaveProperty("withoutModToken")
   })
 
+  test("keeps a Session whose terminal's tmux session is gone, with a new terminal", async () => {
+    const { h } = await withSession()
+    await Effect.runPromise(Fiber.interrupt(h.runner))
+    h.tmux.killTerminal("s-1")
+    await restartRunner(h)
+
+    // Its agent runs on, so it is not put to sleep for it.
+    expect(h.hub.current.received[0]).toMatchObject({ sessions: ["s-1"] })
+    expect(h.sandboxes.reconciled.at(-1)).toEqual([sessionId("s-1")])
+    expect(h.sandboxes.running.has(sessionId("s-1"))).toBe(true)
+    expect(h.tmux.launchedTerminals).toHaveLength(2)
+    expect(h.tmux.agent("s-1").terminated).toBe(false)
+    h.hub.send({ _tag: "TerminalInput", sessionId: "s-1", data: "ls\r" })
+    await eventually(() => h.tmux.terminal("s-1").inputs.length === 1)
+  })
+
   test("puts to sleep a Session that ran a Harness from before the durable agent, to wake on it", async () => {
     const { h } = await withSession()
     await Effect.runPromise(Fiber.interrupt(h.runner))
@@ -1074,6 +1090,38 @@ describe("Sessions", () => {
     expect(h.hub.all("SessionStopped")).toEqual([])
     expect(h.sandboxes.calls).toEqual(["start s-1"])
     expect(h.tmux.agent("s-1").terminated).toBe(false)
+  })
+
+  test("brings the terminal back when its tmux session is gone, while its agent runs", async () => {
+    const { h } = await withSession()
+
+    h.tmux.killTerminal("s-1")
+    await eventually(() => h.tmux.launchedTerminals.length === 2)
+    await eventually(() => h.tmux.terminals.get(sessionId("s-1"))?.attached === true)
+
+    // The Session goes on: its input reaches the new terminal, and what it prints, the Hub.
+    h.hub.send({ _tag: "TerminalInput", sessionId: "s-1", data: "ls\r" })
+    await eventually(() => h.tmux.terminal("s-1").inputs.length === 1)
+    await eventually(() =>
+      h.hub
+        .all("TerminalFrame")
+        .some((frame) => frame.sessionId === "s-1" && frame.kind === "Snapshot"),
+    )
+    h.tmux.terminal("s-1").output("back")
+    await eventually(() => h.hub.current.received.some((m) => m.data === "back"))
+    expect(h.tmux.terminal("s-1").inputs).toEqual(["ls\r"])
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    expect(h.tmux.agent("s-1").terminated).toBe(false)
+  })
+
+  test("doesn't bring a stopped Session's terminal back", async () => {
+    const { h } = await withSession()
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+    await Bun.sleep(1_300)
+
+    expect(h.tmux.launchedTerminals).toHaveLength(1)
+    expect(h.tmux.terminals.size).toBe(0)
   })
 
   test("stops a Session when asked: its agent with SIGTERM, then both tmux sessions and its Sandbox", async () => {

@@ -2,7 +2,7 @@
 // unless KNDL_SANDBOX_IT=1. It needs `msb` installed for the current user, the
 // `docker:dind` image, and network access to npm the first time a Claude Code version is cached,
 // and to Docker Hub for `alpine`. It runs no Claude Code, only shell commands with the
-// environment Claude Code would get: no model calls, no credentials. Everything it creates is
+// environment the agent would get: no model calls, no credentials. Everything it creates is
 // named kndl-it-… and destroyed at the end, pass or fail.
 //
 //   KNDL_SANDBOX_IT=1 bun test packages/runner/src/SessionSleep.integration.test.ts
@@ -17,7 +17,7 @@ import { Duration, Effect, Layer } from "effect"
 import { Sandbox } from "microsandbox"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude } from "./Sandbox.ts"
+import type { SandboxPi } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend, shell } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
@@ -42,15 +42,15 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
 
 const target = { repo: "acme/app" as RepoName }
 
-/** Runs `command` in the Session's Sandbox with Claude Code's environment, in the Workspace. */
-const bash = (sessionId: SessionId, claude: SandboxClaude, command: string) =>
+/** Runs `command` in the Session's Sandbox with the agent's environment, in the Workspace. */
+const bash = (sessionId: SessionId, pi: SandboxPi, command: string) =>
   Effect.gen(function* () {
     const backend = yield* SandboxBackend
     const ran = yield* backend.exec(sessionId, {
       command: "sh",
       args: ["-c", command],
       cwd: workspaceGuestPath,
-      env: claude.env,
+      env: pi.env,
     })
     return ran.stdout + ran.stderr
   })
@@ -85,7 +85,7 @@ test.skipIf(!enabled)(
           "Bash: install, write, docker run",
           bash(
             sessionId,
-            started.claude,
+            started.pi,
             "mkdir -p node_modules/dep && echo dependency > node_modules/dep/index.js && " +
               "echo work > notes.txt && " +
               "docker run -d --init --name devserver alpine sleep 3600 >/dev/null && echo done",
@@ -121,7 +121,7 @@ test.skipIf(!enabled)(
         "Bash after waking",
         bash(
           sessionId,
-          woken.claude,
+          woken.pi,
           "cat node_modules/dep/index.js notes.txt package.json; " +
             "docker ps --format '{{.Names}}'",
         ),

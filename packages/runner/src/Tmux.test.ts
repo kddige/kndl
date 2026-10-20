@@ -309,6 +309,32 @@ describe.skipIf(tmuxMissing)("the agent's tmux session", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
+  test("kills an agent that ignores SIGHUP and SIGTERM along with its tmux session", async () => {
+    const id = sessionId("agent-stuck")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      // Shutting down slowly: ignoring both signals is all a stuck agent needs to outlive its tmux
+      // session, and with it a relaunch's new agent would share its storage.
+      yield* launchAgent(id, [
+        "sh",
+        "-c",
+        'trap "" HUP TERM; echo "pid $$"; while :; do sleep 0.1; done',
+      ])
+      yield* waitFor(Effect.map(tmux.lastOutput(id), (shown) => shown.includes("pid ")))
+      const pid = Number((yield* tmux.lastOutput(id)).replace("pid ", ""))
+      expect(isAlive(pid)).toBe(true)
+
+      yield* tmux.killAgent(id)
+      // Gone by the time it returns, not merely told to go.
+      expect(isAlive(pid)).toBe(false)
+      expect(yield* tmux.lastOutput(id)).toBe("")
+      // An agent already gone is no trouble.
+      yield* tmux.killAgent(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.provide(TestTmux)))
+  }, 15_000)
+
   test.skipIf(process.platform !== "linux")(
     "never leaves the agent's secrets in the command line of the tmux server it starts",
     async () => {
@@ -415,7 +441,7 @@ describe.skipIf(tmuxMissing)("the terminal's tmux session", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
-  test("comes back whenever its shell exits, or the loop that runs it is killed", async () => {
+  test("comes back whenever its shell exits, or the sh that runs it is killed", async () => {
     const id = sessionId("terminal-2")
     const program = Effect.gen(function* () {
       const tmux = yield* Tmux
@@ -428,11 +454,12 @@ describe.skipIf(tmuxMissing)("the terminal's tmux session", () => {
       const { terminal, events, pump } = yield* attachTerminal(id)
       yield* run(terminal, events, "echo one-$((0+1))", "one-1")
 
+      // A shell that exits at once is started again only after a second.
       yield* terminal.input("exit\r")
-      yield* Effect.sleep("300 millis")
+      yield* Effect.sleep("1500 millis")
       yield* run(terminal, events, "echo two-$((1+1))", "two-2")
 
-      // The loop itself, killed: tmux starts the pane again.
+      // The sh that runs it, killed: tmux starts the pane again.
       yield* terminal.input("kill -KILL $PPID\r")
       yield* Effect.sleep("500 millis")
       yield* run(terminal, events, "echo three-$((1+2))", "three-3")
@@ -443,6 +470,80 @@ describe.skipIf(tmuxMissing)("the terminal's tmux session", () => {
       yield* tmux.kill(id)
       // Once its tmux session is gone, they do.
       yield* Fiber.join(pump)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("comes back when bash itself is killed, with a terminal that takes input", async () => {
+    const id = sessionId("terminal-4")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launchTerminal({
+        sessionId: id,
+        cwd: tmpdir(),
+        env: {},
+        size: { cols: 60, rows: 10 },
+      })
+      const { terminal, events } = yield* attachTerminal(id)
+      yield* run(terminal, events, "echo one-$((0+1))", "one-1")
+
+      // As the kernel's OOM killer would: the shell dies, and the terminal must not stay wedged on
+      // a process group that is gone, where the next shell would start in the background.
+      yield* terminal.input("kill -KILL $$\r")
+      yield* Effect.sleep("1500 millis")
+      yield* run(terminal, events, "echo two-$((1+1))", "two-2")
+      expect(output(events)).not.toContain("no job control")
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("hides the tmux server from the terminal, as TMUX would point a plain tmux at it", async () => {
+    const id = sessionId("terminal-5")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launchTerminal({
+        sessionId: id,
+        cwd: tmpdir(),
+        env: {},
+        size: { cols: 60, rows: 10 },
+      })
+      const { terminal, events } = yield* attachTerminal(id)
+      yield* run(terminal, events, 'echo "[${TMUX-none}][${TMUX_PANE-none}]"', "[none][none]")
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("keeps a variable out of the agent alone, as the terminal still gets it", async () => {
+    const id = sessionId("terminal-6")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      const server = "start-server ; set-option -g exit-empty off ; set-environment -g LEAKED image"
+      yield* hostBackend.exec(id, {
+        command: "tmux",
+        args: ["-L", socket, "-f", "/dev/null", ...server.split(" ")],
+      })
+      yield* tmux.launchAgent({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", 'echo "agent [${LEAKED-unset}]"; sleep 5'],
+        env: {},
+        unset: ["LEAKED"],
+      })
+      yield* tmux.launchTerminal({
+        sessionId: id,
+        cwd: tmpdir(),
+        env: {},
+        size: { cols: 60, rows: 10 },
+      })
+      const { terminal, events } = yield* attachTerminal(id)
+      yield* run(terminal, events, 'echo "terminal [${LEAKED-unset}]"', "terminal [image]")
+      expect(yield* tmux.lastOutput(id)).toBe("agent [unset]")
+      yield* tmux.kill(id)
     })
 
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
@@ -528,6 +629,16 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
     expect(Bun.spawnSync(["tmux", "-L", hostSocket, "list-sessions"]).exitCode).not.toBe(0)
   }, 15_000)
 })
+
+/** Whether process `pid` runs. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Everything the terminal printed in `events`. */
 function output(events: ReadonlyArray<TerminalEvent>): string {

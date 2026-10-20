@@ -402,14 +402,14 @@ describe("Sandboxes from an Environment", () => {
           const sandboxes = yield* Sandboxes
           const world = yield* FakeSandboxBackend
           const directories = yield* directoriesIn(root)
-          const { claude } = yield* sandboxes.start(s1, directories, {
+          const { claude, pi } = yield* sandboxes.start(s1, directories, {
             repo,
             environment: environment(1),
           })
 
           expect(claude.path).toBe(sandboxClaudePath("2.1.287", "glibc"))
           // The login environment probed in the Workspace, under the variables.
-          expect(claude.env).toMatchObject({
+          expect(pi.env).toMatchObject({
             PATH: "/root/.local/share/mise/shims:/root/.local/bin:/workspace/bin:/usr/bin:/bin",
             MISE_SHELL: "bash",
             NPM_TOKEN: "npm-made-up",

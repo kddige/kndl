@@ -47,8 +47,14 @@ import { Workspaces } from "./Workspace.ts"
 /** The terminal size a Session starts with, until a viewer resizes it. */
 export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
 
-/** How long a stopped agent gets to exit after SIGTERM before its tmux session is killed. */
+/**
+ * How long a stopped agent gets to exit after SIGTERM before its tmux session is killed. The
+ * agent gives up its own shutdown sooner (agent.ts), so it is gone when this is over.
+ */
 export const StopGracePeriod = Duration.seconds(10)
+
+/** How long a terminal whose tmux session is gone waits before it is made again. */
+const TerminalReturnDelay = Duration.seconds(1)
 
 /**
  * The Sessions running on this Runner: each one its durable agent (docs/design/durable-harness.md)
@@ -92,7 +98,8 @@ interface AgentRun {
 }
 
 interface Running {
-  readonly terminal: Terminal
+  /** Its current terminal: another one after its tmux session was lost and made again. */
+  terminal: Terminal
   /** Holds the terminal's and the agent's control clients, until the Session stops. */
   readonly scope: Scope.Closeable
   /** Its agent, once it is watched: another run after each relaunch. */
@@ -198,6 +205,22 @@ export const SessionsLive = Layer.effect(
       })
 
     /**
+     * Takes the Session down: forgets its control clients, revokes its tokens, kills its tmux
+     * sessions, stops watching its ports, and last, `sandbox`. The order is this: its control
+     * clients go first, so killing the tmux sessions isn't taken for the terminal being lost (and
+     * made again); its tokens go before its agent is killed, so it reaches the Hub no more as it
+     * dies; and the Sandbox goes last, as killing the tmux sessions runs in it.
+     */
+    const teardown = <E>(sessionId: SessionId, sandbox: Effect.Effect<void, E>) =>
+      Effect.gen(function* () {
+        yield* release(sessionId)
+        yield* forget(sessionId)
+        yield* tmux.kill(sessionId)
+        yield* ports.unwatch(sessionId)
+        yield* sandbox
+      })
+
+    /**
      * Watches the Session's agent, as it starts or starts again. When it exits on its own, reports
      * it and cleans up.
      */
@@ -235,6 +258,78 @@ export const SessionsLive = Layer.effect(
       })
 
     /**
+     * Attaches to the Session's terminal in `scope`, making its tmux session first if it is gone:
+     * after someone killed it from inside, or in a Sandbox whose terminal was lost with the
+     * Runner's restart. Its environment is the Sandbox's when this Runner started it; one it took
+     * back has none until it is told, and its shell starts with the Sandbox's own.
+     */
+    const attachTerminal = (sessionId: SessionId, scope: Scope.Scope) =>
+      tmux.attachTerminal(sessionId).pipe(
+        Effect.catch(() =>
+          tmux
+            .launchTerminal({
+              sessionId,
+              cwd: workspaceGuestPath,
+              env: sandboxStarts.get(sessionId)?.pi.env ?? {},
+              size: InitialTerminalSize,
+            })
+            .pipe(Effect.flatMap(() => tmux.attachTerminal(sessionId))),
+        ),
+        Scope.provide(scope),
+      )
+
+    /**
+     * Streams the Session's terminal to the Hub while it is the Session's current one. Should its
+     * tmux session end while the Session runs, the terminal is attached again, after a second so a
+     * terminal that cannot stay up is not made in a tight loop, and drawn to the Hub as a snapshot.
+     */
+    const streamTerminal = (
+      sessionId: SessionId,
+      session: Running,
+      terminal: Terminal,
+    ): Effect.Effect<void> =>
+      terminal.events.pipe(
+        Stream.runForEach((event) =>
+          hub.send(
+            RunnerToHub.cases.TerminalFrame.make({
+              sessionId,
+              kind: event._tag,
+              data: event.data,
+              size: event.size,
+            }),
+          ),
+        ),
+        Effect.andThen(
+          Effect.gen(function* () {
+            while (running.get(sessionId) === session) {
+              yield* Effect.logWarning(
+                `Session ${sessionId}: its terminal is gone, so it comes back`,
+              )
+              yield* Effect.sleep(TerminalReturnDelay)
+              if (running.get(sessionId) !== session) return
+              const attached = yield* Scope.fork(session.scope).pipe(
+                Effect.flatMap((scope) =>
+                  attachTerminal(sessionId, scope).pipe(
+                    Effect.onError(() => Scope.close(scope, Exit.void)),
+                  ),
+                ),
+                Effect.exit,
+              )
+              if (Exit.isFailure(attached)) {
+                yield* Effect.logWarning(
+                  `Session ${sessionId}: could not bring its terminal back: ${message(attached.cause)}`,
+                )
+                continue
+              }
+              session.terminal = attached.value
+              yield* attached.value.snapshot
+              return yield* streamTerminal(sessionId, session, attached.value)
+            }
+          }),
+        ),
+      )
+
+    /**
      * Attaches to the Session's terminal and its agent, streams the terminal to the Hub, starting
      * with a snapshot, and watches the agent. Watches its Sandbox's Open ports too, until it stops
      * (ADR 0016).
@@ -242,32 +337,12 @@ export const SessionsLive = Layer.effect(
     const watch = (sessionId: SessionId) =>
       Effect.gen(function* () {
         const scope = yield* Scope.make()
-        const terminal = yield* tmux.attachTerminal(sessionId).pipe(
-          Scope.provide(scope),
+        const terminal = yield* attachTerminal(sessionId, scope).pipe(
           Effect.onError(() => Scope.close(scope, Exit.void)),
         )
         const session: Running = { terminal, scope, agent: undefined }
         running.set(sessionId, session)
-        yield* terminal.events.pipe(
-          Stream.runForEach((event) =>
-            hub.send(
-              RunnerToHub.cases.TerminalFrame.make({
-                sessionId,
-                kind: event._tag,
-                data: event.data,
-                size: event.size,
-              }),
-            ),
-          ),
-          Effect.andThen(
-            Effect.suspend(() =>
-              running.get(sessionId) === session
-                ? Effect.logWarning(`Session ${sessionId}: its terminal is gone`)
-                : Effect.void,
-            ),
-          ),
-          Effect.forkIn(scope),
-        )
+        yield* streamTerminal(sessionId, session, terminal).pipe(Effect.forkIn(scope))
         yield* terminal.snapshot
         yield* watchAgent(sessionId, session).pipe(Effect.onError(() => release(sessionId)))
         yield* ports.watch(sessionId)
@@ -302,12 +377,10 @@ export const SessionsLive = Layer.effect(
           // A stop or relaunch may already have queued behind the start that watched this run.
           // Keep the Session until cleanup holds its lock, and leave a newer agent alone.
           if (run.stopping || running.get(sessionId) !== session || session.agent !== run) return
-          yield* release(sessionId)
           const output = withoutValues(
             yield* tmux.lastOutput(sessionId),
             launchSecrets.get(sessionId),
           )
-          yield* forget(sessionId)
           const exited = `Session ${sessionId}: its agent exited with ${exitCode ?? "unknown status"}`
           const log = exitCode === 0 ? Effect.logInfo : Effect.logWarning
           // Only the Hub knows the Environment's Sensitive values, so the output itself goes to the
@@ -318,9 +391,7 @@ export const SessionsLive = Layer.effect(
               ? exited
               : `${exited}; its last ${lines} line(s) of output are on the Session's page`,
           )
-          yield* tmux.kill(sessionId)
-          yield* ports.unwatch(sessionId)
-          yield* sandboxes.stop(sessionId, "Sleep")
+          yield* teardown(sessionId, sandboxes.stop(sessionId, "Sleep"))
           yield* hub.send(
             RunnerToHub.cases.SessionStopped.make({
               sessionId,
@@ -431,8 +502,6 @@ export const SessionsLive = Layer.effect(
             })
             sandboxStarts.set(sessionId, sandbox)
             yield* starts(directories, sandbox)
-            // After the agent, so the shell starts from the tmux server's environment as the
-            // agent's launch left it, as it does each time it comes back.
             yield* tmux.launchTerminal({
               sessionId,
               cwd: workspaceGuestPath,
@@ -447,12 +516,8 @@ export const SessionsLive = Layer.effect(
             return yield* started(sessionId)
           }
           const reason = message(launched.cause)
-          yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
-          yield* release(sessionId)
-          yield* tmux.kill(sessionId)
-          yield* ports.unwatch(sessionId)
-          yield* sandboxes.stop(sessionId, "Sleep")
+          yield* teardown(sessionId, sandboxes.stop(sessionId, "Sleep"))
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
         }),
       )
@@ -496,12 +561,8 @@ export const SessionsLive = Layer.effect(
             return yield* started(sessionId)
           }
           const reason = message(launched.cause)
-          yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to restart: ${reason}`)
-          yield* release(sessionId)
-          yield* tmux.kill(sessionId)
-          yield* ports.unwatch(sessionId)
-          yield* sandboxes.stop(sessionId, "Sleep")
+          yield* teardown(sessionId, sandboxes.stop(sessionId, "Sleep"))
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
         }),
       )
@@ -511,13 +572,9 @@ export const SessionsLive = Layer.effect(
         Effect.gen(function* () {
           const { sessionId } = request
           const exitCode = yield* stopAgent(running.get(sessionId))
-          yield* release(sessionId)
-          yield* forget(sessionId)
-          yield* tmux.kill(sessionId)
-          yield* ports.unwatch(sessionId)
           // Archiving destroys the Sandbox and its volumes and keeps the Workspace, for a restore;
           // purging removes the Workspace later.
-          yield* sandboxes.stop(sessionId, request.reason)
+          yield* teardown(sessionId, sandboxes.stop(sessionId, request.reason))
           yield* Effect.logInfo(`Session ${sessionId} stopped (${request.reason})`)
           yield* hub.send(
             RunnerToHub.cases.SessionStopped.make({
@@ -570,11 +627,7 @@ export const SessionsLive = Layer.effect(
       serialized(sessionId)(
         Effect.gen(function* () {
           yield* stopAgent(running.get(sessionId))
-          yield* release(sessionId)
-          yield* tmux.kill(sessionId)
-          yield* forget(sessionId)
-          yield* ports.unwatch(sessionId)
-          yield* sandboxes.purge(sessionId)
+          yield* teardown(sessionId, sandboxes.purge(sessionId))
           yield* workspaces.remove(sessionId)
           yield* Effect.logInfo(`Session ${sessionId} purged`)
           yield* hub.send(RunnerToHub.cases.SessionPurged.make({ sessionId }))
@@ -591,7 +644,8 @@ export const SessionsLive = Layer.effect(
     // nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped: so does one
     // that ran a Harness from before the durable agent, in a single tmux session, which has no
     // agent's to read; the Hub wakes it on the agent. The agent runs on with the setup token it
-    // was started with, read back too only to keep it out of what it prints as it exits.
+    // was started with, read back too only to keep it out of what it prints as it exits. A missing
+    // terminal doesn't put it to sleep: the agent runs on, so its terminal is made again.
     const adopt = Effect.gen(function* () {
       yield* tmux.retireHostServer
       const kept: Array<SessionId> = []
@@ -600,7 +654,7 @@ export const SessionsLive = Layer.effect(
         const token = yield* tmux.variable(sessionId, ModEnvironment.modToken)
         if (token === undefined || !(yield* relay.hold(sessionId, token))) {
           yield* Effect.logInfo(
-            `Session ${sessionId}: its agent is no longer running, so it sleeps`,
+            `Session ${sessionId}: its agent is no longer running, or ran a Harness from before the durable agent, so it sleeps`,
           )
           continue
         }

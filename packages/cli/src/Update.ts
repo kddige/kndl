@@ -298,8 +298,8 @@ export function buildPlan(
     ...(all || roles.includes("runner")
       ? [
           {
-            label: "Building the hub-link mod",
-            step: step(bun, ["run", "mod:build"], { cwd: app, why: "build the hub-link mod" }),
+            label: "Building the mod",
+            step: step(bun, ["run", "mod:build"], { cwd: app, why: "build the mod" }),
           },
         ]
       : []),

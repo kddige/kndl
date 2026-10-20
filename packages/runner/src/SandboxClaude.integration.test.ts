@@ -27,6 +27,7 @@ import { harnessEnvironment } from "./HarnessEnvironment.ts"
 import { HubLink } from "./HubLink.ts"
 import { makeSessionTokens, SessionTokens } from "./relay/SessionTokens.ts"
 import { Sandboxes } from "./Sandbox.ts"
+import { claudeStateEnv } from "./sandbox/ClaudeState.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
@@ -73,7 +74,7 @@ test.skipIf(!enabled)(
         repo: "acme/app" as RepoName,
       })
       const { env } = harnessEnvironment({
-        base: started.claude.env,
+        base: { ...started.pi.env, ...claudeStateEnv },
         relayUrl: "http://127.0.0.1:9",
         sessionToken: Redacted.make("chp_it.FAKE"),
         credential,

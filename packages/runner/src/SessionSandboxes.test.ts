@@ -154,16 +154,11 @@ describe("SessionSandboxes", () => {
         expect(states(sent)).toEqual(["Starting", "Running"])
         expect((yield* Effect.promise(() => stat(directories.session))).mode & 0o777).toBe(0o700)
 
-        // What Claude Code runs as in it, and with.
-        expect(started.claude).toEqual({
-          path: sandboxClaudePath("2.1.287", "musl"),
-          env: expect.objectContaining({
-            HOME: "/root",
-            LANG: "C.UTF-8",
-            CLAUDE_CONFIG_DIR: claudeStateGuestPath,
-            IS_SANDBOX: "1",
-          }),
-        })
+        // Where Claude Code is in it, and what the agent and the terminal run with: none of
+        // Claude Code's state, which only the Claude bridge gets.
+        expect(started.claude).toEqual({ path: sandboxClaudePath("2.1.287", "musl") })
+        expect(started.pi.env).toMatchObject({ HOME: "/root", LANG: "C.UTF-8" })
+        expect(started.pi.env).not.toHaveProperty("CLAUDE_CONFIG_DIR")
         // tmux and bash, installed if the image lacks them, and Claude Code's state seeded.
         const needs = new TextDecoder().decode(
           yield* backend.readFile(s1, "/tmp/kndl-claude-needs.sh"),
@@ -394,7 +389,7 @@ describe("SessionSandboxes", () => {
 
         // What Claude Code runs as, the same as at its start; the Sandbox is left as it is.
         expect(yield* sandboxes.keep(s1, directories)).toEqual(started)
-        expect(started.claude.env).toMatchObject({
+        expect(started.pi.env).toMatchObject({
           TZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
         })
         expect(world.sandboxes.get(s1)).toBe(sandbox)

@@ -202,7 +202,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
         : {
             name: "Mod build",
             status: "fail",
-            detail: "The hub-link mod isn't built, so the Runner won't start.",
+            detail: "The mod isn't built, so the Runner won't start.",
             fix: { _tag: "BuildMod" },
           },
     )

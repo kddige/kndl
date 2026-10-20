@@ -88,7 +88,8 @@ export interface AgentSpec {
   readonly env: Readonly<Record<string, string>>
   /**
    * Variables kept out of its environment even where the tmux server has them, as from the
-   * Sandbox's image: unset in the server's global environment, which each new process starts from.
+   * Sandbox's image: unset for its process alone (`env -u`), so the terminal, which starts from the
+   * same server environment, still gets them.
    */
   readonly unset?: ReadonlyArray<string>
 }
@@ -133,14 +134,20 @@ export class Tmux extends Context.Service<
 export const agentSessionName = (sessionId: SessionId) => `${tmuxSessionName(sessionId)}-agent`
 
 /**
- * The terminal's command: a login shell, bash where there is one, and again each time it exits,
- * so the terminal is never left dead. One that fails at once is started again only after a
- * second.
+ * The terminal's command: a login shell, bash where there is one. It runs once: when it exits,
+ * tmux starts the pane again (`pane-died`), on a new terminal, which is what a shell killed
+ * outright (the OOM killer's SIGKILL) needs: started again in the same terminal, the next shell
+ * would find its foreground process group gone and read no input. One that fails at once, such
+ * as for a broken profile, waits a second before the pane is started again. `TMUX` and
+ * `TMUX_PANE`, which tmux sets, are dropped: a plain `tmux` in the terminal, or run by a tool,
+ * would otherwise act on the Session's server, such as to read the agent's environment.
  */
 export const TerminalShell = [
   "sh",
   "-c",
-  "while :; do if command -v bash >/dev/null 2>&1; then bash -l; else sh -l; fi || sleep 1; done",
+  "unset TMUX TMUX_PANE; started=$(date +%s); " +
+    "if command -v bash >/dev/null 2>&1; then bash -l; else sh -l; fi; " +
+    '[ "$(date +%s)" -gt "$started" ] || sleep 1',
 ] as const
 
 /** How many lines of a dead pane {@link lastOutputOf} keeps. */
@@ -228,8 +235,8 @@ export const makeTmux = (backend: TmuxBackend) => {
     )
   }
 
-  // Should the shell's own loop be killed, its pane is started again all the same: it never stays
-  // dead, so the terminal never shows tmux's "Pane is dead".
+  // However the shell dies, its pane is started again: it never stays dead, so the terminal never
+  // shows tmux's "Pane is dead".
   const launchTerminal = (spec: TerminalSpec) => {
     const name = tmuxSessionName(spec.sessionId)
     return tmux(
@@ -246,20 +253,22 @@ export const makeTmux = (backend: TmuxBackend) => {
   // The server is readied by a command line of its own, which holds no secret: the client that
   // starts the server forks it, and the server keeps that client's command line, which `ps` shows
   // anything in the Sandbox for as long as it runs. The agent's session, and its secrets, come
-  // from a second client, gone once it is made.
-  const launchAgent = (spec: AgentSpec) =>
-    tmux(spec.sessionId, sequence(serverCommands(spec.unset)), clientEnv(spec.env)).pipe(
+  // from a second client, gone once it is made. What is kept out of the agent is unset by `env`,
+  // which runs the agent in its own process: the server's environment stays whole for the terminal.
+  const launchAgent = (spec: AgentSpec) => {
+    const unset = (spec.unset ?? []).flatMap((name) => ["-u", name])
+    const argv = unset.length === 0 ? spec.argv : ["env", ...unset, ...spec.argv]
+    return tmux(spec.sessionId, sequence(serverCommands()), clientEnv(spec.env)).pipe(
       Effect.andThen(
         tmux(
           spec.sessionId,
-          sequence(
-            newSessionCommands(agentSessionName(spec.sessionId), spec, AgentSize, spec.argv),
-          ),
+          sequence(newSessionCommands(agentSessionName(spec.sessionId), spec, AgentSize, argv)),
           clientEnv(spec.env),
         ),
       ),
       Effect.asVoid,
     )
+  }
 
   // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
   const lastOutput = (sessionId: SessionId) =>
@@ -298,7 +307,17 @@ export const makeTmux = (backend: TmuxBackend) => {
   const killSession = (sessionId: SessionId, name: string) =>
     tmux(sessionId, ["kill-session", "-t", `=${name}`]).pipe(Effect.ignore)
 
-  const killAgent = (sessionId: SessionId) => killSession(sessionId, agentSessionName(sessionId))
+  // Killing a tmux session only hangs up on its processes, which an agent still shutting down may
+  // ignore, and live on, detached, beside the agent that replaces it on the same storage. So a
+  // process still running is killed outright first, and waited for (the wait is bounded, as tmux
+  // reaps a zombie only when it gets to it).
+  const killAgent = (sessionId: SessionId) => {
+    const name = agentSessionName(sessionId)
+    return tmux(sessionId, ["run-shell", "-t", `=${name}:`, KillPaneProcess]).pipe(
+      Effect.ignore,
+      Effect.andThen(killSession(sessionId, name)),
+    )
+  }
 
   const kill = (sessionId: SessionId) =>
     Effect.andThen(killAgent(sessionId), killSession(sessionId, tmuxSessionName(sessionId)))
@@ -412,17 +431,15 @@ export const TmuxLive = Layer.effect(
  * a row from the terminal. Focus events pass through, or a TUI run in the terminal prints a hint
  * to turn them on in a tmux.conf. Window size is the window's own, never the server's: tmux 3.3
  * (Debian 12's) crashes when the global option is manual and there is no session, which is what a
- * relaunch starts from. `unset` is taken out of the server's environment, which each new process
- * starts from.
+ * relaunch starts from.
  */
-function serverCommands(unset: ReadonlyArray<string> = []): Array<ReadonlyArray<string>> {
+function serverCommands(): Array<ReadonlyArray<string>> {
   return [
     ["start-server"],
     ["set-option", "-g", "exit-empty", "off"],
     ["set-option", "-g", "remain-on-exit", "on"],
     ["set-option", "-g", "status", "off"],
     ["set-option", "-g", "focus-events", "on"],
-    ...unset.map((name) => ["set-environment", "-g", "-u", name]),
   ]
 }
 
@@ -487,6 +504,14 @@ const PaneExitFormat = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 const ReapCheckFirstMs = 100
 const ReapCheckLastMs = 5_000
 const ReapGiveUpWithoutSignalsMs = 10_000
+
+/**
+ * A shell command, for tmux's `run-shell`, that SIGKILLs the pane's process unless the pane is
+ * dead, and waits up to five seconds for it to be gone.
+ */
+const KillPaneProcess =
+  "p=#{pane_pid}; [ #{pane_dead} = 1 ] || { kill -KILL $p; n=0; " +
+  "while kill -0 $p 2>/dev/null && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; }"
 
 /** The most bytes typed with one `send-keys` command. */
 const InputChunkBytes = 256

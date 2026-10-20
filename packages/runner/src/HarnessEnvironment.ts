@@ -13,7 +13,7 @@ import { ClaudeTokenVariable, KeptOutOfClaude, QuietClaude } from "./ClaudeEnvir
  * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
  * the mod relay's and the Session token ({@link harnessEnvironment}); the launch sets the rest.
  *
- * The conversation is the one the Harness was launched as. A `claude` or `pi` run inside the
+ * The conversation is the one the agent was launched as. A `claude` or `pi` run inside the
  * Session inherits all of them, but is another conversation, which the mod doesn't link (#321).
  */
 export const ModEnvironment = {

@@ -23,16 +23,10 @@ export interface SandboxTarget {
   readonly gitIdentity?: GitIdentity
 }
 
-/** How to run Claude Code in a started Sandbox (ADR 0013), as the agent's Claude bridge does. */
+/** Where Claude Code is in a started Sandbox (ADR 0013), for the agent's Claude bridge to run. */
 export interface SandboxClaude {
   /** Its executable, in the Sandbox. */
   readonly path: string
-  /**
-   * Its environment over the Sandbox's: what the Runner gives each process it starts there (an
-   * Environment's login environment and variables), with Claude Code's state directory. Holds no
-   * Claude credential and no Session token, which the launch adds.
-   */
-  readonly env: Readonly<Record<string, string>>
 }
 
 /** How to run the durable agent, and the Session's terminal, in a started Sandbox. */
@@ -40,8 +34,9 @@ export interface SandboxPi {
   /** Node.js's executable, in the Sandbox, for its image's libc. */
   readonly node: string
   /**
-   * Their environment over the Sandbox's: Claude Code's, but for Claude Code's state, which the
-   * agent gets only with a Claude credential for its Claude bridge.
+   * Their environment over the Sandbox's: what the Runner gives each process it starts there (an
+   * Environment's login environment and variables). It holds no Claude Code state, which the
+   * agent gets only with a Claude credential for its Claude bridge, and no Session token.
    */
   readonly env: Readonly<Record<string, string>>
 }
@@ -55,8 +50,8 @@ export interface SandboxStarted {
 }
 
 /**
- * The seam for a Session's Sandbox (#9): created and started around its Workspace before Claude
- * Code launches in it, and stopped after Claude Code stops.
+ * The seam for a Session's Sandbox (#9): created and started around its Workspace before its agent
+ * launches in it, and stopped after the agent stops.
  *
  * The live one (SessionSandboxes.ts) reports its state to the Hub with `SandboxStateReport`, and
  * readies the Sandbox for its agent at each start: tmux, Node.js, and Claude Code's state, which
