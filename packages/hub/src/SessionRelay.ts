@@ -366,6 +366,7 @@ import {
   type Scope,
   Semaphore,
 } from "effect"
+import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import { Attachments } from "./Attachments.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
@@ -775,6 +776,7 @@ export class SessionRelay extends Context.Service<
   static readonly layer = Layer.effect(
     SessionRelay,
     Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
       const sessions = yield* Sessions
       const log = yield* SessionLog
       const prompts = yield* PromptQueue
@@ -1800,22 +1802,95 @@ export class SessionRelay extends Context.Service<
           live.threadCommandSent(sessionId, { seq, pending })
       })
 
+      /** Sends an already committed command now, if the durable agent is ready for it. */
+      const sendPendingThreadCommand = Effect.fn("SessionRelay.sendPendingThreadCommand")(
+        function* (sessionId: SessionId, pending: number, command: ThreadCommand) {
+          const session = yield* sessions.get(sessionId)
+          if (Option.isNone(session)) return
+          const { state } = session.value
+          const running = state === "Active" || state === "Frozen"
+          if (!running || live.awaitingHello(sessionId) || live.modDurable(sessionId) !== true)
+            return
+          yield* sendThreadCommand(sessionId, pending, command)
+        },
+      )
+
       /**
-       * Keeps a thread command or Compact for the Session's agent until it is done
-       * (ThreadCommands.ts), and sends it now to a durable agent that has said hello. One that is
-       * starting, or asleep, is sent it after its hello, with every other it hasn't taken.
+       * Keeps a thread command or Compact before sending it. One starting, or asleep, takes it
+       * after its hello, with every other command it hasn't taken.
        */
       const queueThreadCommand = Effect.fn("SessionRelay.queueThreadCommand")(function* (
         sessionId: SessionId,
         command: ThreadCommand,
       ) {
         const pending = yield* threadCommands.add(sessionId, command)
-        const session = yield* sessions.get(sessionId)
-        if (Option.isNone(session)) return
-        const { state } = session.value
-        const running = state === "Active" || state === "Frozen"
-        if (!running || live.awaitingHello(sessionId) || live.modDurable(sessionId) !== true) return
-        yield* sendThreadCommand(sessionId, pending, command)
+        yield* sendPendingThreadCommand(sessionId, pending, command)
+      })
+
+      /**
+       * A thread prompt is admitted all at once: its thread (when new), its visible events and
+       * its replayable command. Never call logEvent or enqueue the in-memory outbox inside this
+       * transaction: neither broadcasts nor live state can roll back. Held text is unrelated to
+       * admission and flushed first, as logEvent would do. Only committed entries are broadcast.
+       * A crash after commit may miss a broadcast/ThreadCreated, but history and the next agent
+       * hello recover the saved prompt; an uncommitted prompt leaves neither history nor command.
+       */
+      const admitThreadPrompt = Effect.fn("SessionRelay.admitThreadPrompt")(function* (
+        sessionId: SessionId,
+        command: StartThread | DeliverThreadPrompt,
+      ) {
+        const needles = yield* needlesForSession(sessionId)
+        const streams = live.textStreams.get(sessionId)
+        if (streams !== undefined) {
+          for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
+        }
+        const { threadId, promptId, sender, text, attachments: carried } = command
+        const admitted = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const events: Array<ThreadStarted | ThreadPromptSent> = []
+            if (command._tag === "StartThread") {
+              const { anchorTurnId } = command
+              const title = threadTitleFrom(text)
+              const setting = modelFlags(command)
+              yield* sessions.threadStarted(sessionId, {
+                id: threadId,
+                anchorTurnId,
+                title,
+                startedBy: sender.id,
+                ...setting,
+                createdAt: yield* Clock.currentTimeMillis,
+              })
+              events.push(
+                ThreadStarted.make({
+                  threadId,
+                  anchorTurnId,
+                  title,
+                  startedBy: sender,
+                  ...setting,
+                }),
+              )
+            }
+            events.push(
+              ThreadPromptSent.make({
+                threadId,
+                promptId,
+                sender,
+                text,
+                ...carrying(carried ?? []),
+              }),
+            )
+            const entries = []
+            for (const event of events)
+              entries.push(yield* log.append(sessionId, redactEvent(needles, event)))
+            const pending = yield* threadCommands.add(sessionId, command)
+            return { entries, pending }
+          }),
+        )
+        for (const entry of admitted.entries) {
+          toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
+        }
+        yield* markBusy(sessionId)
+        yield* sendPendingThreadCommand(sessionId, admitted.pending, command)
       })
 
       /**
@@ -3268,28 +3343,8 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(sent)) return
               const threadId = ThreadId.make(`thr_${randomId()}`)
               const promptId = PromptId.make(randomId())
-              const title = threadTitleFrom(message.text)
-              yield* sessions.threadStarted(sessionId, {
-                id: threadId,
-                anchorTurnId,
-                title,
-                startedBy: you.id,
-                ...setting.value,
-                createdAt: yield* Clock.currentTimeMillis,
-              })
-              yield* logEvent(
-                sessionId,
-                ThreadStarted.make({
-                  threadId,
-                  anchorTurnId,
-                  title,
-                  startedBy: you,
-                  ...setting.value,
-                }),
-              )
               const prompt = { promptId, sender: you, text: message.text, ...carrying(sent.value) }
-              yield* logEvent(sessionId, ThreadPromptSent.make({ threadId, ...prompt }))
-              yield* queueThreadCommand(
+              yield* admitThreadPrompt(
                 sessionId,
                 StartThread.make({
                   sessionId,
@@ -3318,8 +3373,7 @@ export class SessionRelay extends Context.Service<
                 text: message.text,
                 ...carrying(sent.value),
               }
-              yield* logEvent(sessionId, ThreadPromptSent.make({ threadId, ...prompt }))
-              return yield* queueThreadCommand(
+              return yield* admitThreadPrompt(
                 sessionId,
                 DeliverThreadPrompt.make({ sessionId, threadId, ...prompt }),
               )
