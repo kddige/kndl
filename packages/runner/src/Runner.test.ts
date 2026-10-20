@@ -843,6 +843,29 @@ describe("Sessions", () => {
     expect(h.hub.all("SessionStopped")[0]).toMatchObject({ reason: "Exited", exitCode: 1 })
   })
 
+  test("never lets an earlier agent's queued exit stop its replacement", async () => {
+    const h = startRunner()
+    h.openPorts.watchTakes = "300 millis"
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.openPorts.calls.includes("watch s-1"))
+    // The first start still holds the Session lock. Queue a relaunch ahead of its exit cleanup.
+    h.hub.send(relaunchSession(conversation, "xai/grok-5"))
+    await Bun.sleep(30)
+    h.tmux.agent("s-1").exit(1)
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    await Bun.sleep(50)
+
+    expect(h.tmux.launched).toHaveLength(2)
+    expect(h.tmux.agent("s-1").exited).toBe(false)
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    expect(h.hub.all("SessionStartFailed")).toEqual([])
+    h.tmux.agent("s-1").exit(2)
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+    expect(h.hub.all("SessionStopped")[0]).toMatchObject({ reason: "Exited", exitCode: 2 })
+  })
+
   test("keeps the mod a Session's agent started with until it starts again (#159)", async () => {
     const h = startRunner()
     await connected(h)
@@ -1073,6 +1096,26 @@ describe("Sessions", () => {
     // Nothing is pushed (#194): the Runner didn't even ask how to reach the Repo.
     expect(h.hub.all("GitRequest")).toEqual([])
   })
+
+  test("kills both tmux sessions after the grace period when the agent ignores SIGTERM", async () => {
+    const { h } = await withSession()
+    const agent = h.tmux.agent("s-1")
+    agent.ignoreTerminate = true
+    const killed = h.tmux.killed.length
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
+    await eventually(() => agent.terminated)
+    expect(h.tmux.killed).toHaveLength(killed)
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    await eventually(() => h.hub.all("SessionStopped").length === 1, 12_000)
+
+    expect(h.tmux.killed).toHaveLength(killed + 1)
+    expect(h.tmux.terminals.has(sessionId("s-1"))).toBe(false)
+    expect(h.tmux.agents.has(sessionId("s-1"))).toBe(false)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.hub.all("SessionStopped")).toEqual([
+      { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested" },
+    ])
+  }, 15_000)
 
   test("reports a running Session's Open ports, and none before it says it stopped (#175)", async () => {
     const h = startRunner()

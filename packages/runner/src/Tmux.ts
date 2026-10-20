@@ -8,7 +8,7 @@
 // command exits. The server dies with the VM, so both last as long as their Sandbox runs.
 
 import { MaxLastOutputLength, type SessionId, type TerminalSize } from "@kndl/protocol"
-import { Context, Data, Effect, Layer, Queue, type Scope, Stream } from "effect"
+import { Context, Data, Deferred, Effect, Layer, Queue, type Scope, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import {
   type ControlEvent,
@@ -322,15 +322,20 @@ export const makeTmux = (backend: TmuxBackend) => {
         })
         .pipe(Effect.mapError((error) => new TmuxError({ message: sandboxMessage(error) })))
       const commands = yield* Queue.unbounded<string>()
-      yield* Stream.fromQueue(commands).pipe(
-        Stream.runForEach((command) => client.write(command)),
-        Effect.ignore,
-        Effect.forkScoped,
-      )
       const pane = new ControlPane(commands, `${target}:`, {
         cols: Math.max(cols, 1),
         rows: Math.max(rows, 1),
       })
+      // Control mode accepts input before attach-session completes. Without waiting, commands
+      // can target another client's session: refresh-client then subscribes the terminal to the
+      // agent's exit (or the reverse), and the agent's watcher never sees it.
+      yield* pane.ready.pipe(
+        Effect.andThen(
+          Stream.fromQueue(commands).pipe(Stream.runForEach((command) => client.write(command))),
+        ),
+        Effect.ignore,
+        Effect.forkScoped,
+      )
       const events = pane.events(
         client.events.pipe(
           Stream.filter((event) => event._tag === "Stdout"),
@@ -500,6 +505,9 @@ class ControlPane {
   private readonly pending: Array<ReplyHandler> = []
   private readonly parser = new ControlModeParser()
   private readonly decoder = new TextDecoder()
+  private readonly attached = Deferred.makeUnsafe<void>()
+  /** Completes once tmux has attached this client to its session. */
+  readonly ready = Deferred.await(this.attached)
 
   /** The size last asked for, which tmux may not have applied yet. */
   private target: TerminalSize
@@ -658,6 +666,9 @@ class ControlPane {
         this.awaitReap()
         return []
       }
+      case "SessionChanged":
+        Deferred.doneUnsafe(this.attached, Effect.void)
+        return []
       case "Exit":
         return []
     }

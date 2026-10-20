@@ -37,9 +37,9 @@ export const runRunner = (options: { readonly backoff?: Backoff } = {}) =>
 export const ModRelayHost = ModRelayLive.pipe(Layer.provide(SessionTokensLive))
 
 /**
- * Sessions on this host: each Session's Claude Code, or pi (ADR 0029), runs in tmux in its own
- * microsandbox VM, on its Creator's setup token, with a Session token for the mod relay, and its
- * Workspace is cloned with host git. Tunnels into those Sandboxes (#177) share the Sessions'
+ * Sessions on this host: each Session's durable agent runs in tmux in its own microsandbox VM,
+ * beside a shell for its terminal, with a Session token for the mod relay, and its Creator's setup
+ * token for its Claude bridge, and its Workspace is cloned with host git. Tunnels into those Sandboxes (#177) share the Sessions'
  * sandbox backend.
  */
 export const SessionsHost = TunnelsLive.pipe(

@@ -221,11 +221,13 @@ export const SessionsLive = Layer.effect(
               yield* Scope.close(scope, Exit.void)
               yield* Deferred.succeed(run.exited, exitCode)
               if (run.stopping) return
-              if (running.get(sessionId) === session) yield* release(sessionId)
               // Interrupted means the Runner is shutting down: the agent runs on, and is taken
               // back when the Runner comes back (adopt).
-              if (Exit.hasInterrupts(exit)) return
-              yield* background(exitedOnItsOwn(sessionId, exitCode))
+              if (Exit.hasInterrupts(exit)) {
+                if (running.get(sessionId) === session) yield* release(sessionId)
+                return
+              }
+              yield* background(exitedOnItsOwn(sessionId, session, run, exitCode))
             }),
           ),
           Effect.forkIn(layerScope),
@@ -289,9 +291,18 @@ export const SessionsLive = Layer.effect(
     // What the agent printed before it exited is read from its dead pane, which tmux keeps
     // (`remain-on-exit`), before its tmux session is killed: otherwise why it exited is lost
     // (#105). The agent writes its own log too, on the Session's volume.
-    const exitedOnItsOwn = (sessionId: SessionId, exitCode: number | undefined) =>
+    const exitedOnItsOwn = (
+      sessionId: SessionId,
+      session: Running,
+      run: AgentRun,
+      exitCode: number | undefined,
+    ) =>
       serialized(sessionId)(
         Effect.gen(function* () {
+          // A stop or relaunch may already have queued behind the start that watched this run.
+          // Keep the Session until cleanup holds its lock, and leave a newer agent alone.
+          if (run.stopping || running.get(sessionId) !== session || session.agent !== run) return
+          yield* release(sessionId)
           const output = withoutValues(
             yield* tmux.lastOutput(sessionId),
             launchSecrets.get(sessionId),
