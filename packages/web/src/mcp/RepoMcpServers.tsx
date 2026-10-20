@@ -1,5 +1,5 @@
 // A Repo's MCP servers, on its Environment page (ADR 0020): the Installations for it, whose MCP servers
-// Claude Code in its Sessions gets, each saying which of its header secrets need a value, and
+// The agent in its Sessions gets, each saying which of its header secrets need a value, and
 // where it comes from (#219): listed for this Repo, or global, on in every Repo but where a
 // Repo-scoped one of its MCP server takes its place or the Repo turned it off. Anyone with access
 // to the Repo turns a global one off for it, or back on. And, under the page's History, its MCP

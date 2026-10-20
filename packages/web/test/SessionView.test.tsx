@@ -117,7 +117,7 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/kndl")
   // Alice started it, so she drives it (ADR 0026).
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("on your accounts")
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Your accounts pay")
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
   // She keeps it awake (ADR 0016).
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Kept awake by you")
@@ -394,7 +394,7 @@ test("Keep awake wakes an Asleep Session, says who keeps it awake, and Sleep now
   expect(last?._tag === "SetKeepAwake" && last.on).toBe(false)
 })
 
-test("a Session whose Claude Code exited on its own shows what it printed, folded (#105)", async () => {
+test("a Session whose agent exited on its own shows what it printed, folded (#105)", async () => {
   const { hub, page, banner, header } = await openSession("s-readme")
   await step(() => button("Wake now", page).click())
   await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
@@ -624,7 +624,7 @@ const installationRows = () =>
     (li) => li.textContent ?? "",
   )
 
-test("a Session shows the Installations it runs with, as Claude Code names their servers (ADR 0020)", async () => {
+test("a Session shows the Installations it runs with, by the names of their servers (ADR 0020)", async () => {
   const { page } = await openSession(demoSessionId, "Environment changed")
   await eventually(() =>
     expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe("MCP servers: 2 Installations"),
@@ -778,22 +778,28 @@ test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", as
   expect(hub.received.map((message) => message._tag)).not.toContain("OpenTerminal")
   await step(() => (terminalTab() as HTMLElement).click())
   await eventually(() => expect(router.state.location.search).toEqual({ tab: "terminal" }))
-  await eventually(() => expect(screen()).toContain("Do you want to proceed?"))
+  await eventually(() => expect(screen()).toContain("runner@sandbox:/workspace"))
   expect(page.querySelector('[aria-label="Terminal size"]')?.textContent).toBe("120×40")
 
-  // Keys typed into xterm reach the Session: Esc dismisses Claude Code's dialog.
+  // Keys typed into xterm reach the Session's shell: Ctrl-C ends the line.
   const input = page.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
   if (!input) throw new Error("no xterm input")
   await step(() =>
     input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }),
+      new KeyboardEvent("keydown", {
+        key: "c",
+        code: "KeyC",
+        keyCode: 67,
+        ctrlKey: true,
+        bubbles: true,
+      }),
     ),
   )
-  await eventually(() => expect(screen()).toContain("User rejected the command"))
+  await eventually(() => expect(screen()).toContain("^C"))
   expect<unknown>(hub.received).toContainEqual({
     _tag: "TerminalInput",
     sessionId: demoSessionId,
-    data: "\x1b",
+    data: "\x03",
   })
 
   // Leaving the view closes the terminal.
@@ -859,7 +865,7 @@ test("deleting a Session archives it, hides it from the sidebar, and Undo restor
   await eventually(() => expect(list()).toContain("claude/readme-run"))
 })
 
-test("a Turn a finished agent started shows the agent it's from, not Claude Code's notification", async () => {
+test("a Turn a finished agent started shows the agent it's from, not the agent's own notification", async () => {
   const { page } = await openApp("/sessions/s-release")
   await eventually(() => expect(page.querySelector('[data-turn="t-release-2"]')).not.toBeNull())
   const turn = page.querySelector('[data-turn="t-release-2"]')
@@ -1126,7 +1132,7 @@ test("any Participant can drive another's Session and open its shell", async () 
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session is")) ?? ""
   await eventually(() => expect(banner()).toContain("This Session is Asleep"))
-  expect(header()).toContain("on Bob Lee's accounts")
+  expect(header()).toContain("Bob Lee's accounts pay")
   // It waits on Bob to wake it: nothing here wakes it.
   expect(banner()).toContain("Sending a prompt wakes it")
   const labels = () =>
@@ -1185,7 +1191,7 @@ test("any Participant can stop, steer and cancel while another's Session runs", 
   expect(page.querySelector('button[aria-label^="Model:"]')).not.toBeNull()
   expect(page.querySelector('button[aria-label^="Thinking:"]')).not.toBeNull()
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
-    "on Alice Kim's accounts",
+    "Alice Kim's accounts pay",
   )
   await step(() => button("Stop", page).click())
   expect(hub.received.some((message) => message._tag === "StopTurn")).toBe(true)

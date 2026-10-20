@@ -14,14 +14,13 @@ import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useCommands } from "../app/commands.tsx"
-import { notSent } from "../app/copy.ts"
+import { accountsOf, accountsPay, notSent, sentence } from "../app/copy.ts"
 import {
   day,
   environmentChanged,
   mcpServersChanged,
   purgedIn,
   repoParams,
-  spent,
   terminalText,
 } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -58,9 +57,11 @@ import { ModelPicker } from "./ModelPicker.tsx"
 import {
   knownModelLabel,
   modelLabel,
+  ModelNamesContext,
   type ModelSetting,
   otherProviderTurnModel,
   providerModelLabel,
+  useNameReplier,
 } from "./models.ts"
 import { PlanDock } from "./Plan.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
@@ -72,9 +73,9 @@ import {
   TerminalSheet,
   TitleStrip,
 } from "./SessionChrome.tsx"
+import { SessionCost } from "./SessionCost.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { ThreadPanel, type ThreadPanelOf } from "./ThreadPanel.tsx"
-import { ModelNamesContext } from "./ThreadRows.tsx"
 import { Transcript, type TranscriptThreads } from "./Transcript.tsx"
 
 /** Wide enough for a thread's panel beside the conversation, each still readable. */
@@ -330,12 +331,7 @@ function LoadedSession({
     (model: string) => otherProviderTurnModel(models, setting, model),
     [models, setting],
   )
-  // Who answers: the Model a Turn ran, by name, or the Session's.
-  const nameReplier = useCallback(
-    (turnModel: string | undefined) =>
-      turnModel === undefined ? settingName : modelLabel(models, turnModel),
-    [models, settingName],
-  )
+  const nameReplier = useNameReplier(models, settingName)
   const nameModel = useCallback((model: string) => modelLabel(models, model), [models])
 
   const you = useHubState((hubState) => hubState.you)
@@ -418,6 +414,8 @@ function LoadedSession({
           : undefined
   const anchorTurnId =
     panelOf?.kind === "new" ? panelOf.anchorTurnId : panelOf?.thread?.anchorTurnId
+  // The thread you just made from the composer: opening it keeps focus there.
+  const [made, setMade] = useState<ThreadId | undefined>(undefined)
   const anchor = useMemo(
     () => (anchorTurnId === undefined ? undefined : findTurn(items, anchorTurnId)),
     [items, anchorTurnId],
@@ -429,9 +427,15 @@ function LoadedSession({
     },
     [onThreadChange],
   )
+  // An Archived Session starts no threads: its ⌘K doesn't offer one either.
   const threads = useMemo<TranscriptThreads>(
-    () => ({ anchored: transcript.anchored, open: threadId, forking: forkOf, onReply: reply }),
-    [transcript.anchored, threadId, forkOf, reply],
+    () => ({
+      anchored: transcript.anchored,
+      open: threadId,
+      forking: forkOf,
+      onReply: archived ? undefined : reply,
+    }),
+    [transcript.anchored, threadId, forkOf, reply, archived],
   )
   // A Turn jumped to from a thread scrolls into view and lights up for a moment.
   const flashed = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -535,8 +539,7 @@ function LoadedSession({
   const wide = useMediaQuery(WIDE)
   const panelShown = panelOf !== undefined
   const conversationShown = (wide || !terminalOpen) && (sideBySide || !panelShown)
-  const yourAccounts = yours ? "your accounts" : `${summary.creator.name}'s accounts`
-  const cost = transcript.usage?.cost
+  const accounts = accountsOf(summary, you)
 
   const titleStrip = (
     <TitleStrip
@@ -573,24 +576,8 @@ function LoadedSession({
             </>
           )}{" "}
           <span aria-hidden="true">·</span>{" "}
-          <span
-            title={`It spends ${yourAccounts}: the Providers ${yours ? "you" : summary.creator.name} connected. Everyone here drives it.`}
-            {...stylex.props(styles.nowrap)}
-          >
-            on {yourAccounts}
-          </span>
-          {cost !== undefined && cost > 0 && (
-            <>
-              {" "}
-              <span aria-hidden="true">·</span>{" "}
-              <span
-                title={`What the main conversation has spent so far, on ${yourAccounts}`}
-                {...stylex.props(styles.nowrap)}
-              >
-                {spent(cost)} spent
-              </span>
-            </>
-          )}
+          <span {...stylex.props(styles.nowrap)}>{accountsPay(summary, you)}</span>
+          <SessionCost transcript={transcript} accounts={accounts} />
           {summary.keepAwake !== undefined && (
             <>
               {" "}
@@ -750,7 +737,8 @@ function LoadedSession({
                       connectable={connectable}
                       value={shownSetting}
                       onChange={pick}
-                      footer={`Runs on ${yourAccounts}.`}
+                      owner={yours ? undefined : summary.creator.name}
+                      footer={`Runs on ${accounts}.`}
                       disabled={archived}
                       side="top"
                     />
@@ -771,7 +759,11 @@ function LoadedSession({
               layout={sideBySide ? "side" : "full"}
               onClose={() => onThreadChange?.(undefined)}
               onJumpToAnchor={jumpToTurn}
-              onCreated={(created) => onThreadChange?.({ thread: created }, { replace: true })}
+              focusComposer={panelOf.kind === "thread" && panelOf.threadId === made}
+              onCreated={(created) => {
+                setMade(created)
+                onThreadChange?.({ thread: created }, { replace: true })
+              }}
             />
           )}
         </div>
@@ -1090,6 +1082,3 @@ function StateBanner({
     }
   }
 }
-
-/** The reason as a sentence, with a space after it for the one that follows. */
-const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)

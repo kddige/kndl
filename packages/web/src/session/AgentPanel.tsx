@@ -1,8 +1,8 @@
 import type { AgentId, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { notSent } from "../app/copy.ts"
+import { accountsOf, notSent } from "../app/copy.ts"
 import { spent } from "../app/format.ts"
-import { useHub } from "../app/hub.tsx"
+import { useHub, useHubState } from "../app/hub.tsx"
 import type { AgentView } from "../hub/transcript.ts"
 import { AgentStatus, ArrowLeftIcon, Button, BranchIcon, EmptyState } from "../ui/index.ts"
 import { color, font, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -83,10 +83,11 @@ export function AgentPanel({
   onClose: () => void
 }) {
   const hub = useHub()
+  const you = useHubState((state) => state.you)
   const scroller = useStickToBottom(agent)
   const back = (
     <Button size="sm" intent="ghost" icon={<ArrowLeftIcon />} onClick={onClose} sx={styles.back}>
-      Back to the chat
+      Back to the conversation
     </Button>
   )
   if (!agent) {
@@ -130,7 +131,7 @@ export function AgentPanel({
             <AgentStatus status={agent.status} />
             {agent.usage !== undefined && agent.usage.cost > 0 && (
               <span
-                title={`What this agent has spent, on ${session.creator.name}'s accounts`}
+                title={`What this agent has spent, on ${accountsOf(session, you)}`}
                 {...stylex.props(styles.cost)}
               >
                 {spent(agent.usage.cost)}

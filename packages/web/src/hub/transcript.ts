@@ -467,6 +467,15 @@ function conversationKey(of: { readonly threadId?: ThreadId; readonly agentId?: 
   return "main"
 }
 
+/** Whether two Plans say the same. */
+const samePlan = (a: Plan | undefined, b: Plan): boolean =>
+  a !== undefined &&
+  a.explanation === b.explanation &&
+  a.steps.length === b.steps.length &&
+  a.steps.every(
+    (step, index) => step.text === b.steps[index]?.text && step.status === b.steps[index]?.status,
+  )
+
 /** Whether a tool call is the agent's Plan tool, whose call the Plan's block takes the place of. */
 const isPlanTool = (tool: string): boolean => /^update_?plan$/i.test(tool)
 
@@ -768,7 +777,9 @@ class Folding {
     // A run picked up again after a restart goes on from the Turn the restart ended.
     if (sender._tag === "Resumed" && conversation.latest !== undefined) {
       const previous = conversation.turns[conversation.latest]
-      if (previous && previous.end !== null) conversation.turn(conversation.latest).continued = true
+      // Only one the restart cut short: a Turn that finished on its own has nothing to continue.
+      if (previous?.end?.reason === "aborted")
+        conversation.turn(conversation.latest).continued = true
     }
     return conversation.startTurn(entry, {
       turnId,
@@ -1196,7 +1207,8 @@ class Folding {
           blocks[call] = { ...block, key: replaced.key }
           this.#planCalls ??= new Set(this.#from.fold.planCalls)
           this.#planCalls.add(replaced.call.toolCallId)
-        } else {
+        } else if (!samePlan(previous, event.plan)) {
+          // The agent reports every conversation's Plan again when it starts: that is no update.
           blocks.push(block)
         }
         break

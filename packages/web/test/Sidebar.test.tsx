@@ -2,7 +2,7 @@
 // there, against the fake Hub with its script not playing.
 
 import { afterEach, expect, test } from "bun:test"
-import { SessionId } from "@kndl/protocol"
+import { SessionId, ThreadId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
 import { button, chooseSessionAction, dialog, render, settle, step } from "./render.ts"
 
@@ -453,4 +453,33 @@ test("the Sessions are one Tab stop: arrows move, ← → fold, and each row has
   await eventually(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
   const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent)
   expect(items).toEqual(expect.arrayContaining(["RenameF2", "Copy link", "Delete Session"]))
+})
+
+const thread = (id: string, at: number, running = false) => ({
+  id: ThreadId.make(id),
+  title: id,
+  running,
+  at,
+})
+const ids = (shown: ReadonlyArray<{ id: string }>) => shown.map((each) => each.id)
+
+test("a Session's threads keep the order they were started in as they stream", async () => {
+  const { recentThreads } = await import("../src/app/AppSidebar.tsx")
+  const threads = [
+    thread("a", 1),
+    thread("b", 2, true),
+    thread("c", 3),
+    thread("d", 4),
+    thread("e", 5),
+    thread("f", 6, true),
+  ]
+  // Running ones stay among the others, rather than first; the three latest idle ones show.
+  expect(ids(recentThreads(threads, undefined))).toEqual(["b", "c", "d", "e", "f"])
+  // The open one shows, wherever it sits.
+  expect(ids(recentThreads(threads, ThreadId.make("a")))).toEqual(["a", "b", "c", "d", "e", "f"])
+  // Replying or finishing changes which show, never the order they are in.
+  const replied = threads.map((each) => (each.id === "c" ? { ...each, running: true } : each))
+  expect(ids(recentThreads(replied, undefined))).toEqual(["a", "b", "c", "d", "e", "f"])
+  const finished = threads.map((each) => (each.id === "b" ? { ...each, running: false } : each))
+  expect(ids(recentThreads(finished, undefined))).toEqual(["c", "d", "e", "f"])
 })

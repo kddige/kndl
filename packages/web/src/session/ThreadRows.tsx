@@ -5,19 +5,15 @@
 import type { SessionId, ThreadId } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { createContext, useContext } from "react"
+import { useContext } from "react"
 import { counted, timeAgo } from "../app/format.ts"
 import type { ThreadView } from "../hub/transcript.ts"
 import { AvatarStack, ChevronRightIcon, Spinner, ThreadIcon } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { ModelNamesContext } from "./models.ts"
 
 const HOVER = "@media (hover: hover)"
-
-/** Names a model by its `provider/id`, as the Session's Models label it. */
-export type NameModel = (model: string) => string
-
-export const ModelNamesContext = createContext<NameModel>((model) => model)
 
 /** What a thread is doing, in a few words: what its running Turn does now, or that it waits. */
 export function threadActivity(thread: ThreadView): string | undefined {

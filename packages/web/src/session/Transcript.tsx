@@ -41,11 +41,11 @@ import { turnRow } from "../ui/markers.stylex.ts"
 import { focus, textLink } from "../ui/shared.ts"
 import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { CompactionLine } from "./Compaction.tsx"
-import { modelSwitchedText, threadModelChangedText } from "./models.ts"
+import { ModelNamesContext, modelSwitchedText, threadModelChangedText } from "./models.ts"
 import { PlanMarker } from "./Plan.tsx"
 import { QuestionChip } from "./QuestionChip.tsx"
 import { SentAttachments, SessionContext } from "./SentAttachments.tsx"
-import { ModelNamesContext, ThreadRows } from "./ThreadRows.tsx"
+import { ThreadRows } from "./ThreadRows.tsx"
 import { ToolCall } from "./ToolCall.tsx"
 
 const HOVER = "@media (hover: hover)"
@@ -79,8 +79,8 @@ export interface TranscriptThreads {
   readonly open?: ThreadId | undefined
   /** The Turn a new thread is being written off, marked as replied to. */
   readonly forking?: TurnId | undefined
-  /** Starts a thread off a Turn. */
-  readonly onReply: (turnId: TurnId) => void
+  /** Starts a thread off a Turn; absent where none can start, as in an Archived Session. */
+  readonly onReply?: ((turnId: TurnId) => void) | undefined
 }
 
 const styles = stylex.create({
@@ -387,32 +387,42 @@ export const Transcript = memo(function Transcript({
       <ReplierContext value={nameReplier}>
         <TurnModelContext value={nameTurnModel}>
           <ol aria-label={label} {...stylex.props(styles.list)}>
-            {items.map((item) => (
-              <li
-                key={item.key}
-                {...stylex.props(
-                  item.kind === "turn" &&
-                    item.turn.sender._tag === "Resumed" &&
-                    styles.continuation,
-                )}
-              >
-                {item.kind === "turn" ? (
-                  <Turn
-                    turn={item.turn}
-                    threads={threads?.anchored.get(item.turn.turnId)}
-                    open={threads?.open}
-                    forking={threads?.forking === item.turn.turnId}
-                    onReply={threads?.onReply}
-                  />
-                ) : item.kind === "cancelled" ? (
-                  <CancelledPrompt at={item.at} prompt={item.event} />
-                ) : item.kind === "compaction" ? (
-                  <CompactionLine compaction={item.compaction} />
-                ) : (
-                  <Notice at={item.at} event={item.event} />
-                )}
-              </li>
-            ))}
+            {items.map((item) => {
+              const anchored =
+                item.kind === "turn" ? threads?.anchored.get(item.turn.turnId) : undefined
+              return (
+                <li
+                  key={item.key}
+                  {...stylex.props(
+                    item.kind === "turn" &&
+                      item.turn.sender._tag === "Resumed" &&
+                      styles.continuation,
+                  )}
+                >
+                  {item.kind === "turn" ? (
+                    <Turn
+                      turn={item.turn}
+                      threads={anchored}
+                      // Only the Turn the open thread is under needs to know which it is, so opening
+                      // or switching one doesn't render every Turn again.
+                      open={
+                        anchored?.some((thread) => thread.threadId === threads?.open)
+                          ? threads?.open
+                          : undefined
+                      }
+                      forking={threads?.forking === item.turn.turnId}
+                      onReply={threads?.onReply}
+                    />
+                  ) : item.kind === "cancelled" ? (
+                    <CancelledPrompt at={item.at} prompt={item.event} />
+                  ) : item.kind === "compaction" ? (
+                    <CompactionLine compaction={item.compaction} />
+                  ) : (
+                    <Notice at={item.at} event={item.event} />
+                  )}
+                </li>
+              )
+            })}
           </ol>
         </TurnModelContext>
       </ReplierContext>

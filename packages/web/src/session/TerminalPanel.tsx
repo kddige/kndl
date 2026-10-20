@@ -120,7 +120,7 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
         <span {...stylex.props(styles.note)}>
           {scaled
             ? "Sized for another viewer's window, so it's scaled down. Type into it, or fit it, to size it for yours."
-            : "A shell in this Session's Sandbox, shared with everyone here. Type into it for anything the chat can't do."}
+            : "A shell in this Session's Sandbox, shared with everyone here. Type into it for anything the conversation can't do."}
         </span>
         {size && (
           <span {...stylex.props(styles.size)} aria-label="Terminal size">

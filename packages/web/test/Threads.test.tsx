@@ -7,7 +7,7 @@ let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
 const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-router")
 const { HubProvider } = await import("../src/app/hub.tsx")
-const { HubClient } = await import("../src/hub/client.ts")
+const { CommandError, HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
 const { bob } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
@@ -171,4 +171,180 @@ test("a new thread is preselected to the Session's Model, with no row that follo
   expect(hub.received.find((message) => message._tag === "CreateThread")).toMatchObject({
     model,
   })
+})
+
+test("starting a thread keeps the keyboard in the composer, not on the panel's heading", async () => {
+  const { panel, page, field, router } = await open("/sessions/s-demo")
+  const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
+    (each) => each.textContent?.trim() === "Reply in thread",
+  )
+  await step(() => reply?.click())
+  await eventually(() => expect(document.activeElement).toBe(field("Reply")))
+  await step(() => type(field("Reply"), "Try this in a fork"))
+  await step(() => button("Start thread", panel()).click())
+  await eventually(() => expect(router.state.location.search).toHaveProperty("thread"))
+  await eventually(() => expect(panel().querySelectorAll("[data-turn]")).toHaveLength(1))
+  expect(panel().querySelector("h2")?.textContent).not.toBe("New thread")
+  expect(document.activeElement).toBe(field("Reply"))
+  expect(field("Reply").disabled).toBe(false)
+})
+
+test("Escape closes the thread panel from anywhere inside it, unless a menu or dialog took it", async () => {
+  const { panel, field, router } = await open()
+  await step(() => field("Reply").focus())
+  // The composer doesn't use Escape, so it closes the panel.
+  const menuTrigger = panel().querySelector<HTMLButtonElement>(
+    'button[aria-label="Thread actions"]',
+  )
+  await step(() => menuTrigger?.click())
+  await settle()
+  const item = document.querySelector<HTMLElement>('[role="menuitem"]')
+  expect(item).not.toBeNull()
+  await step(() =>
+    item?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  )
+  await settle()
+  expect(document.querySelector('[role="menuitem"]')).toBeNull()
+  expect(router.state.location.search).toHaveProperty("thread")
+  expect(panel()).not.toBeNull()
+  await step(() => field("Reply").focus())
+  await step(() =>
+    field("Reply").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  )
+  await eventually(() => expect(panel()).toBeNull())
+  expect(router.state.location.search).not.toHaveProperty("thread")
+})
+
+test("the header says whose accounts pay, and its cost is the Session's total, broken down on click", async () => {
+  const { page } = await open("/sessions/s-demo")
+  const header = () => page.querySelector("h1")?.closest("header") as HTMLElement
+  expect(header().textContent).toContain("Alice Kim's accounts pay")
+  // The main conversation's $0.46 and the thread's $0.03.
+  const total = button("$0.49 spent", header())
+  expect(total.getAttribute("aria-haspopup")).toBe("dialog")
+  await step(() => total.click())
+  await eventually(() => expect(document.querySelector('[aria-label="Spent"]')).not.toBeNull())
+  const rows = [...document.querySelectorAll('[aria-label="Spent"] li')].map(
+    (row) => row.textContent,
+  )
+  expect(rows[0]).toBe("Main conversation$0.46")
+  expect(rows[1]).toMatch(/^Thread: .*\$0\.03$/)
+  expect(rows).toHaveLength(2)
+})
+
+test("a reply the agent couldn't take shows to everyone as not sent, with why", async () => {
+  const { panel } = await open()
+  await eventually(() => expect(panel().querySelector("[data-failed]")).not.toBeNull())
+  const failed = panel().querySelector<HTMLElement>('[aria-label="Not sent"] [data-failed]')
+  expect(failed?.textContent).toContain("Bob Lee")
+  expect(failed?.textContent).toContain(
+    "Reply not sent: The model refused the request: its context is full.",
+  )
+  expect(failed?.textContent).toContain("And does it back off the same way")
+  expect(failed?.querySelector('[role="alert"]')).not.toBeNull()
+})
+
+test("a link to a thread or a Turn the Session doesn't have says so, with a way back and no composer", async () => {
+  for (const path of ["/sessions/s-demo?thread=thr-nope", "/sessions/s-demo?fork=t-nope"]) {
+    const { panel, router } = await open(path)
+    await eventually(() => expect(panel().textContent).toContain("No such"))
+    expect(panel().querySelector("textarea")).toBeNull()
+    expect(panel().querySelector('button[aria-label^="Model:"]')).toBeNull()
+    await step(() => button("Back to the conversation", panel()).click())
+    await eventually(() => expect(panel()).toBeNull())
+    expect(router.state.location.search).not.toHaveProperty("thread")
+    expect(router.state.location.search).not.toHaveProperty("fork")
+    await cleanup?.()
+    cleanup = undefined
+  }
+})
+
+test("an Archived Session offers no Reply in thread, as its palette doesn't", async () => {
+  const { page } = await open("/sessions/s-flaky", 1440)
+  await eventually(() => expect(page.querySelector("[data-turn]")).not.toBeNull())
+  expect(
+    [...page.querySelectorAll("button")].some(
+      (each) => each.textContent?.trim() === "Reply in thread",
+    ),
+  ).toBe(false)
+})
+
+test("a thread says what it is doing in words, not only in a tooltip", async () => {
+  const { panel, field } = await open()
+  await step(() => type(field("Reply"), "keep going"))
+  await step(() => button("Send reply", panel()).click())
+  await eventually(() => expect(button("Steer", panel())).toBeDefined())
+  expect(panel().querySelector("header")?.textContent).toMatch(/(Thinking|Writing|Running \w+)…/)
+  expect(panel().querySelector("header [title$='…']")).toBeNull()
+})
+
+test("a thread being started is announced by a region that was empty first, and the visible copy keeps out of the reader's way", async () => {
+  const { client, panel, page, field } = await open("/sessions/s-demo")
+  // The Hub hasn't made it yet.
+  client.createThread = () => new Promise(() => {})
+  const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
+    (each) => each.textContent?.trim() === "Reply in thread",
+  )
+  await step(() => reply?.click())
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await step(() => type(field("Reply"), "Try this in a fork"))
+  await step(() => button("Start thread", panel()).click())
+  const note = panel().querySelector<HTMLElement>("span[class*='sentNote']")
+  expect(panel().querySelector('[role="status"]')?.textContent).toBe("Starting the thread…")
+  expect(note?.getAttribute("aria-hidden")).toBe("true")
+})
+
+test("a refused reply shows in the panel only, not also as a toast", async () => {
+  const { hub, panel, field } = await open()
+  // The Session was archived under this tab, which hasn't heard yet.
+  const fake = hub.sessions.get(session)
+  if (fake) fake.summary = { ...fake.summary, state: "Archived" }
+  await step(() => type(field("Reply"), "too late"))
+  await step(() => button("Send reply", panel()).click())
+  await eventually(() =>
+    expect(panel().querySelector("[data-pending-reply]")?.textContent).toContain(
+      "Reply not sent: The Session is archived: restore it first.",
+    ),
+  )
+  expect(document.querySelector("[data-type]")).toBeNull()
+})
+
+test("a thread whose answer the dropped connection took may exist: it says to check, not that it didn't start", async () => {
+  const { client, panel, page, field } = await open("/sessions/s-demo")
+  client.createThread = () =>
+    Promise.reject(new CommandError("Lost the connection to the Hub.", true))
+  const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
+    (each) => each.textContent?.trim() === "Reply in thread",
+  )
+  await step(() => reply?.click())
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  await step(() => type(field("Reply"), "Try this in a fork"))
+  await step(() => button("Start thread", panel()).click())
+  await eventually(() => expect(panel().querySelector('[role="alert"]')?.textContent).toBeTruthy())
+  expect(panel().querySelector('[role="alert"]')?.textContent).toBe(
+    "Thread may have started: Lost the connection to the Hub. Check the threads list before retrying.",
+  )
+  expect(panel().textContent).not.toContain("Thread not started")
+})
+
+test("a thread forked off a Turn that was running says its answer has grown since", async () => {
+  const { client, page, panel, field } = await open("/sessions/s-demo")
+  await step(() => client.sendPrompt(session, "main stays busy"))
+  await eventually(() =>
+    expect(button("Stop", page.querySelector("main > div > div") ?? page)).toBeDefined(),
+  )
+  const replies = () =>
+    [...page.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (each) => each.textContent?.trim() === "Reply in thread",
+    )
+  await step(() => replies().at(-1)?.click())
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  expect(panel().textContent).toContain(
+    "This Turn is still running: the thread forks from where it has got to.",
+  )
+  await step(() => type(field("Reply"), "Try this in a fork"))
+  await step(() => button("Start thread", panel()).click())
+  await eventually(() =>
+    expect(panel().textContent).toContain("Forked while this Turn was running"),
+  )
 })

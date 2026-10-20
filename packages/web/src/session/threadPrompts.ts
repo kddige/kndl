@@ -74,6 +74,3 @@ export function unconfirmedThreadPrompts(
       : prompt,
   )
 }
-
-/** The reason as a sentence, with a space after it for the one that follows. */
-export const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)

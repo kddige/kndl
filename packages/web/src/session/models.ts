@@ -19,6 +19,7 @@ import {
   type ThinkingLevel,
   type ThreadModelChanged,
 } from "@kndl/protocol"
+import { createContext, useCallback } from "react"
 
 /** A Session's or a thread's model and thinking level: an absent model is the Hub's pick. */
 export interface ModelSetting {
@@ -91,6 +92,26 @@ export function modelLabel(
   model: string,
 ): string {
   return (models && findProviderModel(models, model))?.label ?? modelIdOf(model)
+}
+
+/** Names a model by its `provider/id`, as the Session's Models label it. */
+export type NameModel = (model: string) => string
+
+/** How a Session's Models are named below its view, such as in a Turn's threads. */
+export const ModelNamesContext = createContext<NameModel>((model) => model)
+
+/**
+ * Names who answers a Turn, for the Session's conversation and a thread's alike: the Model the
+ * Turn ran, by its label, or `own`, the Model the conversation runs on now.
+ */
+export function useNameReplier(
+  models: ReadonlyArray<ProviderModel> | undefined,
+  own: string,
+): (turnModel: string | undefined) => string {
+  return useCallback(
+    (turnModel) => (turnModel === undefined ? own : modelLabel(models, turnModel)),
+    [models, own],
+  )
 }
 
 /**

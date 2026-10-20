@@ -865,6 +865,8 @@ const posted = (promptId: string, sender: typeof alice, text: string): EventEnco
   text,
 })
 const step = (text: string, status: "pending" | "in_progress" | "done") => ({ text, status })
+const markers = (blocks: ReadonlyArray<{ kind: string }> | undefined) =>
+  blocks?.filter((block) => block.kind === "plan").length
 const spent = (cost: number) => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost })
 
 describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-harness.md)", () => {
@@ -1104,6 +1106,18 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
     expect(resumed?.continued).toBeUndefined()
   })
 
+  test("a Turn that finished on its own isn't continued by a Resumed one", () => {
+    const items = build(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "[Alice] go", sender: fromAlice },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 9 },
+        { _tag: "TurnStarted", turnId: "t-2", text: "", sender: { _tag: "Resumed" } },
+      ]),
+    )
+    const [finished] = turns(items)
+    expect(finished?.continued).toBeUndefined()
+  })
+
   test("a compaction shows in the Turn it ran in, or between Turns, with how it ended", () => {
     const transcript = transcriptOf(
       entries([
@@ -1184,6 +1198,29 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
     expect(transcript.threads.get("thr-1" as never)?.plan).toEqual(first as never)
     // Between Turns, the thread's Plan shows; nothing is marked.
     expect(transcript.threads.get("thr-1" as never)?.items).toEqual([])
+  })
+
+  test("a Plan the agent reports again as it starts is no update, for any conversation", () => {
+    const plan = { steps: [step("Add the route", "in_progress"), step("Test it", "pending")] }
+    const transcript = transcriptOf(
+      entries([
+        started,
+        { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
+        agentStarted("a-1", "c-1"),
+        { _tag: "PlanChanged", agentId: "a-1", plan },
+        { _tag: "TurnStarted", turnId: "t-2", threadId: "thr-1", text: "go", sender: fromBob },
+        // The restarted agent says every conversation's Plan again.
+        { _tag: "PlanChanged", plan },
+        { _tag: "PlanChanged", threadId: "thr-1", plan },
+        { _tag: "PlanChanged", agentId: "a-1", plan: { steps: [...plan.steps] } },
+        { _tag: "PlanChanged", agentId: "a-1", plan: { steps: [step("Add the route", "done")] } },
+      ]),
+    )
+    // The first report of a Plan is a marker; the same one again isn't; a changed one is.
+    expect(markers(transcript.agents.get("a-1" as never)?.blocks)).toBe(2)
+    expect(markers(turns(transcript.items)[0]?.blocks)).toBe(1)
+    const thread = transcript.threads.get("thr-1" as never)
+    expect(markers(turns(thread?.items ?? [])[0]?.blocks)).toBe(1)
   })
 
   test("what each conversation spent is the latest it said", () => {

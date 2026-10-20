@@ -103,7 +103,7 @@ test("any Participant switches among the Creator's Models, in one list grouped o
         (model) => model.label === "Claude Opus 5.5",
       ),
   ).toBe(true)
-  expect(page.textContent).toContain("on Alice Kim's accounts")
+  expect(page.textContent).toContain("Alice Kim's accounts pay")
   await step(() => picker()?.click())
   await settle()
   expect(groupNames()).toEqual(["Anthropic", "OpenAI"])

@@ -1,7 +1,7 @@
 // The MCP page (ADR 0020): remote MCP servers the Hub adds to Sessions, each with the Installations
 // that put it on in Repos. Any Member adds an MCP server; an Installation needs access to every
 // Repo it lists, as a Session does, and a Repo has at most one Installation of each MCP server.
-// Claude Code in a Session reaches each through the Hub's Gateway, so no MCP server's address or
+// The agent in a Session reaches each through the Hub's Gateway, so no MCP server's address or
 // credential is ever in a Sandbox. A change applies to a Session at its next wake or Restart.
 //
 // An MCP server can declare header secrets (#215): a header, and a template its value goes in. Each
@@ -1115,7 +1115,7 @@ function InstallationDialog({
       <form id="installation" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
         <Field
           label="Name"
-          description="Claude Code names its MCP server after it."
+          description="The agent names its tools after it, as mcp__name__tool."
           invalid={touched && nameProblem !== undefined}
           error={touched ? nameProblem : undefined}
         >

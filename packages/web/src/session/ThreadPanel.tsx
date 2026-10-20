@@ -8,15 +8,17 @@ import type {
   AttachmentId,
   ConnectableProvider,
   ProviderModel,
+  RequestId,
   SessionSummary,
   ThreadId,
   TurnId,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { useCallback, useEffect, useId, useRef, useState } from "react"
-import { notSent } from "../app/copy.ts"
+import { useEffect, useId, useRef, useState } from "react"
+import { accountsOf, notSent, sentence } from "../app/copy.ts"
 import { clock, spent } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { CommandError } from "../hub/client.ts"
 import type { FailedPrompt, SentPrompt, ThreadView, TurnView } from "../hub/transcript.ts"
 import {
   ArrowLeftIcon,
@@ -24,6 +26,7 @@ import {
   Button,
   CloseIcon,
   CompactIcon,
+  EmptyState,
   IconButton,
   Markdown,
   Menu,
@@ -33,12 +36,12 @@ import {
   ThreadIcon,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
+import { focus, srOnly } from "../ui/shared.ts"
 import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { CompactDialog } from "./Compaction.tsx"
 import { Composer, type ComposerCopy } from "./Composer.tsx"
 import { ModelPicker } from "./ModelPicker.tsx"
-import { modelLabel, type ModelSetting, providerModelLabel } from "./models.ts"
+import { modelLabel, type ModelSetting, providerModelLabel, useNameReplier } from "./models.ts"
 import { PlanDock } from "./Plan.tsx"
 import { SentAttachments } from "./SentAttachments.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
@@ -46,7 +49,6 @@ import {
   failedThreadPrompt,
   pendingThreadPrompts,
   type PendingThreadPrompt,
-  sentence,
   unconfirmedThreadPrompts,
 } from "./threadPrompts.ts"
 import { threadActivity } from "./ThreadRows.tsx"
@@ -138,6 +140,7 @@ const styles = stylex.create({
     ":hover": { textDecorationColor: { default: null, [HOVER]: "currentColor" } },
   },
   scroll: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" },
+  missing: { display: "grid", placeItems: "center", flex: 1, padding: space.s4 },
   body: {
     display: "flex",
     flexDirection: "column",
@@ -262,6 +265,7 @@ export function ThreadPanel({
   onClose,
   onJumpToAnchor,
   onCreated,
+  focusComposer = false,
 }: {
   session: SessionSummary
   of: ThreadPanelOf
@@ -277,6 +281,8 @@ export function ThreadPanel({
   onJumpToAnchor: (turnId: TurnId) => void
   /** A new thread was made from what was written: open it. */
   onCreated: (threadId: ThreadId) => void
+  /** Opening it puts focus where to write rather than on its title: it was just made from there. */
+  focusComposer?: boolean
 }) {
   const hub = useHub()
   const titleId = useId()
@@ -291,6 +297,8 @@ export function ThreadPanel({
     text: string
     attachments: ReadonlyArray<AttachmentId>
     failed?: string
+    /** It may have been made: the connection dropped before the Hub answered. */
+    unconfirmed?: boolean
   } | null>(null)
   // The model a new thread is to run on, if one other than the Session's was picked before its
   // first prompt. Until then it is the Session's current Model, which the thread keeps.
@@ -308,22 +316,28 @@ export function ThreadPanel({
     if (connection === "online") return
     setPending(unconfirmedThreadPrompts)
   }, [connection])
+  // The replies sent from here, whose refusals this panel shows itself, in place: the app's toast
+  // would say it twice.
+  const sentReplies = useRef(new Set<RequestId>())
   useEffect(
     () =>
-      hub.onCommandFailed((failure) => {
+      hub.claimCommandFailure((failure) => {
         // The refusal names the reply it is for by the request id it was sent with.
-        if (failure.command !== "PromptThread" || failure.requestId === undefined) return
         const { requestId, message } = failure
+        if (failure.command !== "PromptThread" || requestId === undefined) return false
+        if (!sentReplies.current.has(requestId)) return false
         setPending((prompts) => failedThreadPrompt(prompts, requestId, message))
+        return true
       }),
     [hub],
   )
 
-  // Opening a thread moves focus to it: its title, or, for a new one, where to write.
+  // Opening a thread moves focus to it: its title, or, for a new one, or one just made from the
+  // composer, where to write.
   const opened = of.kind === "thread" ? of.threadId : `new:${of.anchorTurnId}`
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    if (of.kind === "new") panel.current?.querySelector("textarea")?.focus()
+    if (of.kind === "new" || focusComposer) panel.current?.querySelector("textarea")?.focus()
     else heading.current?.focus({ preventScroll: true })
     setCreating(null)
     return () => {
@@ -338,8 +352,8 @@ export function ThreadPanel({
   }, [opened])
 
   const archived = session.state === "Archived"
-  const yours = useHubState((state) => state.you?.id === session.creator.id)
-  const accounts = yours ? "your accounts" : `${session.creator.name}'s accounts`
+  const you = useHubState((state) => state.you)
+  const accounts = accountsOf(session, you)
   const running = thread?.running !== undefined
   const threadSetting: ModelSetting =
     of.kind === "new"
@@ -352,11 +366,7 @@ export function ThreadPanel({
     threadSetting.model === undefined
       ? providerModelLabel(models, threadSetting)
       : modelLabel(models, threadSetting.model)
-  const nameReplier = useCallback(
-    (turnModel: string | undefined) =>
-      turnModel === undefined ? modelName : modelLabel(models, turnModel),
-    [modelName, models],
-  )
+  const nameReplier = useNameReplier(models, modelName)
 
   const attach = (file: File, options: Parameters<typeof hub.uploadAttachment>[2]) =>
     hub.uploadAttachment(session.id, file, options)
@@ -368,6 +378,7 @@ export function ThreadPanel({
         notSent("Reply")
         return false
       }
+      sentReplies.current.add(requestId)
       setPending((prompts) => [
         ...prompts,
         { requestId, after: log?.at(-1)?.seq, text: prompt.trim(), attachments },
@@ -383,6 +394,7 @@ export function ThreadPanel({
           text: prompt,
           attachments,
           failed: error instanceof Error ? error.message : "Not sent",
+          unconfirmed: error instanceof CommandError && error.unconfirmed,
         }),
     )
     return true
@@ -429,6 +441,8 @@ export function ThreadPanel({
           ? "Asleep: a reply wakes the Session."
           : undefined
   const activity = thread && threadActivity(thread)
+  // A link to a thread, or to a Turn to reply to, that the Session doesn't have.
+  const missing = of.kind === "thread" ? thread === undefined : anchor === undefined
   const title = of.kind === "new" ? "New thread" : (thread?.title ?? "Thread")
   const cost = thread?.usage?.cost
 
@@ -437,7 +451,15 @@ export function ThreadPanel({
       ref={panel}
       aria-labelledby={titleId}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !event.defaultPrevented && event.target === heading.current) {
+        // From anywhere in the panel, unless something took the key first. A menu or dialog opened
+        // from here is portaled out of it, so its Escape reaches this handler too: it isn't ours.
+        if (
+          event.key === "Escape" &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing &&
+          event.target instanceof Node &&
+          event.currentTarget.contains(event.target)
+        ) {
           event.preventDefault()
           onClose()
         }
@@ -462,9 +484,10 @@ export function ThreadPanel({
             {title}
           </h2>
           {activity !== undefined && (
-            <span title={`${activity}…`} {...stylex.props(styles.live)}>
+            // What it does now, in words, so it reads the same without a pointer or a screen.
+            <span {...stylex.props(styles.live)}>
               {running && <Spinner size="sm" />}
-              {running ? "Replying" : "Waiting"}
+              {activity}…
             </span>
           )}
           {of.kind === "thread" && !archived && (
@@ -487,155 +510,182 @@ export function ThreadPanel({
             </IconButton>
           )}
         </div>
-        <p {...stylex.props(styles.meta, layout === "full" && styles.fullColumn)}>
-          {anchor !== undefined && anchorTurnId !== undefined ? (
-            <span>
-              Forked from{" "}
-              <button
-                type="button"
-                onClick={() => onJumpToAnchor(anchorTurnId)}
-                {...stylex.props(styles.jump, focus.ring)}
-              >
-                {anchorName(anchor)}
-              </button>{" "}
-              at {clock(anchor.at)}
-            </span>
-          ) : (
-            <span>Forked from the conversation</span>
-          )}
-          {cost !== undefined && cost > 0 && (
-            <>
-              <span aria-hidden="true" {...stylex.props(styles.dot)}>
-                ·
+        {!missing && (
+          <p {...stylex.props(styles.meta, layout === "full" && styles.fullColumn)}>
+            {anchor !== undefined && anchorTurnId !== undefined ? (
+              <span>
+                Forked from{" "}
+                <button
+                  type="button"
+                  onClick={() => onJumpToAnchor(anchorTurnId)}
+                  {...stylex.props(styles.jump, focus.ring)}
+                >
+                  {anchorName(anchor)}
+                </button>{" "}
+                at {clock(anchor.at)}
               </span>
-              <span
-                title={`What this thread has spent, on ${accounts}`}
-                {...stylex.props(styles.nowrap)}
-              >
-                {spent(cost)} spent
-              </span>
-            </>
-          )}
-        </p>
+            ) : (
+              <span>Forked from the conversation</span>
+            )}
+            {cost !== undefined && cost > 0 && (
+              <>
+                <span aria-hidden="true" {...stylex.props(styles.dot)}>
+                  ·
+                </span>
+                <span
+                  title={`What this thread has spent, on ${accounts}`}
+                  {...stylex.props(styles.nowrap)}
+                >
+                  {spent(cost)} spent
+                </span>
+              </>
+            )}
+          </p>
+        )}
       </header>
 
-      <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.body, layout === "full" && styles.fullColumn)}>
-          {anchor !== undefined && (
-            <AnchorQuote turn={anchor} onJump={() => onJumpToAnchor(anchor.turnId)} />
-          )}
-          {of.kind === "new" && creating === null && (
-            <p {...stylex.props(styles.intro)}>
-              Ask about this answer without derailing the main conversation. The thread starts from
-              everything said up to here, runs beside it, and anyone in the Session can reply.
-            </p>
-          )}
-          {thread !== undefined && thread.items.length > 0 && (
-            <Transcript
-              sessionId={session.id}
-              items={thread.items}
-              label="Thread"
-              nameReplier={nameReplier}
-            />
-          )}
-          {of.kind === "thread" && thread === undefined && log !== undefined && (
-            <p {...stylex.props(styles.intro)}>
-              The Session has no such thread. It may have failed to start.
-            </p>
-          )}
-          {thread !== undefined && thread.sent.length > 0 && (
-            <SentList sent={thread.sent} running={running} />
-          )}
-          {thread !== undefined && thread.failed.length > 0 && (
-            <FailedList failed={thread.failed} />
-          )}
-          {previews.map((prompt) => (
-            <div key={prompt.requestId} data-pending-reply="">
-              <CreatingPrompt
-                text={prompt.text}
-                failed={prompt.failed}
-                unconfirmed={prompt.unconfirmed === true}
-                reply
-              />
-              {prompt.attachments.length > 0 && (
-                <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>
-              )}
-              {prompt.failed !== undefined && (
-                <Button
-                  size="sm"
-                  intent="secondary"
-                  onClick={() => {
-                    if (send(prompt.text, prompt.attachments))
-                      setPending((prompts) =>
-                        prompts.filter((each) => each.requestId !== prompt.requestId),
-                      )
-                  }}
-                >
-                  Retry reply
-                </Button>
-              )}
-            </div>
-          ))}
-          {creating !== null && (
-            <div>
-              <CreatingPrompt text={creating.text} failed={creating.failed} />
-              {creating.failed !== undefined && (
-                <Button
-                  size="sm"
-                  intent="secondary"
-                  onClick={() => send(creating.text, creating.attachments)}
-                >
-                  Retry starting thread
-                </Button>
-              )}
-            </div>
-          )}
+      {missing ? (
+        <div {...stylex.props(styles.missing)}>
+          <EmptyState
+            title={of.kind === "thread" ? "No such thread" : "No such Turn"}
+            description={
+              of.kind === "thread"
+                ? "The Session has no thread with this link. It may have failed to start."
+                : "The Session has no Turn with this link, so there is nothing to start a thread off."
+            }
+            action={
+              <Button size="sm" intent="secondary" onClick={onClose}>
+                Back to the conversation
+              </Button>
+            }
+          />
         </div>
-      </div>
+      ) : (
+        <>
+          <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+            <div {...stylex.props(styles.body, layout === "full" && styles.fullColumn)}>
+              {anchor !== undefined && (
+                <AnchorQuote
+                  turn={anchor}
+                  onJump={() => onJumpToAnchor(anchor.turnId)}
+                  note={anchorNote(anchor, thread)}
+                />
+              )}
+              {of.kind === "new" && creating === null && (
+                <p {...stylex.props(styles.intro)}>
+                  Ask about this answer without derailing the main conversation. The thread starts
+                  from everything said up to here, runs beside it, and anyone in the Session can
+                  reply.
+                </p>
+              )}
+              {thread !== undefined && thread.items.length > 0 && (
+                <Transcript
+                  sessionId={session.id}
+                  items={thread.items}
+                  label="Thread"
+                  nameReplier={nameReplier}
+                />
+              )}
+              {thread !== undefined && thread.sent.length > 0 && (
+                <SentList sent={thread.sent} running={running} />
+              )}
+              {thread !== undefined && thread.failed.length > 0 && (
+                <FailedList failed={thread.failed} />
+              )}
+              {previews.map((prompt) => (
+                <div key={prompt.requestId} data-pending-reply="">
+                  <CreatingPrompt
+                    text={prompt.text}
+                    failed={prompt.failed}
+                    unconfirmed={prompt.unconfirmed === true}
+                    reply
+                  />
+                  {prompt.attachments.length > 0 && (
+                    <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>
+                  )}
+                  {prompt.failed !== undefined && (
+                    <Button
+                      size="sm"
+                      intent="secondary"
+                      onClick={() => {
+                        if (send(prompt.text, prompt.attachments))
+                          setPending((prompts) =>
+                            prompts.filter((each) => each.requestId !== prompt.requestId),
+                          )
+                      }}
+                    >
+                      Retry reply
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {creating !== null && (
+                <div>
+                  <CreatingPrompt
+                    text={creating.text}
+                    failed={creating.failed}
+                    unconfirmed={creating.unconfirmed === true}
+                  />
+                  {creating.failed !== undefined && (
+                    <Button
+                      size="sm"
+                      intent="secondary"
+                      onClick={() => send(creating.text, creating.attachments)}
+                    >
+                      Retry starting thread
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
 
-      <div {...stylex.props(styles.dock, layout === "full" && styles.fullColumn)}>
-        {thread?.plan !== undefined && (
-          <PlanDock plan={thread.plan} live={running} label="Thread plan" />
-        )}
-        <Composer
-          copy={copy}
-          running={running}
-          onSend={send}
-          onStop={stop}
-          disabledReason={
-            archived
-              ? "Archived: restore it to reply"
-              : of.kind === "new" && creating !== null && creating.failed === undefined
-                ? "Starting the thread…"
-                : undefined
-          }
-          hint={hint}
-          attach={attach}
-          picker={
-            <ModelPicker
-              models={models}
-              connectable={connectable}
-              value={threadSetting}
-              onChange={pickModel}
-              footer={`Runs on ${accounts}. A thread keeps its own model: it can try a cheaper or smarter one than the Session's, and doesn't follow the Session's switches.`}
-              disabled={archived}
-              side="top"
+          <div {...stylex.props(styles.dock, layout === "full" && styles.fullColumn)}>
+            {thread?.plan !== undefined && (
+              <PlanDock plan={thread.plan} live={running} label="Thread plan" />
+            )}
+            <Composer
+              copy={copy}
+              running={running}
+              onSend={send}
+              onStop={stop}
+              disabledReason={
+                archived
+                  ? "Archived: restore it to reply"
+                  : of.kind === "new" && creating !== null && creating.failed === undefined
+                    ? "Starting the thread…"
+                    : undefined
+              }
+              hint={hint}
+              attach={attach}
+              picker={
+                <ModelPicker
+                  models={models}
+                  connectable={connectable}
+                  value={threadSetting}
+                  onChange={pickModel}
+                  owner={session.creator.id === you?.id ? undefined : session.creator.name}
+                  footer={`Runs on ${accounts}. A thread keeps its own model: it can try a cheaper or smarter one than the Session's, and doesn't follow the Session's switches.`}
+                  disabled={archived}
+                  side="top"
+                />
+              }
             />
-          }
-        />
-      </div>
+          </div>
 
-      {of.kind === "thread" && (
-        <CompactDialog
-          open={compacting}
-          onOpenChange={setCompacting}
-          thread={{ threadId: of.threadId, title }}
-          onCompact={(instructions) => {
-            const sent = hub.compact(session.id, { threadId: of.threadId, instructions })
-            if (!sent) notSent("Compact")
-            return sent
-          }}
-        />
+          {of.kind === "thread" && (
+            <CompactDialog
+              open={compacting}
+              onOpenChange={setCompacting}
+              thread={{ threadId: of.threadId, title }}
+              onCompact={(instructions) => {
+                const sent = hub.compact(session.id, { threadId: of.threadId, instructions })
+                if (!sent) notSent("Compact")
+                return sent
+              }}
+            />
+          )}
+        </>
       )}
     </aside>
   )
@@ -655,11 +705,35 @@ function anchorName(turn: TurnView): string {
   }
 }
 
+/**
+ * What to say about a quote of a Turn that was still running when the thread forked off it: the
+ * Turn's answer has kept growing since, and what is quoted is its text now, not what the thread
+ * saw. The log doesn't say how much of the answer there was by then, so it can't be cut there.
+ */
+function anchorNote(anchor: TurnView, thread: ThreadView | undefined): string | undefined {
+  if (thread === undefined)
+    return anchor.end === null
+      ? "This Turn is still running: the thread forks from where it has got to."
+      : undefined
+  const forkedLive = anchor.end === null || thread.at < anchor.at + anchor.end.durationMs
+  return forkedLive
+    ? "Forked while this Turn was running: the thread saw less of the answer than this."
+    : undefined
+}
+
 /** How much of an answer shows before it's opened, in characters. */
 const longAnswer = 280
 
 /** The Turn a thread forks off, quoted: its prompt, and its answer so far, opened on request. */
-function AnchorQuote({ turn, onJump }: { turn: TurnView; onJump: () => void }) {
+function AnchorQuote({
+  turn,
+  onJump,
+  note,
+}: {
+  turn: TurnView
+  onJump: () => void
+  note?: string | undefined
+}) {
   const [open, setOpen] = useState(false)
   const id = useId()
   const answer = turn.blocks
@@ -705,6 +779,7 @@ function AnchorQuote({ turn, onJump }: { turn: TurnView; onJump: () => void }) {
           {open ? "Show less" : "Show the whole answer"}
         </button>
       )}
+      {note !== undefined && <p {...stylex.props(styles.intro)}>{note}</p>}
     </figure>
   )
 }
@@ -772,7 +847,7 @@ function FailedList({ failed }: { failed: ReadonlyArray<FailedPrompt> }) {
 /**
  * The first prompt of a thread being started, until the Hub has made it, or why it couldn't; or a
  * reply being sent, until the Hub echoes it, or why it wasn't. When the connection dropped
- * (`unconfirmed`) a reply may have arrived after all, so it says to check before retrying.
+ * (`unconfirmed`) it may have arrived after all, so it says to check before retrying.
  */
 function CreatingPrompt({
   text: prompt,
@@ -785,26 +860,45 @@ function CreatingPrompt({
   unconfirmed?: boolean
   reply?: boolean
 }) {
+  const note =
+    failed === undefined
+      ? reply
+        ? "Sending reply…"
+        : "Starting the thread…"
+      : unconfirmed
+        ? reply
+          ? `Reply may not have arrived: ${sentence(failed)}Check the thread before retrying.`
+          : `Thread may have started: ${sentence(failed)}Check the threads list before retrying.`
+        : `${reply ? "Reply not sent" : "Thread not started"}: ${sentence(failed)}Retry below.`
   return (
     <div {...stylex.props(styles.sent)}>
-      <div role={failed === undefined ? "status" : "alert"} {...stylex.props(styles.sentHead)}>
-        <span {...stylex.props(styles.sentNote, failed !== undefined && styles.failedNote)}>
-          {failed === undefined ? (
-            <>
-              <Spinner size="sm" />
-              {reply ? "Sending reply…" : "Starting the thread…"}
-            </>
-          ) : (
-            <>
-              <WarningIcon />
-              {unconfirmed
-                ? `Reply may not have arrived: ${sentence(failed)}Check the thread before retrying.`
-                : `${reply ? "Reply not sent" : "Thread not started"}: ${sentence(failed)}Retry below.`}
-            </>
-          )}
+      <div {...stylex.props(styles.sentHead)}>
+        {/* Said by the live regions, which are what a screen reader hears. */}
+        <span
+          aria-hidden="true"
+          {...stylex.props(styles.sentNote, failed !== undefined && styles.failedNote)}
+        >
+          {failed === undefined ? <Spinner size="sm" /> : <WarningIcon />}
+          {note}
         </span>
+        <Said role="status" words={failed === undefined ? note : ""} />
+        <Said role="alert" words={failed === undefined ? "" : note} />
       </div>
       <div {...stylex.props(styles.bubble)}>{prompt}</div>
     </div>
+  )
+}
+
+/**
+ * A live region that mounts empty and is given its words after, as the Plan's dock does: one
+ * mounted holding its text isn't announced.
+ */
+function Said({ role, words }: { role: "status" | "alert"; words: string }) {
+  const [said, setSaid] = useState("")
+  useEffect(() => setSaid(words), [words])
+  return (
+    <span role={role} {...stylex.props(srOnly.root)}>
+      {said}
+    </span>
   )
 }

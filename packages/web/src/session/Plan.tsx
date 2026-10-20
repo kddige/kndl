@@ -6,6 +6,7 @@
 import type { Plan, PlanStep, PlanStepStatus } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useId, useState } from "react"
+import { counted } from "../app/format.ts"
 import { CircleCheckIcon, CircleIcon, Disclosure, PlanIcon } from "../ui/index.ts"
 import { focus, srOnly } from "../ui/shared.ts"
 import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -51,9 +52,10 @@ export function planChanges(
 /** One line on what a change did, for the Turn's marker. */
 export function planChangeText(plan: Plan, previous: Plan | undefined): string {
   const { finished, started, added } = planChanges(plan, previous)
+  if (plan.steps.length === 0) return "Cleared the plan"
   // A plan mostly of steps the last one didn't have is a new one.
   if (previous === undefined || added.length * 2 > plan.steps.length)
-    return `Made a plan of ${plan.steps.length} steps`
+    return `Made a plan of ${counted(plan.steps.length, { one: "step", other: "steps" })}`
   if (finished.length > 0 && started.length > 0)
     return `Finished “${finished.at(-1)}”, started “${started[0]}”`
   if (finished.length > 0) return `Finished “${finished.at(-1)}”`
@@ -418,9 +420,11 @@ export function PlanMarker({ plan, previous }: { plan: Plan; previous?: Plan | u
         <span {...stylex.props(styles.markerSummary)}>
           <PlanIcon {...stylex.props(styles.icon)} />
           <span {...stylex.props(styles.markerText)}>{planChangeText(plan, previous)}</span>
-          <span {...stylex.props(styles.count)}>
-            · {done} of {total}
-          </span>
+          {total > 0 && (
+            <span {...stylex.props(styles.count)}>
+              · {done} of {total}
+            </span>
+          )}
         </span>
       }
     >

@@ -1547,6 +1547,11 @@ export class FakeHub implements HubTransport {
         if (!session) break
         const thread = this.#threadFor(socket, session, message)
         if (!thread) break
+        // As on the Hub, there is nothing to stop in a thread that isn't replying.
+        if (!thread.summary.running) {
+          this.#fail(socket, message._tag, "No Turn runs in the thread.", message.sessionId)
+          break
+        }
         this.#append(session, {
           _tag: "TurnStopRequested",
           by: this.#you,
@@ -1588,25 +1593,40 @@ export class FakeHub implements HubTransport {
         const thread =
           message.threadId === undefined ? undefined : this.#threadFor(socket, session, message)
         if (message.threadId !== undefined && !thread) break
-        if (session.summary.state !== "Active") {
+        if (session.summary.state === "Archived") {
           this.#fail(
             socket,
             message._tag,
-            `The Session is ${session.summary.state}: wake it to compact it.`,
+            "The Session is archived: restore it first.",
             message.sessionId,
           )
           break
         }
         const of = message.threadId === undefined ? {} : { threadId: message.threadId }
-        this.#append(session, { _tag: "CompactionStarted", ...of, reason: "manual", by: this.#you })
-        this.#after(10, () =>
+        const compact = () => {
           this.#append(session, {
-            _tag: "CompactionEnded",
+            _tag: "CompactionStarted",
             ...of,
-            outcome: "compacted",
-            summary: `${thread ? `In "${thread.summary.title}"` : "So far"}: ${message.instructions ? `(keeping ${message.instructions}) ` : ""}the web client reconnects with afterSeq and a 10s backoff cap, and tool calls start collapsed. Tests pass.`,
-          }),
-        )
+            reason: "manual",
+            by: this.#you,
+          })
+          this.#after(10, () =>
+            this.#append(session, {
+              _tag: "CompactionEnded",
+              ...of,
+              outcome: "compacted",
+              summary: `${thread ? `In "${thread.summary.title}"` : "So far"}: ${message.instructions ? `(keeping ${message.instructions}) ` : ""}the web client reconnects with afterSeq and a 10s backoff cap, and tool calls start collapsed. Tests pass.`,
+            }),
+          )
+        }
+        // An Asleep Session is woken for it, as for a prompt; the agent compacts once it is up.
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken to compact", this.#you)
+        const run = () => {
+          const { state, starting } = session.summary
+          if (state === "Active" && starting === undefined) compact()
+          else this.#after(2, run)
+        }
+        this.#after(1, run)
         break
       }
       case "SendPrompt": {
@@ -3107,7 +3127,7 @@ export class FakeHub implements HubTransport {
     this.#summaryChanged(session)
   }
 
-  /** Its Claude Code stopped: its Running agents are Interrupted, as on the Hub. */
+  /** Its agent stopped: its Running agents are Interrupted, as on the Hub. */
   #interruptAgents(session: FakeSession): void {
     for (const [agentId, agent] of session.agents) {
       if (agent.summary.status !== "Running") continue
@@ -3119,14 +3139,9 @@ export class FakeHub implements HubTransport {
   #terminal(session: FakeSession): FakeTerminal {
     if (session.terminal) return session.terminal
     const terminal = new FakeTerminal(
-      {
-        after: (steps, fn) => void this.#after(steps, fn),
-        changed: () => this.#terminalOutput(session),
-      },
-      {
-        cwd: `/workspace/${session.summary.repo.split("/").at(-1) ?? "repo"}`,
-        demo: session.summary.id === demoSessionId,
-      },
+      { changed: () => this.#terminalOutput(session) },
+      // A plain shell in /workspace, as the real terminal is.
+      { cwd: "/workspace", demo: session.summary.id === demoSessionId },
     )
     session.terminal = terminal
     return terminal

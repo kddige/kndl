@@ -4,7 +4,6 @@ import {
   failedThreadPrompt,
   pendingThreadPrompts,
   type PendingThreadPrompt,
-  sentence,
   unconfirmedThreadPrompts,
 } from "../src/session/threadPrompts.ts"
 import { alice, entries } from "./fixtures.ts"
@@ -104,9 +103,4 @@ test("a dropped connection marks the unanswered replies as unconfirmed, not as n
   expect(marked[0]).toMatchObject({ unconfirmed: true })
   expect(marked[1]).not.toHaveProperty("unconfirmed")
   expect(unconfirmedThreadPrompts(marked)).toBe(marked)
-})
-
-test("a reason becomes a sentence with a space after it, once", () => {
-  expect(sentence("The Session has no such thread.")).toBe("The Session has no such thread. ")
-  expect(sentence("the connection dropped")).toBe("the connection dropped. ")
 })

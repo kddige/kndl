@@ -817,6 +817,21 @@ function demoHistory(): Array<SessionEventWire> {
       ],
       gpt,
     ),
+    // A reply the agent couldn't take: not sent after all, for everyone.
+    {
+      _tag: "ThreadPromptSent",
+      threadId: backoffThreadId,
+      promptId: "p-seed-t3",
+      sender: bob,
+      text: "And does it back off the same way when the Hub answers with an error?",
+    },
+    {
+      _tag: "ThreadPromptFailed",
+      threadId: backoffThreadId,
+      promptId: "p-seed-t3",
+      message:
+        "The model refused the request: its context is full. Compact the thread, then ask again.",
+    },
     { _tag: "UsageChanged", threadId: backoffThreadId, usage: spend(0.03) },
     {
       _tag: "ModelSwitched",

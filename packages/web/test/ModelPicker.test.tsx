@@ -317,33 +317,19 @@ test("the picker says so when there are no Models, and while they load", async (
   )
   await cleanup?.()
 
+  // A Session's are its Creator's: it is theirs to connect one.
+  const theirs = await render(
+    <ModelPicker models={[]} value={{}} onChange={() => {}} owner="Alice" />,
+  )
+  cleanup = theirs.unmount
+  await click(trigger(theirs.container, "Model"))
+  expect(document.body.textContent).toContain(
+    "No Models yet. Alice needs to connect a Provider on their Account page.",
+  )
+  await cleanup?.()
+
   const loading = await render(<ModelPicker models={undefined} value={{}} onChange={() => {}} />)
   cleanup = loading.unmount
   await click(trigger(loading.container, "Model"))
   expect(document.body.textContent).toContain("Loading the Models…")
-})
-
-test("a thread's picker follows the Session's model until another is picked, and back", async () => {
-  const { container, changes } = await picker(
-    {},
-    {
-      inherit: { label: "Same as the Session · Claude Sonnet 5.5", name: "Claude Sonnet 5.5" },
-      footer: "Runs on Alice's accounts.",
-    },
-  )
-  expect(trigger(container, "Model")?.textContent).toBe("Claude Sonnet 5.5")
-  // Following the Session, it has no level of its own.
-  expect(trigger(container, "Thinking")).toBeNull()
-  await click(trigger(container, "Model"))
-  expect(groups()[0]).toEqual(["The Session's", ["Same as the Session · Claude Sonnet 5.5"]])
-  expect(selected()).toEqual(["Same as the Session · Claude Sonnet 5.5"])
-  expect(document.body.textContent).toContain("Runs on Alice's accounts.")
-
-  await click(option("GPT-6-Sol mini"))
-  expect(changes).toEqual([{ model: "openai/gpt-6-sol-mini" }])
-  expect(trigger(container, "Model")?.textContent).toBe("GPT-6-Sol mini")
-
-  await click(trigger(container, "Model"))
-  await click(option("Same as the Session · Claude Sonnet 5.5"))
-  expect(changes.at(-1)).toEqual({})
 })

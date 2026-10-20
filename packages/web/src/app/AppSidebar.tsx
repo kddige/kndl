@@ -290,7 +290,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
                         id: thread.id,
                         title: thread.title,
                         running: thread.running,
-                        lastAt: 0,
+                        at: 0,
                       })),
                   current ? threadId : undefined,
                 )
@@ -412,36 +412,35 @@ interface ThreadRowData {
   readonly id: ThreadId
   readonly title: string
   readonly running: boolean
-  /** When anything last happened in it; 0 where only the Session's summary is known. */
-  readonly lastAt: number
+  /** When it was started; 0 where only the Session's summary is known, which lists them in order. */
+  readonly at: number
 }
 
 const threadRowOf = (thread: ThreadView): ThreadRowData => ({
   id: thread.threadId,
   title: thread.title,
   running: thread.running !== undefined,
-  lastAt: thread.lastAt,
+  at: thread.at,
 })
 
 /** How many idle threads the open Session lists; the rest are in its transcript. */
 const recentIdle = 3
 
 /**
- * A Session's threads for the sidebar: the running ones first, then the latest idle ones, and the
- * one whose panel is open, each group newest first.
+ * A Session's threads for the sidebar, in the order they were started, so rows stay put while
+ * threads stream: the running ones, the latest idle ones, and the one whose panel is open. Only
+ * which show changes with activity, never their order.
  */
-function recentThreads(
+export function recentThreads(
   threads: ReadonlyArray<ThreadRowData>,
   open: string | undefined,
 ): ReadonlyArray<ThreadRowData> {
-  const newest = threads
+  const started = threads
     .map((thread, index) => ({ thread, index }))
-    .toSorted((a, b) => b.thread.lastAt - a.thread.lastAt || b.index - a.index)
+    .toSorted((a, b) => a.thread.at - b.thread.at || a.index - b.index)
     .map(({ thread }) => thread)
-  const running = newest.filter((thread) => thread.running)
-  const idle = newest.filter((thread) => !thread.running)
-  const shown = new Set(idle.slice(0, recentIdle))
-  return [...running, ...idle.filter((thread) => shown.has(thread) || thread.id === open)]
+  const latestIdle = new Set(started.filter((thread) => !thread.running).slice(-recentIdle))
+  return started.filter((thread) => thread.running || latestIdle.has(thread) || thread.id === open)
 }
 
 /** A thread under its Session's row: running or not, and its title, leading to its panel. */

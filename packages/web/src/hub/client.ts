@@ -106,9 +106,18 @@ export class ListingUnavailableError extends Error {
   override readonly name = "ListingUnavailableError"
 }
 
-/** A command the Hub refused, or that couldn't be sent. */
+/**
+ * A command the Hub refused, or that couldn't be sent. `unconfirmed`: it was sent, and the
+ * connection went before the Hub answered, so it may have been done after all.
+ */
 export class CommandError extends Error {
   override readonly name = "CommandError"
+  constructor(
+    message: string,
+    readonly unconfirmed = false,
+  ) {
+    super(message)
+  }
 }
 
 const unavailableText = (answer: { readonly hint?: string }) =>
@@ -154,6 +163,7 @@ export class HubClient {
   #state: HubState = initialState
   readonly #listeners = new Set<() => void>()
   readonly #failureListeners = new Set<(failure: CommandFailed) => void>()
+  readonly #failureClaims = new Set<(failure: CommandFailed) => boolean>()
   readonly #retryDelay: (attempt: number) => number
   readonly #requests = new Map<string, PendingRequest>()
   readonly #terminals = new Map<SessionId, Set<TerminalWriter>>()
@@ -184,6 +194,15 @@ export class HubClient {
     return () => this.#failureListeners.delete(listener)
   }
 
+  /**
+   * Lets a view that shows a refusal in place take it: when `claim` returns true for it, the
+   * listeners of {@link onCommandFailed}, which toast it, don't hear of it.
+   */
+  claimCommandFailure(claim: (failure: CommandFailed) => boolean): () => void {
+    this.#failureClaims.add(claim)
+    return () => this.#failureClaims.delete(claim)
+  }
+
   /** Connects, and keeps reconnecting until {@link stop}. */
   start(): void {
     if (this.#running) return
@@ -197,7 +216,7 @@ export class HubClient {
     const socket = this.#socket
     this.#socket = null
     socket?.close()
-    this.#failRequests("Disconnected from the Hub.")
+    this.#failRequests("Disconnected from the Hub.", true)
   }
 
   /** Connects again now, such as after signing in. */
@@ -1162,7 +1181,7 @@ export class HubClient {
         if (request?.command === message.command && message.requestId !== undefined) {
           this.#requests.delete(message.requestId)
           request.reject(new CommandError(message.message))
-        } else {
+        } else if (![...this.#failureClaims].some((claim) => claim(message))) {
           for (const listener of this.#failureListeners) listener(message)
         }
         break
@@ -1189,7 +1208,7 @@ export class HubClient {
   #closed(attempt: number): void {
     const wasWelcomed = this.#welcomed
     this.#welcomed = false
-    this.#failRequests("Lost the connection to the Hub.")
+    this.#failRequests("Lost the connection to the Hub.", true)
     if (!this.#running) return
     if (wasWelcomed) {
       this.#scheduleRetry(1)
@@ -1245,8 +1264,9 @@ export class HubClient {
     return true
   }
 
-  #failRequests(reason: string): void {
-    for (const request of this.#requests.values()) request.reject(new CommandError(reason))
+  #failRequests(reason: string, unconfirmed = false): void {
+    for (const request of this.#requests.values())
+      request.reject(new CommandError(reason, unconfirmed))
     this.#requests.clear()
   }
 

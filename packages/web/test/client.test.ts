@@ -442,18 +442,21 @@ describe("the terminal", () => {
     client.openTerminal(demo, (frame) => frames.push(frame))
     await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
     expect(frames[0]?.size).toEqual({ cols: 120, rows: 40 })
-    expect(frames[0]?.data).toContain("Do you want to proceed?")
+    // A plain shell in /workspace, as the real terminal is, with a command already run in it.
+    expect(frames[0]?.data).toContain("runner@sandbox:/workspace")
+    expect(frames[0]?.data).toContain("168 pass")
+    expect(frames[0]?.data).not.toContain("Claude")
     expect(client.getState().terminals[demo]).toEqual({
       status: "live",
       size: { cols: 120, rows: 40 },
     })
-    // Esc dismisses Claude Code's dialog.
-    expect(client.sendTerminalInput(demo, "\x1b")).toBe(true)
-    await eventually(() => expect(frames.at(-1)?.data).toContain("User rejected the command"))
+    // A command typed is run by the shell.
+    expect(client.sendTerminalInput(demo, "pwd\r")).toBe(true)
+    await eventually(() => expect(frames.at(-1)?.data).toContain("/workspace\x1b[K"))
     expect(frames.at(-1)?.kind).toBe("Output")
     expect(hub.received.filter((message) => message._tag.includes("Terminal"))).toEqual([
       { _tag: "OpenTerminal", sessionId: demo },
-      { _tag: "TerminalInput", sessionId: demo, data: "\x1b" },
+      { _tag: "TerminalInput", sessionId: demo, data: "pwd\r" },
     ])
   })
 
@@ -578,7 +581,7 @@ describe("the terminal", () => {
     expect(client.getState().terminals[readme]?.status).toBe("waiting")
     client.wakeSession(readme)
     await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
-    expect(frames[0]?.data).toContain("Welcome to")
+    expect(frames[0]?.data).toContain("runner@sandbox:/workspace")
   })
 
   test("keystrokes and resizes while offline aren't sent", () => {
@@ -695,6 +698,102 @@ describe("everyone drives a durable Session", () => {
     expect(failures).toEqual([])
     const [one, other] = hub.received.filter((message) => message._tag === "CreateThread")
     expect(one?.requestId).not.toBe(other?.requestId)
+  })
+
+  test("a thread whose answer the dropped connection took may exist, and the Hub's refusal means it doesn't", async () => {
+    let drop: (() => void) | undefined
+    let toClient: ((message: object) => void) | undefined
+    const transport: HubTransport = {
+      open(handlers) {
+        toClient = (message) => handlers.onMessage(JSON.stringify(message))
+        drop = () => handlers.onClose()
+        setTimeout(() => handlers.onOpen(), 0)
+        return {
+          send: (text) => {
+            const message = JSON.parse(text) as {
+              _tag: string
+              requestId?: string
+              sessionId?: string
+            }
+            if (message._tag === "WebHello")
+              toClient?.({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice })
+            // The Hub answers after the command has gone out.
+            if (message._tag === "CreateThread" && message.sessionId === "s-refused")
+              setTimeout(
+                () =>
+                  toClient?.({
+                    _tag: "CommandFailed",
+                    command: "CreateThread",
+                    requestId: message.requestId,
+                    message: "There is no such Turn in the Session to start a thread off.",
+                  }),
+                0,
+              )
+          },
+          close: () => setTimeout(() => handlers.onClose(), 0),
+        }
+      },
+      signInStatus: async () => ({ signedIn: true, you: decodedAlice }),
+      devSignIn: async () => {},
+      signOut: async () => {},
+      approveCli: unused,
+      admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
+    }
+    const client = new HubClient(transport, { retryDelay: () => 1 })
+    cleanups.push(() => client.stop())
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    const refused = client.createThread(SessionId.make("s-refused"), TurnId.make("t-1"), "hi")
+    await expect(refused).rejects.toMatchObject({ unconfirmed: false })
+    const lost = client.createThread(demo, TurnId.make("t-1"), "hi")
+    drop?.()
+    await expect(lost).rejects.toMatchObject({
+      message: "Lost the connection to the Hub.",
+      unconfirmed: true,
+    })
+  })
+
+  test("as on the Hub, stopping a thread with nothing running is refused, and compacting wakes an Asleep Session", async () => {
+    const { client } = setUp({ autoplay: false })
+    const failures = refusals(client)
+    const readme = SessionId.make("s-readme")
+    const flaky = SessionId.make("s-flaky")
+    client.start()
+    client.join(demo)
+    client.join(readme)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+    await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
+
+    client.stopThread(demo, ThreadId.make("thr-backoff"))
+    await eventually(() =>
+      expect(failures).toMatchObject([
+        { command: "StopThread", message: "No Turn runs in the thread." },
+      ]),
+    )
+
+    // Asleep, it wakes for the compaction rather than refusing it.
+    expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
+    client.compact(readme)
+    await eventually(() => expect(findSession(client.getState(), readme)?.state).toBe("Active"))
+    await eventually(() =>
+      expect(
+        client
+          .getState()
+          .joined[readme]?.log.some((entry) => entry.event._tag === "CompactionStarted"),
+      ).toBe(true),
+    )
+    expect(failures).toHaveLength(1)
+
+    // An Archived one is refused, as for any thread command.
+    client.compact(flaky)
+    await eventually(() =>
+      expect(failures[1]).toMatchObject({
+        command: "CompactConversation",
+        message: "The Session is archived: restore it first.",
+      }),
+    )
   })
 
   test("a reply into a thread is sent with a request id, which its echo and a refusal carry", async () => {

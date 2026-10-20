@@ -1216,20 +1216,6 @@ function SettingsTemplate() {
                 Switch to dev
               </Button>
             </PropertyRow>
-            <PropertyRow
-              label="Run Claude's Models with"
-              description="New Sessions start on it; the Model picker can switch."
-            >
-              <SegmentedControl
-                label="Run Claude's Models with"
-                options={[
-                  { value: "ClaudeCode", label: "Claude Code" },
-                  { value: "Pi", label: "pi" },
-                ]}
-                value="ClaudeCode"
-                onValueChange={() => {}}
-              />
-            </PropertyRow>
           </SettingsList>
         </SettingsSection>
         <SettingsSection title="Connect a Provider">
@@ -1272,7 +1258,10 @@ function SettingsTemplate() {
 
 function Disclosures() {
   return (
-    <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
+    <Section
+      title="Disclosure"
+      note="Closed by default: tool calls and subagents in the conversation."
+    >
       <Disclosure
         summary={
           <>

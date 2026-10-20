@@ -61,12 +61,6 @@ const styles = stylex.create({
   },
 })
 
-/**
- * The value of the row that follows another's model, as a thread does the Session's. Parentheses
- * are in no model name, so it is no Model's.
- */
-const inheritRow = "(inherit)"
-
 /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
 type Appearance = "bar" | "field"
 
@@ -84,14 +78,14 @@ export interface ModelPickerProps {
   readonly models: ReadonlyArray<ProviderModel> | undefined
   /** The Hub's names for the Providers, which head each group (ProvidersState). */
   readonly connectable?: ReadonlyArray<ConnectableProvider> | undefined
-  /** The setting: a `provider/id` model, or none, for the Hub's pick (or `inherit`'s). */
+  /** The setting: a `provider/id` model, or none, for the Hub's pick. */
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
   /**
-   * A first row for no model, which follows another's, named as that: a thread's "Session's
-   * model". Without it, no model is the Hub's pick, its first Model.
+   * Whose Providers the Models are, by name, when they aren't the signed-in person's: a Session
+   * runs on its Creator's, who is the one to connect another.
    */
-  inherit?: { readonly label: string; readonly name: string }
+  owner?: string | undefined
   /** A note under the list, such as whose accounts the Models are. */
   footer?: ReactNode
   disabled?: boolean
@@ -114,39 +108,29 @@ export function ModelPicker({
   connectable,
   value,
   onChange,
-  inherit,
+  owner,
   footer,
   disabled = false,
   side = "bottom",
   appearance = "bar",
 }: ModelPickerProps) {
-  const inheriting = inherit !== undefined && value.model === undefined
-  const model = inheriting ? undefined : providerModelOf(models, value)
+  const model = providerModelOf(models, value)
   // A model that isn't listed takes no level here: the Hub would refuse one for it.
   const levels = model?.thinkingLevels ?? []
-  const name = inheriting ? inherit.name : providerModelLabel(models, value)
+  const name = providerModelLabel(models, value)
 
-  const groups: Array<SearchSelectGroup> = [
-    ...(inherit === undefined
-      ? []
-      : [{ label: "The Session's", options: [{ value: inheritRow, label: inherit.label }] }]),
-    ...groupByProvider(models ?? []).map((group) => ({
-      label: providerName(group.provider, connectable),
-      options: group.models.map((each) => ({
-        value: providerModelName(each),
-        label: each.label,
-        keywords: each.id,
-      })),
+  const groups: Array<SearchSelectGroup> = groupByProvider(models ?? []).map((group) => ({
+    label: providerName(group.provider, connectable),
+    options: group.models.map((each) => ({
+      value: providerModelName(each),
+      label: each.label,
+      keywords: each.id,
     })),
-  ]
-  const picked = inheriting ? inheritRow : model && providerModelName(model)
+  }))
+  const picked = model && providerModelName(model)
 
   // A level the model picked doesn't take is dropped: the Hub refuses it with one.
   const chooseModel = (row: string) => {
-    if (row === inheritRow) {
-      onChange({})
-      return
-    }
     const level = value.thinkingLevel
     const next = models && findProviderModel(models, row)
     const takesLevel = level !== undefined && next !== undefined && takesThinkingLevel(next, level)
@@ -178,7 +162,9 @@ export function ModelPicker({
         empty={
           models === undefined
             ? "Loading the Models…"
-            : "No Models yet. Connect a Provider on your Account page."
+            : owner === undefined
+              ? "No Models yet. Connect a Provider on your Account page."
+              : `No Models yet. ${owner} needs to connect a Provider on their Account page.`
         }
         {...(footer !== undefined && { footer })}
       />
