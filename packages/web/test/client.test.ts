@@ -8,6 +8,8 @@ import {
   RunnerId,
   SessionId,
   type TerminalFrame,
+  ThreadId,
+  TurnId,
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
@@ -671,6 +673,61 @@ describe("everyone drives a durable Session", () => {
     expect(client.getState().joined[demo]?.models?.length).toBeGreaterThan(0)
     expect(failures).toEqual([])
     expect(hub.received.map((message) => message._tag)).toContain("OpenTerminal")
+  })
+
+  test("a thread is answered, or refused, by the request it was asked in, not by the one asked first", async () => {
+    const { hub, client } = setUp({ you: bob, autoplay: false })
+    const failures = refusals(client)
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+
+    // The first is fine and the second refused: the refusal rejects the second, not the first.
+    const first = client.createThread(demo, TurnId.make("t-seed-1"), "What about Windows?")
+    const second = client.createThread(demo, TurnId.make("t-nope"), "From nowhere")
+    const [made, refused] = await Promise.allSettled([first, second])
+    expect(made.status).toBe("fulfilled")
+    expect(refused).toMatchObject({
+      status: "rejected",
+      reason: { message: "There is no such Turn in the Session to start a thread off." },
+    })
+    // A refusal that names its request doesn't reach the listeners of those with none to answer.
+    expect(failures).toEqual([])
+    const [one, other] = hub.received.filter((message) => message._tag === "CreateThread")
+    expect(one?.requestId).not.toBe(other?.requestId)
+  })
+
+  test("a reply into a thread is sent with a request id, which its echo and a refusal carry", async () => {
+    const { client } = setUp({ you: bob, autoplay: false })
+    const failures = refusals(client)
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+
+    const threadId = await client.createThread(demo, TurnId.make("t-seed-1"), "What about Windows?")
+    // As on the Hub, the thread and its first prompt are logged before the answer comes.
+    const tags = client.getState().joined[demo]?.log.map((entry) => entry.event._tag) ?? []
+    expect(tags.lastIndexOf("ThreadStarted")).toBeGreaterThan(-1)
+    expect(tags.at(-1)).toBe("ThreadPromptSent")
+    const reply = client.promptThread(demo, threadId, "and macOS")
+    expect(reply).toBeDefined()
+    await eventually(() =>
+      expect(
+        client
+          .getState()
+          .joined[demo]?.log.some(
+            (entry) =>
+              entry.event._tag === "ThreadPromptSent" &&
+              entry.event.text === "and macOS" &&
+              entry.event.requestId === reply,
+          ),
+      ).toBe(true),
+    )
+    const lost = client.promptThread(demo, ThreadId.make("thr-nope"), "hello?")
+    await eventually(() =>
+      expect(failures).toMatchObject([{ command: "PromptThread", requestId: lost }]),
+    )
+    expect(client.promptThread(demo, threadId, "  ")).toBeUndefined()
   })
 
   test("without a Claude token, another connected Model can create and wake a Session", async () => {

@@ -434,7 +434,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
         models: action.models,
       }))
     case "ThreadCreated":
-      // An answer for whoever started the thread: the HubClient hands it to them.
+      // An answer for whoever started the thread: the HubClient hands it to them, by its request id.
       return state
     case "SessionStartLogged":
       return updateJoined(state, action.sessionId, (session) => {

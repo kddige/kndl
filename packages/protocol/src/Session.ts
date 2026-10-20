@@ -348,8 +348,11 @@ export const ThreadSummary = Schema.Struct({
   startedBy: Participant,
   /** Whether a Turn runs in it now. */
   running: Schema.Boolean,
-  /** The model it runs on, `<provider>/<id>`; absent while it runs on the Session's. */
-  model: Schema.optionalKey(ModelName),
+  /**
+   * The model it runs on, `<provider>/<id>`. Its own: it doesn't follow the Session's, and starts
+   * on the Session's current one if none was picked.
+   */
+  model: ModelName,
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type ThreadSummary = typeof ThreadSummary.Type

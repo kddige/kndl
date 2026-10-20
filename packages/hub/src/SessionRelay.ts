@@ -113,8 +113,10 @@
 //   stops its Turn (StopThread), switches its model to one of the Creator's (SetThreadModel), or
 //   compacts it or the main loop (CompactConversation); an Asleep Session is woken first, as for a
 //   message to a subagent. The Hub mints a thread's id, keeps it with the Session (Sessions.ts),
-//   whose summary lists it, logs ThreadStarted, ThreadPromptSent and ThreadModelChanged itself,
-//   and sends the mod the command. An agent whose hello said it isn't the durable agent is refused
+//   whose summary lists it with its own Model, the Session's as it was when none was picked,
+//   which it keeps, logs ThreadStarted, ThreadPromptSent and ThreadModelChanged itself, and sends
+//   the mod the command. A prompt the agent fails is logged as a ThreadPromptFailed, and a thread
+//   it could not start is forgotten with it. An agent whose hello said it isn't the durable agent is refused
 //   them, saying to restart it. The commands aren't lost to an outbox dropped as the agent stops,
 //   or sent while it sleeps or starts: each is kept (ThreadCommands.ts) and sent again after every
 //   hello of the agent, until a Turn starts from its prompt or the prompt steers one, or, for the
@@ -296,6 +298,7 @@ import {
   ThreadId,
   type TurnId,
   ThreadModelChanged,
+  ThreadPromptFailed,
   ThreadPromptSent,
   ThreadStarted,
   threadTitleFrom,
@@ -382,7 +385,7 @@ import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { readHandoff } from "./Handoff.ts"
-import { makeHarnesses, type SessionHarness } from "./Harnesses.ts"
+import { type CheckedModel, makeHarnesses, type SessionHarness } from "./Harnesses.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
@@ -1838,6 +1841,8 @@ export class SessionRelay extends Context.Service<
       const admitThreadPrompt = Effect.fn("SessionRelay.admitThreadPrompt")(function* (
         sessionId: SessionId,
         command: StartThread | DeliverThreadPrompt,
+        /** The web command it came from, which its ThreadPromptSent carries back to the sender. */
+        requestId: RequestId,
       ) {
         const needles = yield* needlesForSession(sessionId)
         const streams = live.textStreams.get(sessionId)
@@ -1849,15 +1854,17 @@ export class SessionRelay extends Context.Service<
           Effect.gen(function* () {
             const events: Array<ThreadStarted | ThreadPromptSent> = []
             if (command._tag === "StartThread") {
-              const { anchorTurnId } = command
-              const title = threadTitleFrom(text)
-              const setting = modelFlags(command)
+              const { anchorTurnId, model, thinkingLevel } = command
+              // Redacted before it is kept: the Session's summary lists it to everyone, past what
+              // the log's redaction covers. Before it is clipped, so a value isn't cut in two.
+              const title = threadTitleFrom(redactText(needles, text))
               yield* sessions.threadStarted(sessionId, {
                 id: threadId,
                 anchorTurnId,
                 title,
                 startedBy: sender.id,
-                ...setting,
+                model,
+                ...(thinkingLevel !== undefined && { thinkingLevel }),
                 createdAt: yield* Clock.currentTimeMillis,
               })
               events.push(
@@ -1866,7 +1873,8 @@ export class SessionRelay extends Context.Service<
                   anchorTurnId,
                   title,
                   startedBy: sender,
-                  ...setting,
+                  model,
+                  ...(thinkingLevel !== undefined && { thinkingLevel }),
                 }),
               )
             }
@@ -1874,6 +1882,7 @@ export class SessionRelay extends Context.Service<
               ThreadPromptSent.make({
                 threadId,
                 promptId,
+                requestId,
                 sender,
                 text,
                 ...carrying(carried ?? []),
@@ -1909,17 +1918,21 @@ export class SessionRelay extends Context.Service<
         if (thread.value.model === event.asked) {
           const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
           const { thinkingLevel } = thread.value
-          // Only a Model of its Creator's is taken as the one it runs on; else the Session's.
-          yield* sessions.setThreadModel(
-            sessionId,
-            threadId,
-            findProviderModel(creatorModels, event.model) === undefined
-              ? {}
-              : { model: event.model, ...(thinkingLevel !== undefined && { thinkingLevel }) },
-          )
-          yield* sessionUpdated(sessionId)
+          // Only a Model of its Creator's is taken as the one it runs on; else the setting stays.
+          if (findProviderModel(creatorModels, event.model) !== undefined) {
+            yield* sessions.setThreadModel(sessionId, threadId, {
+              model: event.model,
+              ...(thinkingLevel !== undefined && { thinkingLevel }),
+            })
+            yield* sessionUpdated(sessionId)
+          }
         }
-        const message = `Couldn't switch the thread “${thread.value.title}” to ${event.asked ?? "the Session's model"}: ${event.message}. It still runs on ${event.model}.`
+        // The title was redacted when it was kept; a thread from before that is redacted now.
+        const needles = yield* needlesForSession(sessionId)
+        const message = redactText(
+          needles,
+          `Couldn't switch the thread “${thread.value.title}” to ${event.asked ?? "another model"}: ${event.message}. It still runs on ${event.model}.`,
+        )
         const key = `${sessionId}/${threadId}`
         const switcher = threadModelSwitchers.get(key)
         threadModelSwitchers.delete(key)
@@ -2215,7 +2228,7 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * Wakes the Session if it is Asleep with prompts or thread commands waiting, as ones queued
+       * Wakes the Session if it is Asleep with prompts or thread prompts waiting, as ones queued
        * while Frozen.
        */
       const wakeIfWaiting = Effect.fn("SessionRelay.wakeIfWaiting")(function* (
@@ -2223,9 +2236,12 @@ export class SessionRelay extends Context.Service<
       ) {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session) || session.value.state !== "Asleep") return
+        // A thread command that carries no prompt, such as a model switch, is taken as it wakes.
         if (
           (yield* prompts.list(sessionId)).length === 0 &&
-          (yield* threadCommands.pending(sessionId)).length === 0
+          !(yield* threadCommands.pending(sessionId)).some(
+            (pending) => promptOfCommand(pending.command) !== undefined,
+          )
         ) {
           return
         }
@@ -2692,7 +2708,7 @@ export class SessionRelay extends Context.Service<
         const sessionFor = Effect.fn(function* (message: WebToHub & { sessionId: SessionId }) {
           const session = yield* sessions.get(message.sessionId)
           if (Option.isNone(session)) {
-            refuse(message, "There is no such Session.", { sessionId: message.sessionId })
+            refuse(message, "There is no such Session.")
           }
           return session
         })
@@ -2714,8 +2730,7 @@ export class SessionRelay extends Context.Service<
             you.id,
             yield* Clock.currentTimeMillis,
           )
-          if (Option.isNone(marked))
-            refuse(message, attachmentsNotSent(what).refusal, { sessionId })
+          if (Option.isNone(marked)) refuse(message, attachmentsNotSent(what).refusal)
           return marked
         })
 
@@ -2767,15 +2782,13 @@ export class SessionRelay extends Context.Service<
           const session = yield* sessionFor(message)
           if (Option.isNone(session)) return session
           if (session.value.state === "Archived") {
-            refuse(message, "The Session is archived: restore it first.", { sessionId })
+            refuse(message, "The Session is archived: restore it first.")
             return Option.none<SessionSummary>()
           }
           // A mod from before, of pi or Claude Code, that said hello and runs still.
           const running = session.value.state === "Active" || session.value.state === "Frozen"
           if (running && !live.awaitingHello(sessionId) && live.modDurable(sessionId) === false) {
-            refuse(message, "This Session's agent doesn't take threads: restart it.", {
-              sessionId,
-            })
+            refuse(message, "This Session's agent doesn't take threads: restart it.")
             return Option.none<SessionSummary>()
           }
           return session
@@ -2788,25 +2801,28 @@ export class SessionRelay extends Context.Service<
         ) {
           const thread = yield* sessions.threadOf(message.sessionId, threadId)
           if (Option.isNone(thread)) {
-            refuse(message, "The Session has no such thread.", { sessionId: message.sessionId })
+            refuse(message, "The Session has no such thread.")
           }
           return thread
         })
 
         /**
-         * A new thread's model and thinking level, checked against the Session's Creator's Models:
-         * none for the Session's; or none at all, the command refused.
+         * A new thread's own model and thinking level, checked against the Session's Creator's
+         * Models: the ones asked for, or, with no model asked for, the Session's as they are now. A
+         * fork keeps the model its parent had when it forked and never follows the Session's
+         * later switches, so the thread is always given one; or none, the command refused.
          */
         const threadSetting = Effect.fn("SessionRelay.threadSetting")(function* (
           message: Extract<WebToHub, { readonly _tag: "CreateThread" }>,
           session: SessionSummary,
         ) {
-          const { thinkingLevel } = message
-          if (message.model === undefined && thinkingLevel === undefined) {
-            return Option.some<ModelSetting>({})
-          }
-          // A thinking level alone is for the Session's model.
+          // A thinking level alone is for the Session's model. One that goes with another model
+          // is what was asked for it: the Session's doesn't carry over.
           const model = message.model ?? session.model
+          const thinkingLevel =
+            message.model === undefined
+              ? (message.thinkingLevel ?? session.thinkingLevel)
+              : message.thinkingLevel
           const checked = yield* harnesses.agent.check(
             {
               ...(model !== undefined && { model }),
@@ -2815,13 +2831,10 @@ export class SessionRelay extends Context.Service<
             { creatorId: session.creator.id },
           )
           if (typeof checked === "string") {
-            refuse(message, checked, { sessionId: session.id })
-            return Option.none<ModelSetting>()
+            refuse(message, checked)
+            return Option.none<CheckedModel["setting"]>()
           }
-          return Option.some<ModelSetting>({
-            ...(message.model !== undefined && { model: checked.setting.model }),
-            ...(thinkingLevel !== undefined && { thinkingLevel }),
-          })
+          return Option.some(checked.setting)
         })
 
         /**
@@ -2836,11 +2849,11 @@ export class SessionRelay extends Context.Service<
           if (session.state !== "Asleep") return true
           const refused = yield* wake(session, { by: you })
           if (refused !== undefined) {
-            refuse(message, refused, { sessionId })
+            refuse(message, refused)
             return false
           }
           if (!live.awaitingHello(sessionId)) {
-            refuse(message, "The Session could not be woken: see its history.", { sessionId })
+            refuse(message, "The Session could not be woken: see its history.")
             return false
           }
           return true
@@ -3323,16 +3336,13 @@ export class SessionRelay extends Context.Service<
 
             case "CreateThread": {
               // Anyone who sees the Session may (docs/design/durable-harness.md).
-              const { sessionId, anchorTurnId } = message
+              const { requestId, sessionId, anchorTurnId } = message
               const session = yield* threadSession(message)
               if (Option.isNone(session)) return
               if ((yield* log.mainTurnStartedAt(sessionId, anchorTurnId)) === undefined) {
                 return refuse(
                   message,
                   "There is no such Turn in the Session to start a thread off.",
-                  {
-                    sessionId,
-                  },
                 )
               }
               const setting = yield* threadSetting(message, session.value)
@@ -3353,14 +3363,15 @@ export class SessionRelay extends Context.Service<
                   ...prompt,
                   ...setting.value,
                 }),
+                requestId,
               )
-              peer.send(ThreadCreated.make({ sessionId, threadId }))
+              peer.send(ThreadCreated.make({ requestId, sessionId, threadId }))
               return yield* sessionUpdated(sessionId)
             }
 
             case "PromptThread": {
               // Anyone may post into a thread: it steers a Turn running there.
-              const { sessionId, threadId } = message
+              const { requestId, sessionId, threadId } = message
               const session = yield* threadSession(message)
               if (Option.isNone(session)) return
               if (Option.isNone(yield* threadFor(message, threadId))) return
@@ -3376,6 +3387,7 @@ export class SessionRelay extends Context.Service<
               return yield* admitThreadPrompt(
                 sessionId,
                 DeliverThreadPrompt.make({ sessionId, threadId, ...prompt }),
+                requestId,
               )
             }
 
@@ -3385,9 +3397,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               const thread = yield* threadFor(message, threadId)
               if (Option.isNone(thread)) return
-              if (!thread.value.running) {
-                return refuse(message, "No Turn runs in the thread.", { sessionId })
-              }
+              if (!thread.value.running) return refuse(message, "No Turn runs in the thread.")
               yield* logEvent(sessionId, TurnStopRequested.make({ by: you, threadId }))
               return yield* queueThreadCommand(sessionId, StopThread.make({ sessionId, threadId }))
             }
@@ -3409,9 +3419,8 @@ export class SessionRelay extends Context.Service<
                 },
                 { creatorId: session.value.creator.id },
               )
-              if (typeof checked === "string") return refuse(message, checked, { sessionId })
+              if (typeof checked === "string") return refuse(message, checked)
               const { model, thinkingLevel } = checked.setting
-              if (model === undefined) return
               if (thread.value.model === model && thread.value.thinkingLevel === thinkingLevel) {
                 return
               }
@@ -4442,19 +4451,39 @@ export class SessionRelay extends Context.Service<
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
-          // A thread's prompt is done with: told to its sender, not sent again.
+          // A thread's prompt is done with, not sent again, and logged as failed, so everyone sees
+          // it is not sent, now and after a reload. A thread the agent could not start is gone with
+          // its first prompt: it never existed there, and a reply to it would fail alike.
           const threadPrompt = yield* threadCommands.promptTaken(sessionId, event.promptId)
           if (Option.isSome(threadPrompt) && promptOfCommand(threadPrompt.value) !== undefined) {
-            const { sender } = threadPrompt.value as StartThread | DeliverThreadPrompt
-            return toWeb(
-              CommandFailed.make({
-                command:
-                  threadPrompt.value._tag === "StartThread" ? "CreateThread" : "PromptThread",
-                sessionId,
-                message: `Your prompt could not be delivered to the thread: ${event.message}`,
+            const { threadId, sender } = threadPrompt.value as StartThread | DeliverThreadPrompt
+            const dropped =
+              threadPrompt.value._tag === "StartThread" &&
+              (yield* sessions.dropThread(sessionId, threadId))
+            yield* logEvent(
+              sessionId,
+              ThreadPromptFailed.make({
+                threadId,
+                promptId: event.promptId,
+                message: event.message,
+                ...(dropped && { threadDropped: true as const }),
               }),
-              (client) => client.you.id === sender.id,
             )
+            if (dropped) {
+              // Its sender is in a thread that is no more: told why, as the thread says nothing.
+              toWeb(
+                CommandFailed.make({
+                  command: "CreateThread",
+                  sessionId,
+                  message: redactText(
+                    yield* needlesForSession(sessionId),
+                    `The thread could not be started: ${event.message}`,
+                  ),
+                }),
+                (client) => client.you.id === sender.id,
+              )
+            }
+            return yield* sessionUpdated(sessionId)
           }
           const steeredBy = live.promptFailed(sessionId, event.promptId)
           if (steeredBy !== undefined) {
@@ -4654,7 +4683,8 @@ export class SessionRelay extends Context.Service<
           event.agentId === undefined &&
           event.threadId !== undefined
         ) {
-          if (yield* sessions.setThreadTurn(sessionId, event.threadId, null)) {
+          // Only the Turn running there ends it: a late end of an earlier one leaves a later alone.
+          if (yield* sessions.threadTurnEnded(sessionId, event.threadId, event.turnId)) {
             yield* sessionUpdated(sessionId)
           }
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {

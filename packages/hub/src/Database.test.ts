@@ -53,7 +53,14 @@ const beforeThreads = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`DROP TABLE thread_commands`
   yield* sql`DROP TABLE threads`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'thread_models'`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'threads'`
+})
+
+/** Takes the database back to before migration 0048, a thread's own model. */
+const beforeThreadModels = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'thread_models'`
 })
 
 /** Takes the database back to before migration 0046, the Hub's one device id, and 0047. The device id is kept. */
@@ -384,6 +391,115 @@ const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
 
+describe("migration 0048, a thread's own model", () => {
+  test("a thread that ran on the Session's is given the Session's model, one with its own keeps it", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeThreadModels
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, harness,
+            model, thinking_level
+          ) VALUES
+            ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, 'Pi', 'openai/gpt-6-sol', 'low')
+        `
+        yield* sql`
+          INSERT INTO threads (
+            session_id, thread_id, anchor_turn_id, title, started_by, model, thinking_level,
+            created_at
+          ) VALUES
+            ('s-1', 'thr-1', 't-1', 'follows', 'p-1', NULL, NULL, 1),
+            ('s-1', 'thr-2', 't-1', 'own', 'p-1', 'anthropic/claude-opus-5-5', NULL, 2)
+        `
+      }),
+    )
+    const threads = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const all = yield* sessions.list
+        return all[0]?.threads?.map((thread) => [thread.id, thread.model, thread.thinkingLevel])
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(threads).toEqual([
+      ["thr-1", "openai/gpt-6-sol", "low"],
+      ["thr-2", "anthropic/claude-opus-5-5", undefined],
+    ])
+  })
+})
+
+describe("migration 0047, threads", () => {
+  test("a Session from the old pi extension is handed its history on the durable agent, with no old conversation", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const old = ConversationId.make("0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeThreads
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, harness,
+            handoff_from
+          ) VALUES
+            ('s-pi', 'o/r', 'main', 'claude/s-pi', 'Asleep', 'r-1', 'p-1', 1, 'Pi', NULL),
+            ('s-switching', 'o/r', 'main', 'claude/s-sw', 'Asleep', 'r-1', 'p-1', 1, 'Pi', 'ClaudeCode'),
+            ('s-back', 'o/r', 'main', 'claude/s-back', 'Asleep', 'r-1', 'p-1', 1, NULL, NULL)
+        `
+        // The old pi extension's conversations, and Claude Code's, which the durable agent never had.
+        yield* sql`
+          INSERT INTO session_conversations (session_id, harness, conversation_id, seen_seq) VALUES
+            ('s-pi', 'Pi', ${old}, 3),
+            ('s-switching', 'Pi', ${old}, NULL),
+            ('s-switching', 'ClaudeCode', ${old}, 5),
+            ('s-back', 'Pi', ${old}, 7),
+            ('s-back', 'ClaudeCode', ${old}, 9)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const found = []
+        for (const id of ["s-pi", "s-switching", "s-back"]) {
+          const sessionId = SessionId.make(id)
+          found.push([
+            id,
+            Option.getOrUndefined(yield* sessions.handoffFrom(sessionId)),
+            Option.getOrUndefined(yield* sessions.conversationId(sessionId, "Pi")),
+            Option.getOrUndefined(yield* sessions.seenSeq(sessionId, "Pi")),
+            Option.getOrUndefined(yield* sessions.conversationId(sessionId, "ClaudeCode")),
+          ])
+        }
+        return found
+      }).pipe(Effect.provide(SessionsTest)),
+    )
+    expect(after).toEqual([
+      // Handed all its history: it had never switched, so it names its own Harness.
+      ["s-pi", "Pi", undefined, undefined, undefined],
+      ["s-switching", "ClaudeCode", undefined, undefined, old],
+      // Claude Code's wake (settleHarness) hands it off from Claude Code, with no stale pi id.
+      ["s-back", undefined, undefined, undefined, old],
+    ])
+  })
+})
+
 describe("migration 0046, the Hub's one device id", () => {
   test("keeps the first a Hub made, and takes no second", async () => {
     const dir = testDatabaseDir("kndl-migration-")
@@ -521,7 +637,8 @@ describe("migration 0043, each Harness's conversation", () => {
           ) VALUES
             ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, NULL, ${conversation}),
             ('s-2', 'o/r', 'main', 'claude/s-2', 'Asleep', 'r-1', 'p-1', 1, 'Pi', ${conversation}),
-            ('s-3', 'o/r', 'main', 'claude/s-3', 'Asleep', 'r-1', 'p-1', 1, NULL, NULL)
+            ('s-3', 'o/r', 'main', 'claude/s-3', 'Asleep', 'r-1', 'p-1', 1, NULL, NULL),
+            ('s-4', 'o/r', 'main', 'claude/s-4', 'Asleep', 'r-1', 'p-1', 1, NULL, ${conversation})
         `
       }),
     )
@@ -547,14 +664,15 @@ describe("migration 0043, each Harness's conversation", () => {
         return { found, left: left.map((row) => row.id) }
       }).pipe(Effect.provide(SessionsTest)),
     )
+    // Migration 0047 forgets the old pi extension's conversation, which the durable agent can't resume.
     expect(after.found).toEqual({
       claudeCode: conversation,
       notPi: undefined,
-      pi: conversation,
+      pi: undefined,
       notClaudeCode: undefined,
       none: undefined,
     })
-    expect(after.left).toEqual(["s-2"])
+    expect(after.left).toEqual(["s-4"])
   })
 })
 

@@ -143,3 +143,32 @@ test("at narrow widths, closing the thread restores the main draft and its keybo
   expect(field("Prompt").closest("[hidden]")).toBeNull()
   expect(document.activeElement).toBe(reply ?? null)
 })
+
+test("a new thread is preselected to the Session's Model, with no row that follows the Session's", async () => {
+  const { hub, panel, page, field } = await open("/sessions/s-demo")
+  const { model } = hub.sessions.get(session)?.summary ?? {}
+  expect(model).toBeDefined()
+  const reply = [...page.querySelectorAll<HTMLButtonElement>("button")].find(
+    (each) => each.textContent?.trim() === "Reply in thread",
+  )
+  await step(() => reply?.click())
+  await eventually(() => expect(panel()?.querySelector("h2")?.textContent).toBe("New thread"))
+  const picker = panel().querySelector<HTMLButtonElement>('button[aria-label^="Model:"]')
+  await step(() => picker?.click())
+  await settle()
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+  expect(options.length).toBeGreaterThan(0)
+  expect(options.some((each) => each.textContent?.includes("Same as the Session"))).toBe(false)
+  expect(panel().textContent).not.toContain("Same as the Session")
+  // The Session's own Model is the one picked, and what is sent without picking another.
+  expect(options.find((each) => each.getAttribute("aria-selected") === "true")).toBeDefined()
+  await step(() => options[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })))
+  await step(() => type(field("Reply"), "Keep the model"))
+  await step(() => button("Start thread", panel()).click())
+  await eventually(() =>
+    expect(hub.received.find((message) => message._tag === "CreateThread")).toBeDefined(),
+  )
+  expect(hub.received.find((message) => message._tag === "CreateThread")).toMatchObject({
+    model,
+  })
+})

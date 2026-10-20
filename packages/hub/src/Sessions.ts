@@ -103,8 +103,8 @@ export interface NewThread {
   readonly anchorTurnId: TurnId
   readonly title: string
   readonly startedBy: ParticipantId
-  /** Its model and thinking level, when not the Session's. */
-  readonly model?: ModelName
+  /** Its own model and thinking level: a thread doesn't follow the Session's. */
+  readonly model: ModelName
   readonly thinkingLevel?: ThinkingLevel
   readonly createdAt: number
 }
@@ -113,7 +113,8 @@ export interface NewThread {
 export interface ThreadTurn {
   readonly threadId: ThreadId
   readonly turnId: TurnId
-  readonly startedAt: number
+  /** When it started, if known. */
+  readonly startedAt: number | undefined
 }
 
 /** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
@@ -445,18 +446,29 @@ export class Sessions extends Context.Service<
       Option.Option<ModelSetting & { readonly title: string; readonly running: boolean }>,
       SqlError
     >
-    /** The Turn running in the thread now, or null once it is idle; false if there is no such thread. */
+    /** The thread's Turn starts: it runs now. False if there is no such thread. */
     readonly setThreadTurn: (
       id: SessionId,
       threadId: ThreadId,
-      turn: { readonly turnId: TurnId; readonly startedAt: number } | null,
+      turn: { readonly turnId: TurnId; readonly startedAt: number },
     ) => Effect.Effect<boolean, SqlError>
-    /** The thread's model and thinking level; none for the Session's. */
+    /**
+     * The thread's Turn `turnId` ended: it is idle, unless a later Turn started in it, which a
+     * late end of an earlier one leaves running. Whether it was idled.
+     */
+    readonly threadTurnEnded: (
+      id: SessionId,
+      threadId: ThreadId,
+      turnId: TurnId,
+    ) => Effect.Effect<boolean, SqlError>
+    /** The thread's model and thinking level. */
     readonly setThreadModel: (
       id: SessionId,
       threadId: ThreadId,
-      setting: ModelSetting,
+      setting: ModelSetting & { readonly model: ModelName },
     ) => Effect.Effect<void, SqlError>
+    /** Forgets a thread the agent never made. Whether the Session had it. */
+    readonly dropThread: (id: SessionId, threadId: ThreadId) => Effect.Effect<boolean, SqlError>
     /** Its agent stopped: no Turn runs in any of its threads. Returns those that ran. */
     readonly endThreadTurns: (id: SessionId) => Effect.Effect<ReadonlyArray<ThreadTurn>, SqlError>
   }
@@ -521,6 +533,9 @@ export class Sessions extends Context.Service<
         `
         const bySession = new Map<string, Array<ThreadSummary>>()
         for (const row of rows) {
+          // A thread without a model the Hub still takes is hidden: it can't be shown as running on one.
+          const { model, ...setting } = settingOf(row)
+          if (model === undefined) continue
           const threads = bySession.get(row.sessionId) ?? []
           threads.push({
             id: ThreadId.make(row.id),
@@ -533,7 +548,8 @@ export class Sessions extends Context.Service<
               ...(row.startedByAvatarUrl !== null && { avatarUrl: row.startedByAvatarUrl }),
             },
             running: row.runningTurn !== null,
-            ...settingOf(row),
+            model,
+            ...setting,
           })
           bySession.set(row.sessionId, threads)
         }
@@ -918,7 +934,7 @@ export class Sessions extends Context.Service<
             created_at
           ) VALUES (
             ${id}, ${thread.id}, ${thread.anchorTurnId}, ${thread.title}, ${thread.startedBy},
-            ${thread.model ?? null}, ${thread.thinkingLevel ?? null}, ${thread.createdAt}
+            ${thread.model}, ${thread.thinkingLevel ?? null}, ${thread.createdAt}
           )
         `
       })
@@ -946,12 +962,24 @@ export class Sessions extends Context.Service<
       const setThreadTurn = Effect.fn("Sessions.setThreadTurn")(function* (
         id: SessionId,
         threadId: ThreadId,
-        turn: { readonly turnId: TurnId; readonly startedAt: number } | null,
+        turn: { readonly turnId: TurnId; readonly startedAt: number },
       ) {
         const rows = yield* sql<{ readonly id: string }>`
-          UPDATE threads SET running_turn = ${turn?.turnId ?? null},
-            turn_started_at = ${turn?.startedAt ?? null}
+          UPDATE threads SET running_turn = ${turn.turnId}, turn_started_at = ${turn.startedAt}
           WHERE session_id = ${id} AND thread_id = ${threadId}
+          RETURNING thread_id AS id
+        `
+        return rows.length > 0
+      })
+
+      const threadTurnEnded = Effect.fn("Sessions.threadTurnEnded")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+        turnId: TurnId,
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          UPDATE threads SET running_turn = NULL, turn_started_at = NULL
+          WHERE session_id = ${id} AND thread_id = ${threadId} AND running_turn = ${turnId}
           RETURNING thread_id AS id
         `
         return rows.length > 0
@@ -960,13 +988,24 @@ export class Sessions extends Context.Service<
       const setThreadModel = Effect.fn("Sessions.setThreadModel")(function* (
         id: SessionId,
         threadId: ThreadId,
-        setting: ModelSetting,
+        setting: ModelSetting & { readonly model: ModelName },
       ) {
         yield* sql`
-          UPDATE threads SET model = ${setting.model ?? null},
+          UPDATE threads SET model = ${setting.model},
             thinking_level = ${setting.thinkingLevel ?? null}
           WHERE session_id = ${id} AND thread_id = ${threadId}
         `
+      })
+
+      const dropThread = Effect.fn("Sessions.dropThread")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          DELETE FROM threads WHERE session_id = ${id} AND thread_id = ${threadId}
+          RETURNING thread_id AS id
+        `
+        return rows.length > 0
       })
 
       const endThreadTurns = Effect.fn("Sessions.endThreadTurns")(function* (id: SessionId) {
@@ -978,19 +1017,18 @@ export class Sessions extends Context.Service<
         }>`
           SELECT thread_id AS threadId, running_turn AS turnId, turn_started_at AS startedAt
           FROM threads WHERE session_id = ${id} AND running_turn IS NOT NULL
+          ORDER BY created_at, rowid
         `
         if (rows.length === 0) return []
         yield* sql`
           UPDATE threads SET running_turn = NULL, turn_started_at = NULL
           WHERE session_id = ${id} AND running_turn IS NOT NULL
         `
-        return rows
-          .map((row): ThreadTurn => ({
-            threadId: ThreadId.make(row.threadId),
-            turnId: TurnId.make(row.turnId),
-            startedAt: row.startedAt ?? 0,
-          }))
-          .toSorted((a, b) => a.threadId.localeCompare(b.threadId))
+        return rows.map((row): ThreadTurn => ({
+          threadId: ThreadId.make(row.threadId),
+          turnId: TurnId.make(row.turnId),
+          startedAt: row.startedAt ?? undefined,
+        }))
       }, sql.withTransaction)
 
       return Sessions.of({
@@ -1032,7 +1070,9 @@ export class Sessions extends Context.Service<
         threadStarted,
         threadOf,
         setThreadTurn,
+        threadTurnEnded,
         setThreadModel,
+        dropThread,
         endThreadTurns,
       })
     }),

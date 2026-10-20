@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { AttachmentIds, PromptAttachments, textOrAttachments } from "./Attachment.ts"
-import { AgentId, PromptId, SessionId, ThreadId, TurnId } from "./Ids.ts"
+import { AgentId, PromptId, RequestId, SessionId, ThreadId, TurnId } from "./Ids.ts"
 import { ModelName, ThinkingLevel } from "./Model.ts"
 import { ProviderModel } from "./Provider.ts"
 import { Participant } from "./Session.ts"
@@ -54,8 +54,11 @@ export const ThreadStarted = Schema.TaggedStruct("ThreadStarted", {
   anchorTurnId: TurnId,
   title: Schema.NonEmptyString,
   startedBy: Participant,
-  /** The model it runs on, when not the Session's. */
-  model: Schema.optionalKey(ModelName),
+  /**
+   * The model it runs on: the Session's own when the thread was started without one, since a
+   * fork keeps the model its parent had at the fork and doesn't follow the Session's later.
+   */
+  model: ModelName,
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type ThreadStarted = typeof ThreadStarted.Type
@@ -68,12 +71,32 @@ export type ThreadStarted = typeof ThreadStarted.Type
 export const ThreadPromptSent = Schema.TaggedStruct("ThreadPromptSent", {
   threadId: ThreadId,
   promptId: PromptId,
+  /**
+   * The web command it came from, so its sender matches this to the reply it is showing as
+   * sending. The Hub redacts `text` before logging it, so the text can't be matched.
+   */
+  requestId: Schema.optionalKey(RequestId),
   sender: Participant,
   /** As typed; empty for a prompt of attachments alone. */
   text: Schema.String,
   attachments: Schema.optionalKey(PromptAttachments),
 }).check(textOrAttachments)
 export type ThreadPromptSent = typeof ThreadPromptSent.Type
+
+/**
+ * The agent couldn't take a prompt posted into a thread, such as the first of a thread it
+ * couldn't fork: it is not sent after all, for everyone. When the thread's first prompt failed,
+ * the thread is gone too, since the agent never made it, and later replies are refused.
+ */
+export const ThreadPromptFailed = Schema.TaggedStruct("ThreadPromptFailed", {
+  threadId: ThreadId,
+  promptId: PromptId,
+  /** Why, as the agent said, redacted. */
+  message: Schema.String,
+  /** Present when the thread was dropped with its first prompt. */
+  threadDropped: Schema.optionalKey(Schema.Literal(true)),
+})
+export type ThreadPromptFailed = typeof ThreadPromptFailed.Type
 
 /** A Participant switched a thread's model (web SetThreadModel), from its next request on. */
 export const ThreadModelChanged = Schema.TaggedStruct("ThreadModelChanged", {
@@ -158,7 +181,8 @@ export const StartThread = Schema.TaggedStruct("StartThread", {
   text: Schema.String,
   sender: Participant,
   attachments: Schema.optionalKey(PromptAttachments),
-  model: Schema.optionalKey(ModelName),
+  /** The thread's own model: the Hub always resolves one, the Session's when none was asked for. */
+  model: ModelName,
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 }).check(textOrAttachments)
 export type StartThread = typeof StartThread.Type
@@ -208,10 +232,12 @@ export type Compact = typeof Compact.Type
 /**
  * Start a thread off one of the main loop's Turns, with its first prompt. Any Participant may; an
  * Asleep Session is woken first. The Hub mints its id, logs ThreadStarted and ThreadPromptSent,
- * and answers with a ThreadCreated. A `model` is one of the Session's Models, absent for the
- * Session's own.
+ * and answers with a ThreadCreated, or a CommandFailed, both with its `requestId`. A `model` is
+ * one of the Session's Models; absent, the thread starts on the Session's current Model and
+ * thinking level, and keeps them: it doesn't follow the Session's later switches.
  */
 export const CreateThread = Schema.TaggedStruct("CreateThread", {
+  requestId: RequestId,
   sessionId: SessionId,
   anchorTurnId: TurnId,
   text: Schema.String,
@@ -221,8 +247,13 @@ export const CreateThread = Schema.TaggedStruct("CreateThread", {
 }).check(textOrAttachments)
 export type CreateThread = typeof CreateThread.Type
 
-/** Post into a thread. Any Participant may; an Asleep Session is woken first. */
+/**
+ * Post into a thread. Any Participant may; an Asleep Session is woken first. A refusal is a
+ * CommandFailed with its `requestId`, and the ThreadPromptSent the Hub logs for it carries it, so
+ * the sender can tell which of its replies each is for.
+ */
 export const PromptThread = Schema.TaggedStruct("PromptThread", {
+  requestId: RequestId,
   sessionId: SessionId,
   threadId: ThreadId,
   text: Schema.String,
@@ -251,6 +282,8 @@ export type CompactConversation = typeof CompactConversation.Type
 
 /** The answer to a CreateThread, to its sender: the thread to open. */
 export const ThreadCreated = Schema.TaggedStruct("ThreadCreated", {
+  /** The CreateThread this answers. */
+  requestId: RequestId,
   sessionId: SessionId,
   threadId: ThreadId,
 })

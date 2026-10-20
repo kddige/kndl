@@ -871,12 +871,18 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
   }),
   // Threads (docs/design/durable-harness.md): conversations forked off a Session's main loop at one
-  // of its Turns, oldest first by `created_at`. `model` and `thinking_level` are null while it runs
-  // on the Session's; `running_turn` is the Turn running in it now, null while it is idle, with when
-  // it started. `thread_commands` holds each Session's thread commands and Compacts its agent hasn't
-  // taken yet, as HubToMod JSON, numbered in the order they were sent, never twice, delivered again after each hello of its
-  // agent until it has: a prompt's (`prompt_id`) once its Turn starts or it steers one, the others
-  // once its agent has polled past them.
+  // of its Turns, oldest first by `created_at`. `model` and `thinking_level` are the thread's own
+  // (0048 made `model` always set); `running_turn` is the Turn running in it now, null while it is
+  // idle, with when it started. `thread_commands` holds each Session's thread commands and Compacts
+  // its agent hasn't taken yet, as HubToMod JSON, numbered in the order they were sent, never twice,
+  // delivered again after each hello of its agent until it has: a prompt's (`prompt_id`) once its
+  // Turn starts or it steers one, the others once its agent has polled past them.
+  //
+  // Every conversation the Hub has recorded for the Harness `Pi` is the old pi extension's, which
+  // the durable agent can't resume: it would adopt that id on a fresh database and start empty
+  // with no handoff. They are forgotten, and a Session that ran on pi is marked to be handed its
+  // whole history when it next wakes, on the durable agent. A Session that switched from Claude
+  // Code to pi, and back, loses its stale pi id the same way (the wake hands it off from Claude Code).
   "0047_threads": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`
@@ -903,6 +909,22 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
     yield* sql`CREATE INDEX thread_commands_session ON thread_commands (session_id, seq)`
+    yield* sql`
+      UPDATE sessions SET handoff_from = COALESCE(handoff_from, 'Pi') WHERE harness = 'Pi'
+    `
+    yield* sql`DELETE FROM session_conversations WHERE harness = 'Pi'`
+  }),
+  // A thread has its own model, never the Session's: a fork keeps the model its parent had at the
+  // fork and doesn't follow the Session's switches. Threads recorded as running on the Session's
+  // (null) are given the Session's model and thinking level as they are now.
+  "0048_thread_models": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      UPDATE threads SET
+        model = (SELECT s.model FROM sessions s WHERE s.id = threads.session_id),
+        thinking_level = (SELECT s.thinking_level FROM sessions s WHERE s.id = threads.session_id)
+      WHERE model IS NULL
+    `
   }),
 })
 

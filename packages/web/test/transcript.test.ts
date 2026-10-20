@@ -814,7 +814,7 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
       anchorTurnId: turnId(),
       title: pick(["Why?", "And Windows?"]),
       startedBy: person(),
-      ...(next() < 0.5 && { model: "openai/gpt-6-sol" }),
+      model: "openai/gpt-6-sol",
     }),
     () => ({
       _tag: "ThreadPromptSent",
@@ -822,6 +822,13 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
       promptId: promptId(),
       sender: person(),
       text: "in the thread",
+    }),
+    () => ({
+      _tag: "ThreadPromptFailed",
+      threadId: threadId(),
+      promptId: promptId(),
+      message: "storage is full",
+      ...(next() < 0.2 && { threadDropped: true }),
     }),
     () => ({ _tag: "ThreadModelChanged", threadId: threadId(), by: person(), model: "x/y" }),
     () => ({
@@ -962,6 +969,57 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
     expect(turn?.unread.map((prompt) => prompt.promptId)).toEqual(["p-2"] as never)
     // The prompts and the answer to the first.
     expect(after?.replies).toBe(3)
+  })
+
+  test("a prompt the agent failed leaves those sent and shows as failed, as it does after a reload", () => {
+    const log = entries([
+      ...answered,
+      started,
+      posted("p-1", bob, "What about Windows?"),
+      posted("p-2", alice, "and macOS"),
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-2",
+        message: "storage is full",
+      },
+    ])
+    const thread = transcriptOf(log).threads.get("thr-1" as never)
+    expect(thread?.sent.map((prompt) => prompt.text)).toEqual(["What about Windows?"])
+    expect(
+      thread?.failed.map((prompt) => [prompt.text, prompt.sender.name, prompt.message]),
+    ).toEqual([["and macOS", "Alice", "storage is full"]])
+    // Folded a few entries at a time, as they arrive, it is the same.
+    expect(viewOf(foldInBatches(log, () => 1))).toEqual(transcriptOf(log))
+  })
+
+  test("a thread that failed to start with its first prompt is gone, whatever comes after", () => {
+    const log = entries([
+      ...answered,
+      started,
+      posted("p-1", bob, "What about Windows?"),
+      posted("p-2", alice, "hello?"),
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-1",
+        message: "The main loop has nothing to fork a thread from yet.",
+        threadDropped: true,
+      },
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-2",
+        message: "The Session has no such thread.",
+      },
+    ])
+    const transcript = transcriptOf(log)
+    expect(transcript.threads.has("thr-1" as never)).toBe(false)
+    expect(transcript.anchored.get("t-1" as never)).toBeUndefined()
+    expect(viewOf(foldInBatches(log, () => 1))).toEqual(transcript)
+    // A later event of it doesn't bring it back.
+    const later = transcriptOf([...log, ...entries([posted("p-3", bob, "again")], log.length)])
+    expect(later.threads.has("thr-1" as never)).toBe(false)
   })
 
   test("a stop asked for in a thread stops its Turn, not the main loop's", () => {

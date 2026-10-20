@@ -296,7 +296,7 @@ function threadsFromLog(log: ReadonlyArray<LogEntryWire>): Map<string, FakeThrea
           anchorTurnId: event.anchorTurnId,
           startedBy: event.startedBy,
           running: false,
-          ...(event.model !== undefined && { model: event.model }),
+          model: event.model,
           ...(event.thinkingLevel !== undefined && { thinkingLevel: event.thinkingLevel }),
         },
         turnId: null,
@@ -323,6 +323,10 @@ function spentFromLog(log: ReadonlyArray<LogEntryWire>): number {
 
 /** What a conversation spends on a Turn of `steps`, made up, in dollars. */
 const turnCost = (steps: number) => 0.012 + steps * 0.004
+
+/** The request id a command carries, for the Hub to name in what it refuses. */
+const requestIdOf = (message: object): string | undefined =>
+  "requestId" in message && typeof message.requestId === "string" ? message.requestId : undefined
 
 /** The running total a UsageChanged says, from dollars. */
 const usageOf = (cost: number) => ({
@@ -789,6 +793,7 @@ export class FakeHub implements HubTransport {
     message: {
       readonly _tag: string
       readonly sessionId: string
+      readonly requestId?: string
       readonly attachments?: ReadonlyArray<string>
     },
     what: string,
@@ -800,7 +805,13 @@ export class FakeHub implements HubTransport {
         : [],
     )
     if (taken.length === named.length) return taken
-    this.#fail(socket, message._tag, attachmentsNotSent(what).refusal, message.sessionId)
+    this.#fail(
+      socket,
+      message._tag,
+      attachmentsNotSent(what).refusal,
+      message.sessionId,
+      message.requestId,
+    )
     return undefined
   }
 
@@ -1428,12 +1439,14 @@ export class FakeHub implements HubTransport {
       case "CreateThread": {
         const session = this.#drivenFor(socket, message)
         if (!session) break
+        const { requestId } = message
         if (session.summary.state === "Archived") {
           this.#fail(
             socket,
             message._tag,
-            "The Session is archived: restore it to start a thread.",
+            "The Session is archived: restore it first.",
             message.sessionId,
+            requestId,
           )
           break
         }
@@ -1447,19 +1460,33 @@ export class FakeHub implements HubTransport {
           this.#fail(
             socket,
             message._tag,
-            "The Session has no such Turn to start a thread off.",
+            "There is no such Turn in the Session to start a thread off.",
             message.sessionId,
+            requestId,
           )
           break
         }
-        const checked =
-          message.model === undefined
-            ? undefined
-            : this.#checkProviderModel(message, this.#sessionModels(session))
+        // A thread has a model of its own, as on the Hub: the Session's as it is now when none is
+        // asked for, which it keeps, and the thinking level goes with the model it was asked on.
+        const own = message.model !== undefined
+        const model =
+          message.model ?? (session.summary.harness === "Pi" ? session.summary.model : undefined)
+        const thinkingLevel = own
+          ? message.thinkingLevel
+          : (message.thinkingLevel ?? session.summary.thinkingLevel)
+        const checked = this.#checkProviderModel(
+          {
+            ...(model !== undefined && { model }),
+            ...(thinkingLevel !== undefined && { thinkingLevel }),
+          },
+          this.#sessionModels(session),
+        )
         if (typeof checked === "string") {
-          this.#fail(socket, message._tag, checked, message.sessionId)
+          this.#fail(socket, message._tag, checked, message.sessionId, requestId)
           break
         }
+        // Woken first, then marked sent, then logged, in the Hub's order.
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a thread", this.#you)
         const attachments = this.#markSentOrRefuse(socket, message, "prompt")
         if (!attachments) break
         const threadId = `thr-${++this.#ids}`
@@ -1470,8 +1497,8 @@ export class FakeHub implements HubTransport {
             anchorTurnId: message.anchorTurnId,
             startedBy: this.#you,
             running: false,
-            ...(checked !== undefined && { model: checked.model }),
-            ...(checked?.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
+            model: checked.model,
+            ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
           },
           turnId: null,
           stop: null,
@@ -1484,33 +1511,35 @@ export class FakeHub implements HubTransport {
           anchorTurnId: message.anchorTurnId,
           title: thread.summary.title,
           startedBy: this.#you,
-          ...(thread.summary.model !== undefined && { model: thread.summary.model }),
+          model: thread.summary.model,
           ...(thread.summary.thinkingLevel !== undefined && {
             thinkingLevel: thread.summary.thinkingLevel,
           }),
         })
-        socket.deliver({ _tag: "ThreadCreated", sessionId: message.sessionId, threadId })
+        this.#threadPrompt(session, thread, this.#you, message.text, attachments, requestId)
+        socket.deliver({ _tag: "ThreadCreated", requestId, sessionId: message.sessionId, threadId })
         this.#threadsChanged(session)
-        this.#threadPrompt(session, thread, this.#you, message.text, attachments)
         break
       }
       case "PromptThread": {
         const session = this.#drivenFor(socket, message)
         if (!session) break
-        const thread = this.#threadFor(socket, session, message)
-        if (!thread) break
         if (session.summary.state === "Archived") {
           this.#fail(
             socket,
             message._tag,
-            "The Session is archived: restore it to reply.",
+            "The Session is archived: restore it first.",
             message.sessionId,
+            message.requestId,
           )
           break
         }
+        const thread = this.#threadFor(socket, session, message)
+        if (!thread) break
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a thread", this.#you)
         const attachments = this.#markSentOrRefuse(socket, message, "prompt")
         if (!attachments) break
-        this.#threadPrompt(session, thread, this.#you, message.text, attachments)
+        this.#threadPrompt(session, thread, this.#you, message.text, attachments, message.requestId)
         break
       }
       case "StopThread": {
@@ -3170,12 +3199,23 @@ export class FakeHub implements HubTransport {
   #threadFor(
     socket: FakeSocket,
     session: FakeSession,
-    message: { readonly _tag: string; readonly sessionId: string; readonly threadId?: string },
+    message: {
+      readonly _tag: string
+      readonly sessionId: string
+      readonly requestId?: string
+      readonly threadId?: string
+    },
   ): FakeThread | undefined {
     const thread =
       message.threadId === undefined ? undefined : session.threads.get(message.threadId)
     if (!thread)
-      this.#fail(socket, message._tag, "The Session has no such thread.", message.sessionId)
+      this.#fail(
+        socket,
+        message._tag,
+        "The Session has no such thread.",
+        message.sessionId,
+        message.requestId,
+      )
     return thread
   }
 
@@ -3191,7 +3231,7 @@ export class FakeHub implements HubTransport {
   /**
    * Someone posts into a thread: logged as sent at once; a step later the agent starts a Turn
    * from it, or, while one runs, steers it in, and reads it a few steps after. An Asleep Session
-   * is woken first.
+   * is woken before it, by the command (`wokenFor` on the Hub).
    */
   #threadPrompt(
     session: FakeSession,
@@ -3199,6 +3239,7 @@ export class FakeHub implements HubTransport {
     sender: ParticipantWire,
     text: string,
     attachments: ReadonlyArray<AttachmentWire> = [],
+    requestId?: string,
   ): void {
     const promptId = `p-${++this.#ids}`
     const threadId = thread.summary.id
@@ -3206,11 +3247,11 @@ export class FakeHub implements HubTransport {
       _tag: "ThreadPromptSent",
       threadId,
       promptId,
+      ...(requestId !== undefined && { requestId }),
       sender,
       text,
       ...(attachments.length > 0 && { attachments }),
     })
-    if (session.summary.state === "Asleep") this.#wake(session, "Woken by a thread", sender)
     const deliver = () => {
       const { state, starting } = session.summary
       if (state !== "Active" || starting !== undefined) {
@@ -3259,7 +3300,7 @@ export class FakeHub implements HubTransport {
     const turnId = `t-${++this.#ids}`
     const threadId = thread.summary.id
     const started = Date.now()
-    const model = thread.summary.model ?? this.#modelId(session)
+    const { model } = thread.summary
     const timers: Array<ReturnType<typeof setTimeout>> = []
     const openTools = new Map<string, string>()
     let ended = false
@@ -3392,7 +3433,7 @@ export class FakeHub implements HubTransport {
     if (!session) return undefined
     const refused = driveRefusal(this.#you, session.summary.creator, session.summary.harness)
     if (refused === undefined) return session
-    this.#fail(socket, message._tag, refused.refusal, message.sessionId)
+    this.#fail(socket, message._tag, refused.refusal, message.sessionId, requestIdOf(message))
     return undefined
   }
 
@@ -3440,12 +3481,19 @@ export class FakeHub implements HubTransport {
     }
   }
 
-  #fail(socket: FakeSocket, command: string, message: string, sessionId?: string): void {
+  #fail(
+    socket: FakeSocket,
+    command: string,
+    message: string,
+    sessionId?: string,
+    requestId?: string,
+  ): void {
     socket.deliver({
       _tag: "CommandFailed",
       command,
       message,
       ...(sessionId !== undefined && { sessionId }),
+      ...(requestId !== undefined && { requestId }),
     })
   }
 

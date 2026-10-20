@@ -16,6 +16,7 @@ import {
   findProviderModel,
   type Harness,
   modelNotFoundText,
+  type ModelName,
   type Participant,
   type ParticipantId,
   type ProviderModel,
@@ -29,7 +30,8 @@ import type { ModelSetting } from "./Sessions.ts"
 
 /** A model and thinking level as checked for a Session (#128). */
 export interface CheckedModel {
-  readonly setting: ModelSetting
+  /** The agent's check always names a model: the default Model when none is asked for. */
+  readonly setting: ModelSetting & { readonly model: ModelName }
   /** What the model is called. */
   readonly label: string | undefined
 }

@@ -361,6 +361,8 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     // A thread's title is the start of its first prompt.
     case "ThreadStarted":
       return { ...event, title: redact(event.title) }
+    case "ThreadPromptFailed":
+      return { ...event, message: redact(event.message) }
     case "CompactionEnded":
       return {
         ...event,

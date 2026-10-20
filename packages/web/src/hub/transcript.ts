@@ -110,6 +110,14 @@ export interface SentPrompt extends SteeredPrompt {
   readonly at: number
 }
 
+/**
+ * A prompt posted into a thread that the agent couldn't take, so it is not sent after all, as
+ * everyone sees it: it stays in the thread with why.
+ */
+export interface FailedPrompt extends SentPrompt {
+  readonly message: string
+}
+
 /** A question Claude asked with AskUserQuestion on the main loop (#193), and how it closed. */
 export interface QuestionView {
   readonly toolCallId: ToolCallId
@@ -220,13 +228,15 @@ export interface ThreadView {
   readonly startedBy: Participant
   /** When it was started. */
   readonly at: number
-  /** The model it runs on, when not the Session's. */
+  /** The model it runs on: its own, which doesn't follow the Session's. */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
   /** Its Turns, and what happened between them. */
   readonly items: ReadonlyArray<TranscriptItem>
   /** The prompts posted into it that no Turn took up yet, oldest first. */
   readonly sent: ReadonlyArray<SentPrompt>
+  /** The prompts the agent couldn't take, oldest first. */
+  readonly failed: ReadonlyArray<FailedPrompt>
   /** Its Turn still running, if any. */
   readonly running: TurnView | undefined
   /** Its latest Plan, if any. */
@@ -369,15 +379,20 @@ interface FoldedThread {
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
   readonly sent: ReadonlyArray<SentPrompt>
+  readonly failed: ReadonlyArray<FailedPrompt>
   readonly people: ReadonlyArray<Participant>
   readonly replies: number
   readonly lastAt: number
   readonly conversation: ConversationFold
+  /** The agent never made it: it failed to start with its first prompt, so it is not listed. */
+  readonly dropped?: true
 }
 
 type MutableThread = {
-  -readonly [Key in keyof Omit<FoldedThread, "sent" | "people" | "conversation">]: FoldedThread[Key]
-} & { sent: Array<SentPrompt>; people: Array<Participant> }
+  -readonly [
+    Key in keyof Omit<FoldedThread, "sent" | "failed" | "people" | "conversation">
+  ]: FoldedThread[Key]
+} & { sent: Array<SentPrompt>; failed: Array<FailedPrompt>; people: Array<Participant> }
 
 /** What folding more entries into a transcript needs, besides the transcript itself. */
 export interface TranscriptFold {
@@ -631,6 +646,16 @@ class Folding {
     else this.#agentList[at] = next
   }
 
+  /** Whether the log has any event of the thread. */
+  #known(threadId: ThreadId): boolean {
+    return this.#ownThreads.has(threadId) || this.#threads.has(threadId)
+  }
+
+  /** Whether the thread failed to start, and is gone. */
+  #dropped(threadId: ThreadId): boolean {
+    return (this.#ownThreads.get(threadId) ?? this.#threads.get(threadId))?.dropped === true
+  }
+
   /**
    * A thread, to change. One not started yet in the log, whose events came first, is shown with
    * what they say until ThreadStarted says the rest.
@@ -643,7 +668,12 @@ class Folding {
     }
     const folded = this.#threads.get(threadId)
     const thread: MutableThread = folded
-      ? { ...folded, sent: [...folded.sent], people: [...folded.people] }
+      ? {
+          ...folded,
+          sent: [...folded.sent],
+          failed: [...folded.failed],
+          people: [...folded.people],
+        }
       : {
           threadId,
           title: "Thread",
@@ -651,6 +681,7 @@ class Folding {
           startedBy: { id: "", login: "", name: "Someone" } as Participant,
           at: entry.at,
           sent: [],
+          failed: [],
           people: [],
           replies: 0,
           lastAt: entry.at,
@@ -1025,12 +1056,13 @@ class Folding {
         thread.anchorTurnId = event.anchorTurnId
         thread.startedBy = event.startedBy
         thread.at = entry.at
-        if (event.model !== undefined) thread.model = event.model
+        thread.model = event.model
         if (event.thinkingLevel !== undefined) thread.thinkingLevel = event.thinkingLevel
         this.#conversation(entry, event.threadId)
         break
       }
       case "ThreadPromptSent": {
+        if (this.#dropped(event.threadId)) break
         const thread = this.#thread(entry, event.threadId)
         thread.sent.push({
           key: `sent-${entry.seq}`,
@@ -1045,7 +1077,19 @@ class Folding {
         thread.replies++
         break
       }
+      case "ThreadPromptFailed": {
+        // A thread not seen, or dropped already, has no prompt to take out.
+        if (!this.#known(event.threadId) || this.#dropped(event.threadId)) break
+        const thread = this.#thread(entry, event.threadId)
+        const sent = thread.sent.find((prompt) => prompt.promptId === event.promptId)
+        dropSent(thread, event.promptId)
+        if (event.threadDropped === true) thread.dropped = true
+        else if (sent)
+          thread.failed.push({ ...sent, key: `failed-${entry.seq}`, message: event.message })
+        break
+      }
       case "ThreadModelChanged": {
+        if (this.#dropped(event.threadId)) break
         const thread = this.#thread(entry, event.threadId)
         thread.model = event.model
         if (event.thinkingLevel === undefined) delete thread.thinkingLevel
@@ -1282,6 +1326,10 @@ class Folding {
         anchors.add(thread.anchorTurnId)
         // One whose ThreadStarted isn't in the log hangs off no Turn.
         anchors.delete("" as TurnId)
+        if (thread.dropped === true) {
+          next.delete(threadId)
+          continue
+        }
         next.set(threadId, {
           threadId,
           title: thread.title,
@@ -1292,6 +1340,7 @@ class Folding {
           ...(thread.thinkingLevel !== undefined && { thinkingLevel: thread.thinkingLevel }),
           items: fold.items,
           sent: [...thread.sent],
+          failed: [...thread.failed],
           running: runningTurn(fold.items),
           ...(fold.plan !== undefined && { plan: fold.plan }),
           ...(fold.usage !== undefined && { usage: fold.usage }),

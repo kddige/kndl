@@ -64,6 +64,7 @@ import {
   ThreadCommand,
   ThreadMessage,
   ThreadModelChanged,
+  ThreadPromptFailed,
   ThreadPromptSent,
   ThreadStarted,
 } from "./Thread.ts"
@@ -183,6 +184,7 @@ export const SessionEvent = Schema.Union([
   PromptCancelled,
   ThreadStarted,
   ThreadPromptSent,
+  ThreadPromptFailed,
   ThreadModelChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type

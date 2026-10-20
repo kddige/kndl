@@ -1,6 +1,7 @@
 // A thread's panel (docs/design/durable-harness.md): a fork of the main conversation at one of
-// its Turns' answers, which runs beside it, on the Session's model or another. Anyone here posts
-// into it; a post while it replies steers the reply. Beside the conversation on a wide screen, so
+// its Turns' answers, which runs beside it, on a model of its own: the Session's as it was when the
+// thread started, until someone picks another. Anyone here posts into it; a post while it replies
+// steers the reply. Beside the conversation on a wide screen, so
 // both stream at once; the whole view on a narrow one.
 
 import type {
@@ -16,7 +17,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { notSent } from "../app/copy.ts"
 import { clock, spent } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import type { SentPrompt, ThreadView, TurnView } from "../hub/transcript.ts"
+import type { FailedPrompt, SentPrompt, ThreadView, TurnView } from "../hub/transcript.ts"
 import {
   ArrowLeftIcon,
   Avatar,
@@ -41,7 +42,13 @@ import { modelLabel, type ModelSetting, providerModelLabel } from "./models.ts"
 import { PlanDock } from "./Plan.tsx"
 import { SentAttachments } from "./SentAttachments.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
-import { pendingThreadPrompts, type PendingThreadPrompt } from "./threadPrompts.ts"
+import {
+  failedThreadPrompt,
+  pendingThreadPrompts,
+  type PendingThreadPrompt,
+  sentence,
+  unconfirmedThreadPrompts,
+} from "./threadPrompts.ts"
 import { threadActivity } from "./ThreadRows.tsx"
 import { Transcript } from "./Transcript.tsx"
 
@@ -263,7 +270,7 @@ export function ThreadPanel({
   /** The Session's Models, its Creator's, for the thread's picker and to name them. */
   models: ReadonlyArray<ProviderModel> | undefined
   connectable: ReadonlyArray<ConnectableProvider> | undefined
-  /** The Session's own model, which a thread runs on until it's given another. */
+  /** The Session's own model as it is now, which a new thread is preselected to run on. */
   sessionSetting: ModelSetting
   layout: "side" | "full"
   onClose: () => void
@@ -285,43 +292,31 @@ export function ThreadPanel({
     attachments: ReadonlyArray<AttachmentId>
     failed?: string
   } | null>(null)
-  // The model a new thread is to run on, picked before its first prompt.
-  const [newSetting, setNewSetting] = useState<ModelSetting>({})
-  const you = useHubState((state) => state.you)
+  // The model a new thread is to run on, if one other than the Session's was picked before its
+  // first prompt. Until then it is the Session's current Model, which the thread keeps.
+  const [pickedSetting, setPickedSetting] = useState<ModelSetting | undefined>(undefined)
+  const newSetting = pickedSetting ?? sessionSetting
   const log = useHubState((state) => state.joined[session.id]?.log)
   const connection = useHubState((state) => state.connection.status)
   const [pending, setPending] = useState<ReadonlyArray<PendingThreadPrompt>>([])
-  const nextPrompt = useRef(0)
   const previews =
-    of.kind === "thread" ? pendingThreadPrompts(pending, log ?? [], of.threadId, you?.id) : pending
+    of.kind === "thread" ? pendingThreadPrompts(pending, log ?? [], of.threadId) : pending
   useEffect(() => {
     if (previews !== pending) setPending(previews)
   }, [pending, previews])
   useEffect(() => {
     if (connection === "online") return
-    setPending((prompts) =>
-      prompts.map((prompt) =>
-        prompt.failed === undefined
-          ? {
-              ...prompt,
-              failed: "Delivery not confirmed. Reconnect and check the thread before retrying",
-            }
-          : prompt,
-      ),
-    )
+    setPending(unconfirmedThreadPrompts)
   }, [connection])
   useEffect(
     () =>
       hub.onCommandFailed((failure) => {
-        if (failure.command !== "PromptThread" || failure.sessionId !== session.id) return
-        setPending((prompts) => {
-          const first = prompts.find((prompt) => prompt.failed === undefined)
-          return prompts.map((prompt) =>
-            prompt === first ? { ...prompt, failed: failure.message } : prompt,
-          )
-        })
+        // The refusal names the reply it is for by the request id it was sent with.
+        if (failure.command !== "PromptThread" || failure.requestId === undefined) return
+        const { requestId, message } = failure
+        setPending((prompts) => failedThreadPrompt(prompts, requestId, message))
       }),
-    [hub, session.id],
+    [hub],
   )
 
   // Opening a thread moves focus to it: its title, or, for a new one, where to write.
@@ -346,7 +341,6 @@ export function ThreadPanel({
   const yours = useHubState((state) => state.you?.id === session.creator.id)
   const accounts = yours ? "your accounts" : `${session.creator.name}'s accounts`
   const running = thread?.running !== undefined
-  const sessionModelName = providerModelLabel(models, sessionSetting)
   const threadSetting: ModelSetting =
     of.kind === "new"
       ? newSetting
@@ -355,7 +349,9 @@ export function ThreadPanel({
           ...(thread?.thinkingLevel !== undefined && { thinkingLevel: thread.thinkingLevel }),
         }
   const modelName =
-    threadSetting.model === undefined ? sessionModelName : modelLabel(models, threadSetting.model)
+    threadSetting.model === undefined
+      ? providerModelLabel(models, threadSetting)
+      : modelLabel(models, threadSetting.model)
   const nameReplier = useCallback(
     (turnModel: string | undefined) =>
       turnModel === undefined ? modelName : modelLabel(models, turnModel),
@@ -367,19 +363,16 @@ export function ThreadPanel({
 
   const send = (prompt: string, attachments: ReadonlyArray<AttachmentId>): boolean => {
     if (of.kind === "thread") {
-      const sent = hub.promptThread(session.id, of.threadId, prompt, attachments)
-      if (!sent) notSent("Reply")
-      else
-        setPending((prompts) => [
-          ...prompts,
-          {
-            key: nextPrompt.current++,
-            after: log?.at(-1)?.seq,
-            text: prompt.trim(),
-            attachments,
-          },
-        ])
-      return sent
+      const requestId = hub.promptThread(session.id, of.threadId, prompt, attachments)
+      if (requestId === undefined) {
+        notSent("Reply")
+        return false
+      }
+      setPending((prompts) => [
+        ...prompts,
+        { requestId, after: log?.at(-1)?.seq, text: prompt.trim(), attachments },
+      ])
+      return true
     }
     if (creating !== null && creating.failed === undefined) return false
     setCreating({ text: prompt, attachments })
@@ -397,11 +390,10 @@ export function ThreadPanel({
 
   const pickModel = (setting: ModelSetting) => {
     if (of.kind === "new") {
-      setNewSetting(setting)
+      setPickedSetting(setting)
       return
     }
-    // A thread back on the Session's model is switched to it by name.
-    const model = setting.model ?? sessionSetting.model
+    const { model } = setting
     if (model === undefined) return
     if (
       !hub.setThreadModel(session.id, of.threadId, {
@@ -546,12 +538,25 @@ export function ThreadPanel({
               nameReplier={nameReplier}
             />
           )}
+          {of.kind === "thread" && thread === undefined && log !== undefined && (
+            <p {...stylex.props(styles.intro)}>
+              The Session has no such thread. It may have failed to start.
+            </p>
+          )}
           {thread !== undefined && thread.sent.length > 0 && (
             <SentList sent={thread.sent} running={running} />
           )}
+          {thread !== undefined && thread.failed.length > 0 && (
+            <FailedList failed={thread.failed} />
+          )}
           {previews.map((prompt) => (
-            <div key={prompt.key} data-pending-reply="">
-              <CreatingPrompt text={prompt.text} failed={prompt.failed} reply />
+            <div key={prompt.requestId} data-pending-reply="">
+              <CreatingPrompt
+                text={prompt.text}
+                failed={prompt.failed}
+                unconfirmed={prompt.unconfirmed === true}
+                reply
+              />
               {prompt.attachments.length > 0 && (
                 <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>
               )}
@@ -561,7 +566,9 @@ export function ThreadPanel({
                   intent="secondary"
                   onClick={() => {
                     if (send(prompt.text, prompt.attachments))
-                      setPending((prompts) => prompts.filter((each) => each.key !== prompt.key))
+                      setPending((prompts) =>
+                        prompts.filter((each) => each.requestId !== prompt.requestId),
+                      )
                   }}
                 >
                   Retry reply
@@ -610,11 +617,7 @@ export function ThreadPanel({
               connectable={connectable}
               value={threadSetting}
               onChange={pickModel}
-              inherit={{
-                label: `Same as the Session · ${sessionModelName}`,
-                name: sessionModelName,
-              }}
-              footer={`Runs on ${accounts}. A thread can try a cheaper or smarter model; the Session's stays as it is.`}
+              footer={`Runs on ${accounts}. A thread keeps its own model: it can try a cheaper or smarter one than the Session's, and doesn't follow the Session's switches.`}
               disabled={archived}
               side="top"
             />
@@ -737,14 +740,49 @@ function SentList({ sent, running }: { sent: ReadonlyArray<SentPrompt>; running:
   )
 }
 
-/** The first prompt of a thread being started, until the Hub has made it, or why it couldn't. */
+/**
+ * The prompts posted into the thread that the agent couldn't take, shown to everyone with why, as
+ * the log says: they are not sent after all.
+ */
+function FailedList({ failed }: { failed: ReadonlyArray<FailedPrompt> }) {
+  return (
+    <ol aria-label="Not sent" {...stylex.props(styles.sentList)}>
+      {failed.map((prompt) => (
+        <li key={prompt.key} {...stylex.props(styles.sent)} data-failed={prompt.promptId}>
+          <div role="alert" {...stylex.props(styles.sentHead)}>
+            <Avatar name={prompt.sender.name} src={prompt.sender.avatarUrl} size="sm" />
+            <span {...stylex.props(styles.name)}>{prompt.sender.name}</span>
+            <span {...stylex.props(styles.sentNote, styles.failedNote)}>
+              <WarningIcon />
+              {`Reply not sent: ${prompt.message}`}
+            </span>
+          </div>
+          {prompt.text !== "" && <div {...stylex.props(styles.bubble)}>{prompt.text}</div>}
+          <SentAttachments
+            attachments={prompt.attachments}
+            label="The prompt's attachments"
+            sx={styles.sentFiles}
+          />
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+/**
+ * The first prompt of a thread being started, until the Hub has made it, or why it couldn't; or a
+ * reply being sent, until the Hub echoes it, or why it wasn't. When the connection dropped
+ * (`unconfirmed`) a reply may have arrived after all, so it says to check before retrying.
+ */
 function CreatingPrompt({
   text: prompt,
   failed,
+  unconfirmed = false,
   reply = false,
 }: {
   text: string
   failed?: string | undefined
+  unconfirmed?: boolean
   reply?: boolean
 }) {
   return (
@@ -759,7 +797,9 @@ function CreatingPrompt({
           ) : (
             <>
               <WarningIcon />
-              {`${reply ? "Reply not sent" : "Thread not started"}: ${failed}. Retry below.`}
+              {unconfirmed
+                ? `Reply may not have arrived: ${sentence(failed)}Check the thread before retrying.`
+                : `${reply ? "Reply not sent" : "Thread not started"}: ${sentence(failed)}Retry below.`}
             </>
           )}
         </span>
