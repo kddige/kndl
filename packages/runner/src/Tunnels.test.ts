@@ -359,8 +359,10 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
         sessionId: scene.sessionId,
         data: `echo pong-$((${n}+0))\r`,
       })
+      // The answer's line ending may come in the next frame, so the number must only end there.
+      const answer = new RegExp(`pong-${n}(?![0-9])`)
       const { at } = await web.nextTimed("TerminalFrame", (frame) =>
-        String(frame["data"]).includes(`pong-${n}\r\n`),
+        answer.test(String(frame["data"])),
       )
       return at - sent
     }
