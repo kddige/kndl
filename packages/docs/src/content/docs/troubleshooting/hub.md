@@ -160,10 +160,10 @@ HubConfigError: The GitHub App's private key is not an RSA key.
 **What you see.** A Session shows **This Session can't start** and stays Asleep, with one of:
 
 ```
-Claude Code could not start: Docs needs a value for API key. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
-Claude Code could not start: Docs's MCP server refused its credential (401). Fix the Installation on the MCP page, …
-Claude Code could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. …
-Claude Code could not start: Docs isn't connected to its account. …
+The agent could not start: Docs needs a value for API key. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
+The agent could not start: Docs's MCP server refused its credential (401). Fix the Installation on the MCP page, …
+The agent could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. …
+The agent could not start: Docs isn't connected to its account. …
 ```
 
 **Why.** As a Session starts, the Hub checks each MCP server Installation on for its Repo, and won't start the Session with one that can't work.
@@ -181,7 +181,7 @@ Prompts sent meanwhile wait, and run once the Session starts. See [When an Insta
 **What you see.** A running Session's conversation shows, in red, one of:
 
 ```
-Docs's MCP server could not be reached. Claude Code started all the same: its tools fail until it answers.
+Docs's MCP server could not be reached. The agent started all the same: its tools fail until it answers.
 Docs's MCP server refused its credential (403). Its tools fail until the Installation is fixed and the Session restarted.
 Docs needs a value for API key. Its tools fail until the Installation is fixed and the Session restarted.
 ```

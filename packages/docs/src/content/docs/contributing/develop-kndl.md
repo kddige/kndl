@@ -12,7 +12,7 @@ Clone kndl, run it from the checkout, and make a change that passes the checks. 
 - macOS or Linux, with git.
 - [Bun](https://bun.sh) 1.4 or newer.
 - tmux, for the Runner's tmux tests. Without it, `bun test` skips them.
-- To run Sessions: a Mac with Apple Silicon, or Linux with KVM your user can open (add it to the `kvm` group), and a Claude setup token from `claude setup-token`, saved on your **Account** page.
+- To run Sessions: a Mac with Apple Silicon, or Linux with KVM your user can open (add it to the `kvm` group), and at least one Model: a Provider connected on your **Account** page, or a Claude setup token from `claude setup-token` saved there.
 
 ## Get the code
 

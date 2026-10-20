@@ -1,13 +1,13 @@
 ---
 title: Work with subagents
-description: Have a Session hand work to subagents, on any of your Models, then follow, message, stop and resume them, and merge a worktree agent's work.
+description: Have a Session hand work to subagents, on any of your Models, then follow, message, stop and resume them.
 sidebar:
   order: 3
 ---
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
-Have a Session hand work to [subagents](/reference/glossary/), then follow, message, stop and resume them from the web UI. Everyone in the Session follows them. Messaging, stopping and resuming are the Session's Creator's.
+Have a Session hand work to [subagents](/reference/glossary/), then follow, message, stop and resume them from the web UI. Everyone in the Session follows them, and can message, stop and resume them.
 
 ## What you need
 
@@ -21,8 +21,9 @@ Ask for them in a prompt:
 Use one agent to find every caller of parseConfig, and another to draft the changelog.
 ```
 
-- **In a pi Session**, each agent runs on the Session's Model, or on any other of yours the prompt names, and runs in the background: the Turn can end while it works, and when it's done its result starts a new Turn, shown as from the agent. A result that comes while a Turn runs waits for that Turn to end. Several agents run side by side. The Session's agent can also wait for one, when it can't go on without its answer, and it can message, stop and resume its agents itself. A subagent can't start agents of its own or ask anyone questions.
-- **In a Claude Code Session**, Claude Code's Agent tool starts them. **In the background**, the default, an agent keeps running after the Turn ends, and Claude Code starts a Turn to read its result when it's done. **In the foreground**, the Turn waits for it. **In a worktree**, it works in its own checkout, on its own branch.
+Each agent runs on the Session's Model, or on any other of the Creator's the prompt names. By default it runs in the background: the Turn can end while it works, and when it's done its result starts a new Turn, shown as from the agent. A result that comes while a Turn runs waits for that Turn to end. Several agents run side by side.
+
+The Session's agent can also wait for one, when it can't go on without its answer, and it can message, stop and resume its agents itself. A subagent can't start agents of its own or ask anyone questions.
 
 Every agent shares the Session's Sandbox. If they need more CPU or memory, raise the [Environment's resources](/guides/set-up-an-environment/#set-the-resources).
 
@@ -30,12 +31,12 @@ Every agent shares the Session's Sandbox. If they need more CPU or memory, raise
 
 Each agent is a card in the transcript that streams its work. In the sidebar, the Session's agents are listed under its row, each with a status:
 
-| Status      | Meaning                                          |
-| ----------- | ------------------------------------------------ |
-| Running     | The agent is working.                            |
-| Done        | The agent finished.                              |
-| Stopped     | The Creator, or the Session's agent, stopped it. |
-| Interrupted | The Session's agent stopped while this one ran.  |
+| Status      | Meaning                                                     |
+| ----------- | ----------------------------------------------------------- |
+| Running     | The agent is working.                                       |
+| Done        | The agent finished.                                         |
+| Stopped     | Someone in the Session, or the Session's agent, stopped it. |
+| Interrupted | The Session's agent stopped while this one ran.             |
 
 To open an agent's view, click its row in the sidebar, or **Message or stop it** on its card. **Back to the chat** returns to the transcript.
 
@@ -57,25 +58,13 @@ In the agent's view:
 
 When a resumed agent is done, its result starts a Turn, as when it was started. You can also ask the Session's agent to message or resume one for you.
 
-**Stop** on a Turn doesn't stop a background agent. Stop it from its view.
+**Stop** on a Turn doesn't stop a background agent. Stop it from its view. An agent the Session's agent is waiting for stops with that Turn.
 
 ## After sleep or a restart
 
-Subagents run inside the Session's pi or Claude Code, so they stop when it does: when the Session sleeps or restarts, when its Environment changes, or when its Runner is lost. A Claude Code Session's agents also stop when its model changes, and every agent stops when the Session [switches between Claude Code and pi](/guides/manage-a-session/#switch-between-claude-code-and-pi). While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
+Subagents survive their Session's agent stopping. While it is stopped, on sleep, a restart or a lost Runner, running agents show as Interrupted. When the agent starts again, they go on where they were, and their results still come. Every agent's conversation is kept with the Session, so any of them, Done, Stopped or Interrupted, can be resumed after the Session wakes. While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
 
-Agents that were running show as Interrupted. Every agent's conversation is kept with the Session, so any of them, Done, Stopped or Interrupted, can be resumed after the Session wakes: resume one to carry on. The Session's agent is told, with its next prompt, which agents were interrupted.
-
-An agent resumes only on the Harness that started it: pi's agents while the Session runs pi, Claude Code's while it runs Claude Code. A [Handoff](/reference/glossary/#handoff) to the other Harness carries the Turns the agents' results started, not their own work.
-
-## Merge a worktree agent's work
-
-In a Claude Code Session, a worktree agent works on the branch `worktree-agent-<agent id>`, shown on its card. To bring its work onto the Session's Work branch, ask:
-
-```text
-Merge the worktree agent's branch into this branch.
-```
-
-Until then the branch is local to the Session. It reaches GitHub only if the Session pushes it.
+A subagent started in a [Thread](/guides/reply-in-a-thread/) reports to the Thread.
 
 ## Next steps
 

@@ -2,7 +2,7 @@
 
 kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs coding-agent sessions in sandboxes, on models from any Provider its members connect, and works in them together from the web.
 
-> This experimental branch lifts the Creator-only driving rule: every Participant can drive, while the Creator's accounts still pay. The definitions below describe the spike; accepted decisions remain in `docs/adr/` until the experiment is assessed.
+> The definitions below describe the Pi Durable spike, an experimental branch. In it every Participant can drive a Session while the Creator's accounts still pay, and one Harness runs every Model. Accepted ADRs that this contradicts stay as written until the experiment is assessed; the design in `docs/design/durable-harness.md` lists them.
 
 ## Infrastructure
 
@@ -60,6 +60,14 @@ _Avoid_: track, branch, ring
 The program that runs a Session's agent in its Sandbox. The spike has one Harness, the durable agent, for every Model.
 _Avoid_: driver, engine, agent, backend
 
+**Durable agent**:
+The headless program that runs every Session's agent in its Sandbox, built on Pi Durable. It keeps its conversation in storage on the Session's disk, so a Turn cut off by a restart goes on where it stopped. It runs the main conversation, Threads and Subagents, and is the one Harness.
+_Avoid_: pi agent, bot, worker
+
+**Claude bridge**:
+How the durable agent runs Claude's Models: it runs Claude Code in the Sandbox as a model only, with none of Claude Code's own tools, on the Creator's Claude credential. It is the one place Claude Code still runs.
+_Avoid_: Claude Code Harness
+
 **Handoff**:
 The shortened history given to a legacy Session as it moves to the durable agent: who prompted what, the tools the agent called and what it answered. Reasoning, full tool results and Attachments do not carry over; the agent can read further back in the Session's history.
 _Avoid_: summary, transcript, migration, context transfer
@@ -101,8 +109,8 @@ _Avoid_: invitation code, Pairing code, join link
 ## Sessions
 
 **Session**:
-One ongoing body of agent work on one Repo and Work branch, with a main conversation, optional threads and Subagents, driven together by its Participants on its Creator's Connected providers. Who can see it is its Repo's to decide.
-_Avoid_: chat, thread, agent, job
+One ongoing body of agent work on one Repo and Work branch, with a main conversation, optional Threads and Subagents, driven together by its Participants on its Creator's Connected providers. Who can see it is its Repo's to decide.
+_Avoid_: chat, agent, job
 
 **Subagent**:
 An agent that a Session's agent starts to work alongside it, on any of the Creator's Models. It runs in the Session's Sandbox, is shown under the Session, and any Participant can message or stop it.
@@ -124,12 +132,20 @@ _Avoid_: collaborator, viewer, guest
 One prompt and the agent's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
+**Resumed**:
+The sender of a Turn the durable agent continued after it restarted. The Hub had ended the first Turn as aborted when the agent stopped, so the run that was going goes on as a new Turn, marked as resumed.
+_Avoid_: retried, replayed, restarted
+
+**Compact**:
+To summarize a conversation's older messages, so it keeps fitting its Model's context; the summary is a compaction. The agent does it on its own near the limit, and any Participant can ask for one, optionally saying what to keep. A divider in the transcript marks it, and the history still shows the messages it covers.
+_Avoid_: truncate, trim, clear
+
 **Thread**:
-A conversation forked from a main conversation's Turn, with the context up to that answer, that runs beside the main conversation and other threads. Participants can prompt it, steer it and choose its own Model from the Creator's Models.
+A conversation forked from the main conversation's Turn (the code and the design call the main conversation the main loop), with the context up to that answer, that runs beside the main conversation and other Threads. Participants can prompt it and choose its own Model from the Creator's Models; a prompt posted into a busy Thread steers it, outside the Prompt queue. A Thread keeps the Model it started on.
 _Avoid_: Subagent, Child Session, branch
 
 **Plan**:
-The agent's live checklist for a conversation, with steps pending, in progress or done. A thread starts with the Plan at its fork and then keeps its own.
+The agent's live checklist for a conversation, kept with its `update_plan` tool, with steps pending, in progress or done. Everyone in the Session sees it live. A Thread starts with the Plan at its fork and then keeps its own.
 _Avoid_: task list, roadmap
 
 **Prompt queue**:
@@ -137,15 +153,15 @@ The ordered prompts from Participants waiting for the Session's main conversatio
 _Avoid_: backlog, inbox
 
 **Attachment**:
-A file a Participant attaches in the web UI, pasted, dropped or picked, to a prompt, a message to a subagent or a reply to an Open question: an image, such as a screenshot, or a PDF. The Hub keeps it for the life of its Session once it is sent, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]` or `[PDF #1: spec.pdf (attachment <id>)]`, and the agent opens it with a tool the mod registers (ADR 0024).
+A file a Participant attaches in the web UI, pasted, dropped or picked, to a prompt, a message to a subagent or a reply to an Open question: an image, such as a screenshot, or a PDF. The Hub keeps it for the life of its Session once it is sent, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]` or `[PDF #1: spec.pdf (attachment <id>)]`, and the agent opens it with its attachment tool (ADR 0024): an image as itself, a PDF as a file at a path.
 _Avoid_: upload, paste, file (for what the prompt carries)
 
 **Steer**:
-To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step, as Claude Code does with a prompt typed while it works. The Turn stays the one its first prompt started.
+To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step. The Turn stays the one its first prompt started. A prompt posted into a busy Thread steers it directly, with no queue.
 _Avoid_: interrupt, inject, push
 
 **Open question**:
-A question the agent asked in a Turn, with its question tool, that no one has answered yet. Any Participant answers it from the web UI; the first answer is the one the agent reads. While it is open, the Session is waiting on an answer and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
+A question the agent asked in a Turn, with its question tool, that no one has answered yet. Any Participant answers it from the web UI; the first answer is the one the agent reads. Only the main conversation's agent asks: Threads and Subagents don't. While it is open, the Session is waiting on an answer and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
 _Avoid_: prompt, dialog, permission request
 
 **Workspace**:
@@ -213,8 +229,8 @@ _Avoid_: reference, import, binding
 ## MCP servers
 
 **MCP server**:
-A remote server, speaking MCP, that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. They are managed on the MCP page. kndl's own pieces that each Session's Harness loads are the mod, not MCP servers.
-_Avoid_: plugin (in kndl, only ever a Claude Code plugin), integration, extension (in kndl, only ever a pi extension), connector, mod
+A remote server, speaking MCP, that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. They are managed on the MCP page. kndl's own code in each Sandbox, the mod, is not an MCP server. The agent finds a server's tools as `mcp__<server>__<tool>`, with `tool_search`.
+_Avoid_: plugin, integration, extension, connector, mod
 
 **MCP server icon**:
 The small picture beside an MCP server on the MCP page. The Hub finds it, from the package's manifest or the favicon of the MCP server's URL, keeps it and serves it; browsers never fetch it from the third party. An MCP server with none shows a letter.

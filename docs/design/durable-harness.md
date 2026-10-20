@@ -6,20 +6,36 @@ Everything a Session's agent does now runs in one headless Node process in the S
 
 | Pi Durable | What kndl gets |
 | --- | --- |
-| Tasks with checkpoints, `resume()`, SQLite storage on the Session's volume | A Turn survives its Sandbox sleeping, the agent crashing, or the Runner restarting: it continues where it stopped, reported as resumed. |
-| `requestId` on submissions | Exactly-once prompts: a prompt's id is its request id, so a prompt delivered twice is answered once. |
+| Tasks with checkpoints, `resume()`, SQLite storage on the Session's volume | A run that was going when its Sandbox slept, the agent crashed or the Runner restarted continues where it stopped, reported as a `Resumed` Turn. The conversation is durable; the web's events are not (see the [recovery contract](../../packages/mod/durable/README.md#recovery-contract)). |
+| `requestId` on submissions | Exactly-once prompt admission: a prompt's id is its request id, so a prompt delivered twice is admitted once. Effects of tools, and events not yet sent to the Hub, are not promised exactly once. |
 | `fork(entryId)`, many conversations at once | **Threads**: anyone replies in a thread off any answer. A thread is a fork of the main conversation at that answer, runs beside it and beside other threads, and can be on another Model. |
 | The inbox: steer, follow-up | Anyone can post into a busy thread; it steers. The main loop keeps the Hub's Prompt queue. |
-| Task-owned conversations, background tasks | Subagents that survive a restart, whose results come back as a Turn, and whose stop cascades. |
+| Task-owned conversations, background tasks | Subagents that survive a restart, whose results come back as a Turn. A background agent deliberately survives its parent's stop; only a foreground `wait: true` call stops with it. |
 | Documents, forked `asOf` | **The Plan**: the agent keeps a checklist (`update_plan`), shown live to everyone, per conversation; a thread starts with the Plan as it was at its fork. |
-| Background compaction, `compact()`, `reset(note)` | Sessions that never run out of context, a **Compact** button anyone can press, with instructions, and a `handoff` tool the agent can use on itself. |
+| Background compaction, `compact()`, `reset(note)` | Sessions that never run out of context, a **Compact** action anyone can use, with instructions, and a `handoff` tool the agent can use on itself. |
 | Codemode, deferred tools, `tool_search` | MCP servers' tools are deferred and found by search, so a Session with many servers keeps a short tool list; `codemode` scripts call any tool, and survive a restart. |
 | `pi.usage` per conversation | Cost per Turn as before, and per thread. |
 | Sections rebuilt every request | AGENTS.md, CLAUDE.md and skills are read live: an edit reaches the next request. |
 
-Claude's Models run through **the Claude bridge**, ported from the pi extension to a pi-ai provider (`anthropic`). Claude Code is no longer a Harness, but its pinned binary is still mounted, as the bridge runs it as a model.
+Claude's Models run through **the Claude bridge**, ported from the pi extension to a pi-ai provider (`anthropic`). Claude Code is no longer a Harness, but its pinned binary is still mounted, as the bridge runs it as a model. The bridge's notices, such as rate-limit warnings, go only to the agent's log (`onNotice` in `packages/mod/durable/src/ClaudeModels.ts`, to `durable/agent.log`), not to the web.
 
-**Everyone drives.** For the spike, every Participant who sees a Session can prompt it, steer, stop, answer, switch its Model, message and stop its agents, start and post in threads, compact, and use its terminal. It still spends its Creator's accounts (ADR 0026's billing half stands; its driving half is lifted for testing).
+**Everyone drives.** For the spike, every Participant who sees a Session can prompt it, steer, cancel queued prompts, stop, answer, switch its Model, message and stop its agents, start and post in threads, compact, and use its terminal. They can also sleep it, wake it, set Keep awake, restart it, archive it, restore it and rename it, and their `kndl forward` wakes an Asleep one. The list is `drivingCommands` in `packages/hub/src/SessionRelay.ts`, and `driveRefusal` in `packages/protocol/src/SessionRules.ts` never refuses: it stays as the one place to put the rule back. The Session still spends its Creator's accounts (ADR 0026's billing half stands; its driving half is lifted for testing).
+
+## Departures from ADRs
+
+The spike contradicts these accepted ADRs. They are not edited: the rules below are what this branch does instead, and an ADR that supersedes them follows only if the spike holds.
+
+- **0026, a Session runs on and is driven by its Creator.** The driving half is lifted: `drivingCommands` (above) lets every Participant with Repo access send each driving command. The billing half stands: the Session runs on its Creator's Connected providers and Claude credential, and the model picker lists the Creator's Models.
+- **0029, pi is the Harness and the Hub is the Gateway.** The pi coding agent's TUI, run in tmux with kndl's pi extension, is replaced by the headless durable agent, which has no TUI; the terminal is a separate plain shell. The Gateway half stands: the Hub holds every Connected provider and the agent reaches Providers through it (`packages/mod/durable/src/Providers.ts`).
+- **0030, a Session switches Harness with a context handoff.** There is one Harness, so a Session never switches. `packages/hub/src/Harnesses.ts` offers only `Pi`, and a model named as Claude Code names it is refused. The Handoff survives solely to move a Session from before the spike onto the durable agent.
+- **0027, anyone who sees an Archived Session can purge it.** Its sentence "Restoring stays the Creator's alone" no longer holds: `RestoreSession` is in `drivingCommands`, and `ArchivedSessions.tsx` offers **Restore** to anyone who sees the Session. A restored Session runs on the Creator's accounts.
+- **0018, steering a prompt into the running Turn.** Its Creator-only Steer amendment (from ADR 0026) is lifted: `SteerPrompt` is a driving command. A prompt posted into a busy thread steers that thread's Turn without the Prompt queue (`DeliverThreadPrompt`), which ADR 0018 has no case for. "Only the main loop" is no longer true: threads steer too, though subagents still don't.
+- **0024, attachments reach Claude through a mod tool.** The tool is `attachment`, registered by the durable agent, not `mcp__hub-link-commands__attachment`. A tool result carries text and images only, so a PDF is saved to a path outside the Workspace and the tool names it for the model to read; it isn't a native document (`Attachments.ts`).
+- **0014, subagents replace Child Sessions.** The agents are the durable agent's `agent`, `message_agent` and `stop_agent` tools, not Claude Code's Agent tool. There are no Claude Code plugins to hold hub-link, and no `isolation: "worktree"`: the `agent` tool takes `description`, `prompt`, `model` and `wait` only. A background agent survives its parent's stop.
+- **0031, the agent can ask a question and go on.** There is no Claude Code tool or terminal dialog; `ask_user_question` is the agent's own, and anyone in the Session answers (ADR 0031 says the Creator). Questions are main-loop only: threads and subagents have no question tool.
+- **0020, plugins are remote MCP servers behind the Hub.** Claude Code no longer gets one MCP server per Installation, named to avoid its `.mcp.json`. The agent connects to each at the Gateway, and its tools are `mcp__<server>__<tool>`, deferred and found with `tool_search` (`Mcp.ts`). The Gateway and Installations stand.
+- **0011, amended in #159.** "A new model's restart" no longer reloads the agent: a Model change reaches the running agent as `SwitchModel` and restarts nothing. The copy of the mod is still made each time the agent starts, at a Session's start, wake or relaunch.
+- **0016, with 0026: forwarding a Session's ports.** `kndl forward` of an Asleep Session wakes it for anyone with access, not only its Creator (`connectForward` in the Session relay).
 
 ## The process
 
@@ -54,15 +70,17 @@ The contract is code: `packages/protocol/src/Thread.ts`, and the `threadId`s, `R
 - `ModelSwitchFailed` has an optional `threadId`.
 - `ModHello` has `durable: true`.
 
-**Session events the Hub logs itself:** `ThreadStarted { threadId, anchorTurnId, title, startedBy, model?, thinkingLevel? }`, `ThreadPromptSent { threadId, promptId, sender, text, attachments? }` (shown as sent until the agent's `TurnStarted` or `PromptSteered` with that `promptId`), `ThreadModelChanged { threadId, by, model, thinkingLevel? }`, and `TurnStopRequested` with an optional `threadId`.
+**Session events the Hub logs itself:** `ThreadStarted { threadId, anchorTurnId, title, startedBy, model, thinkingLevel? }`, `ThreadPromptSent { threadId, promptId, requestId?, sender, text, attachments? }` (shown as sent until the agent's `TurnStarted` or `PromptSteered` with that `promptId`), `ThreadModelChanged { threadId, by, model, thinkingLevel? }`, and `TurnStopRequested` with an optional `threadId`. `model` in `ThreadStarted` is required: the Session's own Model when the web asked for none, because a fork keeps the Model its parent had at the fork and doesn't follow the Session's later switches.
 
-**Commands, Hub to mod:** `StartThread { threadId, anchorTurnId, promptId, text, sender, attachments?, model?, thinkingLevel? }`, `DeliverThreadPrompt { threadId, promptId, text, sender, attachments? }` (steers a busy thread, else starts a Turn; `requestId: promptId`), `StopThread`, `SwitchThreadModel`, `Compact { threadId?, instructions?, sender }`.
+**A failed thread prompt:** the agent reports `ThreadPromptFailed { threadId, promptId, message, threadDropped? }` when it couldn't take one, such as the first prompt of a thread it couldn't fork. The prompt is then not sent for everyone, and a thread whose first prompt failed is dropped (`threadDropped: true`): the agent never made it, and later replies are refused.
 
-**Web to Hub** (`ThreadCommand`): `CreateThread { sessionId, anchorTurnId, text, attachments?, model?, thinkingLevel? }`, `PromptThread`, `StopThread`, `SetThreadModel`, `CompactConversation`. Any Participant with access. The Hub mints the ids, logs what it logs, wakes an Asleep Session, and queues the mod command; thread commands not yet delivered when the Harness restarts are delivered again after its hello, which `requestId` makes safe.
+**Commands, Hub to mod:** `StartThread { threadId, anchorTurnId, promptId, text, sender, attachments?, model, thinkingLevel? }` (the Hub always resolves a `model`), `DeliverThreadPrompt { threadId, promptId, text, sender, attachments? }` (steers a busy thread, else starts a Turn; `requestId: promptId`), `StopThread`, `SwitchThreadModel`, `Compact { threadId?, instructions?, sender }`.
 
-**Hub to web** (`ThreadMessage`): `ThreadCreated { sessionId, threadId }` to the creator of a thread, and `SessionModels { sessionId, models }` to everyone who joins a Session: its Creator's Models, so anyone can switch it.
+**Web to Hub** (`ThreadCommand`): `CreateThread { requestId, sessionId, anchorTurnId, text, attachments?, model?, thinkingLevel? }`, `PromptThread { requestId, sessionId, threadId, text, attachments? }`, `StopThread`, `SetThreadModel`, `CompactConversation` (while the Session is Active). Any Participant with access. A `requestId` lets the sender match the Hub's answer: `ThreadCreated` echoes `CreateThread`'s, the `ThreadPromptSent` the Hub logs carries the one from `CreateThread` or `PromptThread`, and a refusal is a `CommandFailed` with it. The Hub mints the ids, logs what it logs, wakes an Asleep Session, and queues the mod command (a `model` the web didn't ask for is the Session's current one); thread commands not yet delivered when the Harness restarts are delivered again after its hello, which `requestId` makes safe.
 
-**`SessionSummary.threads`:** `ThreadSummary { id, title, anchorTurnId, startedBy, running, model?, thinkingLevel? }`, oldest first. A running thread keeps the Session from going to sleep for being idle, as a Turn does. When the Harness stops, the Hub ends each running thread's Turn as `aborted`, as it does the main loop's; the agent's restart reports `Resumed` Turns for those it continues.
+**Hub to web** (`ThreadMessage`): `ThreadCreated { requestId, sessionId, threadId }` to the creator of a thread, and `SessionModels { sessionId, models }` to everyone who joins a Session: its Creator's Models, so anyone can switch it.
+
+**`SessionSummary.threads`:** `ThreadSummary { id, title, anchorTurnId, startedBy, running, model, thinkingLevel? }`, oldest first. A running thread keeps the Session from going to sleep for being idle, as a Turn does. When the Harness stops, the Hub ends each running thread's Turn as `aborted`, as it does the main loop's; the agent's restart reports `Resumed` Turns for those it continues.
 
 ## The agent's tools
 

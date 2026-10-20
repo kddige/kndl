@@ -28,7 +28,7 @@ kndl doctor --fix
 | `kndl logs hub`, `kndl logs runner` | Why a service won't start, refused connections, sign-in failures, what happened to Sandboxes. Add `-f` to follow. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`. |
 | **Show log** on a Session's **Starting…** banner | The output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** | The agent's own screen: pi's or Claude Code's. |
+| A Session's **Terminal** | A plain shell in the Sandbox's `/workspace`: look at files and processes there. The agent has no screen of its own. |
 | `https://<your Hub>/health` | `{"status":"ok"}` when the Hub is up. |
 
 Running kndl from a checkout? The logs are in the terminals running `bun run hub` and `bun run runner`, and the Hub's settings in `packages/hub/.env.local`. See [Develop kndl](/contributing/develop-kndl/).
@@ -89,22 +89,17 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `Unknown Sandbox for Session …` | [Runners](/troubleshooting/runners/#unknown-sandbox-for-session) |
 | `The mod isn't built` | [Runners](/troubleshooting/runners/#the-mod-isnt-built) |
 | `Expected string at ["RUNNER_TOKEN"]`, from a checkout | [Develop kndl](/contributing/develop-kndl/#run-a-runner) |
-| `Claude Code could not start on …` | [Sessions](/troubleshooting/sessions/#claude-code-could-not-start) |
-| `Claude Code exited with code …` | [Sessions](/troubleshooting/sessions/#claude-code-exited) |
-| A woken Session's conversation starts over | [Sessions](/troubleshooting/sessions/#a-woken-sessions-conversation-starts-over) |
+| `The agent could not start on …` | [Sessions](/troubleshooting/sessions/#the-agent-could-not-start) |
+| `The agent exited with code …` | [Sessions](/troubleshooting/sessions/#the-agent-exited) |
 | `… Sessions can't start: … need values` | [Sessions](/troubleshooting/sessions/#variables-need-values) |
 | `The Sandbox failed: …` | [Sessions](/troubleshooting/sessions/#the-sandbox-failed) |
 | **Test build failed** | [Sessions](/troubleshooting/sessions/#test-build-failed) |
 | `You don't have access to … on GitHub` | [Sessions](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) |
 | A Sensitive variable can't be saved | [Sessions](/troubleshooting/sessions/#a-sensitive-variable-cant-be-saved) |
-| New Session asks for your Claude credential, or a Session sleeps for want of one | [Sessions](/troubleshooting/sessions/#you-have-no-claude-credential) |
 | **Connect a Provider first**, or a Session sleeps for want of Models | [Sessions](/troubleshooting/sessions/#you-have-no-models) |
-| A Turn says **Failed** in a pi Session | [Sessions](/troubleshooting/sessions/#a-turn-fails-on-a-providers-model) |
-| `… doesn't run both Claude Code and pi: …`, or another refusal as you switch | [Sessions](/troubleshooting/sessions/#switching-between-claude-code-and-pi-is-refused) |
-| `pi could not start on …: the Sandbox could not be readied for pi: …` | [Sessions](/troubleshooting/sessions/#a-switch-to-pi-puts-the-session-to-sleep) |
-| `… started without a handoff of what happened on …` | [Sessions](/troubleshooting/sessions/#the-agent-doesnt-know-what-happened-before-a-switch) |
-| New Sessions run Claude Code, or `This Runner doesn't run pi Sessions` | [Sessions](/troubleshooting/sessions/#new-sessions-run-claude-code) |
-| `Only …, who started this Session, can drive it` | [Sessions](/troubleshooting/sessions/#only-someone-else-can-drive-this-session) |
+| `Put to sleep: the Claude credential it ran on was removed`, or `… was replaced` | [Sessions](/troubleshooting/sessions/#a-session-went-to-sleep-when-its-claude-credential-changed) |
+| A Turn says **Failed** | [Sessions](/troubleshooting/sessions/#a-turn-fails-on-a-providers-model) |
+| `… isn't known to run the durable agent.`, or `… runs a version from before the durable agent: …` | [Sessions](/troubleshooting/sessions/#a-runner-cant-run-the-agent) |
 | A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |
 | `There is no such Session.` | [Sessions](/troubleshooting/sessions/#there-is-no-such-session) |
 | A Session doesn't go to sleep | [Sessions](/troubleshooting/sessions/#a-session-doesnt-go-to-sleep) |
@@ -114,7 +109,7 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `The GitHub App is not installed on …, or can't see it` | [GitHub and git](/troubleshooting/github-and-git/#the-github-app-is-not-installed-on-the-repo) |
 | **The GitHub App is missing permissions** | [GitHub and git](/troubleshooting/github-and-git/#the-github-app-is-missing-permissions) |
 | `git push` or `gh` fails in a Session | [GitHub and git](/troubleshooting/github-and-git/#git-push-or-gh-fails-in-a-session) |
-| Claude pushed to the default branch | [GitHub and git](/troubleshooting/github-and-git/#claude-pushed-to-the-default-branch) |
+| A Session pushed to the default branch | [GitHub and git](/troubleshooting/github-and-git/#a-session-pushed-to-the-default-branch) |
 
 ## Still stuck
 

@@ -35,7 +35,7 @@ The web, Runner and forward channels and the mod's hello open with the same [han
 | `GET /auth/cli/sessions` | `kndl forward`, to pick a Session ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
 | `GET /ws/forward/<session id>` | `kndl forward` ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
 | `GET /mcp/<id>/icon` | a browser | the sign-in cookie. An MCP server's icon, the `<id>` URL-encoded; 404 if it has none. |
-| `POST /sessions/<session id>/attachments` | a browser, attaching a file to a prompt | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin. The raw file is the body, named in `x-kndl-filename`; it must be an image Claude reads or a PDF ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)). |
+| `POST /sessions/<session id>/attachments` | a browser, attaching a file to a prompt | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin. The raw file is the body, named in `x-kndl-filename`; it must be an image or a PDF ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)). |
 | `GET /sessions/<session id>/attachments/<attachment id>` | a browser | the sign-in cookie. The file, to anyone who can see the Session. |
 | `GET /ws/web` | a browser | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
@@ -44,7 +44,7 @@ The web, Runner and forward channels and the mod's hello open with the same [han
 | `GET /tunnel/<session id>/<port>` | a client reaching an Open port ([Tunnels](#tunnels)) | `Authorization: Bearer <CLI token>`, or the sign-in cookie from `HUB_PUBLIC_URL`'s origin |
 | `GET /runner/tunnel/<tunnel id>` | a Runner, dialing back for a tunnel | `Authorization: Bearer <Runner token>` |
 | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands`, `GET /mod/attachments/<attachment id>`, `GET /mod/providers`, `GET /mod/history` | one Session's mod | `Authorization: Bearer <mod token>` |
-| `/gateway/<installation id>`, any method | one Session's Claude Code, to an Installation's MCP server ([MCP servers](#mcp-servers)) | `Authorization: Bearer <mod token>`, put in by the Runner's mod relay |
+| `/gateway/<installation id>`, any method | one Session's agent, to an Installation's MCP server ([MCP servers](#mcp-servers)) | `Authorization: Bearer <mod token>`, put in by the Runner's mod relay |
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`kndl` command from a Hub](/reference/commands/#the-kndl-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
@@ -55,7 +55,7 @@ The Hub mints six kinds of token, each `<kind>_<id>.<secret>`, and stores only a
 | Prefix | Token | Issued |
 |---|---|---|
 | `chr_` | Runner token | when a Pairing code is redeemed, or by `kndl runner token`; one per Runner |
-| `chm_` | mod token | by the Hub for each run of a Session's Claude Code, and kept by its Runner's [mod relay](/concepts/security-model/#the-mod-relay), which relays the mod's calls with it |
+| `chm_` | mod token | by the Hub for each run of a Session's agent, and kept by its Runner's [mod relay](/concepts/security-model/#the-mod-relay), which relays the mod's calls with it |
 | `chs_` | sign-in token | at sign-in, in the `kndl_sign_in` cookie |
 | `chc_` | CLI token | by `kndl login`, one per sign-in, named after the machine; it lasts until it is revoked |
 | `cho_` | Setup link | by `kndl onboard`, `kndl hub setup-link` or `bun run setup-link`, while the Hub has no Owner; one at a time, used once ([People](#people)) |
@@ -76,9 +76,11 @@ The Hub keeps each CLI token's machine, when it was made, and when it was last u
 
 ## Handshake
 
-Each channel opens with a hello carrying the peer's `protocolVersion`, `ProtocolVersion` in `packages/protocol/src/Version.ts` (`4`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
+Each channel opens with a hello carrying the peer's `protocolVersion`, `ProtocolVersion` in `packages/protocol/src/Version.ts` (`5`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
 
 `HandshakeRejected` has the same shape in every protocol version: `reason` (`ProtocolVersionMismatch` or `MalformedHandshake`), the rejecting side's `protocolVersion`, `message`, and, when the Hub turns a Runner away, `hubVersion`, the commit the Hub runs. A Runner that updates itself moves to that commit and restarts; one that doesn't logs what to do. Neither exits: it tries again every minute.
+
+Version 5 added Threads, the Plan, compaction, running cost and `Resumed` Turns: see [Threads, the Plan and compaction](#threads-the-plan-and-compaction).
 
 ## Pairing
 
@@ -105,11 +107,11 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 A side drops a message it can't decode and carries on.
 
-`RunnerHello` carries the Runner's name, the Sessions it runs, and `version`: the commit its checkout is on, the branch, if any ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/)), and `release`, the Release tagged on that commit, if any, such as `2026.10.1` ([ADR 0025](/contributing/decisions/0025-releases-and-channels/)). Every `version`, `target` and `hubVersion` carries `release` the same way. It is optional, and a peer from before it ignores it, so it needed no new protocol version. The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
+`RunnerHello` carries the Runner's name, the Sessions it runs, `harnesses`, `["Pi"]` for a Runner that prepared the durable agent's runtime and absent for one that couldn't or is older (the Hub starts and wakes no Session on it), and `version`: the commit its checkout is on, the branch, if any ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/)), and `release`, the Release tagged on that commit, if any, such as `2026.10.1` ([ADR 0025](/contributing/decisions/0025-releases-and-channels/)). Every `version`, `target` and `hubVersion` carries `release` the same way. It is optional, and a peer from before it ignores it, so it needed no new protocol version. The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
 
-After a restart, a Runner lists in `withoutModToken` the Sessions it kept running: their mod tokens went with the old process. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's mod relay answers that Session's requests `503` with `retry-after`, which Claude Code and the mod retry. A Runner that loses the message lists the Session again in its next hello.
+After a restart, a Runner lists in `withoutModToken` the Sessions it kept running: their mod tokens went with the old process. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's mod relay answers that Session's requests `503` with `retry-after`, which the agent retries. A Runner that loses the message lists the Session again in its next hello.
 
-A Runner has no Claude credential of its own ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). As each Session starts or wakes, the Runner sends `FetchClaudeCredential` for it. The Hub answers `ClaudeCredentialFetched` with the Creator's setup token, for a Session on that Runner whose Creator has one and is a Member. Otherwise it answers `ClaudeCredentialRefused` with why, and the Runner fails the start or wake with that message. The Runner sets the token as `CLAUDE_CODE_OAUTH_TOKEN` on Claude Code's process, and never writes it down.
+A Runner has no Claude credential of its own ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). As each Session starts or wakes, the Runner sends `FetchClaudeCredential` for it. The Hub answers `ClaudeCredentialFetched` with the Creator's setup token, for a Session on that Runner whose Creator has one and is a Member. Otherwise it answers `ClaudeCredentialRefused` with why, and the Runner starts the agent without Claude's Models. The Runner sets the token as `CLAUDE_CODE_OAUTH_TOKEN` on the agent's process alone, and never writes it down.
 
 Every commit in a message, in `version`, `target`, `hubVersion` or an update's failure, is a full lowercase commit id: 40 hex digits, or 64 in a SHA-256 repository. A message carrying anything else, such as a short id or text git would read as an option, doesn't decode. The Runner also puts `--end-of-options` before every commit it passes to git.
 
@@ -132,9 +134,9 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 
 `StartSession` carries what the Runner needs to start or wake a Session: its Repo, base and Work branches (the same, for a Session working on its branch directly) and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/concepts/git-from-sessions/#in-the-sandbox)).
 
-`SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
+`SessionStopped` says why the agent stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines the agent's terminal session showed, as plain text of at most 4,000 characters. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
 
-`SessionPorts { sessionId, ports }` is the Session's whole list of Open ports, sent while it is Active whenever the list changes, and an empty one when Claude Code stops after it sent any. Each port has `port`, `addresses` (as written: `0.0.0.0`, `::`, `127.0.0.1`, `::1`) and `process` when the Runner could name the process holding it: a runtime with its script (`node vite`), or the program (`docker-proxy` for a port Docker publishes). The Runner sends its lists again after reconnecting. The Hub keeps only the latest list, in memory, drops one for a Session that isn't Active, and redacts process names like terminal frames ([Session lifecycle](/contributing/internals/#open-ports)).
+`SessionPorts { sessionId, ports }` is the Session's whole list of Open ports, sent while it is Active whenever the list changes, and an empty one when the agent stops after it sent any. Each port has `port`, `addresses` (as written: `0.0.0.0`, `::`, `127.0.0.1`, `::1`) and `process` when the Runner could name the process holding it: a runtime with its script (`node vite`), or the program (`docker-proxy` for a port Docker publishes). The Runner sends its lists again after reconnecting. The Hub keeps only the latest list, in memory, drops one for a Session that isn't Active, and redacts process names like terminal frames ([Session lifecycle](/contributing/internals/#open-ports)).
 
 `RunnerSysinfo` is a Runner's host, sampled: `diskFreeBytes` and `diskTotalBytes` of the volume holding its data (`RUNNER_SESSIONS_ROOT`), `memoryTotalBytes` and `memoryAvailableBytes`, `cpuCores`, `loadAverage` (the 1, 5 and 15 minute averages), `os`, `arch` and `uptimeSeconds`. The Runner sends one right after it is welcomed and then every 30 seconds, and does not queue one while disconnected. The Hub keeps each Runner's latest in memory, and lists it as `sysinfo`, with `at`, when the Hub got it, on the Runner in `RunnerList`. It also keeps `diskFreeBytes`, `memoryAvailableBytes` and the 1-minute load in its database as one point per 5 minutes for 7 days, which the browser reads with `GetRunnerHistory { runnerId }` when a Runner's Monitor opens, answered by `RunnerHistory { runnerId, points }`, oldest first. Each point is `{ at, diskFreeBytes, memoryAvailableBytes?, load1? }`: a point kept before the Hub kept memory and load has neither. A Runner from before sends none, and is listed without `sysinfo`.
 
@@ -144,13 +146,11 @@ A Runner that says `asksCloneAccess` in `RunnerHello` asks how to clone a Test b
 
 ### Models and thinking levels
 
-`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `thinkingLevels`, the thinking levels `--effort` takes, lowest first. The levels are pi-ai's, `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, of which Claude Code takes `low` to `max`. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `reasoning`, whether it takes a thinking level. A Runner that sends no `models` runs its Sessions on Claude Code's defaults.
+A Session's Models are its Creator's: `<provider>/<id>` names, such as `openai/gpt-6-sol`, from their Connected providers, and Claude's with a Claude credential. The Hub sends them in `ProvidersState`, to their owner, and in `SessionModels { sessionId, models }` to everyone who joins a Session ([Model and thinking level](#model-and-thinking-level)). A model name without a `/`, such as Claude Code's `sonnet`, is refused: `'sonnet' is Claude Code's name for a model, and Sessions no longer run on Claude Code: pick one of your Models, named <provider>/<id>, such as anthropic/claude-opus-5-5.`
 
-The Runner sends the table of the pinned Claude Code version's models, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts` ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)), which `bun run --filter @kndl/runner probe-models` writes from the version's own `claude -p /model`. A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`.
+`RunnerHello.models` is the table of the pinned Claude Code version's models, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts`, written by `bun run --filter @kndl/runner probe-models`. A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends none.
 
-`StartSession` carries the Session's `model` and `thinkingLevel` when they are set, which the Runner passes as `--model` and `--effort`. Its `resume`, when it wakes a Session, is the `conversationId` the mod's last `ModHello` gave, Claude Code's own session id, which the Runner passes as `--resume`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner restarts Claude Code with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, and the Hub delivers the next prompt once the new mod has said hello. On a Runner without `relaunches`, the setting takes effect when the Session next wakes.
-
-`RelaunchSession.harness` says what runs the Session's agent from then on, Claude Code when absent ([ADR 0030](/contributing/decisions/0030-a-session-switches-harness-with-a-context-handoff/)). One other than the Session runs switches it: the Runner stops the one and starts the other in the same Sandbox, readied for it as a start would have. `resume` is then that Harness's own conversation, from its mod's last hello, or absent when the Session never ran on it, which starts a new one. The Hub sends it only to a Runner whose `harnesses` list both.
+`StartSession` carries the Session's `model` and `thinkingLevel` when they are set, which the Runner gives the agent as `KNDL_MODEL` and `KNDL_THINKING`. Its `resume`, when it wakes a Session, is the `conversationId` the mod's last `ModHello` gave. The agent resumes from its storage either way. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which starts the agent again in the same Sandbox with a fresh mod token; the Hub sends it only to a mod that doesn't say `switchesModels`, which the durable agent does.
 
 ## Forwards
 
@@ -159,7 +159,7 @@ The Runner sends the table of the pinned Claude Code version's models, `PinnedCl
 1. The CLI opens it with a CLI token as `Authorization: Bearer`; the sign-in cookie won't do. A request that isn't a WebSocket upgrade gets `426`, and a missing or wrong token `401`, before the upgrade.
 2. The Hub checks the caller's access to the Session's Repo, as for a tunnel. A refusal comes after the upgrade, as a close with a code and a message.
 3. The CLI sends `ForwardHello { protocolVersion }`. The Hub answers `ForwardWelcome { protocolVersion }`, or `HandshakeRejected` ([Handshake](#handshake)).
-4. The Hub wakes an Asleep Session for its Creator, then sends `ForwardSession { session }`, the Session as the web channel has it, and another whenever it changes. Its `openPorts` are the ports to forward. A Frozen Session's forward stays open, and is sent the Session again once its Runner is back. The CLI sends nothing more.
+4. The Hub wakes an Asleep Session for the caller, then sends `ForwardSession { session }`, the Session as the web channel has it, and another whenever it changes. Its `openPorts` are the ports to forward. A Frozen Session's forward stays open, and is sent the Session again once its Runner is back. The CLI sends nothing more.
 
 While it is connected, a forward is presence: the Hub doesn't put the Session to sleep for being idle, and lists the forward's person in the Session's `PresenceChanged`, to the web UI and the mod, even without the Session open in a browser. `forwardingFrom` on that person lists the machines their forwards come from, each named after its CLI token. Closing the forward takes it out.
 
@@ -170,7 +170,7 @@ The Hub closes a forward with one of these codes, and a message saying why. The 
 | `1001` | The Hub is shutting down. |
 | `4401` | The CLI token was revoked, on the **Account** page or by `kndl logout`: `This machine's CLI token was revoked: run kndl login to sign in again.` |
 | `4404` | No such Session, or one the caller has no access to: the two get the same answer. Also when the caller loses access to the Session's Repo: `You no longer have access to <repo>.` |
-| `4409` | The Session went asleep, the message saying why, such as `Put to sleep by <login>`; or it was Asleep and couldn't be woken, the message saying why not, such as that only its Creator can wake it. |
+| `4409` | The Session went asleep, the message saying why, such as `Put to sleep by <login>`; or it was Asleep and couldn't be woken, the message saying why not, such as `alice, who started this Session, has no Models to run it on: they can connect a Provider on the Account page.` |
 | `4410` | The Session was archived. |
 | `4424` | GitHub couldn't say whether the caller has access to the Session's Repo; try again. |
 
@@ -228,8 +228,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`, `GetRunnerHistory`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`, `PurgeArchivedSession`, `GetSessionDiskUsage`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckHubUpdate`, `UpdateHub`; `CheckRepo`, `ListRepos`, `ListBranches`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken`; `CreateInvite`, `ListInvites`, `RevokeInvite`, `ListMembers`, `RemoveMember`; `GetMcpServers`, `CreateMcpServer`, `EditMcpServer`, `DeleteMcpServer`, `CreateInstallation`, `EditInstallation`, `DeleteInstallation`, `GetMcpServerLog` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `RunnerHistory`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`, `ArchivedSessionPurged`, `SessionDiskUsage`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `HubUpdateChecked`, `HubUpdateStarted`, `HubUpdateRunChanged`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; `McpServersState`, `McpServerLog`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`, `GetRunnerHistory`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `CreateThread`, `PromptThread`, `StopThread`, `SetThreadModel`, `CompactConversation`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`, `PurgeArchivedSession`, `GetSessionDiskUsage`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckHubUpdate`, `UpdateHub`; `CheckRepo`, `ListRepos`, `ListBranches`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken`; `CreateInvite`, `ListInvites`, `RevokeInvite`, `ListMembers`, `RemoveMember`; `GetMcpServers`, `CreateMcpServer`, `EditMcpServer`, `DeleteMcpServer`, `CreateInstallation`, `EditInstallation`, `DeleteInstallation`, `GetMcpServerLog` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `RunnerHistory`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`, `ArchivedSessionPurged`, `SessionDiskUsage`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `ThreadCreated`, `SessionModels`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `HubUpdateChecked`, `HubUpdateStarted`, `HubUpdateRunChanged`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; `McpServersState`, `McpServerLog`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -245,16 +245,17 @@ Every Session and Environment command is checked against the person's access to 
 
 ### Who drives
 
-Only a Session's `creator` drives it ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). On top of Repo access, the Hub refuses anyone else with a `CommandFailed` from `driveRefusal` in `packages/protocol/src/SessionRules.ts`: `Only <name>, who started this Session, can drive it: it runs on their Connected providers.` for a pi Session, and `… it runs on their Claude credential.` for a Claude Code one That covers:
+Everyone with access to a Session's Repo drives it. The Session still runs on its Creator's accounts ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)'s billing half; the spike lifts its driving half, as [the design](https://github.com/kddige/kndl/blob/main/docs/design/durable-harness.md#departures-from-adrs) lists). `driveRefusal` in `packages/protocol/src/SessionRules.ts` is the one place to put the rule back: it never refuses, and `drivingCommands` in the Session relay lists what it would cover:
 
 - `SendPrompt`, `CancelPrompt`, `SteerPrompt`, `StopTurn`, `MessageAgent`, `StopAgent`, `AnswerQuestion` and `PickAnswer`;
 - `SleepSession`, `WakeSession`, `SetKeepAwake`, `RestartSession`, `ArchiveSession`, `RestoreSession`, `RenameSession` and `SetSessionModel`;
 - `OpenTerminal`, `TerminalInput` and `TerminalResize`;
+- `CreateThread`, `PromptThread`, `StopThread`, `SetThreadModel` and `CompactConversation`;
 - uploading an Attachment with `POST /sessions/<session id>/attachments`.
 
-`JoinSession`, reading Attachments, Forwards of an Active Session and `PurgeArchivedSession` take Repo access alone. Only the Creator's forward wakes an Asleep Session ([Forwards](#forwards)). Terminal frames go only to the Creator's connections.
+`JoinSession`, reading Attachments, Forwards of an Active Session and `PurgeArchivedSession` take Repo access alone, and so does a forward's wake of an Asleep Session ([Forwards](#forwards)). Terminal frames go to every connection that opened the terminal.
 
-Each time the Hub starts, it puts to sleep every Active Session whose Creator has no setup token, saying why. It also takes out of each Prompt queue the prompts queued by anyone but the Session's Creator, and logs each as `PromptCancelled { promptId, sender, text, message }`.
+A Session whose Creator is no longer a Member, or who has no Models, can't wake. When a Runner is back after the Hub starts, it puts to sleep each Session that is running without either, saying why.
 
 ### Purging an Archived Session
 
@@ -262,7 +263,7 @@ Each time the Hub starts, it puts to sleep every Active Session whose Creator ha
 
 ### Steering
 
-`SteerPrompt { sessionId, promptId }` asks to feed a queued prompt into the running Turn ([ADR 0018](/contributing/decisions/0018-steering-a-prompt-into-the-running-turn/)). Only the Session's Creator can send it ([Who drives](#who-drives)). The Hub sends the mod `DeliverIntoTurn`, and the prompt keeps its place in the queue until the mod answers. It leaves the queue when the Turn logs `PromptSteered { turnId, promptId, text, sender }`. Once Claude has read it, `SteeredPromptRead { turnId, promptId }` follows. A Turn that ends before that leaves the prompt unread, and Claude reads it with the next prompt. The Hub refuses with a `CommandFailed`:
+`SteerPrompt { sessionId, promptId }` asks to feed a queued prompt into the running Turn ([ADR 0018](/contributing/decisions/0018-steering-a-prompt-into-the-running-turn/)). Anyone who drives the Session can send it ([Who drives](#who-drives)). The Hub sends the mod `DeliverIntoTurn`, and the prompt keeps its place in the queue until the mod answers. It leaves the queue when the Turn logs `PromptSteered { turnId, promptId, text, sender }`. Once the agent has read it, `SteeredPromptRead { turnId, promptId }` follows. A Turn that ends before that leaves the prompt unread, and the agent reads it with the next prompt. The Hub refuses with a `CommandFailed`:
 
 | Refused | Message |
 |---|---|
@@ -271,11 +272,11 @@ Each time the Hub starts, it puts to sleep every Active Session whose Creator ha
 | A mod that didn't say `steers` | `This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.` |
 | A prompt that isn't queued | `The prompt is not in the Prompt queue.` |
 
-If the mod can't add the prompt to the Turn, the prompt stays in its place, and the person who steered it gets `The prompt could not join the running Turn, so it waits in the queue: …`. A `CancelPrompt` for a prompt that is being handed over is refused with `The prompt is being handed to the running Turn.`
+A Thread has no Prompt queue: a prompt posted into a busy Thread steers it directly, and `ThreadPromptSent` shows it as sent until the agent's `TurnStarted` or `PromptSteered` with the same `promptId`. If the mod can't add the prompt to the Turn, the prompt stays in its place, and the person who steered it gets `The prompt could not join the running Turn, so it waits in the queue: …`. A `CancelPrompt` for a prompt that is being handed over is refused with `The prompt is being handed to the running Turn.`
 
 ### Keep awake
 
-`SetKeepAwake { sessionId, on }` turns a Session's Keep awake on or off ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)). Only the Session's Creator can send it ([Who drives](#who-drives)). Each Session carries `keepAwake: { by, at }` while it is on: the Participant who turned it on, and when. Turned on for an Asleep Session, it wakes it, and a refused wake comes back as a `CommandFailed` with Keep awake left on. `SetKeepAwake` on an Archived Session is refused with `The Session is archived.` `SleepSession` and `ArchiveSession` turn it off.
+`SetKeepAwake { sessionId, on }` turns a Session's Keep awake on or off ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)). Anyone who drives the Session can send it ([Who drives](#who-drives)). Each Session carries `keepAwake: { by, at }` while it is on: the Participant who turned it on, and when. Turned on for an Asleep Session, it wakes it, and a refused wake comes back as a `CommandFailed` with Keep awake left on. `SetKeepAwake` on an Archived Session is refused with `The Session is archived.` `SleepSession` and `ArchiveSession` turn it off.
 
 ### Claude credentials
 
@@ -351,9 +352,9 @@ The Hub refuses with a `CommandFailed`:
 | Upgrading an MCP server changed since the read | `<MCP server> changed since that read; check for an upgrade again.` |
 | Upgrading an MCP server with an Installation on in a Repo the person has no access to | `This MCP server has Installations on Repos you have no access to, so you can't upgrade it.` |
 
-Each Session carries `mcpServers` when it runs with Installations: each `{ id, name, mcpServerId, mcpServerName, mcpServerVersion?, global?, server, values? }`, as its Claude Code last started; `mcpServerVersion` is a packaged MCP server's, `global` marks one that was on as a global Installation, and `values` says which header secret values it started with and when each was set. `server` is the name of its MCP server, which Claude Code shows as `plugin:kndl:<server>`. A Session that isn't Archived carries `mcpServersChanged: true` when its Repo's Installations, or their MCP servers' names, changed since, or their MCP servers were upgraded: a wake or `RestartSession` applies the change.
+Each Session carries `mcpServers` when it runs with Installations: each `{ id, name, mcpServerId, mcpServerName, mcpServerVersion?, global?, server, values? }`, as its agent last started; `mcpServerVersion` is a packaged MCP server's, `global` marks one that was on as a global Installation, and `values` says which header secret values it started with and when each was set. `server` is the name of its MCP server, a slug of the Installation's name, in the agent's tool names, `mcp__<server>__<tool>`. A Session that isn't Archived carries `mcpServersChanged: true` when its Repo's Installations, or their MCP servers' names, changed since, or their MCP servers were upgraded: a wake or `RestartSession` applies the change.
 
-`StartSession` carries `mcpServers`, each `{ installationId, server }`, to a Runner whose `RunnerHello` says `relaysMcpServers`: never a header secret value, which stays on the Hub. The Runner gives Claude Code a plugin of its own, `kndl`, whose `.mcp.json` points each server at `/gateway/<installation id>` through the mod relay, with the Session token as its bearer. The relay passes the request to the Hub with the Session's mod token in its place.
+`StartSession` carries `mcpServers`, each `{ installationId, server }`, to a Runner whose `RunnerHello` says `relaysMcpServers`: never a header secret value, which stays on the Hub. The Runner names them to the agent in `KNDL_MCP_SERVERS`. The agent connects to each at `/gateway/<installation id>` through the mod relay, with the Session token as its bearer, and the relay passes the request to the Hub with the Session's mod token in its place. The tools are deferred: the model finds them with `tool_search`.
 
 The Gateway answers:
 
@@ -370,35 +371,29 @@ The request goes to the MCP server's URL as it is now, its body streaming on unt
 
 ### Model and thinking level
 
-Each Runner in `RunnerList` carries the `models` its hello said ([Models and thinking levels](#models-and-thinking-levels)). `CreateSession` takes an optional `model` and `thinkingLevel`, and `SetSessionModel { sessionId, model?, thinkingLevel? }` sets both at once; an absent one is Claude Code's default, and the `default` alias is stored as no model. The Hub checks them against the Session's Runner and refuses with a `CommandFailed`:
+`CreateSession` takes an optional `model` and `thinkingLevel`, and `SetSessionModel { sessionId, model?, thinkingLevel? }` sets both at once, for anyone who drives the Session. The Hub checks them against the Creator's Models, and without a `model` takes the Creator's default: Claude's first Model when they have Claude's, else their first. It refuses with a `CommandFailed`:
 
 | Refused | Message |
 |---|---|
-| A model the Runner's Claude Code doesn't have | `Model '<model>' not found`, as Claude Code's `/model` says it |
-| A thinking level for a model that takes none | `<model> takes no thinking level.` |
-| A level the Runner's Claude Code doesn't have | `Claude Code on <runner> has no thinking level '<level>'.` |
-| A model or level on a Runner that sent no `models` | `<runner> hasn't said which models its Claude Code has: only Claude Code's default model can be used there.` |
+| A Creator without Models | `You have no Models to run a Session on: connect a Provider on the Account page.` |
+| A model that isn't one of theirs | `Model '<model>' not found` |
+| A thinking level for a model that takes none | `<label> takes no thinking level.` |
+| A level the model doesn't have | `<label> has no thinking level '<level>'.` |
+| A model named as Claude Code names it, with no `/` | `'<model>' is Claude Code's name for a model, and Sessions no longer run on Claude Code: …` |
+| `CreateSession.harness` of `ClaudeCode` | `Claude Code no longer runs Sessions: they run on the durable agent, on your Models.` |
 | `SetSessionModel` on an Archived Session | `The Session is archived: restore it to change its model.` |
 
-Each Session carries its `model` and `thinkingLevel` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, thinkingLevel?, harness? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
+Each Session carries its `model` and `thinkingLevel` when set. Each change is logged as `ModelSwitched { by, model?, modelLabel?, thinkingLevel?, harness? }`, where `modelLabel` is the Model's label among its Creator's. Once no Turn runs, the Hub sends the mod `SwitchModel`, and the agent runs its next request on the new Model with its conversation intact. A `TurnEnded.usage.model` is the model a Turn ran. `harness` and `modelPending` remain on the schemas for Sessions from before the durable agent, which move onto it as they next start.
 
-A model names its Harness (`harnessOfModel` in `Model.ts`, [ADR 0030](/contributing/decisions/0030-a-session-switches-harness-with-a-context-handoff/)): a Provider's Model, `<provider>/<id>` such as `openai/gpt-6-sol`, is pi's, and anything else, an alias or no model, is Claude Code's. `SetSessionModel` with a model of the other Harness switches the Session to it between Turns, and `ModelSwitched` then carries `harness`, the Harness it moves to. `SessionSummary.harness` is what runs the Session now. The Hub also refuses such a switch with a `CommandFailed`:
+A Thread has its own model: `ThreadStarted.model` is required, the Hub resolving the Session's when the web asks for none, and a fork keeps its parent's model rather than following the Session. `SetThreadModel` switches one ([Threads, the Plan and compaction](#threads-the-plan-and-compaction)).
 
-| Refused | Message |
-|---|---|
-| A Runner that doesn't run both Harnesses, or hasn't said since the Hub started | `<runner> doesn't run both Claude Code and pi: update it to switch this Session to <Harness>.` |
-| To Claude Code, for a Creator without a Claude credential | `You have no Claude credential: add your setup token on the Account page.` |
-| To pi, for a Creator without Models | `You have no Models to run a pi Session on: connect a Provider on the Account page.` |
-
-`CreateSession.harness`, when given, must agree with its `model`: `<model> runs on pi, not Claude Code.` Without a model, a Runner that runs pi gives a Session Claude Code when the Creator's default Model is Claude's and their `claudeHarness` is `ClaudeCode`, and pi otherwise.
-
-`SetClaudeHarness { requestId, harness }` sets which Harness runs Claude's Models in the signed-in person's new Sessions. The Hub answers with `ProvidersState`, whose `claudeHarness` is the choice, `ClaudeCode` unless they chose `Pi`. `ProvidersState` goes to them alone.
+`SetClaudeHarness` and `ProvidersState.claudeHarness` are left in the schemas; the Account page does not use them.
 
 ### Questions
 
-When the agent asks with the question tool on the main loop (`ask_user_question`, which in Claude Code replaces `AskUserQuestion`), the mod reports `QuestionAsked { turnId, toolCallId, questions, async? }`, each question with its `question`, `header`, `options` (`label`, `description?`) and `multiSelect`. Until it closes, the Session carries it as `openQuestion: { turnId, toolCallId, questions, askedAt, async? }`, and it doesn't go to sleep. A subagent can't ask.
+When the agent asks with the question tool on the main loop (`ask_user_question`), the mod reports `QuestionAsked { turnId, toolCallId, questions, async? }`, each question with its `question`, `header`, `options` (`label`, `description?`) and `multiSelect`. Until it closes, the Session carries it as `openQuestion: { turnId, toolCallId, questions, askedAt, async? }`, and it doesn't go to sleep. A Thread or a subagent can't ask.
 
-The person at the terminal gets a dialog meanwhile, and the first answer to reach the mod, from either, is the one the agent reads. In pi it is pi's own. Claude Code's can't be opened while the Runner has its `AskUserQuestion` turned off (`--disallowedTools`), so the hub-link-commands plugin draws one in a pane, which `/question` opens on a terminal too narrow for a tool to open it. The mod reports `QuestionClosed { turnId, toolCallId, outcome, by? }`. `by` is the Participant who answered from the web UI, absent for the terminal's. A Stop is `Cancelled`. The Hub closes the question as `Cancelled` itself when its Turn or its agent's process ends with it open.
+Anyone in the Session can answer, and the first answer to reach the mod is the one the agent reads. The mod reports `QuestionClosed { turnId, toolCallId, outcome, by? }`. `by` is the Participant who answered. A Stop is `Cancelled`. The Hub closes the question as `Cancelled` itself when its Turn or its agent's process ends with it open.
 
 `AnswerQuestion { sessionId, toolCallId, answer }` answers the Open question, with one of these, and the Hub sends the mod `DeliverAnswer { sessionId, toolCallId, answer, sender }`:
 
@@ -414,18 +409,18 @@ An `AnswerQuestion` for a question that isn't the Session's Open question is ref
 
 ### Subagents
 
-A Session's subagents are Claude Code's own ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)). The mod reports them as Events, which the Hub logs and sends in `SessionEventLogged` like the rest:
+A Session's subagents are the agent's own, started with its `agent` tool ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/), amended by the spike). The mod reports them as Events, which the Hub logs and sends in `SessionEventLogged` like the rest:
 
 | Event | What it says |
 |---|---|
-| `AgentStarted { turnId, agentId, toolCallId, agentType, description, model, background }` | The Agent call `toolCallId`, in the main loop's Turn `turnId`, started the agent `agentId`. Only agents started this way are the Session's: the Hub drops the status of any other, such as those Claude Code starts for itself. |
-| `AgentStatusChanged { agentId, status, worktree? }` | `Running`, `Done`, `Stopped` or `Interrupted`. `worktree`, its `path` and `branch`, once it works in one. |
-| `AgentMessaged { agentId, sender, text }` | The Session's Creator messaged it. Logged by the Hub, since Claude Code doesn't keep the message among the agent's own. |
+| `AgentStarted { turnId, agentId, toolCallId, agentType, description, model, background }` | The `agent` call `toolCallId`, in the Turn `turnId` of the main loop or a Thread, started the agent `agentId`. The Hub drops the status of any agent it never saw start. |
+| `AgentStatusChanged { agentId, status, worktree? }` | `Running`, `Done`, `Stopped` or `Interrupted`. `worktree` is left from Claude Code's agents; the durable agent starts none. |
+| `AgentMessaged { agentId, sender, text }` | A Participant messaged it. Logged by the Hub. |
 | `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded` with `agentId` | The agent's own work. Their `turnId` is the agent's run, new each time it resumes, so the web UI groups them by `agentId`. |
 
-A `TurnStarted` whose `sender` is `FromAgent { agentId }` is the Turn Claude Code starts when a background agent is done or stopped. Its `text` is Claude Code's `<task-notification>` about it; the web UI shows its summary and result. Claude Code notifies a background command's end the same way, so an `agentId` the Session never started is a task's, not an agent's: the web UI shows that Turn as from a background task.
+A `TurnStarted` whose `sender` is `FromAgent { agentId }` is the Turn the agent starts when a background agent is done or stopped. Its `text` is a `<task-notification>` about it, in the shape Claude Code's were; the web UI shows its summary and result. An agent's result goes to the conversation that started it, a Thread's included.
 
-The Hub marks a Session's Running agents `Interrupted` when its Claude Code stops: on sleep, a restart, an exit, or a Runner that comes back without it. A Frozen Session's agents stay as they were.
+The Hub marks a Session's Running agents `Interrupted` when its agent stops: on sleep, a restart, an exit, or a Runner that comes back without it. The agent's restart picks them up where they were, and they report `Running` again. A Frozen Session's agents stay as they were. A background agent outlives its parent's stop; a foreground `wait: true` call stops with it ([the mod's README](https://github.com/kddige/kndl/blob/main/packages/mod/durable/README.md#other-draft-limitations)).
 
 `MessageAgent { sessionId, agentId, text }` messages an agent, and `StopAgent { sessionId, agentId }` stops a running one. The Hub sends the mod `DeliverAgentMessage { sessionId, agentId, text, sender }` or `StopAgent`. A `MessageAgent` to an Asleep Session wakes it first. The Hub refuses with a `CommandFailed`:
 
@@ -441,27 +436,42 @@ When the mod can't carry out a command, it reports `AgentCommandFailed { agentId
 
 ## Mod channel: `/mod/*`
 
-Plain HTTP from the mod inside each Session's Claude Code, in its Sandbox. Its two plugins each say hello: `hub-link` reports the Session's Events, and `hub-link-commands` polls for the Hub's commands and runs them, since a plugin's hooks don't see the work it causes, such as an agent it resumes ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)). The mod sends it to its Runner's mod relay with the Session token, and the relay passes it to the Hub with the mod token:
+Plain HTTP from the Session's durable agent, in its Sandbox: one headless process, `packages/mod/durable`. It sends each call to its Runner's mod relay with the Session token, and the relay passes it to the Hub with the mod token:
 
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
-- `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends, and [subagents](#subagents).
-- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`.
-- `GET /mod/attachments/<attachment id>?offset=<n>`: a file attached to a prompt, base64, in parts, for the tool that shows it to Claude ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)).
+- `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends, [subagents](#subagents) and [Threads](#threads-the-plan-and-compaction).
+- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`, and one it already has with `PromptAlreadySubmitted`.
+- `GET /mod/attachments/<attachment id>?offset=<n>`: a file attached to a prompt, base64, in parts, for the agent's `attachment` tool ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)). An image comes back as an image; a PDF is saved to a path outside the Workspace, which the tool names.
+- `GET /mod/providers`: the Models the agent can use, from the Hub's Gateway.
 - `GET /mod/history?before=<seq>&limit=<n>`: the Session's earlier Turns, for the agent's `session_history` tool ([Handoffs](#handoffs)).
 
 | Direction | Messages |
 |---|---|
-| Mod to Hub | `ModHello`; Turn events (`TurnStarted`, `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`, `AgentStarted`, `AgentStatusChanged`, `QuestionAsked`, `QuestionClosed`, `PromptSteered`, `SteeredPromptRead`); `PromptFailed`, `AgentCommandFailed`, `AnswerFailed` |
-| Hub to mod | `ModWelcome` or `HandshakeRejected`; `DeliverPrompt`, `DeliverIntoTurn`, `StopTurn`, `DeliverAgentMessage`, `StopAgent`, `DeliverAnswer`, `PresenceChanged`, `SwitchModel`, `DeliverHandoff` |
+| Mod to Hub | `ModHello`; Turn events (`TurnStarted`, `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`, `AgentStarted`, `AgentStatusChanged`, `QuestionAsked`, `QuestionClosed`, `PromptSteered`, `SteeredPromptRead`, `CompactionStarted`, `CompactionEnded`, `PlanChanged`, `UsageChanged`); `PromptFailed`, `ThreadPromptFailed`, `AgentCommandFailed`, `AnswerFailed`, `ModelSwitchFailed` |
+| Hub to mod | `ModWelcome` or `HandshakeRejected`; `DeliverPrompt`, `DeliverIntoTurn`, `StopTurn`, `DeliverAgentMessage`, `StopAgent`, `DeliverAnswer`, `PresenceChanged`, `SwitchModel`, `DeliverHandoff`; `StartThread`, `DeliverThreadPrompt`, `StopThread`, `SwitchThreadModel`, `Compact` |
 
-A mod that can [steer](#steering) says `steers: true` in its hello. Only that mod is sent `DeliverIntoTurn { sessionId, promptId, text, sender }`, and only while a Turn runs. hub-link-commands appends the prompt to the running Turn's conversation, with its sender's name, as a user row. If no Turn is running or the append is refused, it answers `PromptFailed`. hub-link reports `PromptSteered` when the row joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
+The hello says what the mod takes: `steers: true` for [steering](#steering), `attaches`, `switchesModels` for `SwitchModel`, and `durable: true` for the Thread commands, `Compact` and `Resumed` Turns. The durable agent says all four. Only a mod that steers is sent `DeliverIntoTurn { sessionId, promptId, text, sender }`, and only while a Turn runs. The agent appends the prompt to the running Turn's conversation, with its sender's name. If no Turn is running or the append is refused, it answers `PromptFailed`. It reports `PromptSteered` when the prompt joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
 
 `/mod/events` and `/mod/commands` answer `409` until the mod has said hello.
 
+### Threads, the Plan and compaction
+
+Version 5 adds what the durable agent does beside the main loop. The messages are in `packages/protocol/src/Thread.ts`, and the agent's design is in [the spike's design](https://github.com/kddige/kndl/blob/main/docs/design/durable-harness.md#the-protocol-version-5); this is the shape of it.
+
+- **Threads.** A Thread is a fork of the main loop at one Turn's answer. The web sends `CreateThread` (answered by `ThreadCreated`, with the same `requestId`), then `PromptThread`, `StopThread`, `SetThreadModel` and `CompactConversation`. The Hub mints a `ThreadId`, logs `ThreadStarted`, `ThreadPromptSent` and `ThreadModelChanged` itself, and sends the mod `StartThread`, `DeliverThreadPrompt`, `StopThread`, `SwitchThreadModel` and `Compact`. The agent's Turn events carry the `threadId`, and a Thread's Turns never touch the Session's `currentTurn`. `SessionSummary.threads` lists each Thread with its title, running state and model.
+- **A failed Thread prompt.** The agent answers with `ThreadPromptFailed { threadId, promptId, message, threadDropped? }`; a Thread whose first prompt failed is dropped.
+- **Delivery.** A prompt's id is its request id, so a prompt delivered twice runs once. A command not yet delivered when the agent restarts is delivered again after its hello.
+- **The Plan.** `PlanChanged { threadId?, agentId?, plan }` carries a conversation's whole checklist: `steps` of `{ text, status }` with `pending`, `in_progress` or `done`, and an optional `explanation`.
+- **Compaction.** `CompactionStarted` and `CompactionEnded` mark a summary of a conversation's older messages: `reason` is `threshold`, `overflow` or `manual`, and `outcome` is `compacted`, `skipped` or `failed`.
+- **Cost.** `UsageChanged { threadId?, agentId?, usage }` is a conversation's running total in tokens and US dollars, sent once a Turn ends.
+- **Resumed Turns.** A `TurnStarted` with `sender: Resumed {}` is a run the agent continued after it restarted. The Hub ended the original Turn as `aborted` when the agent stopped.
+
+Web events reach the Hub through a volatile outbox, so a hard kill can lose some: see the [recovery contract](https://github.com/kddige/kndl/blob/main/packages/mod/durable/README.md#recovery-contract).
+
 ### Handoffs
 
-After a Session switches Harness ([Model and thinking level](#model-and-thinking-level)), its new mod is handed what that Harness hasn't seen of the Session ([ADR 0030](/contributing/decisions/0030-a-session-switches-harness-with-a-context-handoff/)). A mod that takes it says `takesHandoffs: true` in its hello; both of kndl's do.
+A Session from before the durable agent moves onto it as it next starts, and its new mod is handed what Claude Code saw of the Session ([ADR 0030](/contributing/decisions/0030-a-session-switches-harness-with-a-context-handoff/)). No Session switches Harness otherwise.
 
-- **`DeliverHandoff { sessionId, from, text, earlierBefore? }`** is queued once, after the new mod's hello, before the next prompt. `from` is the Harness the Session ran on before. `text` is the Hub's account of the Turns that Harness hasn't seen, all of them for one new to the Session: each Turn's sender, prompt, tool calls (`<tool>: <input>`) and answer, and the model switches among them, oldest first, clipped, and within 64,000 characters, the newest kept. `earlierBefore` is the `seq` of the earliest Turn it kept, when it left some out. The mod gives it to its agent as context for the next prompt, not as a prompt: Claude Code's appends it to the conversation as a note, and pi's adds it as a custom message, neither starting a Turn. A mod whose hello doesn't say `takesHandoffs` gets none, and the Session's history says so: `<Harness> started without a handoff of what happened on <Harness>: its mod doesn't take one.`
-- **`GET /mod/history?before=<seq>&limit=<n>`** answers `ModHistory { turns, earlierBefore? }`: the main loop's Turns before `before`, or the latest without it, oldest first, at most `limit`, 20 by default and 50 at most. Each is a `HistoryTurn { seq, by, prompt, tools, answer, model? }`, clipped as the handoff's. `earlierBefore` is there when earlier Turns are left, to pass as the next `before`. Both mods serve it to their agent as the `session_history` tool.
+- **`DeliverHandoff { sessionId, from, text, earlierBefore? }`** is queued once, after the new mod's hello, before the next prompt. `from` is the Harness the Session ran on before, `ClaudeCode`. `text` is the Hub's account of the Turns that Harness hasn't seen, all of them for one new to the Session: each Turn's sender, prompt, tool calls (`<tool>: <input>`) and answer, and the model switches among them, oldest first, clipped, and within 64,000 characters, the newest kept. `earlierBefore` is the `seq` of the earliest Turn it kept, when it left some out. The mod gives it to its agent as context for the next prompt, not as a prompt, and starts no Turn.
+- **`GET /mod/history?before=<seq>&limit=<n>`** answers `ModHistory { turns, earlierBefore? }`: the main loop's Turns before `before`, or the latest without it, oldest first, at most `limit`, 20 by default and 50 at most. Each is a `HistoryTurn { seq, by, prompt, tools, answer, model? }`, clipped as the handoff's. `earlierBefore` is there when earlier Turns are left, to pass as the next `before`. The agent serves it to itself as the `session_history` tool.
 

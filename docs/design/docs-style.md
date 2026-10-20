@@ -69,7 +69,7 @@ Reference pages are tables with the same columns throughout the page, examples o
 
 ## Glossary terms
 
-`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, Harness, Handoff, Provider, Connected provider, Model, Thinking level, Release, Channel, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
+`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Thread, Plan, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, Harness, Handoff, Provider, Connected provider, Model, Thinking level, Release, Channel, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
 
 - Link a term to its glossary entry or its page on first use in a page, when the reader may not know it.
 - Don't stack terms. "The Runner boots the Session's Sandbox from the Repo's Environment's Build" is four definitions in one sentence. Introduce one at a time, or say it plainly first and name it after.
@@ -83,8 +83,8 @@ The web UI follows the Voice and Glossary terms above, and these:
 - **Errors** say what failed, then the next step. Titles are "Couldn't {verb} {object}", or "{action} not sent" when the Hub isn't reachable.
 - **Toast titles** are the object and a past participle: "Link copied", "Invite revoked". Add a description only when there's a next step.
 - **Page descriptions** are one sentence of under 15 words, saying what the page holds.
-- **States** use one word, the same everywhere: the glossary's Active, Asleep, Frozen and Archived, and "Working" and "Waiting on you".
-- **The agent** is "the agent", unless the Harness is known. A Session may run on pi or Claude Code.
+- **States** use one word, the same everywhere: the glossary's Active, Asleep, Frozen and Archived, and "Working" and "Waiting on an answer".
+- **The agent** is "the agent": every Session runs the same one, on whichever Model its people pick. Say Claude Code only where it is the Claude bridge behind Claude's Models.
 - **Plurals and lists** come from the helpers in `packages/web/src/app/format.ts` (`plural`, `counted`, `andList`), never `n === 1 ?`.
 - **Shared strings** live in `packages/web/src/app/copy.ts`.
 
