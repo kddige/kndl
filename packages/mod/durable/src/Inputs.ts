@@ -33,6 +33,8 @@ export const AnswerEntry = "kndl.answer"
 export const AgentMessageEntry = "kndl.agent-message"
 /** What carries a run on past the agent's handoff to itself: the same Turn goes on. */
 export const ContinueEntry = "kndl.continue"
+/** A write that changes nothing the model sees, to have the conversation place what is queued. */
+export const NudgeEntry = "kndl.nudge"
 /** A context handoff from another Harness (ADR 0030), as a note the model reads. */
 export const HandoffEntry = "kndl.handoff"
 

@@ -70,33 +70,28 @@ const busy = async (runtime: Runtime, conversation: Conversation) =>
 const promptThread = async (
   runtime: Runtime,
   thread: Conversation,
-  threadId: string,
   command: Command<"DeliverThreadPrompt"> | Command<"StartThread">,
 ) => {
   const { context } = runtime
   const requestId = await admitPrompt(runtime, thread, command.promptId)
   if (requestId === undefined) return
   const steer = await busy(runtime, thread)
-  const submission = await thread.submit(
-    promptInput(command, { steer, attachmentTool, requestId }),
-    context,
-  )
-  const status = await submission.status(context)
   const reporter = runtime.loops.get(thread.id)
-  const turnId = reporter?.turnId
-  if (status.status !== "queued" || !steer || turnId === undefined) return
-  reporter?.steered(submission.id, command.promptId)
-  runtime.report({
-    _tag: "PromptSteered",
-    turnId,
-    threadId,
-    promptId: command.promptId,
-    text: command.text,
-    sender: command.sender,
-    ...(command.attachments === undefined || command.attachments.length === 0
-      ? {}
-      : { attachments: command.attachments }),
-  })
+  // The thread's reporter tells the Hub of a steer, and of its placement, in the order of the
+  // thread's events; an idle thread starts a Turn, which the Hub hears of instead.
+  if (steer)
+    reporter?.steering(requestId, {
+      promptId: command.promptId,
+      text: command.text,
+      sender: command.sender,
+      attachments: command.attachments,
+    })
+  try {
+    await thread.submit(promptInput(command, { steer, attachmentTool, requestId }), context)
+  } catch (error) {
+    reporter?.unsteer(requestId)
+    throw error
+  }
 }
 
 /**
@@ -111,7 +106,7 @@ export const startThread = async (
   const harness = runtime.harness()
   const { context } = runtime
   const known = await threadConversation(runtime, command.threadId)
-  if (known !== undefined) return promptThread(runtime, known, command.threadId, command)
+  if (known !== undefined) return promptThread(runtime, known, command)
   const root = await harness.root(context)
   const at = await forkPoint(runtime, root, command.anchorTurnId)
   if (at === undefined) {
@@ -165,7 +160,7 @@ export const startThread = async (
   await runtime.loops.attach(thread.id, { kind: "thread", threadId: command.threadId })
   const plan = await harness.snapshot(PlanDoc, thread.id, context)
   if (plan !== undefined && plan.steps.length > 0) reportPlan(runtime, thread.id, plan)
-  await promptThread(runtime, thread, command.threadId, command)
+  await promptThread(runtime, thread, command)
 }
 
 /** DeliverThreadPrompt: steers the thread's Turn, or starts one. */
@@ -180,7 +175,7 @@ export const deliverThreadPrompt = async (
       promptId: command.promptId,
       message: "The Session has no such thread.",
     })
-  await promptThread(runtime, thread, command.threadId, command)
+  await promptThread(runtime, thread, command)
 }
 
 /** StopThread: the thread's Turn stops; its background agents run on. */

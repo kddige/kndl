@@ -88,12 +88,16 @@ export class Commands {
       // must therefore clear the Hub's pending prompt, not leave it waiting for a start forever.
       const message = turnErrorMessage(String(error), this.runtime.secrets) ?? "The command failed."
       this.runtime.log(`kndl: ${command._tag}: ${message}`)
-      if (
+      const isPrompt =
         command._tag === "DeliverPrompt" ||
         command._tag === "DeliverIntoTurn" ||
         command._tag === "StartThread" ||
         command._tag === "DeliverThreadPrompt"
-      )
+      // A prompt that failed because the agent was closing its Harness didn't fail: the link has
+      // stopped polling, so thrown, it stays unacknowledged and the Hub brings it to the next
+      // start, where its request id makes it run once.
+      if (isPrompt && this.runtime.closing()) throw error
+      if (isPrompt)
         this.runtime.report({ _tag: "PromptFailed", promptId: command.promptId, message })
       else if (command._tag === "SwitchModel" || command._tag === "SwitchThreadModel")
         await this.switchFailed(command, message)
@@ -218,30 +222,29 @@ export class Commands {
     if (requestId === undefined) return
     const reporter = runtime.loops.get(root.id)
     const running = (await runtime.harness().snapshot(LiveDoc, root.id, runtime.context))?.run
-    const turnId = reporter?.turnId
-    if (turnId === undefined || running === undefined)
+    if (reporter === undefined || running === undefined)
       return runtime.report({
         _tag: "PromptFailed",
         promptId: command.promptId,
         message: "no Turn is running",
       })
-    const submission = await root.submit(
-      promptInput(command, { steer: true, attachmentTool, requestId }),
-      runtime.context,
-    )
-    // Placed at once, the Turn had ended: it starts the next, which the Hub hears of instead.
-    if ((await submission.status(runtime.context)).status !== "queued") return
-    reporter?.steered(submission.id, command.promptId)
-    runtime.report({
-      _tag: "PromptSteered",
-      turnId,
+    // The Turn's reporter tells the Hub of the steer, and of its placement, in the order of the
+    // conversation's events: if the Turn ended meanwhile, the next one starts from the steer instead.
+    reporter.steering(requestId, {
       promptId: command.promptId,
       text: command.text,
       sender: command.sender,
-      ...(command.attachments === undefined || command.attachments.length === 0
-        ? {}
-        : { attachments: command.attachments }),
+      attachments: command.attachments,
     })
+    try {
+      await root.submit(
+        promptInput(command, { steer: true, attachmentTool, requestId }),
+        runtime.context,
+      )
+    } catch (error) {
+      reporter.unsteer(requestId)
+      throw error
+    }
   }
 
   /** Compact: summarizes the main loop's or a thread's older messages now, as someone asked. */

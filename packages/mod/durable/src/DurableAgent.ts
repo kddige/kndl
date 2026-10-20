@@ -208,6 +208,7 @@ export const startDurableAgent = async (options: DurableAgentOptions): Promise<D
     secrets,
     log,
     context,
+    runSettled: (sessionId) => catalog.runSettled(sessionId),
   })
   const runtime: Runtime = {
     harness: openHarness,

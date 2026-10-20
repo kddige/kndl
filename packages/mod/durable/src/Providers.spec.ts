@@ -302,6 +302,42 @@ describe("Claude's Models", () => {
     expect(closed).toEqual(["closed"])
   })
 
+  test("hear of a conversation's run settling through the Gateway's catalogue, when there is a bridge", async () => {
+    const anthropic = builtinProvider("anthropic")
+    if (anthropic === undefined) throw new Error("no anthropic")
+    const settled: Array<string> = []
+    const gateway = (withClaude: boolean) =>
+      gatewayCatalog({
+        hubUrl,
+        modToken,
+        env: withClaude ? env : {},
+        cwd: "/workspace",
+        log: () => {},
+        wait: async () => {},
+        fetch: async () => ({ status: 200, text: JSON.stringify({ models: listed }) }),
+        createClaude: () =>
+          Object.assign(
+            { ...anthropic },
+            {
+              models: [],
+              missing: [],
+              withModels: () => anthropic as unknown as ClaudeBridgeProvider,
+              runSettled: (sessionId: string) => void settled.push(sessionId),
+              close: async () => {},
+            },
+          ),
+      })
+    const catalog = await gateway(true)
+    catalog.runSettled("session-1")
+    expect(settled).toEqual(["session-1"])
+    await catalog.close()
+    // Without the Creator's Claude credential there is no bridge to tell.
+    const without = await gateway(false)
+    expect(() => without.runSettled("session-2")).not.toThrow()
+    expect(settled).toEqual(["session-1"])
+    await without.close()
+  })
+
   test("aren't there without the Creator's Claude credential", () => {
     const models = createModels()
     expect(

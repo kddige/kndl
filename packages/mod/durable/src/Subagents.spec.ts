@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { TestAgent, ada, callTool, eventually, holdTool, say } from "../test/TestAgent.ts"
+import { InboxDoc } from "@earendil-works/pi-durable"
+import {
+  TestAgent,
+  ada,
+  callTool,
+  eventually,
+  fauxAssistantMessage,
+  fauxToolCall,
+  holdTool,
+  say,
+} from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
 import { AgentsDoc } from "./Docs.ts"
 
@@ -59,6 +69,48 @@ describe("a subagent", () => {
         .join(""),
     ).toBe("The repo has 3 files.")
     await agent.event((event) => event._tag === "TurnEnded" && event.turnId === fromAgent.turnId)
+  })
+
+  test("has its result reach the parent, which a stop of the parent's Turn withdrew from its queue", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => {
+        if (inAgent(request)) return say("The repo has 3 files.")
+        if (request.text.includes("<task-notification>")) return say("The agent found 3 files.")
+        if (request.last?.role === "toolResult") return say("Done.")
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("agent", { description: "Count files", prompt: "Count the files." }),
+            fauxToolCall("hold", {}),
+          ],
+          { stopReason: "toolUse" },
+        )
+      },
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Count", sender: ada })
+    await hold.firstCall
+    // The agent finished while the parent's Turn is held: its result waits in the parent's queue.
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await eventually(async () => {
+      const inbox = await started.harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT)
+      return inbox?.items.some((item) => item.entry?.kind === "kndl.agent-result") || undefined
+    })
+    agent.send({ _tag: "StopTurn" })
+    const fromAgent = await agent.event(
+      (event) =>
+        event._tag === "TurnStarted" && (event.sender as { _tag: string })._tag === "FromAgent",
+    )
+    expect(fromAgent.text).toContain("<result>The repo has 3 files.</result>")
+    await agent.event((event) => event._tag === "TurnEnded" && event.turnId === fromAgent.turnId)
+    await Bun.sleep(300)
+    // Given once: the stop's withdrawal is not made good twice.
+    expect(
+      agent.hub
+        .ofTag("TurnStarted")
+        .filter((event) => (event.sender as { _tag: string })._tag === "FromAgent"),
+    ).toHaveLength(1)
   })
 
   test("a call that waits gets its answer", async () => {

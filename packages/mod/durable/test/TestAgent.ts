@@ -115,6 +115,8 @@ export class TestAgent {
   connectedLater: Array<string> = []
   /** How often the agent asked for the Creator's Models again. */
   refreshes = 0
+  /** The provider session ids of the conversations whose runs settled, in order. */
+  readonly settled: Array<string> = []
 
   constructor(private readonly options: TestAgentOptions) {
     this.hub = new FakeHub({
@@ -198,6 +200,8 @@ export class TestAgent {
                   this.connectedLater = []
                   return true
                 },
+                undefined,
+                (providerSession) => void this.settled.push(providerSession),
               ),
       log: (text) => {
         if (process.env.KNDL_TEST_LOG) console.log(text)

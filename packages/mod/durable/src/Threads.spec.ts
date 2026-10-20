@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import type { EntryId } from "@earendil-works/pi-durable"
-import { TestAgent, ada, bob, callTool, conversationOf, holdTool, say } from "../test/TestAgent.ts"
+import {
+  TestAgent,
+  ada,
+  bob,
+  callTool,
+  conversationOf,
+  eventually,
+  holdTool,
+  say,
+} from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
 import { PlanDoc, TurnsDoc } from "./Docs.ts"
 
@@ -267,6 +276,69 @@ describe("a thread", () => {
     expect(
       await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from),
     ).toMatchObject({ reason: "aborted" })
+  })
+
+  test("reports a steer posted as the thread starts, which a boundary placed before the command looked", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => {
+        if (!inThread(request)) return say("Main.")
+        return request.text.includes("sent a new message") ? say("Seen.") : callTool("hold", {})
+      },
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    const first = await agent.event((event) => event._tag === "TurnEnded")
+    // The thread's tool round ends, and places the steer, right after the steer is submitted.
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    const conversation = Object.getPrototypeOf(root) as { submit: typeof root.submit }
+    const submit = conversation.submit
+    conversation.submit = async function (this: typeof root, draft, context) {
+      const submission = await submit.call(this, draft, context)
+      if (draft.type === "input" && draft.requestId === "q3") {
+        hold.release()
+        await eventually(async () => (await submission.status(context)).status !== "queued")
+      }
+      return submission
+    }
+    try {
+      // Posted at once, before the Hub is told of the thread's Turn.
+      agent.send({
+        _tag: "StartThread",
+        threadId: "t1",
+        anchorTurnId: first.turnId,
+        promptId: "q2",
+        text: "Dig in",
+        sender: bob,
+        model: "openai/gpt-test",
+      })
+      agent.send({
+        _tag: "DeliverThreadPrompt",
+        threadId: "t1",
+        promptId: "q3",
+        text: "Also this",
+        sender: ada,
+      })
+      const events = await agent.until(
+        (event) => event._tag === "TurnEnded" && event.threadId === "t1",
+      )
+      const turn = events.find((event) => event._tag === "TurnStarted" && event.threadId === "t1")
+      const steered = events.findIndex((event) => event._tag === "PromptSteered")
+      const read = events.findIndex((event) => event._tag === "SteeredPromptRead")
+      expect(events[steered]).toMatchObject({
+        threadId: "t1",
+        turnId: turn?.turnId,
+        promptId: "q3",
+        text: "Also this",
+        sender: ada,
+      })
+      expect(steered).toBeGreaterThan(events.indexOf(turn as never))
+      expect(read).toBeGreaterThan(steered)
+      expect(events[read]).toMatchObject({ threadId: "t1", turnId: turn?.turnId, promptId: "q3" })
+    } finally {
+      conversation.submit = submit
+    }
   })
 
   test("keeps what the stop withdrew from it, and a reply it stopped", async () => {

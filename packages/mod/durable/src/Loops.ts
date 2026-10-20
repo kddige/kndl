@@ -15,7 +15,7 @@
 // which the reporter reconciles with what it reported.
 
 import type { Context } from "@earendil-works/chord"
-import { InboxDoc, watchEvents } from "@earendil-works/pi-durable"
+import { InboxDoc, LiveDoc, ProviderDoc, watchEvents } from "@earendil-works/pi-durable"
 import type {
   AgentEvent,
   AgentEventStream,
@@ -31,8 +31,9 @@ import type {
   UsageState,
 } from "@earendil-works/pi-durable"
 import { clip, isRecord } from "../../src/HubMessages.ts"
+import type { Sender } from "../../src/HubMessages.ts"
 import { AgentsDoc, TurnsDoc } from "./Docs.ts"
-import { contentText, inputOrigin, inputText } from "./Inputs.ts"
+import { contentText, inputOrigin, inputText, NudgeEntry } from "./Inputs.ts"
 import type { InputOrigin } from "./Inputs.ts"
 import type { AssistantEnd } from "./Turns.ts"
 import {
@@ -69,6 +70,8 @@ export interface LoopsOptions {
   readonly log: (text: string) => void
   /** The agent's lifetime: cancelled as it shuts down. */
   readonly context: Context
+  /** A conversation's run settled, with its provider session id: the Models let go of its query. */
+  readonly runSettled: (sessionId: string) => void
 }
 
 /** A run reported as a Turn, until it ends. */
@@ -83,6 +86,14 @@ interface RunningTurn {
   readonly calls: Map<string, unknown>
   readonly started: Set<string>
   lastEntry?: EntryId
+}
+
+/** A steer a Participant sent, which the Hub is told of when the conversation takes it in. */
+export interface Steer {
+  readonly promptId: string
+  readonly text: string
+  readonly sender: Sender
+  readonly attachments?: ReadonlyArray<unknown> | undefined
 }
 
 /** What a batch says of the submissions and entries it touched. */
@@ -121,6 +132,8 @@ export class LoopReporter {
   private turn: RunningTurn | undefined
   /** The text of the in-flight assistant message the Hub has, by content index. */
   private emitted = new Map<number, string>()
+  /** Steers about to be submitted, by request id, until their submission is seen. */
+  private readonly submitting = new Map<string, Steer>()
   /** Queued steers the Hub was told of, until a boundary places them. */
   private readonly steers = new Map<SubmissionId, string>()
   private usage: UsageState | undefined
@@ -168,13 +181,25 @@ export class LoopReporter {
     await this.stream?.stop()
   }
 
-  /** A steer the Hub was told of: its placement is reported as read. */
-  steered(submissionId: SubmissionId, promptId: string) {
-    this.steers.set(submissionId, promptId)
+  /**
+   * A steer about to be submitted under `requestId`. The Hub hears of it from this conversation's
+   * events, once the conversation has taken it in, after the Turn it joins has started and before
+   * any boundary placed it: registered before it is submitted, so no placement can come first.
+   */
+  steering(requestId: string, steer: Steer) {
+    this.submitting.set(requestId, steer)
+  }
+
+  /** The steer registered under `requestId` was not submitted after all. */
+  unsteer(requestId: string) {
+    this.submitting.delete(requestId)
   }
 
   private report(event: Record<string, unknown>) {
-    if (!this.stopped) this.options.report(event)
+    if (this.stopped) return
+    // The Hub was never told of this agent (AgentStarted), so it has no agent for any event of it.
+    if (this.loop.kind === "agent" && !this.loop.reported) return
+    this.options.report(event)
   }
 
   private get fields() {
@@ -290,9 +315,15 @@ export class LoopReporter {
     return page?.items[0]
   }
 
+  /**
+   * Whether the next run carries the Turn on: the handoff's follow-up is among its inputs, though
+   * not first when a steer or an earlier follow-up was queued ahead of it.
+   */
   private async continues(inputs: ReadonlyArray<SubmissionId>, facts: BatchFacts) {
     if (this.turn === undefined) return false
-    return inputOrigin(await this.inputEntry(inputs[0], facts))._tag === "Continue"
+    for (const id of inputs)
+      if (inputOrigin(await this.inputEntry(id, facts))._tag === "Continue") return true
+    return false
   }
 
   /** The next run carries on the Turn: the same Turn, a new first input. */
@@ -300,8 +331,15 @@ export class LoopReporter {
     const turn = this.turn
     if (turn === undefined || inputs[0] === undefined) return
     turn.firstInput = inputs[0]
-    for (const input of inputs) turn.inputs.add(input)
-    void this.recordCurrent(turn.firstInput, [turn.turnId], false)
+    for (const input of inputs) {
+      turn.inputs.add(input)
+      // A steer placed with the handoff is read now: no later event of it can say so.
+      const promptId = this.steers.get(input)
+      if (promptId === undefined) continue
+      this.steers.delete(input)
+      this.report({ _tag: "SteeredPromptRead", turnId: turn.turnId, ...this.fields, promptId })
+    }
+    void this.recordCurrent(turn.firstInput, [turn.turnId], false, undefined, true)
   }
 
   private async startTurn(
@@ -330,12 +368,15 @@ export class LoopReporter {
     await this.recordCurrent(first, [turnId], resumed, entry?.id)
     if (this.loop.kind === "agent") return this.agentStatus("Running")
     const origin: InputOrigin = resumed ? { _tag: "Other" } : inputOrigin(entry)
+    // The handoff's follow-up is the agent's own, with no sender and nothing to say: when it
+    // starts a Turn (the run before it failed), that Turn takes the work up where it was left.
+    const continued = resumed || origin._tag === "Continue"
     this.report({
       _tag: "TurnStarted",
       turnId,
       ...this.fields,
-      text: resumed ? "" : inputText(entry),
-      sender: resumed
+      text: continued ? "" : inputText(entry),
+      sender: continued
         ? { _tag: "Resumed" }
         : origin._tag === "Prompt"
           ? { _tag: "FromParticipant", participant: origin.sender }
@@ -356,6 +397,7 @@ export class LoopReporter {
     turnIds: ReadonlyArray<string>,
     resumed: boolean,
     entry?: EntryId,
+    carried = false,
   ) {
     if (this.loop.kind === "agent") return
     const { context } = this.options
@@ -363,8 +405,13 @@ export class LoopReporter {
     try {
       await harness.commit(async (tx) => {
         const doc = await tx.doc(TurnsDoc, this.conversationId)
-        const earlier = resumed && doc.current?.input === input ? doc.current.turnIds : []
-        doc.current = { input, turnIds: [...earlier, ...turnIds] }
+        // A Turn carried on to a new first input keeps the Turns it goes on from: they end with it.
+        const earlier =
+          (resumed && doc.current?.input === input) || carried ? (doc.current?.turnIds ?? []) : []
+        doc.current = {
+          input,
+          turnIds: [...earlier, ...turnIds.filter((id) => !earlier.includes(id))],
+        }
         // Chord copies assigned values. Mutating the RHS returned by `??= {}` would change
         // a detached plain object, not the newly inserted draft, and lose the prompt anchor.
         for (const turnId of turnIds)
@@ -425,7 +472,55 @@ export class LoopReporter {
     // the model to read with the next prompt.
     for (const id of this.steers.keys()) if (turn.inputs.has(id)) this.steers.delete(id)
     void this.recordEnd(answer, turn.lastEntry)
+    if (reason === "error") void this.placeQueued(turn.turnId)
+    void this.settled()
     if (this.loop.kind === "agent") void this.agentStatus(aborted ? "Stopped" : "Done")
+  }
+
+  /**
+   * Tells the Models the conversation's run settled, whatever ended it, so a Claude Code query
+   * they hold for it is stopped. Not while a run is going: one that took over at the end of the
+   * last (a queued follow-up) says so itself when it ends, and its query is its own.
+   */
+  private async settled() {
+    const { context } = this.options
+    const harness = this.options.harness()
+    try {
+      if ((await harness.snapshot(LiveDoc, this.conversationId, context))?.run !== undefined) return
+      const provider = await harness.snapshot(ProviderDoc, this.conversationId, context)
+      if (provider !== undefined) this.options.runSettled(provider.sessionId)
+    } catch (error) {
+      this.options.log(
+        `kndl: couldn't tell the Models a run of ${this.conversationId} ended: ${error}`,
+      )
+    }
+  }
+
+  /**
+   * Pi Durable leaves what was queued behind a failed run in the inbox until the next input
+   * places it, which may never come: an agent's result or a prompt would wait unread. A write
+   * that changes nothing the model sees asks for the boundary now, and the oldest follow-up
+   * starts the next run.
+   */
+  private async placeQueued(turnId: string) {
+    const { context } = this.options
+    const harness = this.options.harness()
+    try {
+      if ((await harness.snapshot(LiveDoc, this.conversationId, context))?.run !== undefined) return
+      const inbox = await harness.snapshot(InboxDoc, this.conversationId, context)
+      if (inbox === undefined || inbox.items.length === 0) return
+      const conversation = await harness.conversation(this.conversationId, context)
+      await conversation?.submit(
+        {
+          type: "write",
+          entry: { kind: NudgeEntry, data: {}, model: [] },
+          requestId: `${NudgeEntry}:${turnId}`,
+        },
+        context,
+      )
+    } catch (error) {
+      this.options.log(`kndl: couldn't place what is queued in ${this.conversationId}: ${error}`)
+    }
   }
 
   /** The Turn's answer, or its last entry, for a thread forked at it. */
@@ -452,8 +547,8 @@ export class LoopReporter {
   /** A subagent's status, as the Hub and `kndl.agents` keep it. */
   private async agentStatus(status: "Running" | "Done" | "Stopped") {
     if (this.loop.kind !== "agent") return
-    const { agentId, reported } = this.loop
-    if (reported) this.report({ _tag: "AgentStatusChanged", agentId, status })
+    const { agentId } = this.loop
+    this.report({ _tag: "AgentStatusChanged", agentId, status })
     const { context } = this.options
     const harness = this.options.harness()
     try {
@@ -670,6 +765,24 @@ export class LoopReporter {
 
   private submission(record: SubmissionRecord) {
     const turn = this.turn
+    const steer = record.requestId === undefined ? undefined : this.submitting.get(record.requestId)
+    if (steer !== undefined && record.requestId !== undefined) {
+      this.submitting.delete(record.requestId)
+      this.steers.set(record.id, steer.promptId)
+      // One that found no Turn running starts the next, which the Hub hears of instead.
+      if (turn !== undefined && turn.firstInput !== record.id)
+        this.report({
+          _tag: "PromptSteered",
+          turnId: turn.turnId,
+          ...this.fields,
+          promptId: steer.promptId,
+          text: steer.text,
+          sender: steer.sender,
+          ...(steer.attachments === undefined || steer.attachments.length === 0
+            ? {}
+            : { attachments: steer.attachments }),
+        })
+    }
     const promptId = this.steers.get(record.id)
     if (promptId === undefined) return
     if (record.status === "queued") return

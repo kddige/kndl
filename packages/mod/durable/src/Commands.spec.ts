@@ -12,6 +12,7 @@ const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
 
 /** Commands over a Harness that fails whenever it is asked for a conversation. */
 const failing = () => {
+  let closing = false
   const reported: Array<Record<string, unknown>> = []
   const logged: Array<string> = []
   const harness = {
@@ -26,6 +27,7 @@ const failing = () => {
     log: (text: string) => logged.push(text),
     context: BACKGROUND_CONTEXT,
     secrets: [],
+    closing: () => closing,
   } as unknown as Runtime
   const questions = {
     answer: async () => {
@@ -38,6 +40,10 @@ const failing = () => {
     run: (command: Record<string, unknown>) => commands.run(command as unknown as ModCommand),
     reported,
     logged,
+    /** The agent is shutting down from now on. */
+    close: () => {
+      closing = true
+    },
   }
 }
 
@@ -70,6 +76,39 @@ describe("a command that fails", () => {
     expect(reported).toMatchObject([
       { _tag: "ModelSwitchFailed", asked: "openai/gpt-other", threadId: "t1" },
     ])
+  })
+
+  test("to deliver a prompt is a PromptFailed, so the Hub drops it", async () => {
+    const { run, reported } = failing()
+    await run({
+      _tag: "DeliverPrompt",
+      sessionId: "s-1",
+      promptId: "q1",
+      text: "Hi",
+      sender: ada,
+    })
+    expect(reported).toEqual([
+      { _tag: "PromptFailed", promptId: "q1", message: "Error: The storage is gone." },
+    ])
+  })
+
+  test("to deliver a prompt as the agent shuts down is left to the next start, not failed", async () => {
+    const { run, reported, close } = failing()
+    close()
+    // Thrown, the link leaves it unacknowledged: the Hub brings it again to the agent that starts.
+    for (const _tag of ["DeliverPrompt", "DeliverIntoTurn", "StartThread"])
+      await expect(
+        run({
+          _tag,
+          sessionId: "s-1",
+          promptId: "q1",
+          threadId: "t1",
+          anchorTurnId: "turn-1",
+          text: "Hi",
+          sender: ada,
+        }),
+      ).rejects.toThrow("The storage is gone.")
+    expect(reported).toEqual([])
   })
 
   test("to deliver an answer is an AnswerFailed, to the one who answered", async () => {

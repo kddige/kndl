@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable"
-import { TestAgent, ada, bob, callTool, conversationOf, holdTool, say } from "../test/TestAgent.ts"
+import {
+  TestAgent,
+  ada,
+  bob,
+  callTool,
+  conversationOf,
+  eventually,
+  holdTool,
+  say,
+} from "../test/TestAgent.ts"
 import { QuestionsDoc } from "./Docs.ts"
 
 let agent: TestAgent | undefined
@@ -60,6 +69,49 @@ describe("ask_user_question", () => {
       senderId: ada.id,
     })
   })
+
+  test("is woken by an answer committed just after it read the question open", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        request.last?.role === "toolResult"
+          ? say(`Going with it. ${request.text}`)
+          : callTool("ask_user_question", { questions: [question] }),
+    })
+    const started = await agent.start()
+    // The answer comes between the call's read of its question and its wait for the answer.
+    const snapshot = started.harness.snapshot.bind(started.harness) as (
+      ...args: Array<unknown>
+    ) => Promise<{ open?: Record<string, { closed?: unknown }> } | undefined>
+    let injected = false
+    Object.assign(started.harness, {
+      snapshot: async (...args: Array<unknown>) => {
+        const value = await snapshot(...args)
+        const [toolCallId, record] = Object.entries(value?.open ?? {})[0] ?? []
+        if (args[0] !== QuestionsDoc || injected || record?.closed !== undefined) return value
+        injected = true
+        agent?.send({
+          _tag: "DeliverAnswer",
+          toolCallId,
+          answer: { _tag: "Answered", answers: { "Which library?": "luxon" } },
+          sender: bob,
+        })
+        await eventually(async () => {
+          const now = await snapshot(...args)
+          return now?.open?.[toolCallId ?? ""]?.closed !== undefined || undefined
+        })
+        return value
+      },
+    })
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Pick one", sender: ada })
+    const ended = await agent.event((event) => event._tag === "TurnEnded")
+    expect(ended).toMatchObject({ reason: "stop" })
+    expect(
+      agent.hub
+        .ofTag("TextDelta")
+        .map((event) => event.text)
+        .join(""),
+    ).toContain('"Which library?": luxon')
+  }, 5_000)
 
   test("asked async, goes on, and the answer comes as a Turn from whoever answered", async () => {
     agent = new TestAgent({

@@ -156,25 +156,34 @@ export class Questions {
    */
   private async closedOf(toolCallId: string, signal: AbortSignal | undefined): Promise<Closed> {
     for (;;) {
+      // Listening before reading: an answer committed between the two still wakes this call.
+      let answered!: () => void
+      const woken = new Promise<void>((resolve) => {
+        answered = resolve
+      })
+      this.waiting.set(toolCallId, answered)
       const record = (await this.harness.snapshot(QuestionsDoc, this.runtime.context))?.open[
         toolCallId
       ]
-      if (record === undefined) return cancelled
+      if (record === undefined) {
+        this.waiting.delete(toolCallId)
+        return cancelled
+      }
       // Keep the receipt: execute() may replay after this read but before its result commits.
-      if (record.closed !== undefined) return record.closed as unknown as Closed
+      if (record.closed !== undefined) {
+        this.waiting.delete(toolCallId)
+        return record.closed as unknown as Closed
+      }
       const aborted = await new Promise<boolean>((resolve) => {
         if (signal?.aborted) return resolve(true)
-        const onAbort = () => {
-          this.waiting.delete(toolCallId)
-          resolve(true)
-        }
+        const onAbort = () => resolve(true)
         signal?.addEventListener("abort", onAbort, { once: true })
-        this.waiting.set(toolCallId, () => {
+        void woken.then(() => {
           signal?.removeEventListener("abort", onAbort)
-          this.waiting.delete(toolCallId)
           resolve(false)
         })
       })
+      this.waiting.delete(toolCallId)
       if (!aborted) continue
       if (this.runtime.closing()) throw new Error("The session is restarting.")
       await this.close(toolCallId, record, cancelled)

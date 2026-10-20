@@ -192,6 +192,11 @@ export interface Catalog {
   resolve(
     name: string | undefined,
   ): Promise<{ readonly model: ModelRef } | { readonly why: string }>
+  /**
+   * A conversation's run settled: the Claude bridge stops a Claude Code query it still holds for
+   * it. `sessionId` is the conversation's provider session id. Nothing without the bridge.
+   */
+  runSettled(sessionId: string): void
   /** Lets go of what the Models hold, as the Claude bridge's Claude Code. */
   close(): Promise<void>
 }
@@ -214,6 +219,7 @@ export const catalogOf = (
   listed: () => ReadonlyArray<string>,
   ask: () => Promise<boolean>,
   close: () => Promise<void> = async () => undefined,
+  runSettled: (sessionId: string) => void = () => undefined,
 ): Catalog => {
   const names = () => listed().filter((name) => lookup(models, name) !== undefined)
   const listeners: Array<() => void> = []
@@ -251,6 +257,7 @@ export const catalogOf = (
       if (!(await refresh())) return { why: "the Hub didn't say which Models the Creator has" }
       return resolveNow(name)
     },
+    runSettled,
     close,
   }
 }
@@ -268,6 +275,8 @@ export const gatewayCatalog = async (options: {
   readonly log: (text: string) => void
   /** Waits `ms`; a timer by default. */
   readonly wait?: (ms: number) => Promise<void>
+  /** Makes the Claude bridge; the real one by default. */
+  readonly createClaude?: Parameters<typeof installClaude>[2]["create"]
 }): Promise<Catalog> => {
   const models = createModels()
   let listed: ModProviders = { models: [] }
@@ -309,6 +318,7 @@ export const gatewayCatalog = async (options: {
       env: options.env,
       cwd: options.cwd,
       log: options.log,
+      ...(options.createClaude === undefined ? {} : { create: options.createClaude }),
     })
     claude?.update(providers.models)
   }
@@ -328,6 +338,7 @@ export const gatewayCatalog = async (options: {
       isClosed = true
       await claude?.close()
     },
+    (sessionId) => claude?.runSettled(sessionId),
   )
   // A Hub that couldn't answer at startup, or listed no Models yet (it was starting too), is asked
   // again until it lists some: only a Model switch would otherwise ask, so until then every Turn

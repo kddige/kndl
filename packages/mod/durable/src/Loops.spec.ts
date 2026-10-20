@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { InboxDoc } from "@earendil-works/pi-durable"
+import { InboxDoc, ProviderDoc } from "@earendil-works/pi-durable"
+import type { ConversationId } from "@earendil-works/pi-durable"
 import {
   TestAgent,
   ada,
@@ -13,7 +14,7 @@ import {
   holdTool,
   say,
 } from "../test/TestAgent.ts"
-import { TurnsDoc } from "./Docs.ts"
+import { ThreadsDoc, TurnsDoc } from "./Docs.ts"
 import { LoopReporter } from "./Loops.ts"
 
 let agent: TestAgent | undefined
@@ -118,6 +119,49 @@ describe("steering, stopping and redelivery", () => {
       await agent.event((event) => event._tag === "PromptAlreadySubmitted", from),
     ).toMatchObject({ promptId: "q2" })
     expect(agent.requests).toHaveLength(requests)
+  })
+
+  test("a steer a tool round's boundary placed before the command looked is still reported, in order", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) =>
+        request.text.includes("[Ada Lovelace] Go") ? callTool("hold", {}) : say("Done."),
+    })
+    const started = await agent.start()
+    // The tool round ends, and places the steer, right after the steer is submitted.
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    const conversation = Object.getPrototypeOf(root) as { submit: typeof root.submit }
+    const submit = conversation.submit
+    conversation.submit = async function (this: typeof root, draft, context) {
+      const submission = await submit.call(this, draft, context)
+      if (draft.type === "input" && draft.requestId === "q2") {
+        hold.release()
+        await eventually(async () => (await submission.status(context)).status !== "queued")
+      }
+      return submission
+    }
+    try {
+      agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+      const call = await agent.event((event) => event._tag === "ToolCallStarted")
+      agent.send({ _tag: "DeliverIntoTurn", promptId: "q2", text: "Use pnpm", sender: bob })
+      const events = await agent.until((event) => event._tag === "TurnEnded")
+      const steered = events.findIndex((event) => event._tag === "PromptSteered")
+      const read = events.findIndex((event) => event._tag === "SteeredPromptRead")
+      expect(events[steered]).toMatchObject({
+        turnId: call.turnId,
+        promptId: "q2",
+        text: "Use pnpm",
+        sender: bob,
+      })
+      expect(events[read]).toMatchObject({ turnId: call.turnId, promptId: "q2" })
+      expect(steered).toBeGreaterThan(events.findIndex((event) => event._tag === "TurnStarted"))
+      expect(read).toBeGreaterThan(steered)
+      expect(events.at(-1)).toMatchObject({ turnId: call.turnId, reason: "stop" })
+      expect(events.filter((event) => event._tag === "TurnStarted")).toHaveLength(1)
+    } finally {
+      conversation.submit = submit
+    }
   })
 
   test("a steer with no Turn running fails", async () => {
@@ -241,6 +285,156 @@ describe("steering, stopping and redelivery", () => {
     })
     expect(agent.hub.ofTag("TurnStarted")).toHaveLength(1)
     expect(agent.requests).toHaveLength(1)
+  })
+})
+
+describe("a run that fails", () => {
+  test("goes on to the follow-ups queued behind it, which Pi Durable leaves for the next input", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      settings: { retry: { enabled: false } },
+      reply: (request) => {
+        if (request.text.includes("Then this")) return say("Did that.")
+        return request.last?.role === "toolResult"
+          ? fauxAssistantMessage([fauxText("")], {
+              stopReason: "error",
+              errorMessage: "overloaded",
+            })
+          : callTool("hold", {})
+      },
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await hold.firstCall
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Then this", sender: bob })
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await eventually(async () => {
+      const inbox = await started.harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT)
+      return inbox?.items.length === 1 || undefined
+    })
+    hold.release()
+    const failed = await agent.event((event) => event._tag === "TurnEnded")
+    expect(failed).toMatchObject({ reason: "error" })
+    const second = await agent.event(
+      (event) => event._tag === "TurnStarted" && event.promptId === "q2",
+    )
+    expect(second).toMatchObject({ sender: { _tag: "FromParticipant", participant: bob } })
+    expect(
+      await agent.event((event) => event._tag === "TurnEnded" && event.turnId === second.turnId),
+    ).toMatchObject({ reason: "stop" })
+    const inbox = await started.harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT)
+    expect(inbox?.items).toEqual([])
+  })
+})
+
+/** The provider session id of a conversation, which the Claude bridge knows its query by. */
+const sessionOf = async (conversationId: ConversationId) => {
+  const provider = await agent?.agent?.harness.snapshot(
+    ProviderDoc,
+    conversationId,
+    BACKGROUND_CONTEXT,
+  )
+  if (provider === undefined) throw new Error("the conversation has no provider session")
+  return provider.sessionId
+}
+
+describe("a conversation's run settling", () => {
+  test("is told to the Models when a Turn ends, and not while it runs", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) =>
+        request.last?.role === "toolResult" ? say("Done.") : callTool("hold", {}),
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await hold.firstCall
+    await Bun.sleep(100)
+    expect(agent.settled).toEqual([])
+    hold.release()
+    await agent.event((event) => event._tag === "TurnEnded")
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await eventually(() => (agent?.settled.length === 1 ? true : undefined))
+    expect(agent.settled).toEqual([await sessionOf(root.id)])
+  })
+
+  test("is told when a Turn is stopped, and when it fails", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      settings: { retry: { enabled: false } },
+      reply: (request) =>
+        request.text.includes("Fail")
+          ? fauxAssistantMessage([fauxText("")], {
+              stopReason: "error",
+              errorMessage: "overloaded",
+            })
+          : callTool("hold", {}),
+    })
+    const started = await agent.start()
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await hold.firstCall
+    agent.send({ _tag: "StopTurn" })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "aborted")
+    await eventually(() => (agent?.settled.length === 1 ? true : undefined))
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Fail", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "error")
+    await eventually(() => (agent?.settled.length === 2 ? true : undefined))
+    expect(agent.settled).toEqual(Array(2).fill(await sessionOf(root.id)))
+  })
+
+  test("is not told when the next run has taken over, but when that ends", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) =>
+        request.last?.role === "toolResult" ? say("Done.") : callTool("hold", {}),
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await hold.firstCall
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Then this", sender: bob })
+    await Bun.sleep(100)
+    // The first Turn ends, and the follow-up's starts and holds its own tool call.
+    hold.release()
+    hold.rearm()
+    await agent.event((event) => event._tag === "TurnEnded")
+    await agent.event((event) => event._tag === "TurnStarted" && event.promptId === "q2")
+    await Bun.sleep(200)
+    expect(agent.settled).toEqual([])
+    hold.release()
+    await agent.hub.until(() => (agent?.hub.ofTag("TurnEnded").length === 2 ? true : undefined))
+    await eventually(() => (agent?.settled.length === 1 ? true : undefined))
+    await Bun.sleep(100)
+    expect(agent.settled).toHaveLength(1)
+  })
+
+  test("is told of a thread's by the thread's own session id", async () => {
+    agent = new TestAgent({ reply: () => say("Ok.") })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    const first = await agent.event((event) => event._tag === "TurnEnded")
+    await eventually(() => (agent?.settled.length === 1 ? true : undefined))
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: first.turnId,
+      promptId: "q2",
+      text: "Dig in",
+      sender: bob,
+      model: "openai/gpt-test",
+    })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
+    await eventually(() => (agent?.settled.length === 2 ? true : undefined))
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    const thread = (await started.harness.snapshot(ThreadsDoc, BACKGROUND_CONTEXT))?.threads.t1
+    expect(agent.settled).toEqual([
+      await sessionOf(root.id),
+      await sessionOf(thread?.conversationId as ConversationId),
+    ])
+    expect(agent.settled[1]).not.toBe(agent.settled[0])
   })
 })
 
@@ -490,6 +684,7 @@ describe("a reporter that falls behind", () => {
         context: BACKGROUND_CONTEXT,
         secrets: [],
         log: () => {},
+        runSettled: () => {},
       },
     )
     try {
@@ -521,6 +716,60 @@ describe("a reporter that falls behind", () => {
       await reporter.stop()
     }
   }, 15_000)
+})
+
+describe("a subagent the Hub wasn't told of", () => {
+  test("is reported nowhere: none of its events reach the Hub", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        request.last?.role === "toolResult"
+          ? say("It holds a README.")
+          : callTool("bash", { command: "echo hi" }),
+    })
+    const started = await agent.start()
+    const rootId = (await started.harness.root(BACKGROUND_CONTEXT)).id
+    const follow = async (agentId: string, reported: boolean) => {
+      const events: Array<Record<string, unknown>> = []
+      const reporter = new LoopReporter(
+        rootId,
+        { kind: "agent", agentId, reported },
+        {
+          harness: () => started.harness,
+          report: (event) => events.push(event),
+          newId: () => agentId,
+          now: () => performance.now(),
+          context: BACKGROUND_CONTEXT,
+          secrets: [],
+          log: () => {},
+          runSettled: () => {},
+        },
+      )
+      await reporter.attach()
+      return { events, reporter }
+    }
+    const told = await follow("told", true)
+    const quiet = await follow("quiet", false)
+    try {
+      agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "What's here?", sender: ada })
+      await agent.hub.until(() => told.events.find((event) => event._tag === "UsageChanged"))
+      await Bun.sleep(100)
+      // What the Hub is told of an agent it knows: its text, tools, usage and Turn's end.
+      expect(new Set(told.events.map((event) => event._tag))).toEqual(
+        new Set([
+          "AgentStatusChanged",
+          "TextDelta",
+          "ToolCallStarted",
+          "ToolCallEnded",
+          "TurnEnded",
+          "UsageChanged",
+        ]),
+      )
+      expect(quiet.events).toEqual([])
+    } finally {
+      await told.reporter.stop()
+      await quiet.reporter.stop()
+    }
+  })
 })
 
 describe("the Hub restarting", () => {
