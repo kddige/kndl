@@ -84,6 +84,13 @@ From the root, `bun test` runs the packages' tests. On memory-constrained machin
 (cd packages/cli && bun test)
 ```
 
+The root typecheck runs packages concurrently. If the OS kills a compiler for memory pressure, the equivalent serial check is:
+
+```sh
+bun run --sequential --filter '*' typecheck
+bunx tsc -p scripts
+```
+
 The durable agent's tests include real Pi Durable Harnesses with scripted Models, SQLite close/reopen, concurrent forks, tools and a built Node bundle over HTTP. They do not substitute for a real Sandbox launch on your machine.
 
 - Real Sandbox tests are opt-in with `KNDL_SANDBOX_IT=1` and require the host's hypervisor/microsandbox setup.
