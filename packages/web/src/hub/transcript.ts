@@ -1067,7 +1067,7 @@ class Folding {
         thread.anchorTurnId = event.anchorTurnId
         thread.startedBy = event.startedBy
         thread.at = entry.at
-        thread.model = event.model
+        if (event.model !== undefined) thread.model = event.model
         if (event.thinkingLevel !== undefined) thread.thinkingLevel = event.thinkingLevel
         this.#conversation(entry, event.threadId)
         break

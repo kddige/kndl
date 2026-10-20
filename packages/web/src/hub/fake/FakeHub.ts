@@ -275,7 +275,8 @@ interface FakeThread {
 function threadsFromLog(log: ReadonlyArray<LogEntryWire>): Map<string, FakeThread> {
   const threads = new Map<string, FakeThread>()
   for (const { event } of log) {
-    if (event._tag === "ThreadStarted") {
+    // As in Sessions.threadsOf, a summary needs a known model; old history may lack one.
+    if (event._tag === "ThreadStarted" && event.model !== undefined) {
       threads.set(event.threadId, {
         summary: {
           id: event.threadId,

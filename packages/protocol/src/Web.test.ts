@@ -60,6 +60,14 @@ const sessionEvents = [
     message: "Only the Creator prompts a Session now",
   },
   { _tag: "TurnStopRequested", by: bob, threadId: "thr-1" },
+  // Stored before threads always had their own model: replay must still round-trip it.
+  {
+    _tag: "ThreadStarted",
+    threadId: "thr-old",
+    anchorTurnId: "t-1",
+    title: "Before the upgrade",
+    startedBy: bob,
+  },
   {
     _tag: "ThreadStarted",
     threadId: "thr-1",

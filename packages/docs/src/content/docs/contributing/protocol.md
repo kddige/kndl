@@ -381,7 +381,7 @@ The request goes to the MCP server's URL as it is now, its body streaming on unt
 
 Each Session carries its `model` and `thinkingLevel` when set. Each change is logged as `ModelSwitched { by, model?, modelLabel?, thinkingLevel?, harness? }`, where `modelLabel` is the Model's label among its Creator's. Once no Turn runs, the Hub sends the mod `SwitchModel`, and the agent runs its next request on the new Model with its conversation intact. A `TurnEnded.usage.model` is the model a Turn ran. `harness` and `modelPending` remain on the schemas for Sessions from before the durable agent, which move onto it as they next start.
 
-A Thread has its own model: `ThreadStarted.model` is required, the Hub resolving the Session's when the web asks for none, and a fork keeps its parent's model rather than following the Session. `SetThreadModel` switches one ([Threads, the Plan and compaction](#threads-the-plan-and-compaction)).
+A Thread has its own model: new `ThreadStarted` events always carry `model`, the Hub resolving the Session's when the web asks for none, and a fork keeps its parent's model rather than following the Session. Older stored events can lack `model`; history replay accepts those unchanged, while `StartThread.model` and `ThreadSummary.model` remain required. `SetThreadModel` switches one ([Threads, the Plan and compaction](#threads-the-plan-and-compaction)).
 
 ### Questions
 

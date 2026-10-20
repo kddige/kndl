@@ -7,6 +7,7 @@ import { join } from "node:path"
 import {
   DefaultEnvironmentDraft,
   EnvironmentVersion,
+  HubToWeb,
   MaxLastOutputLength,
   type ModCommandsEncoded,
   type ModEventsEncoded,
@@ -14,7 +15,7 @@ import {
   ParticipantId,
   ProtocolVersion,
 } from "@kndl/protocol"
-import { Effect, Exit, Layer, Option, Redacted } from "effect"
+import { Effect, Exit, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
@@ -318,6 +319,46 @@ describe("CreateSession", () => {
 })
 
 describe("the event log", () => {
+  test("joining a Session with a pre-upgrade ThreadStarted keeps the WebSocket connected", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    // The durable spike originally logged threads without a model when none was picked.
+    const event = {
+      _tag: "ThreadStarted",
+      threadId: "old-thread",
+      anchorTurnId: "old-turn",
+      title: "Before the upgrade",
+      startedBy: alice,
+    } as const
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`
+        INSERT INTO session_events (session_id, seq, at, event)
+        VALUES (${sessionId}, 1, 1, ${JSON.stringify(event)})
+      `,
+      ),
+    )
+    joinSession(web, sessionId)
+    const result = await Promise.race([
+      web.take("SessionHistory").then((history) => ({ kind: "history", history }) as const),
+      web.closed.then((closed) => ({ kind: "closed", closed }) as const),
+    ])
+    expect(result.kind).toBe("history")
+    if (result.kind === "history") {
+      // The browser must also accept the replay, not just the Hub's database reader.
+      expect(() => Schema.decodeUnknownSync(HubToWeb)(result.history)).not.toThrow()
+      expect(result.history.entries.at(-1)?.event).toEqual(event)
+    }
+    await web.take("PresenceChanged")
+    await mod.post(turnStarted("after-upgrade"))
+    expect((await web.take("SessionEventLogged")).entry.event).toMatchObject({
+      _tag: "TurnStarted",
+      turnId: "after-upgrade",
+    })
+    // The agent's paged history uses the same persisted events.
+    expect((await mod.history()).status).toBe(200)
+  })
+
   test("a late joiner gets the whole history, and afterSeq only what came after", async () => {
     const { hub, web, sessionId, mod } = await sessionScene()
     joinSession(web, sessionId)

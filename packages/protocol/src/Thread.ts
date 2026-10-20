@@ -57,8 +57,10 @@ export const ThreadStarted = Schema.TaggedStruct("ThreadStarted", {
   /**
    * The model it runs on: the Session's own when the thread was started without one, since a
    * fork keeps the model its parent had at the fork and doesn't follow the Session's later.
+   * New events always carry it. Older stored events did not when no model was picked; keep
+   * those readable on history replay without inventing a model from the Session's current one.
    */
-  model: ModelName,
+  model: Schema.optionalKey(ModelName),
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type ThreadStarted = typeof ThreadStarted.Type

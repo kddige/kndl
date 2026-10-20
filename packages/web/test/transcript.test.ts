@@ -885,6 +885,24 @@ describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-h
     model: "openai/gpt-6-sol",
   }
 
+  test("a pre-upgrade thread without a recorded model stays readable and can change model", () => {
+    const { model: _, ...legacy } = started
+    const log = entries([...answered, legacy, posted("p-1", bob, "What about Windows?")])
+    const before = transcriptOf(log).threads.get("thr-1" as never)
+    expect(before?.title).toBe("What about Windows?")
+    expect(before?.model).toBeUndefined()
+    expect(before?.sent.map((prompt) => prompt.text)).toEqual(["What about Windows?"])
+
+    const after = transcriptOf(
+      entries([
+        ...answered,
+        legacy,
+        { _tag: "ThreadModelChanged", threadId: "thr-1", by: bob, model: "openai/gpt-6-sol" },
+      ]),
+    ).threads.get("thr-1" as never)
+    expect(after?.model).toBe("openai/gpt-6-sol" as never)
+  })
+
   test("a thread's events fold into its own Turns, and leave the main loop as it was", () => {
     const transcript = transcriptOf(
       entries([
