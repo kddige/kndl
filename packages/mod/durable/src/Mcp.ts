@@ -113,7 +113,9 @@ class Connection {
   }
 
   async tools(): Promise<Array<Tool>> {
-    return (await this.connected()).listTools()
+    return (await this.connected()).listTools({
+      timeoutMs: this.options.connectTimeoutMs ?? 15_000,
+    })
   }
 
   /** Calls a tool; a session the server forgot is made again, and the call made once more. */

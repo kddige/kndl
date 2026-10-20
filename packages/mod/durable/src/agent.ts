@@ -1,12 +1,12 @@
 // The durable agent's process (docs/design/durable-harness.md, "The process"): the Runner starts
 // it in the Sandbox with the pinned Node.js, `node /opt/kndl/mod/<copy>/durable/agent.js`, in a
-// tmux window of its own. It reads the Runner's environment, opens the Session's storage on its
+// tmux session of its own. It reads the Runner's environment, opens the Session's storage on its
 // persistent volume, and runs until the Runner stops it.
 //
 // - SIGTERM or SIGINT: it flushes what the Hub hasn't heard, closes the Harness cleanly (a run in
 //   progress stays in storage and resumes at the next start) and exits 0.
 // - A storage failure ends the Harness (`closed` with `failed`): it exits 1, and the Runner sees
-//   the window die and reports the Harness stopped.
+//   the agent's tmux session exit and reports the Harness stopped.
 //
 // Its log is `$KNDL_STATE_DIR/durable/agent.log`, with the mod token and the Claude token
 // redacted. Both are taken out of its environment as it starts, so no command the agent runs

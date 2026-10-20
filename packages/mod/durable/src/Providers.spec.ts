@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { createModels } from "@earendil-works/pi-ai/models"
 import { textReply, toolCallReply } from "../test/FakeHub.ts"
 import { TestAgent, ada, modToken, say } from "../test/TestAgent.ts"
@@ -133,6 +134,23 @@ describe("switching the Session's model", () => {
       usage: { model: "openai/gpt-later" },
     })
     expect(agent.refreshes).toBe(1)
+  })
+
+  test("takes the Session's thinking level on restart, even when the model didn't change", async () => {
+    agent = new TestAgent({ reply: () => say("Ok.") })
+    await agent.start({ thinkingLevel: "high" })
+    await agent.stop()
+    let restarted = await agent.start({ thinkingLevel: "low" })
+    expect(
+      (await (await restarted.harness.root(BACKGROUND_CONTEXT)).agent(BACKGROUND_CONTEXT))
+        .thinkingLevel,
+    ).toBe("low")
+    await agent.stop()
+    restarted = await agent.start()
+    expect(
+      (await (await restarted.harness.root(BACKGROUND_CONTEXT)).agent(BACKGROUND_CONTEXT))
+        .thinkingLevel,
+    ).toBe("off")
   })
 
   test("starts on the Session's model, taking it over a stored one", async () => {

@@ -21,16 +21,15 @@ describe("MCP servers", () => {
         const offered = JSON.stringify(request.context.messages)
         if (request.last?.role === "toolResult" && request.last.toolName === "mcp__fake__echo")
           return say(`It said: ${request.text}`)
-        if (offered.includes('"name":"mcp__fake__echo"') && request.last?.role === "toolResult")
-          return callTool("mcp__fake__echo", { text: "hi" })
+        if (request.last?.role === "toolResult")
+          return offered.includes('"name":"mcp__fake__echo"')
+            ? callTool("mcp__fake__echo", { text: "hi" })
+            : say("Discovery wasn't ready.")
         return callTool("tool_search", { query: "echo text back" })
       },
     })
+    agent.hub.mcpListDelayMs = 100
     await agent.start()
-    await eventually(
-      () => agent?.hub.mcpRequests.some((request) => request.method === "tools/list") || undefined,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
     agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Echo it", sender: ada })
     const events = await agent.until((event) => event._tag === "TurnEnded")
     // Not offered at first: the first request lists no MCP tool.

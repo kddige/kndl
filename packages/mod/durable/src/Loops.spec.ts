@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { TestAgent, ada, bob, callTool, holdTool, say } from "../test/TestAgent.ts"
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
+import { TestAgent, ada, bob, callTool, eventually, holdTool, say } from "../test/TestAgent.ts"
+import { TurnsDoc } from "./Docs.ts"
+import { LoopReporter } from "./Loops.ts"
 
 let agent: TestAgent | undefined
 afterEach(async () => {
@@ -92,6 +95,17 @@ describe("steering, stopping and redelivery", () => {
     expect(events.at(-1)).toMatchObject({ turnId: started.turnId, reason: "stop" })
     const read = agent.requests.find((request) => request.text.includes("Use pnpm"))
     expect(read?.text).toContain("Bob sent a new message while you were working")
+    // A lost admission acknowledgement must be recoverable even after that Turn ended.
+    await agent.stop()
+    agent.hub.forget()
+    const from = agent.hub.events.length
+    const requests = agent.requests.length
+    await agent.start()
+    agent.send({ _tag: "DeliverIntoTurn", promptId: "q2", text: "Use pnpm", sender: bob })
+    expect(
+      await agent.event((event) => event._tag === "PromptAlreadySubmitted", from),
+    ).toMatchObject({ promptId: "q2" })
+    expect(agent.requests).toHaveLength(requests)
   })
 
   test("a steer with no Turn running fails", async () => {
@@ -193,6 +207,134 @@ describe("a restart", () => {
       .join("")
     expect(said).toContain("interrupted")
   })
+})
+
+describe("the boundary between storage and the Hub's projection", () => {
+  test("deduplicates a settled prompt whose events died in the volatile outbox, but does not replay its transcript", async () => {
+    agent = new TestAgent({ reply: () => say("This answer remains in SQLite.") })
+    agent.hub.rejectEvents = true
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q-lost", text: "Persist it", sender: ada })
+    await eventually(() => (agent?.requests.length ?? 0) > 0 || undefined)
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await root.waitForIdle(BACKGROUND_CONTEXT)
+    await eventually(async () => {
+      const turns = await started.harness.snapshot(TurnsDoc, root.id, BACKGROUND_CONTEXT)
+      return (
+        (turns !== undefined &&
+          turns.current === undefined &&
+          Object.keys(turns.turns).length > 0) ||
+        undefined
+      )
+    })
+    // A process death discards its unacknowledged outbox. Stop the link before clean shutdown
+    // so this test has the same persisted state, without spending two seconds draining to 503.
+    started.link.stop()
+    await agent.stop()
+    expect(agent.hub.events).toHaveLength(0)
+    agent.hub.rejectEvents = false
+    agent.hub.forget()
+    const restarted = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q-lost", text: "Persist it", sender: ada })
+    await agent.event((event) => event._tag === "PromptAlreadySubmitted")
+    expect(agent.requests).toHaveLength(1)
+    // Characterizes a draft limitation, not an exactly-once event-delivery promise.
+    expect(agent.hub.ofTag("TurnStarted")).toHaveLength(0)
+    expect(agent.hub.ofTag("TextDelta")).toHaveLength(0)
+    const entries = await (
+      await restarted.harness.root(BACKGROUND_CONTEXT)
+    ).entries({}, 20, undefined, BACKGROUND_CONTEXT)
+    expect(JSON.stringify(entries.items)).toContain("This answer remains in SQLite.")
+  })
+})
+
+describe("a reporter that falls behind", () => {
+  test("reconciles committed text and an aborted outcome, without routing agent events to main or thread", async () => {
+    const hold = holdTool()
+    let rounds = 0
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: () => {
+        rounds++
+        const call = rounds <= 35 ? callTool("bash", { command: "true" }) : callTool("hold", {})
+        return rounds <= 35
+          ? { ...call, content: [{ type: "text", text: `Step ${rounds}.` }, ...call.content] }
+          : call
+      },
+    })
+    const started = await agent.start()
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const paused = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    // Pause only this consumer, not the storage/scheduler or the agent's normal reporter.
+    const slow = new Proxy(started.harness, {
+      get(target, key) {
+        if (key === "commit")
+          return async (...args: Parameters<typeof target.commit>) => {
+            entered()
+            await gate
+            return target.commit(...args)
+          }
+        const value = Reflect.get(target, key)
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
+    const events: Array<Record<string, unknown>> = []
+    let observing = true
+    const reporter = new LoopReporter(
+      (await started.harness.root(BACKGROUND_CONTEXT)).id,
+      { kind: "agent", agentId: "slow-agent", reported: true },
+      {
+        harness: () => {
+          // watchEvents identifies a Harness by object identity; its later reads can be delayed.
+          if (observing) {
+            observing = false
+            return started.harness
+          }
+          return slow
+        },
+        report: (event) => events.push(event),
+        newId: () => "slow-turn",
+        now: () => performance.now(),
+        context: BACKGROUND_CONTEXT,
+        secrets: [],
+        log: () => {},
+      },
+    )
+    try {
+      await reporter.attach()
+      agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+      await paused
+      await hold.firstCall
+      agent.send({ _tag: "StopTurn" })
+      await agent.event((event) => event._tag === "TurnEnded")
+      release()
+      await agent.hub.until(() => events.find((event) => event._tag === "TurnEnded"))
+      expect(events.find((event) => event._tag === "TurnEnded")).toMatchObject({
+        agentId: "slow-agent",
+        reason: "aborted",
+      })
+      // The snapshot's committed tool results must not vanish from the transcript either.
+      expect(events.filter((event) => event._tag === "ToolCallEnded")).toHaveLength(36)
+      expect(
+        events
+          .filter((event) => event._tag === "TextDelta")
+          .map((event) => event.text)
+          .join(""),
+      ).toBe(Array.from({ length: 35 }, (_, index) => `Step ${index + 1}.`).join(""))
+      expect(
+        events.every((event) => event.agentId === "slow-agent" && event.threadId === undefined),
+      ).toBe(true)
+    } finally {
+      release()
+      await reporter.stop()
+    }
+  }, 15_000)
 })
 
 describe("the Hub restarting", () => {

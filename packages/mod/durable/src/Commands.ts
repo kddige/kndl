@@ -14,13 +14,11 @@ import type { Questions } from "./Questions.ts"
 import type { Runtime } from "./Runtime.ts"
 import { messageFromCreator, stopFromCreator } from "./Subagents.ts"
 import { deliverThreadPrompt, startThread, stopThread, threadConversation } from "./Threads.ts"
-import { modelName } from "./Turns.ts"
+import { modelName, turnErrorMessage } from "./Turns.ts"
 
 export interface CommandsOptions {
   readonly runtime: Runtime
   readonly questions: Questions
-  /** Whether the Hub takes PromptAlreadySubmitted (#323): one from before would refuse it. */
-  readonly takesAlreadySubmitted: () => boolean
   /** The extensions a thread goes without: the question tool's. */
   readonly threadWithheld: () => ReadonlyArray<Extension>
   /** The Session's model changed: the hello says it from now on. */
@@ -82,6 +80,25 @@ export class Commands {
   }
 
   async run(command: ModCommand) {
+    try {
+      return await this.dispatch(command)
+    } catch (error) {
+      // The link acknowledges commands even when their handler throws. A failed admission
+      // must therefore clear the Hub's pending prompt, not leave it waiting for a start forever.
+      const message = turnErrorMessage(String(error), this.runtime.secrets) ?? "The command failed."
+      this.runtime.log(`kndl: ${command._tag}: ${message}`)
+      if (
+        command._tag === "DeliverPrompt" ||
+        command._tag === "DeliverIntoTurn" ||
+        command._tag === "StartThread" ||
+        command._tag === "DeliverThreadPrompt"
+      )
+        this.runtime.report({ _tag: "PromptFailed", promptId: command.promptId, message })
+      else throw error
+    }
+  }
+
+  private async dispatch(command: ModCommand) {
     switch (command._tag) {
       case "DeliverPrompt":
         return this.prompt(command)
@@ -155,7 +172,7 @@ export class Commands {
     )
     if (given !== undefined) {
       // A Hub from before #323 would refuse the event, so it keeps the prompt queued: still once.
-      if (this.options.takesAlreadySubmitted())
+      if (runtime.takesAlreadySubmitted())
         runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
       return
     }
@@ -170,6 +187,15 @@ export class Commands {
   private async steer(command: Command<"DeliverIntoTurn">) {
     const { runtime } = this
     const root = await this.root()
+    const given = await root.commit(
+      (tx) => tx.submissionByRequest(root.id, command.promptId),
+      runtime.context,
+    )
+    if (given !== undefined) {
+      if (runtime.takesAlreadySubmitted())
+        runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
+      return
+    }
     const reporter = runtime.loops.get(root.id)
     const running = (await runtime.harness().snapshot(LiveDoc, root.id, runtime.context))?.run
     const turnId = reporter?.turnId
@@ -179,11 +205,6 @@ export class Commands {
         promptId: command.promptId,
         message: "no Turn is running",
       })
-    const given = await root.commit(
-      (tx) => tx.submissionByRequest(root.id, command.promptId),
-      runtime.context,
-    )
-    if (given !== undefined) return
     const submission = await root.submit(
       promptInput(command, { steer: true, attachmentTool }),
       runtime.context,
@@ -210,15 +231,25 @@ export class Commands {
       command.threadId === undefined
         ? await this.root()
         : await threadConversation(runtime, command.threadId)
-    if (conversation === undefined)
-      return runtime.log("kndl: Compact for a thread the agent hasn't")
     const instructions = command.instructions?.trim()
-    await conversation.compact(instructions === "" ? undefined : instructions, runtime.context)
+    // compact() admits a task, not its result. Publish before admission: a fast task (including
+    // a skipped one) can finish before the command's await continuation runs.
     runtime.report({
       _tag: "CompactionStarted",
       ...(command.threadId === undefined ? {} : { threadId: command.threadId }),
       reason: "manual",
       by: command.sender,
     })
+    try {
+      if (conversation === undefined) throw new Error("The Session has no such thread.")
+      await conversation.compact(instructions === "" ? undefined : instructions, runtime.context)
+    } catch (error) {
+      runtime.report({
+        _tag: "CompactionEnded",
+        ...(command.threadId === undefined ? {} : { threadId: command.threadId }),
+        outcome: "failed",
+        error: turnErrorMessage(String(error), runtime.secrets) ?? "Compaction failed.",
+      })
+    }
   }
 }

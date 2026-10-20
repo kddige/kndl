@@ -45,6 +45,12 @@ export const forkPoint = async (
   anchorTurnId: string,
 ): Promise<EntryId | undefined> => {
   const turns = await runtime.harness().snapshot(TurnsDoc, root.id, runtime.context)
+  // A running Turn has no answer/last yet. Fork at its newest committed progress, never an
+  // in-flight partial, rather than at the prompt recordCurrent saved when it began.
+  if (turns?.current?.turnIds.includes(anchorTurnId)) {
+    const newest = await root.entries({}, 1, undefined, runtime.context)
+    return newest.items[0]?.id
+  }
   const turn = turns?.turns[anchorTurnId]
   const known = turn?.answer ?? turn?.last ?? turn?.entry
   if (known !== undefined) return known
@@ -71,7 +77,13 @@ const promptThread = async (
     (tx) => tx.submissionByRequest(thread.id, command.promptId),
     context,
   )
-  if (given !== undefined) return
+  if (given !== undefined) {
+    // The original start/steer may have died in the process's volatile event queue. A receipt
+    // clears the Hub's pending prompt without inventing a second Turn or submitting it twice.
+    if (runtime.takesAlreadySubmitted())
+      runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
+    return
+  }
   const steer = await busy(runtime, thread)
   const submission = await thread.submit(promptInput(command, { steer, attachmentTool }), context)
   const status = await submission.status(context)

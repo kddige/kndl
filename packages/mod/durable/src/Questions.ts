@@ -86,12 +86,16 @@ export class Questions {
 
   /**
    * The questions still open at start: each `async` one is asked again, so the Hub shows it again;
-   * one a call waits for is asked again by that call, as it runs again.
+   * one a call waits for is asked again by that call, as it runs again. Accepted async answers
+   * whose inputs weren't admitted before the crash are delivered first, by their request ids.
    */
   async reaskAsync() {
     const doc = await this.harness.snapshot(QuestionsDoc, this.runtime.context)
-    for (const [toolCallId, record] of Object.entries(doc?.open ?? {}))
-      if (record.async && record.closed === undefined) this.asked(toolCallId, record)
+    for (const [toolCallId, record] of Object.entries(doc?.open ?? {})) {
+      if (!record.async) continue
+      if (record.closed === undefined) this.asked(toolCallId, record)
+      else if (!record.answerSubmitted) await this.deliverAsync(toolCallId, record)
+    }
   }
 
   /** The question tool, as the main loop has it. */
@@ -151,10 +155,8 @@ export class Questions {
         toolCallId
       ]
       if (record === undefined) return cancelled
-      if (record.closed !== undefined) {
-        await this.forget(toolCallId)
-        return record.closed as unknown as Closed
-      }
+      // Keep the receipt: execute() may replay after this read but before its result commits.
+      if (record.closed !== undefined) return record.closed as unknown as Closed
       const aborted = await new Promise<boolean>((resolve) => {
         if (signal?.aborted) return resolve(true)
         const onAbort = () => {
@@ -175,15 +177,13 @@ export class Questions {
     }
   }
 
-  private async forget(toolCallId: string) {
-    await this.harness.commit(async (tx) => {
-      delete (await tx.doc(QuestionsDoc)).open[toolCallId]
-    }, this.runtime.context)
-  }
-
   /** Closes a question, as the Hub hears it. */
   private async close(toolCallId: string, record: QuestionRecord, closed: Closed) {
-    await this.forget(toolCallId)
+    await this.harness.commit(async (tx) => {
+      const open = (await tx.doc(QuestionsDoc)).open[toolCallId]
+      if (open !== undefined && open.closed === undefined)
+        open.closed = { outcome: closed.outcome as unknown as JsonValue }
+    }, this.runtime.context)
     this.runtime.report({
       _tag: "QuestionClosed",
       turnId: record.turnId,
@@ -203,8 +203,8 @@ export class Questions {
       const open = doc.open[toolCallId]
       if (open === undefined || open.closed !== undefined) return undefined
       const taken = copy(open)
-      if (open.async) delete doc.open[toolCallId]
-      else open.closed = { outcome: closed.outcome as unknown as JsonValue, by }
+      open.closed = { outcome: closed.outcome as unknown as JsonValue, by }
+      taken.closed = { outcome: closed.outcome as unknown as JsonValue, by }
       return taken
     }, this.runtime.context)
     if (record === undefined) {
@@ -224,20 +224,34 @@ export class Questions {
       by,
     })
     if (!record.async) return this.waiting.get(toolCallId)?.()
-    // The model reads the answer at its next step, or as a Turn of its own from whoever answered.
+    await this.deliverAsync(toolCallId, record)
+  }
+
+  /** The persisted answer is an outbox: submit once, then acknowledge it, safe across a crash. */
+  private async deliverAsync(toolCallId: string, record: QuestionRecord) {
+    const closed = record.closed as unknown as Closed | undefined
+    if (closed === undefined) return
     const conversation = await this.harness.conversation(
       record.conversationId,
       this.runtime.context,
     )
-    await conversation?.submit(
+    if (conversation === undefined) throw new Error("The question's conversation is gone.")
+    await conversation.submit(
       {
         type: "input",
         content: questionResultText(record.questions as unknown as Array<Question>, closed, true),
         whenBusy: "steer",
         requestId: `answer:${toolCallId}`,
-        entry: { kind: AnswerEntry, data: { toolCallId, sender: by } },
+        entry: {
+          kind: AnswerEntry,
+          data: { toolCallId, ...(closed.by === undefined ? {} : { sender: closed.by }) },
+        },
       },
       this.runtime.context,
     )
+    await this.harness.commit(async (tx) => {
+      const receipt = (await tx.doc(QuestionsDoc)).open[toolCallId]
+      if (receipt !== undefined) receipt.answerSubmitted = true
+    }, this.runtime.context)
   }
 }

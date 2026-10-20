@@ -108,11 +108,13 @@ export type QuestionRecord = {
   turnId: string
   questions: JsonValue
   async: boolean
-  /** How it closed, once it has; a waiting call reads it. */
+  /** How it closed, once it has; retained so a replayed call reads the same answer. */
   closed?: { outcome: JsonValue; by?: SenderJson }
+  /** The accepted async answer's input was durably admitted (otherwise recovered on restart). */
+  answerSubmitted?: boolean
 }
 
-/** The Open questions, by the call that asked them. */
+/** Open questions and closed receipts, by the call that asked them. */
 export const QuestionsDoc = defineDoc<{ open: Record<string, QuestionRecord> }>({
   kind: "kndl.questions",
   version: 1,

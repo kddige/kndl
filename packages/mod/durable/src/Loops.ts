@@ -319,7 +319,10 @@ export class LoopReporter {
       started: new Set(),
     }
     this.emitted = new Map()
-    const entry = resumed ? undefined : await this.inputEntry(first, facts, known)
+    const entry = await this.inputEntry(first, facts, known)
+    // A startup snapshot's committed entries belong to the old process's Turn, not this one.
+    const last = known.at(-1)?.id ?? entry?.id
+    if (last !== undefined) this.turn.lastEntry = last
     await this.recordCurrent(first, [turnId], resumed, entry?.id)
     if (this.loop.kind === "agent") return this.agentStatus("Running")
     const origin: InputOrigin = resumed ? { _tag: "Other" } : inputOrigin(entry)
@@ -358,10 +361,10 @@ export class LoopReporter {
         const doc = await tx.doc(TurnsDoc, this.conversationId)
         const earlier = resumed && doc.current?.input === input ? doc.current.turnIds : []
         doc.current = { input, turnIds: [...earlier, ...turnIds] }
-        for (const turnId of turnIds) {
-          const record = (doc.turns[turnId] ??= {})
-          if (entry !== undefined) record.entry = entry
-        }
+        // Chord copies assigned values. Mutating the RHS returned by `??= {}` would change
+        // a detached plain object, not the newly inserted draft, and lose the prompt anchor.
+        for (const turnId of turnIds)
+          doc.turns[turnId] = { ...doc.turns[turnId], ...(entry === undefined ? {} : { entry }) }
         // A resumed Turn anchors where the Turn it goes on from does.
         const from = earlier[0] === undefined ? undefined : doc.turns[earlier[0]]?.entry
         if (from !== undefined) for (const turnId of turnIds) doc.turns[turnId] = { entry: from }
@@ -427,11 +430,12 @@ export class LoopReporter {
     try {
       await harness.commit(async (tx) => {
         const doc = await tx.doc(TurnsDoc, this.conversationId)
-        for (const turnId of doc.current?.turnIds ?? []) {
-          const record = (doc.turns[turnId] ??= {})
-          if (answer !== undefined) record.answer = answer
-          if (last !== undefined) record.last = last
-        }
+        for (const turnId of doc.current?.turnIds ?? [])
+          doc.turns[turnId] = {
+            ...doc.turns[turnId],
+            ...(answer === undefined ? {} : { answer }),
+            ...(last === undefined ? {} : { last }),
+          }
         delete doc.current
       }, context)
     } catch (error) {
@@ -466,24 +470,39 @@ export class LoopReporter {
     const facts: BatchFacts = { submissions: new Map(), entries: new Map() }
     const run = snapshot.run
     const turn = this.turn
-    if (turn !== undefined && (run === undefined || run.inputs[0] !== turn.firstInput)) {
-      // Its end was in the batches the snapshot replaced: say how it ended, as far as it shows.
-      for (const entry of snapshot.entries) {
-        if (entry.id <= (turn.lastEntry ?? 0)) continue
-        const end = assistantEnd(entry)
-        if (end !== undefined) {
-          turn.requests.push(end)
-          turn.lastEntry = entry.id
-        }
+    const changed = turn !== undefined && (run === undefined || run.inputs[0] !== turn.firstInput)
+    let answer: EntryId | undefined
+    let next: EntryId | undefined
+    if (changed) {
+      // The snapshot has no settlements: read them or an abort/failure looks like an answer.
+      const harness = this.options.harness()
+      for (const id of turn.inputs) {
+        const record = await (
+          await harness.submission(id, this.options.context)
+        )?.status(this.options.context)
+        if (record !== undefined) facts.submissions.set(id, record)
+        if (record?.status === "done" && record.answer !== undefined) answer = record.answer
       }
-      this.endTurn([], facts)
+      next = (await this.inputEntry(run?.inputs[0], facts, snapshot.entries))?.id
+    }
+    // Never attribute a successor's committed answers/tools to the Turn the snapshot ended.
+    this.recoverEntries(
+      snapshot.entries.filter(
+        (entry) =>
+          (answer === undefined || entry.id <= answer) && (next === undefined || entry.id < next),
+      ),
+    )
+    if (changed) {
+      this.endTurn(turn.inputs, facts)
       this.sendUsage()
     }
     if (run !== undefined && this.turn === undefined) {
       // A subagent running again after a restart is Running again: the Hub marked it Interrupted.
       const resumed = initial && (await this.reportedBefore(run.inputs[0]))
-      await this.startTurn(run.inputs, facts, resumed, snapshot.entries)
+      await this.startTurn(run.inputs, facts, resumed, initial ? snapshot.entries : [])
+      if (!initial) this.recoverEntries(snapshot.entries)
     }
+    if (initial && run === undefined) await this.settleCurrent()
     if (startup && run === undefined && this.loop.kind === "agent") await this.settleAgent()
     // What the in-flight message says already, which this reporter may not have reported.
     const partial = snapshot.generation?.message
@@ -493,8 +512,43 @@ export class LoopReporter {
         slot.status === "running" &&
         this.turn !== undefined &&
         !this.turn.started.has(slot.callId)
-      )
-        this.toolStarted(slot.callId, slot.name, {})
+      ) {
+        // A model-issued slot doesn't carry arguments; they live in its assistant entry.
+        const call = snapshot.entries
+          .flatMap((entry) => {
+            const message = entry.model?.[0]
+            return message?.role === "assistant" ? message.content : []
+          })
+          .find((block) => block.type === "toolCall" && block.id === slot.callId)
+        this.toolStarted(slot.callId, slot.name, call?.type === "toolCall" ? call.arguments : {})
+      }
+  }
+
+  /** Replay the committed requests/tool rounds an overflow hid, once in entry order. */
+  private recoverEntries(entries: ReadonlyArray<EntryRecord>) {
+    const turn = this.turn
+    if (turn === undefined) return
+    for (const entry of entries) {
+      if (entry.id <= (turn.lastEntry ?? 0)) continue
+      const message = entry.model?.[0]
+      if (message?.role === "toolResult")
+        this.toolEnded(message.toolCallId, message.toolName, entry)
+      this.entry(entry)
+    }
+  }
+
+  /** A crash after a run settled but before recordEnd must not leave its fork anchor at the prompt. */
+  private async settleCurrent() {
+    if (this.loop.kind === "agent") return
+    const { context } = this.options
+    const harness = this.options.harness()
+    const current = (await harness.snapshot(TurnsDoc, this.conversationId, context))?.current
+    if (current === undefined) return
+    const record = await (await harness.submission(current.input, context))?.status(context)
+    if (record?.status !== "done" && record?.status !== "unanswered") return
+    const conversation = await harness.conversation(this.conversationId, context)
+    const last = (await conversation?.entries({}, 1, undefined, context))?.items[0]?.id
+    await this.recordEnd(record.status === "done" ? record.answer : undefined, last)
   }
 
   /** Whether the agent reported the run starting with `input` before it restarted. */
