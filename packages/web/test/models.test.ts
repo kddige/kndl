@@ -58,9 +58,9 @@ test("modelSwitchedText says who switched to what, and no Harness", () => {
       harness: "Pi",
     }),
   ).toBe("Alice Kim switched to Claude Sonnet 5.5, High")
-  expect(
-    modelSwitchedText({ _tag: "ModelSwitched", by: alice, model: "openai/gpt-6-sol" }),
-  ).toBe("Alice Kim switched to gpt-6-sol")
+  expect(modelSwitchedText({ _tag: "ModelSwitched", by: alice, model: "openai/gpt-6-sol" })).toBe(
+    "Alice Kim switched to gpt-6-sol",
+  )
   expect(modelSwitchedText({ _tag: "ModelSwitched", by: alice, modelLabel: "Opus 5.5" })).toBe(
     "Alice Kim switched to the default model (Opus 5.5)",
   )
@@ -109,9 +109,10 @@ test("a setting's Model is named by its label, else as the transcript knew it, e
 
 test("fitProviderSetting names the Model, and drops a level it doesn't take", () => {
   expect(fitProviderSetting(models, {})).toEqual({ model: "anthropic/claude-opus-5-5" })
-  expect(fitProviderSetting(models, { model: "openai/gpt-6-sol", thinkingLevel: "high" })).toEqual(
-    { model: "openai/gpt-6-sol", thinkingLevel: "high" },
-  )
+  expect(fitProviderSetting(models, { model: "openai/gpt-6-sol", thinkingLevel: "high" })).toEqual({
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "high",
+  })
   expect(
     fitProviderSetting(models, { model: "openai/gpt-6-sol-mini", thinkingLevel: "high" }),
   ).toEqual({ model: "openai/gpt-6-sol-mini" })

@@ -18,17 +18,31 @@ export function pendingThreadPrompts(
   senderId: string | undefined,
 ): ReadonlyArray<PendingThreadPrompt> {
   const last = log.at(-1)?.seq
-  if (pending.length === 0 || last === undefined || pending.every(prompt => prompt.after === last)) return pending
+  if (
+    pending.length === 0 ||
+    last === undefined ||
+    pending.every((prompt) => prompt.after === last)
+  )
+    return pending
   const used = new Set<EventSeq>()
-  return pending.flatMap(prompt => {
-    const echo = log.find(entry => {
+  return pending.flatMap((prompt) => {
+    const echo = log.find((entry) => {
       const event = entry.event
-      return (prompt.after === undefined || entry.seq > prompt.after) && !used.has(entry.seq) &&
-        event._tag === "ThreadPromptSent" && event.threadId === threadId &&
-        event.sender.id === senderId && event.text === prompt.text &&
-        (event.attachments?.map(file => file.id).join("\0") ?? "") === prompt.attachments.join("\0")
+      return (
+        (prompt.after === undefined || entry.seq > prompt.after) &&
+        !used.has(entry.seq) &&
+        event._tag === "ThreadPromptSent" &&
+        event.threadId === threadId &&
+        event.sender.id === senderId &&
+        event.text === prompt.text &&
+        (event.attachments?.map((file) => file.id).join("\0") ?? "") ===
+          prompt.attachments.join("\0")
+      )
     })
-    if (echo) { used.add(echo.seq); return [] }
+    if (echo) {
+      used.add(echo.seq)
+      return []
+    }
     return [{ ...prompt, after: last }]
   })
 }

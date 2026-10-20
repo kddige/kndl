@@ -1133,8 +1133,7 @@ test("any Participant can drive another's Session and open its shell", async () 
     [...page.querySelectorAll("button")].map(
       (each) => each.getAttribute("aria-label") ?? each.textContent?.trim(),
     )
-  for (const control of ["Wake now", "Attach"])
-    expect(labels()).toContain(control)
+  for (const control of ["Wake now", "Attach"]) expect(labels()).toContain(control)
   expect(labels().some((label) => label?.startsWith("Model:"))).toBe(true)
   expect(page.querySelector("header [role=switch]")).toBeNull()
   // Nor rename it from the sidebar.
@@ -1185,9 +1184,11 @@ test("any Participant can stop, steer and cancel while another's Session runs", 
   expect(button("Stop", page)).toBeDefined()
   expect(page.querySelector('button[aria-label^="Model:"]')).not.toBeNull()
   expect(page.querySelector('button[aria-label^="Thinking:"]')).not.toBeNull()
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("on Alice Kim's accounts")
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
+    "on Alice Kim's accounts",
+  )
   await step(() => button("Stop", page).click())
-  expect(hub.received.some(message => message._tag === "StopTurn")).toBe(true)
+  expect(hub.received.some((message) => message._tag === "StopTurn")).toBe(true)
 })
 
 test("a Session can wake without a Claude token when other Models are connected", async () => {

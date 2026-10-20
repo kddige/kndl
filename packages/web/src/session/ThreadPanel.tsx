@@ -280,33 +280,49 @@ export function ThreadPanel({
   const scroller = useStickToBottom(thread)
   const [compacting, setCompacting] = useState(false)
   // What was sent to start a new thread, while the Hub makes it, or why it couldn't.
-  const [creating, setCreating] = useState<{ text: string; attachments: ReadonlyArray<AttachmentId>; failed?: string } | null>(null)
+  const [creating, setCreating] = useState<{
+    text: string
+    attachments: ReadonlyArray<AttachmentId>
+    failed?: string
+  } | null>(null)
   // The model a new thread is to run on, picked before its first prompt.
   const [newSetting, setNewSetting] = useState<ModelSetting>({})
-  const you = useHubState(state => state.you)
-  const log = useHubState(state => state.joined[session.id]?.log)
-  const connection = useHubState(state => state.connection.status)
+  const you = useHubState((state) => state.you)
+  const log = useHubState((state) => state.joined[session.id]?.log)
+  const connection = useHubState((state) => state.connection.status)
   const [pending, setPending] = useState<ReadonlyArray<PendingThreadPrompt>>([])
   const nextPrompt = useRef(0)
-  const previews = of.kind === "thread"
-    ? pendingThreadPrompts(pending, log ?? [], of.threadId, you?.id)
-    : pending
+  const previews =
+    of.kind === "thread" ? pendingThreadPrompts(pending, log ?? [], of.threadId, you?.id) : pending
   useEffect(() => {
     if (previews !== pending) setPending(previews)
   }, [pending, previews])
   useEffect(() => {
     if (connection === "online") return
-    setPending(prompts => prompts.map(prompt => prompt.failed === undefined
-      ? { ...prompt, failed: "Delivery not confirmed. Reconnect and check the thread before retrying" }
-      : prompt))
+    setPending((prompts) =>
+      prompts.map((prompt) =>
+        prompt.failed === undefined
+          ? {
+              ...prompt,
+              failed: "Delivery not confirmed. Reconnect and check the thread before retrying",
+            }
+          : prompt,
+      ),
+    )
   }, [connection])
-  useEffect(() => hub.onCommandFailed(failure => {
-    if (failure.command !== "PromptThread" || failure.sessionId !== session.id) return
-    setPending(prompts => {
-      const first = prompts.find(prompt => prompt.failed === undefined)
-      return prompts.map(prompt => prompt === first ? { ...prompt, failed: failure.message } : prompt)
-    })
-  }), [hub, session.id])
+  useEffect(
+    () =>
+      hub.onCommandFailed((failure) => {
+        if (failure.command !== "PromptThread" || failure.sessionId !== session.id) return
+        setPending((prompts) => {
+          const first = prompts.find((prompt) => prompt.failed === undefined)
+          return prompts.map((prompt) =>
+            prompt === first ? { ...prompt, failed: failure.message } : prompt,
+          )
+        })
+      }),
+    [hub, session.id],
+  )
 
   // Opening a thread moves focus to it: its title, or, for a new one, where to write.
   const opened = of.kind === "thread" ? of.threadId : `new:${of.anchorTurnId}`
@@ -353,9 +369,16 @@ export function ThreadPanel({
     if (of.kind === "thread") {
       const sent = hub.promptThread(session.id, of.threadId, prompt, attachments)
       if (!sent) notSent("Reply")
-      else setPending(prompts => [...prompts, {
-        key: nextPrompt.current++, after: log?.at(-1)?.seq, text: prompt.trim(), attachments,
-      }])
+      else
+        setPending((prompts) => [
+          ...prompts,
+          {
+            key: nextPrompt.current++,
+            after: log?.at(-1)?.seq,
+            text: prompt.trim(),
+            attachments,
+          },
+        ])
       return sent
     }
     if (creating !== null && creating.failed === undefined) return false
@@ -363,7 +386,11 @@ export function ThreadPanel({
     hub.createThread(session.id, of.anchorTurnId, prompt, attachments, newSetting).then(
       (threadId) => onCreated(threadId),
       (error: unknown) =>
-        setCreating({ text: prompt, attachments, failed: error instanceof Error ? error.message : "Not sent" }),
+        setCreating({
+          text: prompt,
+          attachments,
+          failed: error instanceof Error ? error.message : "Not sent",
+        }),
     )
     return true
   }
@@ -417,7 +444,7 @@ export function ThreadPanel({
     <aside
       ref={panel}
       aria-labelledby={titleId}
-      onKeyDown={event => {
+      onKeyDown={(event) => {
         if (event.key === "Escape" && !event.defaultPrevented && event.target === heading.current) {
           event.preventDefault()
           onClose()
@@ -522,21 +549,38 @@ export function ThreadPanel({
           {thread !== undefined && thread.sent.length > 0 && (
             <SentList sent={thread.sent} running={running} />
           )}
-          {previews.map(prompt => (
+          {previews.map((prompt) => (
             <div key={prompt.key} data-pending-reply="">
               <CreatingPrompt text={prompt.text} failed={prompt.failed} reply />
-              {prompt.attachments.length > 0 && <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>}
+              {prompt.attachments.length > 0 && (
+                <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>
+              )}
               {prompt.failed !== undefined && (
-                <Button size="sm" intent="secondary" onClick={() => {
-                  if (send(prompt.text, prompt.attachments)) setPending(prompts => prompts.filter(each => each.key !== prompt.key))
-                }}>Retry reply</Button>
+                <Button
+                  size="sm"
+                  intent="secondary"
+                  onClick={() => {
+                    if (send(prompt.text, prompt.attachments))
+                      setPending((prompts) => prompts.filter((each) => each.key !== prompt.key))
+                  }}
+                >
+                  Retry reply
+                </Button>
               )}
             </div>
           ))}
           {creating !== null && (
             <div>
               <CreatingPrompt text={creating.text} failed={creating.failed} />
-              {creating.failed !== undefined && <Button size="sm" intent="secondary" onClick={() => send(creating.text, creating.attachments)}>Retry starting thread</Button>}
+              {creating.failed !== undefined && (
+                <Button
+                  size="sm"
+                  intent="secondary"
+                  onClick={() => send(creating.text, creating.attachments)}
+                >
+                  Retry starting thread
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -694,7 +738,15 @@ function SentList({ sent, running }: { sent: ReadonlyArray<SentPrompt>; running:
 }
 
 /** The first prompt of a thread being started, until the Hub has made it, or why it couldn't. */
-function CreatingPrompt({ text: prompt, failed, reply = false }: { text: string; failed?: string | undefined; reply?: boolean }) {
+function CreatingPrompt({
+  text: prompt,
+  failed,
+  reply = false,
+}: {
+  text: string
+  failed?: string | undefined
+  reply?: boolean
+}) {
   return (
     <div {...stylex.props(styles.sent)}>
       <div role={failed === undefined ? "status" : "alert"} {...stylex.props(styles.sentHead)}>

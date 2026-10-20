@@ -399,6 +399,9 @@ test("the Model goes through Environment setup, but an obsolete Harness does not
   await eventually(() =>
     expect(router.state.location.pathname).toBe("/repos/acme/fresh/environment"),
   )
-  expect(router.state.location.search).toMatchObject({ branch: "main", model: "anthropic/claude-opus-5-5" })
+  expect(router.state.location.search).toMatchObject({
+    branch: "main",
+    model: "anthropic/claude-opus-5-5",
+  })
   expect(router.state.location.search).not.toHaveProperty("harness")
 })

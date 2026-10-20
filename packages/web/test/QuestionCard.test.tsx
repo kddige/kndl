@@ -272,9 +272,13 @@ test("another Participant sees shared picks and can answer the question", async 
   )
   expect(buttons).toContain("Dismiss the question")
   expect(card()?.querySelector("input")).not.toBeNull()
-  expect(page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reply"]')?.disabled).toBe(false)
+  expect(page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reply"]')?.disabled).toBe(
+    false,
+  )
   await step(() => button("Dismiss the question", card() ?? undefined).click())
   await eventually(() => expect(card()).toBeNull())
-  expect(page.querySelector('[aria-label="Conversation"]')?.textContent).toContain("Bob Lee dismissed the question")
+  expect(page.querySelector('[aria-label="Conversation"]')?.textContent).toContain(
+    "Bob Lee dismissed the question",
+  )
   expect(hub.received.filter(({ _tag }) => _tag === "AnswerQuestion")).toHaveLength(1)
 })

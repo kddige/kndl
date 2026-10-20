@@ -399,9 +399,9 @@ test("a fold lasts across reloads, and opens when one of its agents' views opens
   const { router } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
   expect(nestedUnder("s-release")).toEqual([])
-  expect(button("Threads and agents of Release 0.4", nav() ?? document).getAttribute("aria-expanded")).toBe(
-    "false",
-  )
+  expect(
+    button("Threads and agents of Release 0.4", nav() ?? document).getAttribute("aria-expanded"),
+  ).toBe("false")
 
   // Opening an agent, as from its card in a transcript, opens its Session so it shows as current.
   await step(() => router.history.push("/sessions/s-release?agent=a-docs"))

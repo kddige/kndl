@@ -182,7 +182,12 @@ describe("Runners and Sessions", () => {
 describe("joining and leaving", () => {
   test("a joined Session keeps the Models the Hub sends for it, its Creator's", () => {
     const models = [
-      { provider: "anthropic", id: "claude-opus-5-5", label: "Claude Opus 5.5", thinkingLevels: [] },
+      {
+        provider: "anthropic",
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5",
+        thinkingLevels: [],
+      },
     ] as const
     const state = run(
       joined,

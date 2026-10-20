@@ -645,123 +645,120 @@ function LoadedSession({
 
         <div {...stylex.props(styles.body)}>
           {agentId !== undefined ? (
-              <div hidden={!conversationShown} {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}>
-                {titleStrip}
-                <AgentPanel
-                  session={summary}
-                  agentId={agentId}
-                  agent={agent}
-                  onClose={closeAgent}
+            <div
+              hidden={!conversationShown}
+              {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}
+            >
+              {titleStrip}
+              <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
+            </div>
+          ) : (
+            <div
+              hidden={!conversationShown}
+              {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}
+            >
+              {titleStrip}
+              <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+                <div {...stylex.props(styles.column, styles.transcript)}>
+                  <StateBanner
+                    summary={summary}
+                    change={transcript.stateChange}
+                    running={running}
+                    startLog={startLog}
+                    restart={restart}
+                    onWake={() => command("Wake", hub.wakeSession(summary.id))}
+                    onRestore={() => restoreSession(hub, summary.id)}
+                    onEnterValues={() =>
+                      void navigate({
+                        to: "/repos/$owner/$repo/environment",
+                        params: repoParams(summary.repo),
+                      })
+                    }
+                  />
+                  {items.length === 0 ? (
+                    <EmptyState
+                      title="Nothing here yet"
+                      description="Send the first prompt. Everyone in the Session sees the answer as it streams, and can reply in a thread off it."
+                    />
+                  ) : (
+                    <Transcript
+                      sessionId={summary.id}
+                      items={items}
+                      nameTurnModel={nameTurnModel}
+                      nameReplier={nameReplier}
+                      threads={threads}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <AgentChips agents={summary.agents ?? []} onOpen={(id) => onAgentChange?.(id)} />
+              <div {...stylex.props(styles.column, styles.dock)}>
+                {transcript.plan !== undefined && (
+                  <PlanDock plan={transcript.plan} live={transcript.running !== undefined} />
+                )}
+                <QuestionDock
+                  summary={summary}
+                  questions={transcript.questions}
+                  picks={questionPicks}
+                />
+                <PromptQueue
+                  queue={queue}
+                  onCancel={(prompt) => {
+                    if (!hub.cancelPrompt(summary.id, prompt.id)) notSent("Cancel")
+                  }}
+                  onSteer={
+                    steerable
+                      ? (prompt) => {
+                          if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
+                            setSteering((ids) => new Set(ids).add(prompt.id))
+                        }
+                      : undefined
+                  }
+                  steering={steering}
+                />
+                <Composer
+                  onSend={send}
+                  onStop={() => hub.stopTurn(summary.id)}
+                  running={running}
+                  disabledReason={disabledReason}
+                  hint={
+                    asking
+                      ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
+                      : hint
+                  }
+                  attach={attach}
+                  placeholder="Send a prompt"
+                  {...(asking && { copy: replyCopy, needsText: true })}
+                  tools={
+                    archived ? undefined : (
+                      <ComposerTools
+                        keptAwake={keptAwake}
+                        setKeepAwake={(on) =>
+                          command("Keep awake", hub.setKeepAwake(summary.id, on))
+                        }
+                        terminal={{
+                          open: terminalOpen,
+                          toggle: () => showTerminal(!terminalOpen),
+                        }}
+                      />
+                    )
+                  }
+                  picker={
+                    <ModelPicker
+                      models={models}
+                      connectable={connectable}
+                      value={shownSetting}
+                      onChange={pick}
+                      footer={`Runs on ${yourAccounts}.`}
+                      disabled={archived}
+                      side="top"
+                    />
+                  }
                 />
               </div>
-            ) : (
-              <div hidden={!conversationShown} {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}>
-                {titleStrip}
-                <div
-                  ref={scroller.ref}
-                  onScroll={scroller.onScroll}
-                  {...stylex.props(styles.scroll)}
-                >
-                  <div {...stylex.props(styles.column, styles.transcript)}>
-                    <StateBanner
-                      summary={summary}
-                      change={transcript.stateChange}
-                      running={running}
-                      startLog={startLog}
-                      restart={restart}
-                      onWake={() => command("Wake", hub.wakeSession(summary.id))}
-                      onRestore={() => restoreSession(hub, summary.id)}
-                      onEnterValues={() =>
-                        void navigate({
-                          to: "/repos/$owner/$repo/environment",
-                          params: repoParams(summary.repo),
-                        })
-                      }
-                    />
-                    {items.length === 0 ? (
-                      <EmptyState
-                        title="Nothing here yet"
-                        description="Send the first prompt. Everyone in the Session sees the answer as it streams, and can reply in a thread off it."
-                      />
-                    ) : (
-                      <Transcript
-                        sessionId={summary.id}
-                        items={items}
-                        nameTurnModel={nameTurnModel}
-                        nameReplier={nameReplier}
-                        threads={threads}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <AgentChips agents={summary.agents ?? []} onOpen={(id) => onAgentChange?.(id)} />
-                <div {...stylex.props(styles.column, styles.dock)}>
-                  {transcript.plan !== undefined && (
-                    <PlanDock plan={transcript.plan} live={transcript.running !== undefined} />
-                  )}
-                  <QuestionDock
-                    summary={summary}
-                    questions={transcript.questions}
-                    picks={questionPicks}
-                  />
-                  <PromptQueue
-                    queue={queue}
-                    onCancel={(prompt) => {
-                      if (!hub.cancelPrompt(summary.id, prompt.id)) notSent("Cancel")
-                    }}
-                    onSteer={
-                      steerable
-                        ? (prompt) => {
-                            if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
-                              setSteering((ids) => new Set(ids).add(prompt.id))
-                          }
-                        : undefined
-                    }
-                    steering={steering}
-                  />
-                  <Composer
-                    onSend={send}
-                    onStop={() => hub.stopTurn(summary.id)}
-                    running={running}
-                    disabledReason={disabledReason}
-                    hint={
-                      asking
-                        ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
-                        : hint
-                    }
-                    attach={attach}
-                    placeholder="Send a prompt"
-                    {...(asking && { copy: replyCopy, needsText: true })}
-                    tools={
-                      archived ? undefined : (
-                        <ComposerTools
-                          keptAwake={keptAwake}
-                          setKeepAwake={(on) =>
-                            command("Keep awake", hub.setKeepAwake(summary.id, on))
-                          }
-                          terminal={{
-                            open: terminalOpen,
-                            toggle: () => showTerminal(!terminalOpen),
-                          }}
-                        />
-                      )
-                    }
-                    picker={
-                      <ModelPicker
-                        models={models}
-                        connectable={connectable}
-                        value={shownSetting}
-                        onChange={pick}
-                        footer={`Runs on ${yourAccounts}.`}
-                        disabled={archived}
-                        side="top"
-                      />
-                    }
-                  />
-                </div>
-              </div>
-            )}
+            </div>
+          )}
           {panelOf !== undefined && (!terminalOpen || wide) && (
             <ThreadPanel
               key={panelOf.kind === "thread" ? panelOf.threadId : `new-${panelOf.anchorTurnId}`}

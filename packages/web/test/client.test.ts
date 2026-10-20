@@ -217,7 +217,7 @@ describe("a joined Session", () => {
       const log = client.getState().joined[demo]?.log ?? []
       const started = log.findLast((entry) => entry.event._tag === "TurnStarted")
       expect(started?.event).toMatchObject({ text: "[Alice Kim] Rename the store" })
-      expect(log.findLast(entry => entry.event._tag === "TurnEnded")).toBeDefined()
+      expect(log.findLast((entry) => entry.event._tag === "TurnEnded")).toBeDefined()
     })
     // Idle comes in the SessionUpdated after the TurnEnded, a message of its own.
     await eventually(() => {
@@ -240,7 +240,10 @@ describe("a joined Session", () => {
     await eventually(() => {
       const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
       expect(events.some((event) => event._tag === "TurnStopRequested")).toBe(true)
-      expect(events.findLast(event => event._tag === "TurnEnded")).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
+      expect(events.findLast((event) => event._tag === "TurnEnded")).toMatchObject({
+        _tag: "TurnEnded",
+        reason: "aborted",
+      })
     })
   })
 
@@ -263,7 +266,9 @@ describe("a joined Session", () => {
     })
     client.sendPrompt(demo, "After the drop")
     await eventually(() =>
-      expect(client.getState().joined[demo]?.log.findLast(entry => entry.event._tag === "TurnEnded")).toBeDefined(),
+      expect(
+        client.getState().joined[demo]?.log.findLast((entry) => entry.event._tag === "TurnEnded"),
+      ).toBeDefined(),
     )
     const seqs = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.seq)
     expect<unknown>(seqs).toEqual(seqs.map((_, index) => index))
@@ -665,7 +670,7 @@ describe("everyone drives a durable Session", () => {
     expect(findSession(client.getState(), demo)?.keepAwake).toBeUndefined()
     expect(client.getState().joined[demo]?.models?.length).toBeGreaterThan(0)
     expect(failures).toEqual([])
-    expect(hub.received.map(message => message._tag)).toContain("OpenTerminal")
+    expect(hub.received.map((message) => message._tag)).toContain("OpenTerminal")
   })
 
   test("without a Claude token, another connected Model can create and wake a Session", async () => {

@@ -113,7 +113,11 @@ function startClient(transport: HubTransport): HubClient {
 /** Creates a Session through the client, and waits until it has started. */
 async function started(client: HubClient, pi = false): Promise<SessionId> {
   await eventually(() => expect(client.getState().connection.status).toBe("online"))
-  const { id } = await client.createSession({ repo, branch, ...(pi && { model: "anthropic/claude-opus-5-5" }) })
+  const { id } = await client.createSession({
+    repo,
+    branch,
+    ...(pi && { model: "anthropic/claude-opus-5-5" }),
+  })
   await eventually(() => {
     const summary = client.getState().sessions?.find((session) => session.id === id)
     expect(summary?.state).toBe("Active")
