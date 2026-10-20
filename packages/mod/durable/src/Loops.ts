@@ -420,7 +420,9 @@ export class LoopReporter {
       ...(usage === undefined ? {} : { usage }),
       ...(errorMessage === undefined ? {} : { errorMessage }),
     })
-    // Left unread, a steer stays in the conversation, and the model reads it in the next run.
+    // The steers this Turn read are done with. One it didn't read stays tracked: the next run
+    // places it, or, if a stop withdrew it, Stopping.ts kept it in the conversation, unread, for
+    // the model to read with the next prompt.
     for (const id of this.steers.keys()) if (turn.inputs.has(id)) this.steers.delete(id)
     void this.recordEnd(answer, turn.lastEntry)
     if (this.loop.kind === "agent") void this.agentStatus(aborted ? "Stopped" : "Done")

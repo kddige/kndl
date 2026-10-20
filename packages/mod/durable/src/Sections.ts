@@ -9,20 +9,48 @@
 
 import type { Context } from "@earendil-works/chord"
 import { section } from "@earendil-works/pi-durable"
-import type { PromptSection } from "@earendil-works/pi-durable"
+import type { PromptInput, PromptSection } from "@earendil-works/pi-durable"
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env"
 import { attachmentTool } from "./Attachments.ts"
+import { AgentsDoc, ThreadsDoc } from "./Docs.ts"
 
-/** The section that says what kndl is, and how people talk to the agent through it. */
-export const preambleText = [
-  "This session is shared through kndl: several people may be watching it and talking to you, live, in a web UI, and any of them can prompt you, steer you while you work, stop you, or answer your questions.",
-  "A prompt from the web UI starts with its sender's name in brackets, such as \"[Ada Lovelace] ...\": answer the person who asked, and keep in mind that the others read along. A prompt without one came from the session itself, such as a subagent's result.",
-  `A line such as "[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for a file its sender attached: to see it, call the ${attachmentTool} tool with its id.`,
-  "You run in a sandbox VM where the repository is checked out, and your work there survives the VM sleeping and your process restarting: a turn cut off by a restart continues where it stopped.",
-  "People can also reply in threads: a thread is a fork of this conversation at one of your answers, which runs beside it with its own context.",
-  "For work of several steps, keep a plan with the update_plan tool: everyone in the session sees it live.",
-  "Your context is summarized automatically when it grows long; everything before stays searchable with the search_history tool. For very long work you can also hand off to yourself with the handoff tool: write down everything the next stretch needs, and you carry on from that note with a fresh context, in the same turn.",
-].join("\n\n")
+/** Whose a conversation is, as its preamble tells it: the main loop, one of its threads, or a subagent. */
+export type ConversationKind = "main" | "thread" | "agent"
+
+/** The section that says what kndl is, and how people talk to the conversation's agent through it. */
+export const preambleFor = (kind: ConversationKind): string =>
+  [
+    kind === "agent"
+      ? "This session is shared through kndl: several people may be watching it live in a web UI, and any of them can message you or stop you. The agent that started you is the one you answer."
+      : `This session is shared through kndl: several people may be watching it and talking to you, live, in a web UI, and any of them can prompt you, steer you while you work, ${kind === "main" ? "stop you, or answer your questions" : "or stop you"}.`,
+    "A prompt from the web UI starts with its sender's name in brackets, such as \"[Ada Lovelace] ...\": answer the person who asked, and keep in mind that the others read along. A prompt without one came from the session itself, such as a subagent's result.",
+    `A line such as "[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for a file its sender attached: to see it, call the ${attachmentTool} tool with its id.`,
+    "You run in a sandbox VM where the repository is checked out, and your work there survives the VM sleeping and your process restarting: a turn cut off by a restart continues where it stopped.",
+    ...(kind === "main"
+      ? [
+          "People can also reply in threads: a thread is a fork of this conversation at one of your answers, which runs beside it with its own context.",
+        ]
+      : []),
+    "For work of several steps, keep a plan with the update_plan tool: everyone in the session sees it live.",
+    "Your context is summarized automatically when it grows long; everything before stays searchable with the search_history tool. For very long work you can also hand off to yourself with the handoff tool: write down everything the next stretch needs, and you carry on from that note with a fresh context, in the same turn.",
+  ].join("\n\n")
+
+/** The main loop's preamble. */
+export const preambleText = preambleFor("main")
+
+/** Whose a conversation is: a subagent's or a thread's if the Session says so, else the main loop's. */
+const conversationKind = async (
+  input: PromptInput,
+  context: Context,
+): Promise<ConversationKind> => {
+  const agents = (await input.read.snapshot(AgentsDoc, context))?.agents ?? {}
+  if (Object.values(agents).some((agent) => agent.conversationId === input.conversationId))
+    return "agent"
+  const threads = (await input.read.snapshot(ThreadsDoc, context))?.threads ?? {}
+  return Object.values(threads).some((thread) => thread.conversationId === input.conversationId)
+    ? "thread"
+    : "main"
+}
 
 /** A file's text and the mtime it was read at. */
 interface Cached {
@@ -220,7 +248,9 @@ export const skillsSection = (): PromptSection => {
 
 /** The kndl sections every conversation has: the preamble, its directory, the Repo's guidance. */
 export const kndlSections = (): Array<PromptSection> => [
-  section("kndl", () => preambleText, { tag: false }),
+  section("kndl", async (input, context) => preambleFor(await conversationKind(input, context)), {
+    tag: false,
+  }),
   section("cwd", (input) => input.env?.cwd),
   contextFilesSection(),
   skillsSection(),

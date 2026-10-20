@@ -31,7 +31,7 @@ import {
 import type { Closed } from "../../src/Questions.ts"
 import { QuestionsDoc } from "./Docs.ts"
 import type { QuestionRecord } from "./Docs.ts"
-import { AnswerEntry } from "./Inputs.ts"
+import { AnswerEntry, freeRequestId } from "./Inputs.ts"
 import type { Runtime } from "./Runtime.ts"
 
 export { questionTool }
@@ -59,6 +59,10 @@ export const questionParameters = Type.Object({
 })
 
 const cancelled = { outcome: { _tag: "Cancelled" } } as const
+
+/** Why a question is refused when no Turn of the conversation is reported to the Hub. */
+const noTurnText =
+  "The question wasn't asked: the session has no turn running for it to belong to. Carry on without, or ask again in a moment."
 
 /** A record out of a commit's draft, to keep after it. */
 const copy = (record: QuestionRecord): QuestionRecord => JSON.parse(JSON.stringify(record))
@@ -119,10 +123,11 @@ export class Questions {
             if (turnId !== undefined && known.closed === undefined) known.turnId = turnId
             return { record: copy(known), again: true }
           }
+          if (turnId === undefined) return { refused: noTurnText }
           const otherAsync = Object.values(doc.open).some(
             (record) => record.async && record.closed === undefined,
           )
-          if (otherAsync || turnId === undefined) return undefined
+          if (otherAsync) return { refused: stillOpenText }
           const record: QuestionRecord = {
             conversationId: api.conversationId,
             turnId,
@@ -132,8 +137,8 @@ export class Questions {
           doc.open[toolCallId] = record
           return { record, again: false }
         }, context)
-        if (asked === undefined)
-          return { output: [{ type: "text", text: stillOpenText }], isError: true }
+        if ("refused" in asked)
+          return { output: [{ type: "text", text: asked.refused }], isError: true }
         const { record } = asked
         if (record.closed === undefined && (!asked.again || !record.async))
           this.asked(toolCallId, record)
@@ -236,19 +241,26 @@ export class Questions {
       this.runtime.context,
     )
     if (conversation === undefined) throw new Error("The question's conversation is gone.")
-    await conversation.submit(
-      {
-        type: "input",
-        content: questionResultText(record.questions as unknown as Array<Question>, closed, true),
-        whenBusy: "steer",
-        requestId: `answer:${toolCallId}`,
-        entry: {
-          kind: AnswerEntry,
-          data: { toolCallId, ...(closed.by === undefined ? {} : { sender: closed.by }) },
-        },
-      },
+    // A stop may have withdrawn the answer unread; it is then in the conversation as a write.
+    const requestId = await freeRequestId(
+      conversation,
+      `answer:${toolCallId}`,
       this.runtime.context,
     )
+    if (requestId !== undefined)
+      await conversation.submit(
+        {
+          type: "input",
+          content: questionResultText(record.questions as unknown as Array<Question>, closed, true),
+          whenBusy: "steer",
+          requestId,
+          entry: {
+            kind: AnswerEntry,
+            data: { toolCallId, ...(closed.by === undefined ? {} : { sender: closed.by }) },
+          },
+        },
+        this.runtime.context,
+      )
     await this.harness.commit(async (tx) => {
       const receipt = (await tx.doc(QuestionsDoc)).open[toolCallId]
       if (receipt !== undefined) receipt.answerSubmitted = true

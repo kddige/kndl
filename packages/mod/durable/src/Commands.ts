@@ -9,9 +9,10 @@ import type { ModCommand, ThinkingLevel } from "@kndl/protocol"
 import type { Command } from "../../src/HubMessages.ts"
 import { attachmentTool } from "./Attachments.ts"
 import { deliverHandoff } from "./History.ts"
-import { promptInput } from "./Inputs.ts"
+import { admitPrompt, promptInput } from "./Inputs.ts"
 import type { Questions } from "./Questions.ts"
 import type { Runtime } from "./Runtime.ts"
+import { stopConversation } from "./Stopping.ts"
 import { messageFromCreator, stopFromCreator } from "./Subagents.ts"
 import { deliverThreadPrompt, startThread, stopThread, threadConversation } from "./Threads.ts"
 import { modelName, turnErrorMessage } from "./Turns.ts"
@@ -94,8 +95,39 @@ export class Commands {
         command._tag === "DeliverThreadPrompt"
       )
         this.runtime.report({ _tag: "PromptFailed", promptId: command.promptId, message })
+      else if (command._tag === "SwitchModel" || command._tag === "SwitchThreadModel")
+        await this.switchFailed(command, message)
+      else if (command._tag === "DeliverAnswer")
+        this.runtime.report({
+          _tag: "AnswerFailed",
+          toolCallId: command.toolCallId,
+          senderId: command.sender.id,
+          message,
+        })
       else throw error
     }
+  }
+
+  /** A model switch that threw: the Hub keeps the conversation on the model it runs on. */
+  private async switchFailed(
+    command: Command<"SwitchModel"> | Command<"SwitchThreadModel">,
+    message: string,
+  ) {
+    const { runtime } = this
+    const threadId = command._tag === "SwitchThreadModel" ? command.threadId : undefined
+    // What it runs on may be what failed to be read.
+    const running = await (async () => {
+      const conversation =
+        threadId === undefined ? await this.root() : await threadConversation(runtime, threadId)
+      return conversation === undefined ? undefined : await conversationModel(runtime, conversation)
+    })().catch(() => undefined)
+    runtime.report({
+      _tag: "ModelSwitchFailed",
+      ...(command.model === undefined ? {} : { asked: command.model }),
+      model: running ?? command.model ?? "none",
+      message,
+      ...(threadId === undefined ? {} : { threadId }),
+    })
   }
 
   private async dispatch(command: ModCommand) {
@@ -106,9 +138,9 @@ export class Commands {
         return this.steer(command)
       case "StopTurn": {
         const root = await this.root()
-        void root
-          .abort(this.runtime.context)
-          .catch((error: unknown) => this.runtime.log(`kndl: stopping the Turn failed: ${error}`))
+        void stopConversation(this.runtime, root).catch((error: unknown) =>
+          this.runtime.log(`kndl: stopping the Turn failed: ${error}`),
+        )
         return
       }
       case "SwitchModel": {
@@ -166,18 +198,13 @@ export class Commands {
   private async prompt(command: Command<"DeliverPrompt">) {
     const { runtime } = this
     const root = await this.root()
-    const given = await root.commit(
-      (tx) => tx.submissionByRequest(root.id, command.promptId),
+    const requestId = await admitPrompt(runtime, root, command.promptId)
+    if (requestId === undefined) return
+    // Should a run have started meanwhile, as an agent's result's, it waits for that run.
+    await root.submit(
+      promptInput(command, { steer: false, attachmentTool, requestId }),
       runtime.context,
     )
-    if (given !== undefined) {
-      // A Hub from before #323 would refuse the event, so it keeps the prompt queued: still once.
-      if (runtime.takesAlreadySubmitted())
-        runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
-      return
-    }
-    // Should a run have started meanwhile, as an agent's result's, it waits for that run.
-    await root.submit(promptInput(command, { steer: false, attachmentTool }), runtime.context)
   }
 
   /**
@@ -187,15 +214,8 @@ export class Commands {
   private async steer(command: Command<"DeliverIntoTurn">) {
     const { runtime } = this
     const root = await this.root()
-    const given = await root.commit(
-      (tx) => tx.submissionByRequest(root.id, command.promptId),
-      runtime.context,
-    )
-    if (given !== undefined) {
-      if (runtime.takesAlreadySubmitted())
-        runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
-      return
-    }
+    const requestId = await admitPrompt(runtime, root, command.promptId)
+    if (requestId === undefined) return
     const reporter = runtime.loops.get(root.id)
     const running = (await runtime.harness().snapshot(LiveDoc, root.id, runtime.context))?.run
     const turnId = reporter?.turnId
@@ -206,7 +226,7 @@ export class Commands {
         message: "no Turn is running",
       })
     const submission = await root.submit(
-      promptInput(command, { steer: true, attachmentTool }),
+      promptInput(command, { steer: true, attachmentTool, requestId }),
       runtime.context,
     )
     // Placed at once, the Turn had ended: it starts the next, which the Hub hears of instead.

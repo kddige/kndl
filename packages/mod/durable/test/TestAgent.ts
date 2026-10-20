@@ -46,7 +46,7 @@ export interface Request {
   readonly system: string
 }
 
-const textOf = (message: Message | undefined): string => {
+export const textOf = (message: Message | undefined): string => {
   if (message === undefined) return ""
   if (message.role === "system") return ""
   const { content } = message
@@ -65,6 +65,12 @@ const systemOf = (context: TranscriptContext) =>
         : [],
     )
     .join("\n")
+
+/** What a request carries after its system messages, in order: each message's role and text. */
+export const conversationOf = (request: Request | undefined) =>
+  (request?.context.messages ?? [])
+    .filter((message) => message.role !== "system")
+    .map((message) => ({ role: message.role, text: textOf(message) }))
 
 /** A call of `tool` with `args`. */
 export const callTool = (tool: string, args: Parameters<typeof fauxToolCall>[1], id?: string) =>

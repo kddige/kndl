@@ -11,9 +11,10 @@ import { threadTitleFrom } from "@kndl/protocol"
 import type { Command } from "../../src/HubMessages.ts"
 import { attachmentTool } from "./Attachments.ts"
 import { PlanDoc, ThreadsDoc, TurnsDoc } from "./Docs.ts"
-import { promptInput } from "./Inputs.ts"
+import { admitPrompt, promptInput } from "./Inputs.ts"
 import { reportPlan } from "./Plan.ts"
 import type { Runtime } from "./Runtime.ts"
+import { stopConversation } from "./Stopping.ts"
 import { modelName } from "./Turns.ts"
 
 /** What a thread's model is told of where it is. */
@@ -73,19 +74,13 @@ const promptThread = async (
   command: Command<"DeliverThreadPrompt"> | Command<"StartThread">,
 ) => {
   const { context } = runtime
-  const given = await thread.commit(
-    (tx) => tx.submissionByRequest(thread.id, command.promptId),
+  const requestId = await admitPrompt(runtime, thread, command.promptId)
+  if (requestId === undefined) return
+  const steer = await busy(runtime, thread)
+  const submission = await thread.submit(
+    promptInput(command, { steer, attachmentTool, requestId }),
     context,
   )
-  if (given !== undefined) {
-    // The original start/steer may have died in the process's volatile event queue. A receipt
-    // clears the Hub's pending prompt without inventing a second Turn or submitting it twice.
-    if (runtime.takesAlreadySubmitted())
-      runtime.report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
-    return
-  }
-  const steer = await busy(runtime, thread)
-  const submission = await thread.submit(promptInput(command, { steer, attachmentTool }), context)
   const status = await submission.status(context)
   const reporter = runtime.loops.get(thread.id)
   const turnId = reporter?.turnId
@@ -191,5 +186,12 @@ export const deliverThreadPrompt = async (
 /** StopThread: the thread's Turn stops; its background agents run on. */
 export const stopThread = async (runtime: Runtime, command: Command<"StopThread">) => {
   const thread = await threadConversation(runtime, command.threadId)
-  void thread?.abort(runtime.context).catch((error: unknown) => runtime.log(`kndl: ${error}`))
+  if (thread === undefined) {
+    // The protocol has no failure for it; the Hub's stop button has nothing to undo.
+    runtime.log(`kndl: StopThread: the Session has no thread ${command.threadId}`)
+    return
+  }
+  void stopConversation(runtime, thread).catch((error: unknown) =>
+    runtime.log(`kndl: stopping thread ${command.threadId} failed: ${error}`),
+  )
 }

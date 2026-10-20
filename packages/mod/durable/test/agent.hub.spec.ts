@@ -258,6 +258,7 @@ test("web participants drive a real durable agent: fork, concurrent Turns, plan/
   await hold.firstCall
   send(participant, {
     _tag: "CreateThread",
+    requestId: "req-why-42",
     sessionId,
     anchorTurnId: anchor.turnId,
     text: "Why 42?",

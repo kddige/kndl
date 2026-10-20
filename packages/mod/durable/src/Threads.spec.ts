@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import type { EntryId } from "@earendil-works/pi-durable"
-import { TestAgent, ada, bob, callTool, holdTool, say } from "../test/TestAgent.ts"
+import { TestAgent, ada, bob, callTool, conversationOf, holdTool, say } from "../test/TestAgent.ts"
 import type { Request } from "../test/TestAgent.ts"
 import { PlanDoc, TurnsDoc } from "./Docs.ts"
 
@@ -38,6 +38,7 @@ describe("a thread", () => {
       promptId: "q3",
       text: "Why 42?",
       sender: bob,
+      model: "openai/gpt-test",
     })
     const events = await agent.until(
       (event) => event._tag === "TurnEnded" && event.threadId === "t1",
@@ -96,6 +97,7 @@ describe("a thread", () => {
       promptId: "q2",
       text: "About that progress",
       sender: bob,
+      model: "openai/gpt-test",
     })
     await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
     expect(JSON.stringify(agent.requests.find(inThread)?.context.messages)).toContain(
@@ -117,6 +119,7 @@ describe("a thread", () => {
       promptId: "q2",
       text: "Again?",
       sender: bob,
+      model: "openai/gpt-test",
     }
     agent.send(start)
     await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
@@ -171,6 +174,7 @@ describe("a thread", () => {
       promptId: "q2",
       text: "Explain",
       sender: bob,
+      model: "openai/gpt-test",
     })
     await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from)
     expect(JSON.stringify(agent.requests.find(inThread)?.context.messages)).toContain(
@@ -193,6 +197,7 @@ describe("a thread", () => {
       promptId: "q1",
       text: "Try it",
       sender: bob,
+      model: "openai/gpt-test",
     })
     expect(await agent.event((event) => event._tag === "PromptFailed")).toMatchObject({
       promptId: "q1",
@@ -223,6 +228,7 @@ describe("a thread", () => {
       promptId: "q2",
       text: "Dig in",
       sender: bob,
+      model: "openai/gpt-test",
     })
     const call = await agent.event(
       (event) => event._tag === "ToolCallStarted" && event.threadId === "t1",
@@ -261,6 +267,99 @@ describe("a thread", () => {
     expect(
       await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from),
     ).toMatchObject({ reason: "aborted" })
+  })
+
+  test("keeps what the stop withdrew from it, and a reply it stopped", async () => {
+    const hold = holdTool()
+    const poem = Array.from({ length: 40 }, (_, n) => `Verse${n}`).join(" ")
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      tokensPerSecond: 60,
+      reply: (request) => {
+        if (!inThread(request)) return say("Main.")
+        if (request.text.includes("Hold")) return callTool("hold", {})
+        if (request.text.includes("Recite")) return say(poem)
+        return say("Thread.")
+      },
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Hi", sender: ada })
+    const first = await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({
+      _tag: "StartThread",
+      threadId: "t1",
+      anchorTurnId: first.turnId,
+      promptId: "q2",
+      text: "Hold",
+      sender: bob,
+      model: "openai/gpt-test",
+    })
+    await agent.event((event) => event._tag === "ToolCallStarted" && event.threadId === "t1")
+    agent.send({
+      _tag: "DeliverThreadPrompt",
+      threadId: "t1",
+      promptId: "q3",
+      text: "Use pnpm",
+      sender: ada,
+    })
+    await agent.event((event) => event._tag === "PromptSteered" && event.threadId === "t1")
+    agent.send({ _tag: "StopThread", threadId: "t1" })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1")
+    expect(agent.hub.ofTag("SteeredPromptRead")).toHaveLength(0)
+    // The next prompt starts a Turn, and the model reads the steer ahead of it.
+    let from = agent.hub.events.length
+    agent.send({
+      _tag: "DeliverThreadPrompt",
+      threadId: "t1",
+      promptId: "q4",
+      text: "Recite",
+      sender: bob,
+    })
+    // Pi Durable commits what streamed every 100 ms: let some words be saved.
+    await agent.until(
+      (event) =>
+        event._tag === "TextDelta" &&
+        agent?.hub
+          .ofTag("TextDelta")
+          .map((each) => each.text)
+          .join("")
+          .includes("Verse8") === true,
+      from,
+    )
+    const steer = conversationOf(agent.requests.at(-1)).map((message) => message.text)
+    expect(steer.findIndex((text) => text.includes("Use pnpm"))).toBeGreaterThan(0)
+    expect(steer.findIndex((text) => text.includes("Recite"))).toBeGreaterThan(
+      steer.findIndex((text) => text.includes("Use pnpm")),
+    )
+    // Stopped while it streams, its words and that it was stopped are read with the next prompt.
+    agent.send({ _tag: "StopThread", threadId: "t1" })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from)
+    from = agent.hub.events.length
+    agent.send({
+      _tag: "DeliverThreadPrompt",
+      threadId: "t1",
+      promptId: "q5",
+      text: "Instead",
+      sender: bob,
+    })
+    await agent.event((event) => event._tag === "TurnEnded" && event.threadId === "t1", from)
+    const texts = conversationOf(agent.requests.at(-1)).map((message) => message.text)
+    const marker = texts.indexOf("[Request interrupted by user]")
+    expect(marker).toBeGreaterThan(0)
+    expect(texts[marker - 1]).toStartWith("Verse0")
+    expect(texts[marker + 1]).toContain("Instead")
+    // Delivered again, the steer is the Hub's to drop: the thread has it, and doesn't run it twice.
+    const requests = agent.requests.length
+    from = agent.hub.events.length
+    agent.send({
+      _tag: "DeliverThreadPrompt",
+      threadId: "t1",
+      promptId: "q3",
+      text: "Use pnpm",
+      sender: ada,
+    })
+    await agent.event((event) => event._tag === "PromptAlreadySubmitted", from)
+    expect(agent.requests).toHaveLength(requests)
   })
 
   test("runs on its own model, which it switches on its own", async () => {
@@ -382,6 +481,7 @@ describe("the Plan", () => {
       promptId: "q3",
       text: "Branch off",
       sender: bob,
+      model: "openai/gpt-test",
     })
     const plan = await agent.event(
       (event) => event._tag === "PlanChanged" && event.threadId === "t1",

@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { TestAgent, ada, bob, callTool, eventually, holdTool, say } from "../test/TestAgent.ts"
+import { InboxDoc } from "@earendil-works/pi-durable"
+import {
+  TestAgent,
+  ada,
+  bob,
+  callTool,
+  conversationOf,
+  eventually,
+  fauxAssistantMessage,
+  fauxText,
+  holdTool,
+  say,
+} from "../test/TestAgent.ts"
 import { TurnsDoc } from "./Docs.ts"
 import { LoopReporter } from "./Loops.ts"
 
@@ -132,6 +144,92 @@ describe("steering, stopping and redelivery", () => {
     })
   })
 
+  test("a steer the stop withdraws stays in the conversation, and the model reads it ahead of the next prompt", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => (request.text.includes("Go") ? callTool("hold", {}) : say("Done.")),
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await agent.event((event) => event._tag === "ToolCallStarted")
+    agent.send({ _tag: "DeliverIntoTurn", promptId: "q2", text: "Use pnpm", sender: bob })
+    await agent.event((event) => event._tag === "PromptSteered")
+    agent.send({ _tag: "StopTurn" })
+    await agent.event((event) => event._tag === "TurnEnded")
+    // The Turn ended before it read the steer: no one told the Hub it did.
+    expect(agent.hub.ofTag("SteeredPromptRead")).toHaveLength(0)
+    agent.send({ _tag: "DeliverPrompt", promptId: "q3", text: "Next", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "stop")
+    const texts = conversationOf(agent.requests.at(-1)).map((message) => message.text)
+    const steer = texts.findIndex((text) => text.includes("Use pnpm"))
+    const next = texts.findIndex((text) => text.includes("Next"))
+    expect(steer).toBeGreaterThan(0)
+    expect(next).toBeGreaterThan(steer)
+    // Redelivered, the steer is the Hub's to drop: it is in the conversation, and isn't run again.
+    const requests = agent.requests.length
+    const from = agent.hub.events.length
+    agent.send({ _tag: "DeliverIntoTurn", promptId: "q2", text: "Use pnpm", sender: bob })
+    await agent.event((event) => event._tag === "PromptAlreadySubmitted", from)
+    expect(agent.requests).toHaveLength(requests)
+  })
+
+  test("a prompt queued behind the running Turn runs after the stop, and is not lost", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => (request.text.includes("Go") ? callTool("hold", {}) : say("Done.")),
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await agent.event((event) => event._tag === "ToolCallStarted")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Then this", sender: bob })
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    await eventually(async () => {
+      const inbox = await started.harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT)
+      return inbox?.items.length === 1 || undefined
+    })
+    agent.send({ _tag: "StopTurn" })
+    const second = await agent.event(
+      (event) => event._tag === "TurnStarted" && event.promptId === "q2",
+    )
+    expect(second).toMatchObject({ sender: { _tag: "FromParticipant", participant: bob } })
+    await agent.event((event) => event._tag === "TurnEnded" && event.turnId === second.turnId)
+    expect(conversationOf(agent.requests.at(-1)).at(-1)?.text).toContain("Then this")
+    const from = agent.hub.events.length
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Then this", sender: bob })
+    await agent.event((event) => event._tag === "PromptAlreadySubmitted", from)
+    expect(agent.hub.ofTag("TurnStarted").filter((event) => event.promptId === "q2")).toHaveLength(
+      1,
+    )
+  })
+
+  test("a prompt delivered again after its submission was withdrawn runs", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) => (request.text.includes("Go") ? callTool("hold", {}) : say("Done.")),
+    })
+    const started = await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await agent.event((event) => event._tag === "ToolCallStarted")
+    // Someone else withdrew the follow-up before the Hub could hear it start.
+    const root = await started.harness.root(BACKGROUND_CONTEXT)
+    const withdrawn = await root.submit(
+      { type: "input", content: "Then this", requestId: "q2" },
+      BACKGROUND_CONTEXT,
+    )
+    await withdrawn.abort(BACKGROUND_CONTEXT)
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Then this", sender: bob })
+    await eventually(async () => {
+      const inbox = await started.harness.snapshot(InboxDoc, root.id, BACKGROUND_CONTEXT)
+      return inbox?.items.length === 1 || undefined
+    })
+    hold.release()
+    await agent.event((event) => event._tag === "TurnStarted" && event.promptId === "q2")
+    expect(agent.hub.ofTag("PromptAlreadySubmitted")).toHaveLength(0)
+  })
+
   test("a prompt delivered twice is answered once", async () => {
     agent = new TestAgent({ reply: () => say("Once.") })
     await agent.start()
@@ -143,6 +241,79 @@ describe("steering, stopping and redelivery", () => {
     })
     expect(agent.hub.ofTag("TurnStarted")).toHaveLength(1)
     expect(agent.requests).toHaveLength(1)
+  })
+})
+
+describe("a stopped reply", () => {
+  const poem = Array.from({ length: 40 }, (_, n) => `Verse${n}`).join(" ")
+
+  test("stays in what the model reads, with the marker that it was stopped", async () => {
+    agent = new TestAgent({
+      reply: (request) => (request.text.includes("Go") ? say(poem) : say("Done.")),
+      tokensPerSecond: 60,
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    // Pi Durable commits what streamed every 100 ms: let some words be saved.
+    await agent.until(
+      (event) =>
+        event._tag === "TextDelta" &&
+        agent?.hub
+          .ofTag("TextDelta")
+          .map((each) => each.text)
+          .join("")
+          .includes("Verse8") === true,
+    )
+    agent.send({ _tag: "StopTurn" })
+    await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Instead", sender: bob })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "stop")
+    const messages = conversationOf(agent.requests.at(-1))
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user"])
+    expect(messages[0]?.text).toContain("[Ada Lovelace] Go")
+    expect(messages[1]?.text).toStartWith("Verse0 Verse1")
+    expect(messages[1]?.text).not.toContain("Verse39")
+    expect(messages[2]?.text).toBe("[Request interrupted by user]")
+    expect(messages[3]?.text).toContain("[Bob] Instead")
+  })
+
+  test("is stopped once, however often the stop comes", async () => {
+    agent = new TestAgent({
+      reply: (request) => (request.text.includes("Go") ? say(poem) : say("Done.")),
+      tokensPerSecond: 60,
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await agent.until((event) => event._tag === "TextDelta")
+    agent.send({ _tag: "StopTurn" })
+    agent.send({ _tag: "StopTurn" })
+    await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Instead", sender: bob })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "stop")
+    const marked = conversationOf(agent.requests.at(-1)).filter(
+      (message) => message.text === "[Request interrupted by user]",
+    )
+    expect(marked).toHaveLength(1)
+  })
+
+  test("is left out when the reply ended in an error, which no one stopped", async () => {
+    agent = new TestAgent({
+      reply: (request) =>
+        request.text.includes("Go")
+          ? fauxAssistantMessage([fauxText("Half an answ")], {
+              stopReason: "error",
+              errorMessage: "overloaded",
+            })
+          : say("Done."),
+      settings: { retry: { enabled: false } },
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Go", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Again", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "stop")
+    const messages = conversationOf(agent.requests.at(-1))
+    expect(messages.map((message) => message.role)).toEqual(["user", "user"])
   })
 })
 

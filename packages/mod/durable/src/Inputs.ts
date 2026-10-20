@@ -5,8 +5,13 @@
 // The model reads each input's `content`: a prompt with its sender's name and a marker per file
 // (HubMessages.deliveredPrompt), as hub-link words it for Claude Code.
 
-import type { JsonValue } from "@earendil-works/chord"
-import type { EntryRecord, InputSubmissionDraft } from "@earendil-works/pi-durable"
+import type { Context, JsonValue } from "@earendil-works/chord"
+import type {
+  Conversation,
+  EntryRecord,
+  InputSubmissionDraft,
+  SubmissionRecord,
+} from "@earendil-works/pi-durable"
 import type { PromptAttachments } from "@kndl/protocol"
 import {
   attachmentContext,
@@ -16,6 +21,7 @@ import {
 } from "../../src/HubMessages.ts"
 import type { Sender } from "../../src/HubMessages.ts"
 import type { SenderJson } from "./Docs.ts"
+import type { Runtime } from "./Runtime.ts"
 
 /** A Participant's prompt: from the Prompt queue, steered into a Turn, or posted in a thread. */
 export const PromptEntry = "kndl.prompt"
@@ -66,7 +72,12 @@ export const promptInput = (
     readonly text: string
     readonly attachments?: Attachments | undefined
   },
-  options: { readonly steer: boolean; readonly attachmentTool: string },
+  options: {
+    readonly steer: boolean
+    readonly attachmentTool: string
+    /** What the conversation knows the submission by; the prompt's id unless admitPrompt said. */
+    readonly requestId?: string
+  },
 ): InputSubmissionDraft => {
   const files = prompt.attachments ?? []
   const text = options.steer
@@ -81,7 +92,7 @@ export const promptInput = (
   }
   return {
     type: "input",
-    requestId: prompt.promptId,
+    requestId: options.requestId ?? prompt.promptId,
     content:
       files.length === 0
         ? text
@@ -92,6 +103,53 @@ export const promptInput = (
     whenBusy: options.steer ? "steer" : "followUp",
     entry: { kind: PromptEntry, data: data as unknown as JsonValue },
   }
+}
+
+/** What a request id that was withdrawn and given again is followed by. */
+const keptSuffix = ":kept"
+
+/**
+ * Whether a stop withdrew the submission before the conversation placed it: the model never read
+ * it, and nothing in the transcript shows it. Withdrawn once placed, it is in the conversation.
+ */
+export const withdrawn = (record: SubmissionRecord | undefined): boolean =>
+  record?.status === "unanswered" && record.reason === "aborted" && record.entry === undefined
+
+/**
+ * The request id to submit an input under so the conversation takes it once: `requestId` itself,
+ * or, when a stop withdrew that submission unread, the id it is given again under. Undefined when
+ * the conversation has the input already, placed or given again. Pi Durable finds a withdrawn
+ * submission by its request id and answers with it, so the input would never run under that id.
+ */
+export const freeRequestId = async (
+  conversation: Conversation,
+  requestId: string,
+  context: Context,
+): Promise<string | undefined> => {
+  for (let key = requestId; ; key += keptSuffix) {
+    const record = await conversation.commit(
+      (tx) => tx.submissionByRequest(conversation.id, key),
+      context,
+    )
+    if (record === undefined) return key
+    if (!withdrawn(record)) return undefined
+  }
+}
+
+/**
+ * The request id to give a prompt, or undefined when the conversation has it already, which the
+ * Hub is told (PromptAlreadySubmitted): the original start or steer may have died in the
+ * volatile event queue, and the receipt takes the prompt out of the Hub's queue without a second
+ * Turn. One a stop withdrew unread was not given, so it runs.
+ */
+export const admitPrompt = async (
+  runtime: Runtime,
+  conversation: Conversation,
+  promptId: string,
+): Promise<string | undefined> => {
+  const requestId = await freeRequestId(conversation, promptId, runtime.context)
+  if (requestId === undefined) runtime.report({ _tag: "PromptAlreadySubmitted", promptId })
+  return requestId
 }
 
 /** Who a run's first input says started its Turn. */

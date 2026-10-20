@@ -206,6 +206,7 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
       promptId: "q-thread",
       text: "THREAD-HOLD-1",
       sender: ada,
+      model: "openai/gpt-4.1",
     })
     hub.send({
       _tag: "StartThread",
@@ -215,6 +216,7 @@ describe.skipIf(cannotRun !== undefined)("the durable agent's bundle", () => {
       promptId: "q-fast",
       text: "THREAD-FAST-2",
       sender: ada,
+      model: "openai/gpt-4.1",
     })
     await hub.eventsUntil(
       from,

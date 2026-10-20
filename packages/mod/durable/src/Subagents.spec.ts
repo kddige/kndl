@@ -178,6 +178,7 @@ describe("a subagent", () => {
       promptId: "thread",
       text: "Delegate",
       sender: ada,
+      model: "openai/gpt-test",
     })
     const spawned = await agent.event((event) => event._tag === "AgentStarted")
     expect(spawned.threadId).toBe("t1")

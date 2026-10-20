@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable"
-import { TestAgent, ada, bob, callTool, say } from "../test/TestAgent.ts"
+import { TestAgent, ada, bob, callTool, conversationOf, holdTool, say } from "../test/TestAgent.ts"
 import { QuestionsDoc } from "./Docs.ts"
 
 let agent: TestAgent | undefined
@@ -91,6 +91,46 @@ describe("ask_user_question", () => {
     expect(answered.promptId).toBeUndefined()
     await agent.event((event) => event._tag === "TurnEnded" && event.turnId === answered.turnId)
     expect(agent.hub.ofTag("TurnEnded").length).toBe(from + 1)
+  })
+
+  test("an async answer the stop withdraws stays in the conversation, and the model reads it with the next prompt", async () => {
+    const hold = holdTool()
+    agent = new TestAgent({
+      extensions: [hold.extension],
+      reply: (request) =>
+        request.text.includes("Go")
+          ? callTool("hold", {})
+          : request.text.includes("Pick one")
+            ? callTool("ask_user_question", { questions: [question], async: true })
+            : request.last?.role === "toolResult"
+              ? say("Asked; carrying on.")
+              : say("Done."),
+    })
+    await agent.start()
+    agent.send({ _tag: "DeliverPrompt", promptId: "q1", text: "Pick one", sender: ada })
+    const asked = await agent.event((event) => event._tag === "QuestionAsked")
+    await agent.event((event) => event._tag === "TurnEnded")
+    agent.send({ _tag: "DeliverPrompt", promptId: "q2", text: "Go", sender: ada })
+    await agent.event((event) => event._tag === "ToolCallStarted" && event.tool === "hold")
+    agent.send({
+      _tag: "DeliverAnswer",
+      toolCallId: asked.toolCallId,
+      answer: { _tag: "Replied", text: "Neither; use Temporal." },
+      sender: bob,
+    })
+    await agent.event((event) => event._tag === "QuestionClosed")
+    // Let the answer join the busy run's inbox before the stop withdraws it.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    agent.send({ _tag: "StopTurn" })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "aborted")
+    const from = agent.hub.events.length
+    agent.send({ _tag: "DeliverPrompt", promptId: "q3", text: "Next", sender: ada })
+    await agent.event((event) => event._tag === "TurnEnded" && event.reason === "stop", from)
+    const texts = conversationOf(agent.requests.at(-1)).map((message) => message.text)
+    const answer = texts.findIndex((text) => text.includes("Neither; use Temporal."))
+    const next = texts.findIndex((text) => text.includes("Next"))
+    expect(answer).toBeGreaterThan(0)
+    expect(next).toBeGreaterThan(answer)
   })
 
   test("a question a restart cut off is asked again, and its answer still reaches the model", async () => {
