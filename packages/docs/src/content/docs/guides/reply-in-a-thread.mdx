@@ -1,0 +1,61 @@
+---
+title: Reply in a Thread
+description: Fork a Session's conversation at any answer, so a side task runs beside the main one, on a Model of its own.
+sidebar:
+  order: 2
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Fork a Session's conversation at an answer, so you can follow up or try something else while the main conversation carries on.
+
+A Thread starts with everything the conversation held up to that answer, runs beside the main conversation and any other Threads, and has its own Plan and cost. Anyone in the Session can start one and post in it.
+
+## What you need
+
+- A Session with at least one Turn: see [Work in a Session](/guides/work-in-a-session/).
+
+## Start a Thread
+
+<Steps>
+
+1. In the footer of the Turn you want to fork at, press the button that replies in a Thread.
+
+2. Type your first prompt and send it. Pick another of the Creator's Models first, if you like.
+
+   The Thread opens beside the conversation on a wide screen, and fills the view on a narrow one. Its title is the first line of your prompt.
+
+</Steps>
+
+A Thread keeps the Model it started on, the Session's at that moment, until someone switches it. Switching the Session's Model later doesn't move it. A Thread runs on the Creator's accounts, so it can switch to any of the Creator's Models: see [Choose the model and thinking level](/guides/manage-a-session/#choose-the-model-and-thinking-level).
+
+## Post, steer and stop
+
+- **To post into a Thread**, type in its prompt box. A post while the Thread is replying steers that reply, as [Steer](/guides/work-in-a-session/#prompt-it-while-others-watch) does. It doesn't join the Session's Prompt queue.
+- **To stop a Thread's Turn**, press **Stop** in the Thread. The main conversation isn't affected, and a Thread's work never makes the main prompt box busy.
+- **To compact a Thread**, use its compaction action: see [Compact the conversation](/guides/work-in-a-session/#compact-the-conversation).
+
+A running Thread keeps the Session awake, and posting into a Thread wakes an Asleep Session.
+
+## What Threads share
+
+Threads have conversations of their own, not checkouts of their own. They share the Session's Workspace, Sandbox and terminal, so coordinate edits and commands as you would with several people in one checkout.
+
+Threads don't ask questions: only the main conversation's agent does. A Thread can start [subagents](/guides/work-with-subagents/), and their results come back to the Thread.
+
+After a restart, a Thread's run carries on and shows as a Turn resumed after the restart.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Manage a Session"
+    href="/kndl/guides/manage-a-session/"
+    description="Change the Model, sleep and wake, delete and restore."
+  />
+  <LinkCard
+    title="Work with subagents"
+    href="/kndl/guides/work-with-subagents/"
+    description="Follow, message and stop the agents a Session starts."
+  />
+</CardGrid>

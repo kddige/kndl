@@ -127,7 +127,7 @@ if [ -n "$missing" ]; then
 fi
 tmux -V | awk '{ version = $2; sub(/^[^0-9]*/, "", version); split(version, v, ".")
   if (version != "" && (v[1] < 3 || (v[1] == 3 && v[2] + 0 < 2))) {
-    print "Claude Code runs in tmux 3.2 or later, and the image has " $0 > "/dev/stderr"; exit 1 } }'`
+    print "The agent runs in tmux 3.2 or later, and the image has " $0 > "/dev/stderr"; exit 1 } }'`
 
 /** Where a script is written in the guest while it runs. */
 const scriptPath = (name: string) => `/tmp/kndl-${name}.sh`

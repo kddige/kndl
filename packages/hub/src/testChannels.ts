@@ -186,6 +186,8 @@ export async function openRunner(
     sessions,
     ...(version !== undefined && { version }),
     ...(asksCloneAccess && { asksCloneAccess: true }),
+    // It can run the durable agent (docs/design/durable-harness.md), unless `more` says otherwise.
+    runsAgent: true,
     ...more,
   })
   await runner.take("RunnerWelcome")

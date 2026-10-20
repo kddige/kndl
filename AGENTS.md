@@ -1,6 +1,6 @@
 # kndl
 
-Multiplayer agentic sessions. kndl (said "kindle", always lowercase; formerly claude-hub) runs Claude Code sessions on any machine, and people watch them together from a web UI. Each Session is driven by its Creator, on their own Claude credential (ADR 0026). See `README.md` for the architecture and how to run it.
+Multiplayer agentic sessions. kndl (said "kindle", always lowercase; formerly claude-hub) runs coding-agent Sessions in Sandboxes, shared through a web UI. This branch is an experimental Pi Durable replacement: every Participant can drive a Session, on its Creator's accounts. When changing the agent, its launch, threads or driving rules, read `docs/design/durable-harness.md`; it describes the spike's deliberate departures from ADRs 0026, 0029 and 0030. See `README.md` for how to run it.
 
 ## Agent skills
 

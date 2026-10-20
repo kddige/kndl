@@ -27,12 +27,16 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.0
-      # The mod's typecheck loads it into Claude Code, which lays the plugin API's types; that
-      # needs no sign-in. The Runner's tmux tests skip themselves without tmux.
-      - name: Install Claude Code and tmux
-        run: |
-          npm install --global @anthropic-ai/claude-code@2.1.296
-          sudo apt-get update && sudo apt-get install --yes tmux
+      # The durable agent's end-to-end test (packages/mod/durable/test/agent.e2e.spec.ts) runs the
+      # built agent under Node and skips itself below 22.19. This is the Node.js a Runner pins
+      # for Sessions (PinnedNodeVersion in packages/runner/src/sandbox/SandboxPi.ts).
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 24.22.0
+      # No Claude Code binary is needed to build, type-check or run the offline tests. The
+      # Runner's tmux tests skip themselves without tmux.
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install --yes tmux
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Type-check

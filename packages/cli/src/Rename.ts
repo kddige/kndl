@@ -457,7 +457,7 @@ export const moveFromFormerName = (
       if (left.length > 0) {
         yield* ui.note(
           left.join("\n"),
-          `Stopped and kept, under the former name: the Sessions' Sandboxes and volumes (a woken Session starts Claude Code afresh, with the Hub's history). Remove them with \`bun x msb remove\` and then \`bun x msb volume remove\` in ${join(layout.app, "packages", "runner")} once you no longer need them:`,
+          `Stopped and kept, under the former name: the Sessions' Sandboxes and volumes (a woken Session starts its agent afresh, with the Hub's history). Remove them with \`bun x msb remove\` and then \`bun x msb volume remove\` in ${join(layout.app, "packages", "runner")} once you no longer need them:`,
         )
       }
       if (setting.env[FormerName.homeVariable] && home === from) {

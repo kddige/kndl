@@ -870,6 +870,70 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP TABLE hub_device`
     yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
   }),
+  // Threads (docs/design/durable-harness.md): conversations forked off a Session's main loop at one
+  // of its Turns, oldest first by `created_at`. `model` and `thinking_level` are the thread's own
+  // (0048 made `model` always set); `running_turn` is the Turn running in it now, null while it is
+  // idle, with when it started. `thread_commands` holds each Session's thread commands and Compacts
+  // its agent hasn't taken yet, as HubToMod JSON, numbered in the order they were sent, never twice,
+  // delivered again after each hello of its agent until it has: a prompt's (`prompt_id`) once its
+  // Turn starts or it steers one, the others once its agent has polled past them.
+  //
+  // Every conversation the Hub has recorded for the Harness `Pi` is the old pi extension's, which
+  // the durable agent can't resume: it would adopt that id on a fresh database and start empty
+  // with no handoff. They are forgotten, and a Session that ran on pi is marked to be handed its
+  // whole history when it next wakes, on the durable agent. A Session that switched from Claude
+  // Code to pi, and back, loses its stale pi id the same way (the wake hands it off from Claude Code).
+  "0047_threads": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE threads (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        anchor_turn_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        started_by TEXT NOT NULL REFERENCES participants (id),
+        model TEXT,
+        thinking_level TEXT,
+        running_turn TEXT,
+        turn_started_at INTEGER,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, thread_id)
+      )
+    `
+    yield* sql`
+      CREATE TABLE thread_commands (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        command TEXT NOT NULL,
+        prompt_id TEXT
+      )
+    `
+    yield* sql`CREATE INDEX thread_commands_session ON thread_commands (session_id, seq)`
+    yield* sql`
+      UPDATE sessions SET handoff_from = COALESCE(handoff_from, 'Pi') WHERE harness = 'Pi'
+    `
+    yield* sql`DELETE FROM session_conversations WHERE harness = 'Pi'`
+  }),
+  // A thread has its own model, never the Session's: a fork keeps the model its parent had at the
+  // fork and doesn't follow the Session's switches. Threads recorded as running on the Session's
+  // (null) are given the Session's model and thinking level as they are now.
+  "0048_thread_models": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      UPDATE threads SET
+        model = (SELECT s.model FROM sessions s WHERE s.id = threads.session_id),
+        thinking_level = (SELECT s.thinking_level FROM sessions s WHERE s.id = threads.session_id)
+      WHERE model IS NULL
+    `
+  }),
+  // Two columns nothing reads any more: `participants.claude_harness` (0044), which Harness ran
+  // Claude's Models in a Member's new Sessions, and `runners.models` (0015), the models a
+  // Runner's Claude Code said it takes. Every Session runs the durable agent now.
+  "0049_unread_columns": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants DROP COLUMN claude_harness`
+    yield* sql`ALTER TABLE runners DROP COLUMN models`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

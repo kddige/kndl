@@ -36,17 +36,16 @@ const styles = stylex.create({
   },
 })
 
-/** The name Claude Code shows an Installation's MCP server by, in the plugin kndl generates. */
-export const serverName = (installation: SessionInstallation) =>
-  `plugin:kndl:${installation.server}`
+/** The prefix of the tools the agent has of an Installation's MCP server. */
+export const serverName = (installation: SessionInstallation) => `mcp__${installation.server}__`
 
 const installationsText = (count: number) =>
   counted(count, { one: "Installation", other: "Installations" })
 
 /**
  * The Installations a Session runs with (ADR 0020): a button in its header while it runs with any,
- * or its Repo's changed, which opens the list, each with its MCP server and the name Claude Code
- * reaches it by. Participants can't change them per Session: they are its Repo's.
+ * or its Repo's changed, which opens the list, each with its MCP server and the prefix of its
+ * tools. Participants can't change them per Session: they are its Repo's.
  */
 export function SessionMcpServers({ summary }: { summary: SessionSummary }) {
   const wide = useMediaQuery(WIDE)

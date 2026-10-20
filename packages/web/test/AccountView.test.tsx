@@ -142,54 +142,11 @@ test("shows a saved token, replaces it, and removes it after asking", async () =
   await menuItem("Actions for Anthropic", "Remove the setup token")
   const confirm = dialog() as HTMLElement
   expect(confirm.textContent).toContain("Remove your Claude credential?")
-  expect(confirm.textContent).toContain("none of them can start or wake")
+  expect(confirm.textContent).toContain("Anyone in them can switch them to another of your Models")
   await step(() => button("Remove", confirm).click())
   // Back among the Providers to connect.
   await eventually(() => expect(saved()).toBeNull())
   expect(button("Add setup token", section() as HTMLElement)).toBeDefined()
-})
-
-// Which Harness runs Claude's Models in new Sessions (ADR 0030), chosen under Anthropic's row.
-
-const harnessChoice = () =>
-  section()?.querySelector<HTMLElement>(
-    '[role="radiogroup"][aria-label="Run Claude\'s Models with"]',
-  )
-const harnessRadios = () => [
-  ...(harnessChoice()?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []),
-]
-const chosenHarness = () =>
-  harnessRadios()
-    .filter((radio) => radio.getAttribute("aria-checked") === "true")
-    .map((radio) => radio.textContent)
-
-test("under Anthropic's row, a choice of which Harness runs Claude's Models in new Sessions", async () => {
-  const { hub } = await openAccount({
-    claudeCredential: { kind: "OAuthToken", last4: "c3d4", addedAt: 1_760_000_000_000 },
-  })
-  await eventually(() =>
-    expect(harnessRadios().map((radio) => radio.textContent)).toEqual(["Claude Code", "pi"]),
-  )
-  // Claude Code unless chosen otherwise, said in one line.
-  expect(chosenHarness()).toEqual(["Claude Code"])
-  expect(section()?.textContent).toContain(
-    "Claude Code: Claude's own tools, on your plan's limits. pi: the same tools and Subagents as your other Providers.",
-  )
-
-  await step(() => harnessRadios()[1]?.click())
-  await eventually(() => expect(chosenHarness()).toEqual(["pi"]))
-  expect(
-    hub.received.flatMap((message) =>
-      message._tag === "SetClaudeHarness" ? [message.harness] : [],
-    ),
-  ).toEqual(["Pi"])
-})
-
-test("without a Claude credential, Anthropic's line has no Harness to choose", async () => {
-  await openAccount()
-  await addSetupToken()
-  await eventually(() => expect(secretField()).not.toBeNull())
-  expect(harnessChoice()).toBeNull()
 })
 
 const tokensSection = () => sectionTitled("CLI tokens")

@@ -7,12 +7,12 @@ sidebar:
 
 Fixes for Sessions, Sandboxes and Environments. A Session that can't start doesn't retry by itself: it goes Asleep with the reason in its transcript, and its prompts wait. Fix the cause, then send a prompt or press **Wake now**.
 
-## Claude Code could not start
+## The agent could not start
 
 **What you see.** A new or woken Session shows **This Session is Asleep**, and its transcript says:
 
 ```
-The Session is Asleep: Claude Code could not start on build-box: …
+The Session is Asleep: The agent could not start on build-box: …
 ```
 
 **Why.** The Runner's reason follows the colon:
@@ -29,25 +29,17 @@ The Session is Asleep: Claude Code could not start on build-box: …
 
 **Fix.** Press **Wake now**, and open **Show log** on the **Starting…** banner for the full output. Fix the script in the Repo's **Environment**, run a **Test build**, and apply it. See [Set up an Environment](/guides/set-up-an-environment/).
 
-## Claude Code exited
+## The agent exited
 
 **What you see.** A Session shows **This Session is Asleep** with:
 
 ```
-Claude Code exited with code 1. Its Sandbox is stopped. …
+The agent exited with code 1. Its Sandbox is stopped. …
 ```
 
-**Why.** Claude Code ended by itself: it crashed, refused to start, or was quit from its terminal. Code 0 means it quit normally, as after `/exit`.
+**Why.** The agent's process ended by itself: it couldn't open its storage, hit a fatal storage error, or crashed. The terminal is a separate shell, so quitting it doesn't end the agent.
 
-**Fix.** Open **Show Claude Code's last output** under the message, fix what it names, and press **Wake now**. A sign-in or usage message means the Claude credential the Session runs on needs attention: its Creator [replaces theirs](/guides/add-your-claude-credential/#replace-or-remove-it) on their **Account** page.
-
-## A woken Session's conversation starts over
-
-**What you see.** A woken Session's history says Claude Code, or pi, couldn't resume its conversation.
-
-**Why.** The agent exited before it saved the conversation, so there was nothing to resume.
-
-**Fix.** Nothing. The Workspace is as it was; only the conversation starts over.
+**Fix.** Open **Show its last output** under the message, fix what it names, and press **Wake now**. The agent's own log is `durable/agent.log` under `/var/lib/kndl/claude` in the Sandbox: see [Files and paths](/reference/files-and-paths/#inside-a-sandbox).
 
 ## Variables need values
 
@@ -122,107 +114,68 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 - **No key:** whoever runs the Hub makes one with `kndl secrets key`, puts it in `hub.env`, and runs `kndl hub install`.
 - **Too short:** make the variable Plain, or use the real, longer value.
 
-## You have no Claude credential
-
-**What you see.** New Session says **Add your setup token first**, or a Session went to sleep saying its Creator has none, or removed or replaced theirs.
-
-**Why.** A Claude Code Session, and Claude's Models in any Session, run on the Creator's Claude credential, and a Runner has none of its own. Removing or replacing a credential, or removing its owner as a Member, puts their awake Sessions to sleep.
-
-**Fix.** The Session's Creator [adds theirs](/guides/add-your-claude-credential/) and wakes it. A Session whose Creator is no longer a Member stays readable, but can't wake.
-
 ## You have no Models
 
-**What you see.** New Session says **Connect a Provider first**, its **Model** list says **No Models yet. Connect a Provider on your Account page.**, or a Session went to sleep with:
+**What you see.** New Session says **Connect a Provider first**, the **Model** list is empty, or a Session went to sleep with:
 
 ```
 Put to sleep: it runs on the Models of alice, who started it, and they have none
 ```
 
-**Why.** A pi Session runs on its Creator's Models: those of their Connected providers, and Claude's when they have a Claude credential. A Runner has none of its own.
+Someone else's attempt to wake it is refused with:
 
-**Fix.** The Session's Creator [connects a Provider](/guides/connect-your-providers/), or [adds their Claude credential](/guides/add-your-claude-credential/), and wakes it.
+```
+alice, who started this Session, has no Models to run it on: they can connect a Provider on the Account page.
+```
+
+**Why.** A Session runs on its Creator's Models: those of their Connected providers, and Claude's when they have a Claude credential. A Runner has none of its own.
+
+**Fix.** The Session's Creator [connects a Provider](/guides/connect-your-providers/), or [adds their Claude credential](/guides/add-your-claude-credential/), and anyone wakes the Session.
+
+## A Session went to sleep when its Claude credential changed
+
+**What you see.** A Session's transcript says one of:
+
+```
+The Session is Asleep: Put to sleep: the Claude credential its agent started with was removed
+The Session is Asleep: Put to sleep, to wake on a new Claude credential: the one its agent started with was replaced
+```
+
+**Why.** Removing or replacing a Claude credential puts its owner's awake Sessions to sleep, even mid-Turn, those on other Providers' Models too: each agent holds the credential it started with. So does removing the owner as a Member.
+
+**Fix.** The Creator [adds a credential](/guides/add-your-claude-credential/) if they removed theirs, and anyone wakes the Session. A Session whose Creator is no longer a Member stays readable, but can't wake.
 
 ## A Turn fails on a Provider's Model
 
-**What you see.** In a pi Session, a Turn's footer says **Failed**, with the reason under it, such as:
+**What you see.** A Turn's footer says **Failed**, with the reason under it, such as:
 
 ```
 The Session's Creator hasn't connected OpenAI: they connect it on the Account page.
 ```
 
-**Why.** The Provider of the Session's Model refused the call, or the Creator disconnected it. A sign-in the Provider stopped renewing shows **It doesn't work anymore** on its card on the **Account** page.
+**Why.** The Provider of the Model the Turn ran on refused the call, or the Creator disconnected it. A sign-in the Provider stopped renewing shows **It doesn't work anymore** on its card on the **Account** page.
 
-**Fix.** The Creator [connects the Provider again](/guides/connect-your-providers/#replace-or-disconnect-it), or [switches the Session's Model](/guides/manage-a-session/#choose-the-model-and-thinking-level), and sends the prompt again.
+**Fix.** The Creator [connects the Provider again](/guides/connect-your-providers/#replace-or-disconnect-it), or anyone [switches the Session's Model](/guides/manage-a-session/#choose-the-model-and-thinking-level), and sends the prompt again.
 
-## Switching between Claude Code and pi is refused
+## A Runner can't run the agent
 
-**What you see.** Picking a Model the other Harness runs shows one of:
-
-| Refusal | Fix |
-|---|---|
-| `build-box doesn't run both Claude Code and pi: update it to switch this Session to Claude Code.` (or `… to pi.`) | The Session's Runner runs one Harness alone, or hasn't said which it runs since the Hub started. Wait until it's online, or see [New Sessions run Claude Code](#new-sessions-run-claude-code). |
-| `You have no Claude credential: add your setup token on the Account page.` | [Add your Claude credential](/guides/add-your-claude-credential/), then pick the Model again. |
-| `You have no Models to run a pi Session on: connect a Provider on the Account page.` | [Connect a Provider](/guides/connect-your-providers/), then pick the Model again. |
-
-**Why.** A switch stops one [Harness](/reference/glossary/#harness) and starts the other on the Session's Runner, so the Runner must run both, and you must have what the other runs on.
-
-**Fix.** As the table says. The Session stays on the Model it ran on meanwhile.
-
-## A switch to pi puts the Session to sleep
-
-**What you see.** After you pick one of pi's Models, the Session goes Asleep, and its transcript says:
+**What you see.** New Session or a wake is refused with one of the first two, or a start ends with the third:
 
 ```
-The Session is Asleep: pi could not start on build-box: the Sandbox could not be readied for pi: its Sandbox was made before pi, so it runs pi once it sleeps and wakes
+build-box hasn't connected since the Hub started, so it isn't known to run the durable agent.
+build-box can't run the durable agent: it couldn't prepare Node.js and the agent's packages. Its log says why; restart it once that is fixed.
+The Session is Asleep: The agent could not start on build-box: This Runner can't run Sessions: its log says why.
 ```
 
-**Why.** The Session's Sandbox was started before its Runner had pi, and was kept across a Runner restart.
-
-**Fix.** Press **Wake now**. The Session wakes on pi, with a [Handoff](/reference/glossary/#handoff) of what happened on Claude Code.
-
-## The agent doesn't know what happened before a switch
-
-**What you see.** After a switch between Claude Code and pi, the Session's history says:
-
-```
-pi started without a handoff of what happened on Claude Code: its mod doesn't take one.
-```
-
-**Why.** The mod the Runner loaded into the Session is from before [Handoffs](/reference/glossary/#handoff), so it takes none.
-
-**Fix.** Tell the agent what it needs in your next prompt. A Runner on the Hub's commit, with its mod built (`bun run mod:build` in a checkout), loads a mod that takes them.
-
-## New Sessions run Claude Code
-
-**What you see.** New Session's **Model** lists only **Anthropic · Claude Code**, or New Session says **Add your setup token first** though you connected a Provider. Or a start fails with:
-
-```
-… This Runner doesn't run pi Sessions: its log says why.
-```
-
-**Why.** The Runner can't run pi, so it runs Claude Code Sessions alone. With **Any online Runner**, New Session offers pi's Models only when every online Runner runs pi. A Runner gets pi as it starts: see [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads).
+**Why.** A Runner runs Sessions once it has the agent's Node.js and packages. It gets them as it starts. If it couldn't, its log says `Sessions can't run: …`, and it runs none until it next starts. Its hello says so, and the Hub gives that Runner the second message.
 
 **Fix.** On the Runner's machine, find why in its log:
 
 ```sh
-kndl logs runner -n 10000 | grep 'Sessions run Claude Code alone'
+kndl logs runner -n 10000 | grep "Sessions can't run"
 ```
 
-Fix what it names, such as no route to the npm registry or `nodejs.org`, then restart the Runner with `kndl runner stop` and `kndl runner start`. Meanwhile, pick a Runner that runs pi in **Runner**.
-
-## Only someone else can drive this Session
-
-**What you see.** The prompt box is off, there's no **Terminal**, and a command is refused with:
-
-```
-Only Alice Lee, who started this Session, can drive it: it runs on their Connected providers.
-```
-
-A Claude Code Session's says `it runs on their Claude credential.`
-
-**Why.** Only a Session's Creator prompts it, answers it, stops it, controls it and uses its terminal. Everyone else watches.
-
-**Fix.** Ask its Creator, or start a Session of your own on its Work branch once it's pushed.
+Fix what it names, such as no route to the npm registry or `nodejs.org`, then restart the Runner with `kndl runner stop` and `kndl runner start`. Meanwhile, pick another Runner in **Runner**. See [What a Runner downloads](/self-hosting/add-a-runner/#what-a-runner-downloads).
 
 ## A Claude credential can't be saved
 
@@ -249,7 +202,7 @@ A Claude Code Session's says `it runs on their Claude credential.`
 
 **What you see.** A Session nobody uses stays Active long after 15 minutes.
 
-**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, someone with the Session open, or **Keep awake**, which the line under the Session's title shows as "Kept awake by …". See [Going to sleep](/concepts/session-lifecycle/#going-to-sleep).
+**Why.** Something keeps it busy: a Turn running in the main conversation or a Thread, a subagent running, a prompt queued, someone with the Session open, or **Keep awake**, which the line under the Session's title shows as "Kept awake by …". See [Going to sleep](/concepts/session-lifecycle/#going-to-sleep).
 
 **Fix.** Turn **Keep awake** off, or press **Sleep now**.
 

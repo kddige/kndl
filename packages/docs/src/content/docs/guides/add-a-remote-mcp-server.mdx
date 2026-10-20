@@ -7,11 +7,11 @@ sidebar:
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
-Add a remote MCP server to the Hub and turn it on for your Repos, so Claude in their Sessions can call its tools.
+Add a remote MCP server to the Hub and turn it on for your Repos, so the agent in their Sessions can call its tools.
 
 An [MCP server](/reference/glossary/#mcp-server) is added once per Hub. An [Installation](/reference/glossary/#installation) turns it on for the Repos it lists, with its own key.
 
-MCP servers reach every Session, Claude Code's and pi's, through the Hub.
+MCP servers reach every Session through the Hub.
 
 ## What you need
 
@@ -77,7 +77,7 @@ Anyone with access to a Repo can turn a global Installation off for that Repo: o
 
 1. Start a Session on the Repo, or wake one. Running Sessions show **MCP servers changed**: press **Restart** to pick up the server.
 
-2. Ask Claude to use it:
+2. Ask the agent to use it:
 
    ```text
    Search the docs for "rate limits".
@@ -85,7 +85,7 @@ Anyone with access to a Repo can turn a global Installation off for that Repo: o
 
 </Steps>
 
-The Installations button by the Session's title, such as **1 Installation**, lists what the Session runs with. Claude Code knows each one as `plugin:kndl:<name>`, such as `plugin:kndl:docs`.
+The Installations button by the Session's title, such as **1 Installation**, lists what the Session runs with. The agent knows each tool as `mcp__<server>__<tool>`, where `<server>` is the Installation's name as a slug, such as `mcp__docs__search`. They are deferred: the agent finds them with its `tool_search` tool, so a Session with many servers keeps a short tool list.
 
 ## Connect it to an account with OAuth
 

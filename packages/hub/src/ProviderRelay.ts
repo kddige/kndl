@@ -5,8 +5,6 @@
 //   Sessions can run (ProvidersState) after the welcome, and to each of their connections whenever
 //   that changes: a connection made or lost, a refresh refused, the Models found again, or their
 //   Claude credential changed, since Claude's Models are among them. No one else is sent them.
-// - Which Harness runs Claude's Models in a Member's new Sessions (ADR 0030) is theirs to set
-//   (SetClaudeHarness), kept with them as a Member (Members.ts), sent with the rest.
 // - Connecting with an API key waits for the Provider to list its Models with it, and asking for
 //   the Models again waits for each Provider: both off the lock, and off the connection's other
 //   commands, which are answered meanwhile.
@@ -37,7 +35,6 @@ import {
 import { Cause, Effect, Exit, Fiber, Option, Redacted, Schema, type Scope } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { ConnectedProviders, type ProviderRefusal } from "./ConnectedProviders.ts"
-import { Members } from "./Members.ts"
 import type { Peer } from "./Peers.ts"
 
 const isProviderMessage = Schema.is(ProviderCommand)
@@ -212,7 +209,6 @@ const answeringFailures =
 
 export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRelayHost) {
   const providers = yield* ConnectedProviders
-  const members = yield* Members
   const scope = yield* Effect.scope
   /** The sign-in running for each Member. */
   const signIns = new Map<ParticipantId, SignIn>()
@@ -225,7 +221,6 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     return ProvidersState.make({
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
-      claudeHarness: yield* members.claudeHarness(participantId),
     })
   })
 
@@ -379,10 +374,6 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
             .refreshModels(you.id, message.provider)
             .pipe(Effect.andThen(changed(you.id, asker))),
         )
-      case "SetClaudeHarness": {
-        yield* members.setClaudeHarness(you.id, message.harness)
-        return yield* changed(you.id, asker)
-      }
     }
   })
 

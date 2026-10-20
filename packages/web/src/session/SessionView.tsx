@@ -1,20 +1,20 @@
 import {
   type AgentId,
   type AttachmentId,
-  type Harness,
-  harnessOfModel,
   MaxSessionNameLength,
   type PromptId,
   type SessionId,
   type SessionStateChanged,
   type SessionSummary,
   sessionTitle,
+  type ThreadId,
+  type TurnId,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useCommands } from "../app/commands.tsx"
-import { notSent } from "../app/copy.ts"
+import { accountsOf, accountsPay, notSent, sentence } from "../app/copy.ts"
 import {
   day,
   environmentChanged,
@@ -25,6 +25,7 @@ import {
 } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
+import type { TurnView } from "../hub/transcript.ts"
 import type { UploadOptions } from "../hub/transport.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
@@ -48,21 +49,21 @@ import {
 } from "../ui/index.ts"
 import { space } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
+import { CompactDialog } from "./Compaction.tsx"
 import { Composer } from "./Composer.tsx"
-import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
-import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
+import { ModelPicker } from "./ModelPicker.tsx"
 import {
-  harnessNames,
-  isClaudeModel,
   knownModelLabel,
+  modelLabel,
+  ModelNamesContext,
   type ModelSetting,
-  modelName,
   otherProviderTurnModel,
-  otherTurnModel,
   providerModelLabel,
+  useNameReplier,
 } from "./models.ts"
+import { PlanDock } from "./Plan.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { QuestionDock } from "./QuestionCard.tsx"
 import {
@@ -72,14 +73,33 @@ import {
   TerminalSheet,
   TitleStrip,
 } from "./SessionChrome.tsx"
+import { SessionCost } from "./SessionCost.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
-import { Transcript } from "./Transcript.tsx"
+import { ThreadPanel, type ThreadPanelOf } from "./ThreadPanel.tsx"
+import { Transcript, type TranscriptThreads } from "./Transcript.tsx"
+
+/** Wide enough for a thread's panel beside the conversation, each still readable. */
+const SIDE_BY_SIDE = "(min-width: 72rem)"
 
 const styles = stylex.create({
   view: {
     display: "flex",
     flexDirection: "column",
     flex: 1,
+    minHeight: 0,
+  },
+  hidden: { display: "none" },
+  // The conversation, and a thread's panel beside it.
+  body: {
+    display: "flex",
+    flex: 1,
+    minHeight: 0,
+  },
+  conversation: {
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    minWidth: 0,
     minHeight: 0,
   },
   scroll: {
@@ -121,6 +141,7 @@ const styles = stylex.create({
     marginRight: space.s1,
     verticalAlign: "-0.125em",
   },
+  nowrap: { whiteSpace: "nowrap" },
 })
 
 // xterm.js is most of the terminal's weight: it loads when the terminal is first shown.
@@ -128,16 +149,20 @@ const TerminalPanel = lazy(async () => ({
   default: (await import("./TerminalPanel.tsx")).TerminalPanel,
 }))
 
-/** The Session view's tabs: the conversation, or Claude Code's own terminal. */
+/** The Session view's tabs: the conversation, or the shell in its Sandbox. */
 export type SessionTab = "chat" | "terminal"
 
+/** A thread to open in the panel, or a Turn to start one off. */
+export type ThreadTarget = { readonly thread: ThreadId } | { readonly fork: TurnId }
+
 /**
- * One Session: its conversation, who's here, the Prompt queue and the composer, and in another
- * tab its terminal. With `agentId`, the chat shows that subagent's view instead (ADR 0014). `tab`,
- * `agentId` and their callbacks let the URL track what is open.
+ * One Session: its conversation, who's here, the Prompt queue and the composer, its threads in a
+ * panel beside it, and its terminal under it. With `agentId`, the chat shows that subagent's view
+ * instead (ADR 0014). `tab`, `agentId`, `threadId`, `forkOf` and their callbacks let the URL track
+ * what is open.
  *
- * Only its Creator drives it (ADR 0026). Anyone else watches: the composer is disabled, saying
- * why, and what would drive it is hidden, the terminal included.
+ * Everyone in it drives it (docs/design/durable-harness.md): it runs on its Creator's accounts,
+ * which it says, but anyone prompts it, answers it, stops it, starts threads and uses its terminal.
  */
 export function SessionView({
   sessionId,
@@ -145,12 +170,18 @@ export function SessionView({
   onTabChange,
   agentId,
   onAgentChange,
+  threadId,
+  forkOf,
+  onThreadChange,
 }: {
   sessionId: SessionId
   tab?: SessionTab
   onTabChange?: (tab: SessionTab) => void
   agentId?: AgentId
   onAgentChange?: (agentId: AgentId | undefined) => void
+  threadId?: ThreadId
+  forkOf?: TurnId
+  onThreadChange?: (target: ThreadTarget | undefined, options?: { replace?: boolean }) => void
 }) {
   const hub = useHub()
   const sessions = useHubState((state) => state.sessions)
@@ -182,16 +213,21 @@ export function SessionView({
   }
   return (
     <LoadedSession
+      key={summary.id}
       tab={tab}
       onTabChange={onTabChange}
       agentId={agentId}
       onAgentChange={onAgentChange}
+      threadId={threadId}
+      forkOf={forkOf}
+      onThreadChange={onThreadChange}
       summary={summary}
       transcript={joined.transcript}
       presence={joined.presence}
       queue={joined.queue}
       startLog={joined.startLog}
       questionPicks={joined.questionPicks}
+      sessionModels={joined.models}
     />
   )
 }
@@ -201,23 +237,33 @@ function LoadedSession({
   onTabChange,
   agentId,
   onAgentChange,
+  threadId,
+  forkOf,
+  onThreadChange,
   summary,
   transcript,
   presence,
   queue,
   startLog,
   questionPicks,
+  sessionModels,
 }: {
   tab: SessionTab
   onTabChange: ((tab: SessionTab) => void) | undefined
   agentId: AgentId | undefined
   onAgentChange: ((agentId: AgentId | undefined) => void) | undefined
+  threadId: ThreadId | undefined
+  forkOf: TurnId | undefined
+  onThreadChange:
+    | ((target: ThreadTarget | undefined, options?: { replace?: boolean }) => void)
+    | undefined
   summary: SessionSummary
   transcript: JoinedSession["transcript"]
   presence: JoinedSession["presence"]
   queue: JoinedSession["queue"]
   startLog: JoinedSession["startLog"]
   questionPicks: JoinedSession["questionPicks"]
+  sessionModels: JoinedSession["models"]
 }) {
   const hub = useHub()
   const navigate = useNavigate()
@@ -226,14 +272,17 @@ function LoadedSession({
   const scroller = useStickToBottom(items)
 
   const [renaming, setRenaming] = useState(false)
+  const [compacting, setCompacting] = useState(false)
   const title = sessionTitle(summary)
 
-  // Stopping its Claude Code interrupts its running agents (ADR 0014): sleep, a restart and a
-  // change of model or thinking level ask first, with what they'd interrupt.
+  // A restart or sleep pauses what runs in the background: its agents and threads, which the
+  // durable agent picks up again where they were once the Session is back. Each asks first.
   const runningAgents = summary.agents?.filter((agent) => agent.status === "Running").length ?? 0
+  const runningThreads = summary.threads?.filter((thread) => thread.running).length ?? 0
+  const background = runningAgents + runningThreads
   const [confirming, setConfirming] = useState<Interruption | null>(null)
   const interrupting = (interruption: Interruption) => {
-    if (runningAgents === 0) interruption.go()
+    if (background === 0) interruption.go()
     else setConfirming(interruption)
   }
   const asked = useRestart(summary, () => command("Restart", hub.restartSession(summary.id)))
@@ -242,40 +291,15 @@ function LoadedSession({
     ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
   }
 
-  // Its model and thinking level (#128): Claude Code's from what its Runner said its Claude Code
-  // has; pi's from its Creator's Models (ADR 0029), which only they are sent, so anyone else knows
-  // a pi Session's Model by the name the transcript last gave it. Its Creator may pick any Model its
-  // Runner can run, on either Harness (ADR 0030). While a switch of Harness waits for a Turn to end,
-  // the Session still runs on its Harness, but its model is the other's already: the model is named
-  // and found by the Harness it names.
-  const harness = summary.harness ?? "ClaudeCode"
-  const pi = harness === "Pi"
-  const modelOnPi = harnessOfModel(summary.model) === "Pi"
-  const runner = useHubState((hubState) =>
-    hubState.runners?.find((candidate) => candidate.id === summary.runnerId),
-  )
-  const models = runner?.models
-  // A Runner from before pi runs Claude Code alone.
-  const runnerHarnesses = runner?.harnesses ?? ["ClaudeCode"]
+  // Its Models are its Creator's (ADR 0026), which the Hub sends everyone in it; the Creator's own
+  // ProvidersState has them too, before SessionModels comes.
   const yours = useHubState((hubState) => hubState.you?.id === summary.creator.id)
-  const providerModels = useHubState((hubState) => (yours ? hubState.providers?.models : undefined))
-  const connectable = useHubState((hubState) =>
-    yours ? hubState.providers?.connectable : undefined,
-  )
-  // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
-  const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
+  const ownModels = useHubState((hubState) => (yours ? hubState.providers?.models : undefined))
+  const models = sessionModels ?? ownModels
+  const connectable = useHubState((hubState) => hubState.providers?.connectable)
   // Looked for only when the log or the model changes, not on every change the Hub sends.
   const log = useHubState((hubState) => hubState.joined[summary.id]?.log)
-  const knownLabel = useMemo(
-    () => (modelOnPi ? knownModelLabel(log ?? [], summary.model) : undefined),
-    [modelOnPi, log, summary.model],
-  )
-  const offered = {
-    ...(((runnerHarnesses.includes("ClaudeCode") && hasClaudeCredential) || !pi) && {
-      claudeCode: { models },
-    }),
-    ...((runnerHarnesses.includes("Pi") || pi) && { pi: { models: providerModels, connectable } }),
-  }
+  const knownLabel = useMemo(() => knownModelLabel(log ?? [], summary.model), [log, summary.model])
   const setting = useMemo(
     () => ({
       ...(summary.model !== undefined && { model: summary.model }),
@@ -283,8 +307,8 @@ function LoadedSession({
     }),
     [summary.model, summary.thinkingLevel],
   )
-  // A switch shows in the picker from the pick, while it is asked about and then sent, until the
-  // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
+  // A switch shows in the picker from the pick, while it is sent, until the Hub says the
+  // Session's setting: a refusal shows the setting again.
   const [picked, setPicked] = useState<PickedSetting | null>(null)
   const shownSetting = picked !== null && picked.from === setting ? picked.to : setting
   useEffect(() => {
@@ -292,83 +316,40 @@ function LoadedSession({
     const timer = setTimeout(() => setPicked(null), switchSentMs)
     return () => clearTimeout(timer)
   }, [picked])
-  // The other Harness's Model switches the Session to it (ADR 0030), which is said first, once. A
-  // pi Session switches between Turns without stopping anything (ADR 0029), so it doesn't ask;
-  // Claude Code restarts, which asks while agents run.
+  // The durable agent switches between Turns without stopping anything, so nothing asks first.
   const pick = (next: ModelSetting) => {
     const from = setting
-    setPicked({ from, to: next, sent: false })
-    const go = () =>
-      setPicked(
-        command("Model change", hub.setSessionModel(summary.id, next))
-          ? { from, to: next, sent: true }
-          : null,
-      )
-    const cancel = () => setPicked(null)
-    const to = harnessOfModel(next.model)
-    if (to !== harness)
-      setConfirming({
-        title: `Switch to ${harnessNames[to]}?`,
-        description: harnessSwitchText(to, runningAgents),
-        action: "Switch",
-        go,
-        cancel,
-      })
-    else if (pi) go()
-    else interrupting({ title: "Switch the model?", action: "Switch", go, cancel })
+    setPicked(
+      command("Model change", hub.setSessionModel(summary.id, next))
+        ? { from, to: next, sent: true }
+        : null,
+    )
   }
-  // A Turn that ran on another Model than the Session's is named, as one from before a switch,
-  // of Harness too: by its Runner's name for it, or its Creator's Model's.
+  const settingName = providerModelLabel(models, setting, knownLabel)
+  // A Turn that ran on another Model than the Session's is named, as one from before a switch.
   const nameTurnModel = useCallback(
-    (model: string) =>
-      modelOnPi
-        ? otherProviderTurnModel(providerModels, setting, model)
-        : otherTurnModel(models, setting, model, providerModels),
-    [modelOnPi, models, providerModels, setting],
+    (model: string) => otherProviderTurnModel(models, setting, model),
+    [models, setting],
   )
-  const settingName = modelOnPi
-    ? providerModelLabel(providerModels, setting, knownLabel)
-    : modelName(models, setting)
-  // Who answers: Claude, on Claude Code, unless a Turn from before a switch ran another Provider's
-  // Model; on pi, the Model a Turn ran, by name, or the Session's.
-  const nameReplier = useCallback(
-    (turnModel: string | undefined) =>
-      !modelOnPi
-        ? turnModel === undefined || isClaudeModel(turnModel)
-          ? "Claude"
-          : (otherTurnModel(models, setting, turnModel, providerModels) ?? "Claude")
-        : turnModel === undefined
-          ? settingName
-          : (otherProviderTurnModel(providerModels, setting, turnModel) ?? settingName),
-    [modelOnPi, models, providerModels, setting, settingName],
-  )
+  const nameReplier = useNameReplier(models, settingName)
+  const nameModel = useCallback((model: string) => modelLabel(models, model), [models])
 
   const you = useHubState((hubState) => hubState.you)
-  // Only its Creator drives it (ADR 0026): anyone else watches.
-  const cantDrive = useDriveRefusal(summary)
-  const drives = cantDrive === undefined
-  // On Claude Code, it runs on its Creator's setup token, and can't wake without one.
-  const noToken = useHubState((hubState) => !pi && hubState.claudeCredential === null)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
-  const disabledReason =
-    cantDrive ?? (state === "Archived" ? "Archived: restore it to send prompts" : undefined)
-  const hint = !drives
-    ? undefined
-    : busy
-      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`
-      : summary.modelPending === true && running
-        ? `${settingName} takes over when this Turn ends.`
-        : state === "Asleep"
-          ? noToken
-            ? "Asleep: add a setup token on your Account page to wake it."
-            : "Asleep: sending a prompt wakes it."
-          : state === "Frozen"
-            ? "Frozen: prompts wait in the queue until its Runner is back."
-            : undefined
+  const disabledReason = state === "Archived" ? "Archived: restore it to send prompts" : undefined
+  const hint = busy
+    ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until it's up.`
+    : summary.modelPending === true && running
+      ? `${settingName} takes over when this Turn ends.`
+      : state === "Asleep"
+        ? "Asleep: sending a prompt wakes it."
+        : state === "Frozen"
+          ? "Frozen: prompts wait in the queue until its Runner is back."
+          : undefined
 
-  // While Claude asks a question (#193), what is sent declines it and goes to Claude instead.
+  // While the agent asks a question (#193), what is sent declines it and goes to it instead.
   const asking = summary.openQuestion
   // A reply carries the draft's files too (#278).
   const send = (prompt: string, attachments: ReadonlyArray<AttachmentId>) =>
@@ -400,11 +381,10 @@ function LoadedSession({
       }),
     [hub, summary.id],
   )
-  // An Archived Session has no terminal to open, and someone watching sees none (ADR 0026): it
-  // shows its conversation only.
+  // An Archived Session has no terminal to open: it shows its conversation only.
   const archived = state === "Archived"
-  const view: SessionTab = archived || !drives ? "chat" : tab
-  const canTerminal = !archived && drives
+  const view: SessionTab = archived ? "chat" : tab
+  const canTerminal = !archived
   // The terminal mounts when first shown and stays, so its scrollback survives switching tabs.
   const [shownTerminal, setShownTerminal] = useState(view === "terminal")
   if (view === "terminal" && !shownTerminal) setShownTerminal(true)
@@ -422,12 +402,74 @@ function LoadedSession({
   const agent = agentId === undefined ? undefined : transcript.agents.get(agentId)
   const closeAgent = () => onAgentChange?.(undefined)
 
+  // ── Threads (docs/design/durable-harness.md) ──
+  const sideBySide = useMediaQuery(SIDE_BY_SIDE)
+  const panelOf: ThreadPanelOf | undefined =
+    agentId !== undefined
+      ? undefined
+      : threadId !== undefined
+        ? { kind: "thread", threadId, thread: transcript.threads.get(threadId) }
+        : forkOf !== undefined
+          ? { kind: "new", anchorTurnId: forkOf }
+          : undefined
+  const anchorTurnId =
+    panelOf?.kind === "new" ? panelOf.anchorTurnId : panelOf?.thread?.anchorTurnId
+  // The thread you just made from the composer: opening it keeps focus there.
+  const [made, setMade] = useState<ThreadId | undefined>(undefined)
+  const anchor = useMemo(
+    () => (anchorTurnId === undefined ? undefined : findTurn(items, anchorTurnId)),
+    [items, anchorTurnId],
+  )
+  const reply = useCallback(
+    (turnId: TurnId) => {
+      // The Turn's latest thread opens if one was just started off it by you; a new one otherwise.
+      onThreadChange?.({ fork: turnId })
+    },
+    [onThreadChange],
+  )
+  // An Archived Session starts no threads: its ⌘K doesn't offer one either.
+  const threads = useMemo<TranscriptThreads>(
+    () => ({
+      anchored: transcript.anchored,
+      open: threadId,
+      forking: forkOf,
+      onReply: archived ? undefined : reply,
+    }),
+    [transcript.anchored, threadId, forkOf, reply, archived],
+  )
+  // A Turn jumped to from a thread scrolls into view and lights up for a moment.
+  const flashed = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const jumpToTurn = (turnId: TurnId) => {
+    const show = () => {
+      const element = scroller.ref.current?.querySelector<HTMLElement>(
+        `[data-turn="${CSS.escape(turnId)}"]`,
+      )
+      if (!element) return
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      element.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" })
+      element.tabIndex = -1
+      element.focus({ preventScroll: true })
+      element.setAttribute("data-flash", "")
+      clearTimeout(flashed.current)
+      flashed.current = setTimeout(() => element.removeAttribute("data-flash"), 1_400)
+    }
+    // Narrow, the thread steps aside first, to show the conversation.
+    if (sideBySide) show()
+    else {
+      onThreadChange?.(undefined)
+      requestAnimationFrame(() => requestAnimationFrame(show))
+    }
+  }
+  useEffect(() => () => clearTimeout(flashed.current), [])
+  const latestTurn = useMemo(() => findLatestTurn(items), [items])
+
   const keptAwake =
     summary.keepAwake === undefined ? undefined : keptAwakeText(summary.keepAwake, you?.id)
   const terminalOpen = view === "terminal"
   const showTerminal = (open: boolean) => onTabChange?.(open ? "terminal" : "chat")
   const actions: SessionActions = {
     rename: () => setRenaming(true),
+    compact: () => setCompacting(true),
     setKeepAwake: (on) => command("Keep awake", hub.setKeepAwake(summary.id, on)),
     // The Hub only puts a Session to sleep once started, with nothing running or waiting.
     sleep:
@@ -442,16 +484,28 @@ function LoadedSession({
     restart: state === "Active" && !busy ? restart.ask : undefined,
     remove,
   }
-  // ⌘K offers its Creator what the ⋯ menu does (#399).
+  // ⌘K offers what the ⋯ menu does (#399), and a thread off the latest answer.
   const kept = summary.keepAwake !== undefined
   const canSleep = actions.sleep !== undefined
   const canRestart = actions.restart !== undefined
+  const latestTurnId = latestTurn?.turnId
   const thisSession = useMemo(
     () =>
-      drives && !archived
-        ? {
+      archived
+        ? undefined
+        : {
             label: "This Session",
             commands: [
+              ...(latestTurnId !== undefined
+                ? [
+                    {
+                      id: "reply-in-thread",
+                      label: "Reply in Thread to the latest answer",
+                      run: () => reply(latestTurnId),
+                    },
+                  ]
+                : []),
+              { id: "compact", label: "Compact conversation…", run: actions.compact },
               { id: "rename", label: "Rename", run: actions.rename },
               {
                 id: "keep-awake",
@@ -473,239 +527,297 @@ function LoadedSession({
                 : []),
               { id: "delete", label: "Delete Session", run: actions.remove },
             ],
-          }
-        : undefined,
+          },
     // Rebuilt when what it offers changes, not on every render.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [drives, archived, kept, canSleep, canRestart, canTerminal, terminalOpen, summary.id],
+    [archived, kept, canSleep, canRestart, canTerminal, terminalOpen, latestTurnId, summary.id],
   )
   useCommands(thisSession)
 
-  // On a phone the terminal takes the view, so the conversation steps aside while it's open.
+  // On a phone the terminal takes the view, so the conversation steps aside while it's open; so
+  // does a thread where there's no room for it beside the conversation.
   const wide = useMediaQuery(WIDE)
-  const conversationShown = wide || !terminalOpen
+  const panelShown = panelOf !== undefined
+  const conversationShown = (wide || !terminalOpen) && (sideBySide || !panelShown)
+  const accounts = accountsOf(summary, you)
+
+  const titleStrip = (
+    <TitleStrip
+      summary={summary}
+      // Its name, edited in place: anyone may rename it, whatever its state.
+      title={
+        renaming ? (
+          <InlineEdit
+            label="Session name"
+            defaultValue={title}
+            placeholder={summary.workBranch}
+            maxLength={MaxSessionNameLength}
+            // A rename that isn't sent keeps the field open, with what was typed.
+            onCommit={(typed) => {
+              const sent = renameSession(hub, summary, typed)
+              if (sent) setRenaming(false)
+              return sent
+            }}
+            onCancel={() => setRenaming(false)}
+            sx={[styles.nameField, fieldText.title]}
+          />
+        ) : (
+          title
+        )
+      }
+      meta={
+        <>
+          {summary.workBranch === summary.baseBranch ? (
+            `on ${summary.baseBranch}`
+          ) : (
+            <>
+              {/* Named, the title no longer says which branch it works on. */}
+              {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
+            </>
+          )}{" "}
+          <span aria-hidden="true">·</span>{" "}
+          <span {...stylex.props(styles.nowrap)}>{accountsPay(summary, you)}</span>
+          <SessionCost transcript={transcript} accounts={accounts} />
+          {summary.keepAwake !== undefined && (
+            <>
+              {" "}
+              <span aria-hidden="true">·</span>{" "}
+              <span {...stylex.props(styles.keptAwake)}>
+                <SunIcon {...stylex.props(styles.sun)} />
+                {keptAwakeText(summary.keepAwake, you?.id)}
+              </span>
+            </>
+          )}
+        </>
+      }
+      presence={presence}
+      actions={actions}
+    />
+  )
 
   return (
-    <main {...stylex.props(styles.view)}>
-      <TitleStrip
-        summary={summary}
-        // Its name, edited in place: its Creator may rename it, whatever its state.
-        title={
-          renaming ? (
-            <InlineEdit
-              label="Session name"
-              defaultValue={title}
-              placeholder={summary.workBranch}
-              maxLength={MaxSessionNameLength}
-              // A rename that isn't sent keeps the field open, with what was typed.
-              onCommit={(typed) => {
-                const sent = renameSession(hub, summary, typed)
-                if (sent) setRenaming(false)
-                return sent
-              }}
-              onCancel={() => setRenaming(false)}
-              sx={[styles.nameField, fieldText.title]}
-            />
-          ) : (
-            title
-          )
-        }
-        meta={
-          <>
-            {summary.workBranch === summary.baseBranch ? (
-              `on ${summary.baseBranch}`
-            ) : (
-              <>
-                {/* Named, the title no longer says which branch it works on. */}
-                {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
-              </>
-            )}{" "}
-            <span aria-hidden="true">·</span>{" "}
-            {drives ? "you drive it" : `${summary.creator.name} drives it`}
-            {summary.keepAwake !== undefined && (
-              <>
-                {" "}
-                <span aria-hidden="true">·</span>{" "}
-                <span {...stylex.props(styles.keptAwake)}>
-                  <SunIcon {...stylex.props(styles.sun)} />
-                  {keptAwakeText(summary.keepAwake, you?.id)}
-                </span>
-              </>
-            )}
-          </>
-        }
-        drives={drives}
-        presence={presence}
-        actions={actions}
-      />
+    <ModelNamesContext value={nameModel}>
+      <main {...stylex.props(styles.view)}>
+        <Dialog
+          size="sm"
+          open={confirming !== null}
+          onOpenChange={(open) => {
+            if (open) return
+            confirming?.cancel?.()
+            setConfirming(null)
+          }}
+          title={confirming?.title}
+          description={confirming?.description ?? pausedText(runningAgents, runningThreads)}
+          footer={
+            <>
+              <DialogClose>Cancel</DialogClose>
+              <Button
+                onClick={() => {
+                  confirming?.go()
+                  setConfirming(null)
+                }}
+              >
+                {confirming?.action}
+              </Button>
+            </>
+          }
+        />
+        <CompactDialog
+          open={compacting}
+          onOpenChange={setCompacting}
+          onCompact={(instructions) =>
+            command("Compact", hub.compact(summary.id, { instructions }))
+          }
+        />
 
-      <Dialog
-        size="sm"
-        open={confirming !== null}
-        onOpenChange={(open) => {
-          if (open) return
-          confirming?.cancel?.()
-          setConfirming(null)
-        }}
-        title={confirming?.title}
-        description={
-          confirming?.description ??
-          `${
-            runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
-          }; stopping ${pi ? "the Session" : "Claude Code"} interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`
-        }
-        footer={
-          <>
-            <DialogClose>Cancel</DialogClose>
-            <Button
-              onClick={() => {
-                confirming?.go()
-                setConfirming(null)
-              }}
+        <div {...stylex.props(styles.body)}>
+          {agentId !== undefined ? (
+            <div
+              hidden={!conversationShown}
+              {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}
             >
-              {confirming?.action}
-            </Button>
-          </>
-        }
-      />
-
-      {conversationShown &&
-        (agentId !== undefined ? (
-          <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
-        ) : (
-          <>
-            <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
-              <div {...stylex.props(styles.column, styles.transcript)}>
-                <StateBanner
-                  summary={summary}
-                  change={transcript.stateChange}
-                  running={running}
-                  startLog={startLog}
-                  drives={drives}
-                  restart={restart}
-                  onWake={() => command("Wake", hub.wakeSession(summary.id))}
-                  onRestore={() => restoreSession(hub, summary.id)}
-                  onEnterValues={() =>
-                    void navigate({
-                      to: "/repos/$owner/$repo/environment",
-                      params: repoParams(summary.repo),
-                    })
-                  }
-                />
-                {items.length === 0 ? (
-                  <EmptyState
-                    title="Nothing here yet"
-                    description={
-                      drives
-                        ? `Send the first prompt. Everyone in the Session sees ${pi ? "the" : "Claude's"} answer as it streams.`
-                        : `Once ${summary.creator.name} sends the first prompt, you see ${pi ? "the" : "Claude's"} answer here as it streams.`
+              {titleStrip}
+              <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
+            </div>
+          ) : (
+            <div
+              hidden={!conversationShown}
+              {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}
+            >
+              {titleStrip}
+              <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+                <div {...stylex.props(styles.column, styles.transcript)}>
+                  <StateBanner
+                    summary={summary}
+                    change={transcript.stateChange}
+                    running={running}
+                    startLog={startLog}
+                    restart={restart}
+                    onWake={() => command("Wake", hub.wakeSession(summary.id))}
+                    onRestore={() => restoreSession(hub, summary.id)}
+                    onEnterValues={() =>
+                      void navigate({
+                        to: "/repos/$owner/$repo/environment",
+                        params: repoParams(summary.repo),
+                      })
                     }
                   />
-                ) : (
-                  <Transcript
-                    sessionId={summary.id}
-                    items={items}
-                    nameTurnModel={nameTurnModel}
-                    nameReplier={nameReplier}
-                  />
-                )}
-              </div>
-            </div>
-
-            <AgentChips agents={summary.agents ?? []} onOpen={(id) => onAgentChange?.(id)} />
-            <div {...stylex.props(styles.column, styles.dock)}>
-              <QuestionDock
-                summary={summary}
-                questions={transcript.questions}
-                picks={questionPicks}
-                drives={drives}
-              />
-              <PromptQueue
-                queue={queue}
-                onCancel={
-                  drives
-                    ? (prompt) => {
-                        if (!hub.cancelPrompt(summary.id, prompt.id)) {
-                          notSent("Cancel")
-                        }
-                      }
-                    : undefined
-                }
-                onSteer={
-                  drives && steerable
-                    ? (prompt) => {
-                        if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
-                          setSteering((ids) => new Set(ids).add(prompt.id))
-                      }
-                    : undefined
-                }
-                steering={steering}
-              />
-              <Composer
-                onSend={send}
-                onStop={drives ? () => hub.stopTurn(summary.id) : undefined}
-                running={running}
-                disabledReason={disabledReason}
-                hint={
-                  drives && asking
-                    ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
-                    : hint
-                }
-                attach={drives ? attach : undefined}
-                {...(pi && { placeholder: "Send a prompt" })}
-                {...(drives && asking && { copy: replyCopy, needsText: true })}
-                tools={
-                  drives && !archived ? (
-                    <ComposerTools
-                      keptAwake={keptAwake}
-                      setKeepAwake={(on) => command("Keep awake", hub.setKeepAwake(summary.id, on))}
-                      terminal={{ open: terminalOpen, toggle: () => showTerminal(!terminalOpen) }}
+                  {items.length === 0 ? (
+                    <EmptyState
+                      title="Nothing here yet"
+                      description="Send the first prompt. Everyone in the Session sees the answer as it streams, and can reply in a Thread off it."
                     />
-                  ) : undefined
-                }
-                picker={
-                  drives ? (
+                  ) : (
+                    <Transcript
+                      sessionId={summary.id}
+                      items={items}
+                      nameTurnModel={nameTurnModel}
+                      nameReplier={nameReplier}
+                      threads={threads}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <AgentChips agents={summary.agents ?? []} onOpen={(id) => onAgentChange?.(id)} />
+              <div {...stylex.props(styles.column, styles.dock)}>
+                {transcript.plan !== undefined && (
+                  <PlanDock plan={transcript.plan} live={transcript.running !== undefined} />
+                )}
+                <QuestionDock
+                  summary={summary}
+                  questions={transcript.questions}
+                  picks={questionPicks}
+                />
+                <PromptQueue
+                  queue={queue}
+                  onCancel={(prompt) => {
+                    if (!hub.cancelPrompt(summary.id, prompt.id)) notSent("Cancel")
+                  }}
+                  onSteer={
+                    steerable
+                      ? (prompt) => {
+                          if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
+                            setSteering((ids) => new Set(ids).add(prompt.id))
+                        }
+                      : undefined
+                  }
+                  steering={steering}
+                />
+                <Composer
+                  onSend={send}
+                  onStop={() => hub.stopTurn(summary.id)}
+                  running={running}
+                  disabledReason={disabledReason}
+                  hint={
+                    asking
+                      ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
+                      : hint
+                  }
+                  attach={attach}
+                  placeholder="Send a prompt"
+                  {...(asking && { copy: replyCopy, needsText: true })}
+                  tools={
+                    archived ? undefined : (
+                      <ComposerTools
+                        keptAwake={keptAwake}
+                        setKeepAwake={(on) =>
+                          command("Keep awake", hub.setKeepAwake(summary.id, on))
+                        }
+                        terminal={{
+                          open: terminalOpen,
+                          toggle: () => showTerminal(!terminalOpen),
+                        }}
+                      />
+                    )
+                  }
+                  picker={
                     <ModelPicker
-                      {...offered}
+                      models={models}
+                      connectable={connectable}
                       value={shownSetting}
                       onChange={pick}
+                      owner={yours ? undefined : summary.creator.name}
+                      footer={`Runs on ${accounts}.`}
                       disabled={archived}
                       side="top"
                     />
-                  ) : (
-                    // Someone watching sees what it runs on, but can't change it (ADR 0026).
-                    <ModelSettingLabel
-                      claudeCode={{ models }}
-                      pi={{ models: providerModels }}
-                      value={setting}
-                      knownLabel={knownLabel}
-                    />
-                  )
-                }
-              />
-            </div>
-          </>
-        ))}
-
-      {/* Mounted once opened, and kept while hidden, so its scrollback survives. */}
-      {shownTerminal && canTerminal && (
-        <TerminalSheet open={terminalOpen} onClose={() => showTerminal(false)}>
-          <Suspense
-            fallback={
-              <div {...stylex.props(styles.centered)}>
-                <Spinner label="Loading the terminal" />
+                  }
+                />
               </div>
-            }
-          >
-            <TerminalPanel session={summary} />
-          </Suspense>
-        </TerminalSheet>
-      )}
-    </main>
+            </div>
+          )}
+          {panelOf !== undefined && (!terminalOpen || wide) && (
+            <ThreadPanel
+              key={panelOf.kind === "thread" ? panelOf.threadId : `new-${panelOf.anchorTurnId}`}
+              session={summary}
+              of={panelOf}
+              anchor={anchor}
+              models={models}
+              connectable={connectable}
+              sessionSetting={setting}
+              layout={sideBySide ? "side" : "full"}
+              onClose={() => onThreadChange?.(undefined)}
+              onJumpToAnchor={jumpToTurn}
+              focusComposer={panelOf.kind === "thread" && panelOf.threadId === made}
+              onCreated={(created) => {
+                setMade(created)
+                onThreadChange?.({ thread: created }, { replace: true })
+              }}
+            />
+          )}
+        </div>
+
+        {/* Mounted once opened, and kept while hidden, so its scrollback survives. */}
+        {shownTerminal && canTerminal && (
+          <TerminalSheet open={terminalOpen} onClose={() => showTerminal(false)}>
+            <Suspense
+              fallback={
+                <div {...stylex.props(styles.centered)}>
+                  <Spinner label="Loading the terminal" />
+                </div>
+              }
+            >
+              <TerminalPanel session={summary} />
+            </Suspense>
+          </TerminalSheet>
+        )}
+      </main>
+    </ModelNamesContext>
   )
 }
 
-/** The prompt box's words while Claude waits on an answer to its question (#193). */
+/** The main conversation's Turn of this id, if it has it. */
+function findTurn(
+  items: JoinedSession["transcript"]["items"],
+  turnId: TurnId,
+): TurnView | undefined {
+  for (const item of items)
+    if (item.kind === "turn" && item.turn.turnId === turnId) return item.turn
+  return undefined
+}
+
+/** The main conversation's latest Turn a person or an agent prompted, to reply to from ⌘K. */
+function findLatestTurn(items: JoinedSession["transcript"]["items"]): TurnView | undefined {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]
+    if (item?.kind === "turn") return item.turn
+  }
+  return undefined
+}
+
+/** What a restart or sleep does to what runs in the background, which the durable agent resumes. */
+function pausedText(agents: number, threads: number): string {
+  const parts = [
+    ...(agents > 0 ? [agents === 1 ? "an agent" : `${agents} agents`] : []),
+    ...(threads > 0 ? [threads === 1 ? "a Thread" : `${threads} Threads`] : []),
+  ]
+  const what = parts.join(" and ")
+  const one = agents + threads === 1
+  return `${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? "is" : "are"} running. ${one ? "It pauses" : "They pause"}, and ${one ? "picks" : "pick"} up where ${one ? "it" : "they"} left off once the Session is back.`
+}
+
+/** The prompt box's words while the agent waits on an answer to its question (#193). */
 const replyCopy = {
   field: "Reply",
   placeholder: "Or reply directly…",
@@ -719,25 +831,10 @@ function command(what: string, sent: boolean): boolean {
   return sent
 }
 
-/**
- * What a switch to the other Harness does (ADR 0030), said once before it is sent: its own
- * conversation, a handoff, a relaunch the next prompt waits for, and the agents it interrupts.
- */
-function harnessSwitchText(to: Harness, runningAgents: number): string {
-  const agents =
-    runningAgents === 0
-      ? ""
-      : ` It interrupts ${runningAgents === 1 ? "the running agent" : `${runningAgents} running agents`}.`
-  return `Switching to ${harnessNames[to]} continues in its own conversation, with a handoff of this one. The next prompt waits until it's up.${agents}`
-}
-
-/**
- * Something that stops the Session's Claude Code, confirmed first while agents run; or a switch of
- * Harness, always confirmed.
- */
+/** Something that pauses the Session's background work, confirmed first while it runs. */
 interface Interruption {
   readonly title: string
-  /** What the dialog says; absent, which running agents it interrupts. */
+  /** What the dialog says; absent, what runs in the background and that it resumes. */
   readonly description?: string
   /** Its button's label. */
   readonly action: string
@@ -786,19 +883,13 @@ function useRestart(summary: SessionSummary, send: () => boolean): Restart {
 /**
  * Shown while the Session is being started or restarted (#70): what is going on, and the start's
  * output so far, which is its Environment's build and start script.
- *
- * The output is shown here rather than in the Terminal tab: the terminal draws only from a
- * Snapshot of Claude Code's screen, which there is none of until Claude Code is up, and the chat
- * is where people wait for it.
  */
 function StartingBanner({
   summary,
   startLog,
-  drives,
 }: {
   summary: SessionSummary
   startLog: JoinedSession["startLog"]
-  drives: boolean
 }) {
   const { starting, restarting } = summary
   const you = useHubState((state) => state.you)
@@ -806,7 +897,6 @@ function StartingBanner({
   const output = starting && startLog?.since === starting.since ? startLog.text : ""
   const plain = useMemo(() => terminalText(output), [output])
   const version = starting?.environmentVersion
-  const pi = summary.harness === "Pi"
   return (
     <Banner
       intent="neutral"
@@ -823,13 +913,11 @@ function StartingBanner({
       }
     >
       {starting === undefined
-        ? `${asker ? `${asker} asked for a restart. ` : ""}${pi ? "Stopping its Sandbox, to start it" : "Stopping Claude Code and its Sandbox, to start them"} again on ${summary.repo}'s latest Environment. `
+        ? `${asker ? `${asker} asked for a restart. ` : ""}Stopping its Sandbox, to start it again on ${summary.repo}'s latest Environment. Whatever was running picks up where it left off. `
         : version === undefined
-          ? pi
-            ? "Starting a fresh Sandbox. "
-            : "Starting Claude Code in a fresh Sandbox. "
+          ? "Starting a fresh Sandbox. "
           : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its Start script. `}
-      {drives && `Prompts sent now wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`}
+      Prompts sent now wait in the queue until it's up.
     </Banner>
   )
 }
@@ -837,15 +925,13 @@ function StartingBanner({
 /**
  * Shown while the Session is starting or restarting, Frozen, Asleep or Archived, or runs on an
  * older Environment or other Installations than its Repo's, with why from its latest state change.
- * Its Restart, Wake and Restore are its Creator's alone (ADR 0026): someone watching sees why, but
- * not them.
+ * Anyone in it can restart, wake or restore it.
  */
 function StateBanner({
   summary,
   change,
   running,
   startLog,
-  drives,
   restart,
   onWake,
   onRestore,
@@ -855,28 +941,21 @@ function StateBanner({
   change: SessionStateChanged | undefined
   running: boolean
   startLog: JoinedSession["startLog"]
-  /** Whether the signed-in person drives the Session. */
-  drives: boolean
   restart: Restart
   onWake: () => void
   onRestore: () => void
   onEnterValues: () => void
 }) {
-  const navigate = useNavigate()
-  // Its Creator's setup token, which it can't wake without (ADR 0026); undefined while loading.
-  const credential = useHubState((state) => state.claudeCredential)
-  // A pi Session runs on its Creator's Connected providers, and wakes without one (ADR 0029).
-  const pi = summary.harness === "Pi"
   const why = change?.state === summary.state ? change.message : undefined
   const busy = summary.starting !== undefined || summary.restarting !== undefined
   if (busy && (summary.state === "Active" || summary.state === "Asleep")) {
-    return <StartingBanner summary={summary} startLog={startLog} drives={drives} />
+    return <StartingBanner summary={summary} startLog={startLog} />
   }
   switch (summary.state) {
     case "Active": {
       const environment = summary.environment
       const mcpServers = mcpServersChanged(summary)
-      const restartButton = drives && (
+      const restartButton = (
         <Button
           size="sm"
           icon={<RestartIcon />}
@@ -902,12 +981,12 @@ function StateBanner({
             ; version {environment.latestVersion} is the latest. Restarting puts the Session to
             sleep and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
             {mcpServers && ` It applies the change to ${summary.repo}'s Installations too.`}
-            {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
+            {running && " Once the running Turn ends."}
           </Banner>
         )
       }
       if (!mcpServers) return null
-      // Installations change no Environment version (ADR 0020): Claude Code is given them as it starts.
+      // Installations change no Environment version (ADR 0020): the agent is given them as it starts.
       return (
         <Banner
           intent="neutral"
@@ -915,10 +994,10 @@ function StateBanner({
           title="MCP servers changed"
           action={restartButton}
         >
-          {summary.repo}'s Installations changed since this Session started, and{" "}
-          {pi ? "the Session gets" : "Claude Code gets"} its MCP servers as it starts. A Restart
-          applies the change, with the Workspace and conversation as they are.
-          {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
+          {summary.repo}'s Installations changed since this Session started, and the agent gets its
+          MCP servers as it starts. A Restart applies the change, with the Workspace and
+          conversation as they are.
+          {running && " Once the running Turn ends."}
         </Banner>
       )
     }
@@ -926,7 +1005,7 @@ function StateBanner({
       return (
         <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">
           {why ? sentence(why) : "Its Runner is offline. "}
-          {drives && "Prompts sent now wait in the queue until the Runner is back."}
+          Prompts sent now wait in the queue until the Runner is back.
         </Banner>
       )
     case "Asleep":
@@ -944,7 +1023,7 @@ function StateBanner({
             }
           >
             {why ? sentence(why) : ""}
-            {drives && "Prompts sent now wait in the queue until it starts."}
+            Prompts sent now wait in the queue until it starts.
           </Banner>
         )
       }
@@ -954,27 +1033,8 @@ function StateBanner({
           <InstallationsFailedBanner
             summary={summary}
             failures={change.installationsFailed ?? []}
-            onRetry={drives ? onWake : undefined}
+            onRetry={onWake}
           />
-        )
-      }
-      // It runs on its Creator's setup token, and can't wake without one (ADR 0026).
-      if (drives && !pi && credential === null) {
-        return (
-          <Banner
-            intent="danger"
-            icon={<InfoIcon />}
-            title="This Session can't wake"
-            action={
-              <Button size="sm" onClick={() => void navigate({ to: "/account" })}>
-                Add a setup token
-              </Button>
-            }
-          >
-            {why ? sentence(why) : ""}
-            It runs on your Claude setup token, and you have none on this Hub. Add one on your
-            Account page, then wake it.
-          </Banner>
         )
       }
       return (
@@ -983,30 +1043,22 @@ function StateBanner({
           icon={<InfoIcon />}
           title="This Session is Asleep"
           action={
-            drives && (
-              <Button size="sm" onClick={onWake}>
-                Wake now
-              </Button>
-            )
+            <Button size="sm" onClick={onWake}>
+              Wake now
+            </Button>
           }
           detail={
-            // What Claude Code printed before it exited on its own, as why it did (#105).
+            // What the agent printed before it exited on its own, as why it did (#105).
             summary.lastOutput !== undefined && (
-              <Disclosure
-                variant="plain"
-                summary={pi ? "Show its last output" : "Show Claude Code's last output"}
-              >
-                <LogView label={pi ? "Its last output" : "Claude Code's last output"}>
-                  {summary.lastOutput}
-                </LogView>
+              <Disclosure variant="plain" summary="Show its last output">
+                <LogView label="Its last output">{summary.lastOutput}</LogView>
               </Disclosure>
             )
           }
         >
           {why ? sentence(why) : ""}
-          {drives
-            ? "Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as they were."
-            : `Its Sandbox is stopped until ${summary.creator.name} wakes it.`}
+          Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as
+          they were.
         </Banner>
       )
     case "Archived": {
@@ -1016,11 +1068,9 @@ function StateBanner({
           icon={<InfoIcon />}
           title="This Session is Archived"
           action={
-            drives && (
-              <Button size="sm" onClick={onRestore}>
-                Restore
-              </Button>
-            )
+            <Button size="sm" onClick={onRestore}>
+              Restore
+            </Button>
           }
         >
           {archived
@@ -1032,9 +1082,3 @@ function StateBanner({
     }
   }
 }
-
-/** Who may restart a Session, for someone watching it (ADR 0026). */
-const restarter = (summary: SessionSummary) => `Only ${summary.creator.name} can restart it.`
-
-/** The reason as a sentence, with a space after it for the one that follows. */
-const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)

@@ -13,7 +13,6 @@ import { counted, day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { messageOf, useLastOpened } from "../mcp/shared.ts"
-import { useDrives } from "../session/drive.ts"
 import {
   BranchIcon,
   Button,
@@ -354,8 +353,7 @@ function ArchivedRow({
   purging: Purging
 }) {
   const archived = session.archived
-  // Restoring it is its Creator's alone (ADR 0026); purging it, anyone's who sees it (ADR 0027).
-  const drives = useDrives(session)
+  // Anyone who sees it restores it (docs/design/durable-harness.md) or purges it (ADR 0027).
   if (archived === undefined) return null
   const title = sessionTitle(session)
   return (
@@ -391,15 +389,13 @@ function ArchivedRow({
         </span>,
       ]}
       action={
-        drives && (
-          <Button
-            size="sm"
-            aria-label={`Restore ${title}`}
-            onClick={() => restoreSession(hub, session.id)}
-          >
-            Restore
-          </Button>
-        )
+        <Button
+          size="sm"
+          aria-label={`Restore ${title}`}
+          onClick={() => restoreSession(hub, session.id)}
+        >
+          Restore
+        </Button>
       }
       menu={
         <MenuItem intent="danger" onClick={() => purging.ask([session])}>

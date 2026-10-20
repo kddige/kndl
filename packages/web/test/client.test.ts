@@ -8,12 +8,14 @@ import {
   RunnerId,
   SessionId,
   type TerminalFrame,
+  ThreadId,
+  TurnId,
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient, ListingUnavailableError } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
-import { bob, bobsSessionId, demoSessionId } from "../src/hub/fake/script.ts"
+import { bob, demoSessionId } from "../src/hub/fake/script.ts"
 import { findSession } from "../src/hub/store.ts"
 import { buildTranscript, emptyTranscript } from "../src/hub/transcript.ts"
 import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
@@ -217,7 +219,7 @@ describe("a joined Session", () => {
       const log = client.getState().joined[demo]?.log ?? []
       const started = log.findLast((entry) => entry.event._tag === "TurnStarted")
       expect(started?.event).toMatchObject({ text: "[Alice Kim] Rename the store" })
-      expect(log.at(-1)?.event._tag).toBe("TurnEnded")
+      expect(log.findLast((entry) => entry.event._tag === "TurnEnded")).toBeDefined()
     })
     // Idle comes in the SessionUpdated after the TurnEnded, a message of its own.
     await eventually(() => {
@@ -240,7 +242,10 @@ describe("a joined Session", () => {
     await eventually(() => {
       const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
       expect(events.some((event) => event._tag === "TurnStopRequested")).toBe(true)
-      expect(events.at(-1)).toMatchObject({ _tag: "TurnEnded", reason: "aborted" })
+      expect(events.findLast((event) => event._tag === "TurnEnded")).toMatchObject({
+        _tag: "TurnEnded",
+        reason: "aborted",
+      })
     })
   })
 
@@ -263,7 +268,9 @@ describe("a joined Session", () => {
     })
     client.sendPrompt(demo, "After the drop")
     await eventually(() =>
-      expect(client.getState().joined[demo]?.log.at(-1)?.event._tag).toBe("TurnEnded"),
+      expect(
+        client.getState().joined[demo]?.log.findLast((entry) => entry.event._tag === "TurnEnded"),
+      ).toBeDefined(),
     )
     const seqs = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.seq)
     expect<unknown>(seqs).toEqual(seqs.map((_, index) => index))
@@ -435,18 +442,21 @@ describe("the terminal", () => {
     client.openTerminal(demo, (frame) => frames.push(frame))
     await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
     expect(frames[0]?.size).toEqual({ cols: 120, rows: 40 })
-    expect(frames[0]?.data).toContain("Do you want to proceed?")
+    // A plain shell in /workspace, as the real terminal is, with a command already run in it.
+    expect(frames[0]?.data).toContain("runner@sandbox:/workspace")
+    expect(frames[0]?.data).toContain("168 pass")
+    expect(frames[0]?.data).not.toContain("Claude")
     expect(client.getState().terminals[demo]).toEqual({
       status: "live",
       size: { cols: 120, rows: 40 },
     })
-    // Esc dismisses Claude Code's dialog.
-    expect(client.sendTerminalInput(demo, "\x1b")).toBe(true)
-    await eventually(() => expect(frames.at(-1)?.data).toContain("User rejected the command"))
+    // A command typed is run by the shell.
+    expect(client.sendTerminalInput(demo, "pwd\r")).toBe(true)
+    await eventually(() => expect(frames.at(-1)?.data).toContain("/workspace\x1b[K"))
     expect(frames.at(-1)?.kind).toBe("Output")
     expect(hub.received.filter((message) => message._tag.includes("Terminal"))).toEqual([
       { _tag: "OpenTerminal", sessionId: demo },
-      { _tag: "TerminalInput", sessionId: demo, data: "\x1b" },
+      { _tag: "TerminalInput", sessionId: demo, data: "pwd\r" },
     ])
   })
 
@@ -571,7 +581,7 @@ describe("the terminal", () => {
     expect(client.getState().terminals[readme]?.status).toBe("waiting")
     client.wakeSession(readme)
     await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
-    expect(frames[0]?.data).toContain("Welcome to")
+    expect(frames[0]?.data).toContain("runner@sandbox:/workspace")
   })
 
   test("keystrokes and resizes while offline aren't sent", () => {
@@ -645,8 +655,8 @@ function refusals(client: HubClient): Array<CommandFailed> {
   return failures
 }
 
-describe("who drives a Session (ADR 0026)", () => {
-  test("only its Creator drives it: everyone else is refused, saying why, and watches", async () => {
+describe("everyone drives a durable Session", () => {
+  test("another Participant prompts, stops, renames, picks a Model and uses the terminal", async () => {
     const { hub, client } = setUp({ you: bob, autoplay: false })
     const failures = refusals(client)
     client.start()
@@ -654,70 +664,187 @@ describe("who drives a Session (ADR 0026)", () => {
     await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
 
     expect(client.sendPrompt(demo, "hello")).toBe(true)
+    await eventually(() => expect(findSession(client.getState(), demo)?.currentTurn).not.toBeNull())
     client.stopTurn(demo)
-    client.sleepSession(demo)
     client.setKeepAwake(demo, false)
-    client.restartSession(demo)
-    client.setSessionModel(demo, { model: "opus" })
+    client.setSessionModel(demo, { model: "openai/gpt-6-sol" })
     client.renameSession(demo, "Bob's now")
-    client.archiveSession(demo)
     client.openTerminal(demo, () => {})
-    const driving = [
-      "SendPrompt",
-      "StopTurn",
-      "SleepSession",
-      "SetKeepAwake",
-      "RestartSession",
-      "SetSessionModel",
-      "RenameSession",
-      "ArchiveSession",
-      "OpenTerminal",
-    ]
-    await eventually(() => expect(failures.map((failure) => failure.command)).toEqual(driving))
-    for (const failure of failures) {
-      expect(failure.message).toBe(
-        "Only Alice Kim, who started this Session, can drive it: it runs on their Claude credential.",
-      )
-    }
-    // Nothing changed: no prompt queued, still Active and kept awake, its name as it was.
-    expect(client.getState().joined[demo]?.queue).toEqual([])
-    const summary = findSession(client.getState(), demo)
-    expect(summary?.state).toBe("Active")
-    expect(summary?.keepAwake?.by.name).toBe("Alice Kim")
-    expect(summary?.name).toBeUndefined()
-    expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
-
-    // Their own Session they drive.
-    const landing = SessionId.make(bobsSessionId)
-    client.wakeSession(landing)
-    await eventually(() => expect(findSession(client.getState(), landing)?.state).toBe("Active"))
-    expect(failures).toHaveLength(driving.length)
+    await eventually(() => expect(findSession(client.getState(), demo)?.name).toBe("Bob's now"))
+    expect(findSession(client.getState(), demo)?.model).toBe("openai/gpt-6-sol")
+    expect(findSession(client.getState(), demo)?.keepAwake).toBeUndefined()
+    expect(client.getState().joined[demo]?.models?.length).toBeGreaterThan(0)
+    expect(failures).toEqual([])
+    expect(hub.received.map((message) => message._tag)).toContain("OpenTerminal")
   })
 
-  test("without a setup token, a Session can't be created or woken", async () => {
+  test("a thread is answered, or refused, by the request it was asked in, not by the one asked first", async () => {
+    const { hub, client } = setUp({ you: bob, autoplay: false })
+    const failures = refusals(client)
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+
+    // The first is fine and the second refused: the refusal rejects the second, not the first.
+    const first = client.createThread(demo, TurnId.make("t-seed-1"), "What about Windows?")
+    const second = client.createThread(demo, TurnId.make("t-nope"), "From nowhere")
+    const [made, refused] = await Promise.allSettled([first, second])
+    expect(made.status).toBe("fulfilled")
+    expect(refused).toMatchObject({
+      status: "rejected",
+      reason: { message: "There is no such Turn in the Session to start a Thread off." },
+    })
+    // A refusal that names its request doesn't reach the listeners of those with none to answer.
+    expect(failures).toEqual([])
+    const [one, other] = hub.received.filter((message) => message._tag === "CreateThread")
+    expect(one?.requestId).not.toBe(other?.requestId)
+  })
+
+  test("a thread whose answer the dropped connection took may exist, and the Hub's refusal means it doesn't", async () => {
+    let drop: (() => void) | undefined
+    let toClient: ((message: object) => void) | undefined
+    const transport: HubTransport = {
+      open(handlers) {
+        toClient = (message) => handlers.onMessage(JSON.stringify(message))
+        drop = () => handlers.onClose()
+        setTimeout(() => handlers.onOpen(), 0)
+        return {
+          send: (text) => {
+            const message = JSON.parse(text) as {
+              _tag: string
+              requestId?: string
+              sessionId?: string
+            }
+            if (message._tag === "WebHello")
+              toClient?.({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice })
+            // The Hub answers after the command has gone out.
+            if (message._tag === "CreateThread" && message.sessionId === "s-refused")
+              setTimeout(
+                () =>
+                  toClient?.({
+                    _tag: "CommandFailed",
+                    command: "CreateThread",
+                    requestId: message.requestId,
+                    message: "There is no such Turn in the Session to start a Thread off.",
+                  }),
+                0,
+              )
+          },
+          close: () => setTimeout(() => handlers.onClose(), 0),
+        }
+      },
+      signInStatus: async () => ({ signedIn: true, you: decodedAlice }),
+      devSignIn: async () => {},
+      signOut: async () => {},
+      approveCli: unused,
+      admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
+    }
+    const client = new HubClient(transport, { retryDelay: () => 1 })
+    cleanups.push(() => client.stop())
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    const refused = client.createThread(SessionId.make("s-refused"), TurnId.make("t-1"), "hi")
+    await expect(refused).rejects.toMatchObject({ unconfirmed: false })
+    const lost = client.createThread(demo, TurnId.make("t-1"), "hi")
+    drop?.()
+    await expect(lost).rejects.toMatchObject({
+      message: "Lost the connection to the Hub.",
+      unconfirmed: true,
+    })
+  })
+
+  test("as on the Hub, stopping a thread with nothing running is refused, and compacting wakes an Asleep Session", async () => {
+    const { client } = setUp({ autoplay: false })
+    const failures = refusals(client)
+    const readme = SessionId.make("s-readme")
+    const flaky = SessionId.make("s-flaky")
+    client.start()
+    client.join(demo)
+    client.join(readme)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+    await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
+
+    client.stopThread(demo, ThreadId.make("thr-backoff"))
+    await eventually(() =>
+      expect(failures).toMatchObject([
+        { command: "StopThread", message: "No Turn runs in the Thread." },
+      ]),
+    )
+
+    // Asleep, it wakes for the compaction rather than refusing it.
+    expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
+    client.compact(readme)
+    await eventually(() => expect(findSession(client.getState(), readme)?.state).toBe("Active"))
+    await eventually(() =>
+      expect(
+        client
+          .getState()
+          .joined[readme]?.log.some((entry) => entry.event._tag === "CompactionStarted"),
+      ).toBe(true),
+    )
+    expect(failures).toHaveLength(1)
+
+    // An Archived one is refused, as for any thread command.
+    client.compact(flaky)
+    await eventually(() =>
+      expect(failures[1]).toMatchObject({
+        command: "CompactConversation",
+        message: "The Session is archived: restore it first.",
+      }),
+    )
+  })
+
+  test("a reply into a thread is sent with a request id, which its echo and a refusal carry", async () => {
+    const { client } = setUp({ you: bob, autoplay: false })
+    const failures = refusals(client)
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+
+    const threadId = await client.createThread(demo, TurnId.make("t-seed-1"), "What about Windows?")
+    // As on the Hub, the thread and its first prompt are logged before the answer comes.
+    const tags = client.getState().joined[demo]?.log.map((entry) => entry.event._tag) ?? []
+    expect(tags.lastIndexOf("ThreadStarted")).toBeGreaterThan(-1)
+    expect(tags.at(-1)).toBe("ThreadPromptSent")
+    const reply = client.promptThread(demo, threadId, "and macOS")
+    expect(reply).toBeDefined()
+    await eventually(() =>
+      expect(
+        client
+          .getState()
+          .joined[demo]?.log.some(
+            (entry) =>
+              entry.event._tag === "ThreadPromptSent" &&
+              entry.event.text === "and macOS" &&
+              entry.event.requestId === reply,
+          ),
+      ).toBe(true),
+    )
+    const lost = client.promptThread(demo, ThreadId.make("thr-nope"), "hello?")
+    await eventually(() =>
+      expect(failures).toMatchObject([{ command: "PromptThread", requestId: lost }]),
+    )
+    expect(client.promptThread(demo, threadId, "  ")).toBeUndefined()
+  })
+
+  test("without a Claude token, another connected Model can create and wake a Session", async () => {
     const { client } = setUp({ claudeCredential: null, autoplay: false })
     client.start()
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
-    await expect(
-      client.createSession({
-        repo: "kddige/kndl",
-        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
-      }),
-    ).rejects.toThrow("Add your Claude setup token")
+    const created = await client.createSession({
+      repo: "kddige/kndl",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
+    expect(created.model).toBe("openai/gpt-6-sol")
+    expect(created.harness).toBe("Pi")
 
     const readme = SessionId.make("s-readme")
     client.join(readme)
     await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
     client.wakeSession(readme)
-    const log = () => client.getState().joined[readme]?.log.map((entry) => entry.event) ?? []
-    await eventually(() =>
-      expect(log().at(-1)).toMatchObject({
-        _tag: "SessionStateChanged",
-        state: "Asleep",
-        message: "Claude Code could not start: Alice Kim has no Claude setup token on this Hub.",
-      }),
-    )
-    expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
+    await eventually(() => expect(findSession(client.getState(), readme)?.state).toBe("Active"))
   })
 
   test("without Models, a pi Session can't be woken, as on the Hub", async () => {
@@ -1259,7 +1386,7 @@ describe("Connected providers (ADR 0029)", () => {
     )
   })
 
-  test("on a Runner that runs both, the model says the Harness; Claude Code's default is asked for by name", async () => {
+  test("every Model runs on the durable agent, and its default is the first connected Model", async () => {
     const { client } = await online()
     const branch = { _tag: "Existing", name: "main", newWorkBranch: true } as const
     const pi = await client.createSession({
@@ -1270,29 +1397,18 @@ describe("Connected providers (ADR 0029)", () => {
       thinkingLevel: "high",
     })
     expect(pi).toMatchObject({ harness: "Pi", model: "openai/gpt-6-sol", thinkingLevel: "high" })
-    // A Claude Code alias is Claude Code's (ADR 0030).
     const sonnet = await client.createSession({
       repo: "kddige/kndl",
       branch,
       runnerId: RunnerId.make("r-pi"),
-      model: "sonnet",
+      model: "anthropic/claude-sonnet-5-5",
     })
-    expect(sonnet).toMatchObject({ harness: "ClaudeCode", model: "sonnet" })
-    const claudeCode = await client.createSession({
+    expect(sonnet).toMatchObject({ harness: "Pi", model: "anthropic/claude-sonnet-5-5" })
+    const byDefault = await client.createSession({
       repo: "kddige/kndl",
       branch,
       runnerId: RunnerId.make("r-pi"),
-      harness: "ClaudeCode",
     })
-    expect(claudeCode).toMatchObject({ harness: "ClaudeCode" })
-    expect(claudeCode.model).toBeUndefined()
-  })
-
-  test("sets which Harness runs Claude's Models in new Sessions, which the store keeps (ADR 0030)", async () => {
-    const { client } = await online()
-    await eventually(() => expect(client.getState().providers?.claudeHarness).toBe("ClaudeCode"))
-    const answered = await client.setClaudeHarness("Pi")
-    expect(answered.claudeHarness).toBe("Pi")
-    expect(client.getState().providers?.claudeHarness).toBe("Pi")
+    expect(byDefault).toMatchObject({ harness: "Pi", model: "anthropic/claude-opus-5-5" })
   })
 })

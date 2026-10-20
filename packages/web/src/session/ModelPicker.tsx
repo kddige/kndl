@@ -1,16 +1,13 @@
 import {
   type ConnectableProvider,
-  findModel,
   findProviderModel,
-  harnessOfModel,
   type ProviderModel,
   providerModelName,
-  type RunnerModels,
   takesThinkingLevel,
   type ThinkingLevel,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import {
   Button,
   ChevronDownIcon,
@@ -20,19 +17,15 @@ import {
   type SearchSelectGroup,
   Slider,
 } from "../ui/index.ts"
-import { color, space, text, weight } from "../ui/tokens.stylex.ts"
+import { space } from "../ui/tokens.stylex.ts"
 import {
   groupByProvider,
-  harnessNames,
   type ModelSetting,
-  modelName,
-  modelOf,
-  providerGroupLabel,
   providerModelLabel,
   providerModelOf,
+  providerName,
   thinkingLevelNames,
   thinkingLevelNotes,
-  thinkingLevelsOf,
 } from "./models.ts"
 
 const styles = stylex.create({
@@ -66,24 +59,7 @@ const styles = stylex.create({
   thinkingTrigger: {
     flexShrink: 0,
   },
-  // The setting as someone watching sees it: the pickers' labels, as text.
-  shown: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: space.s1,
-    minWidth: 0,
-    paddingInline: space.s2,
-    color: color.textSecondary,
-    fontSize: text.sm,
-    fontWeight: weight.medium,
-  },
 })
-
-/**
- * The value of Claude Code's `Default` row: no model set, Claude Code's default. Parentheses are
- * in no model name, so it is no alias's.
- */
-const defaultRow = "(default)"
 
 /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
 type Appearance = "bar" | "field"
@@ -96,23 +72,22 @@ const look = (appearance: Appearance) =>
 
 export interface ModelPickerProps {
   /**
-   * Claude Code's models, when the Session can run on it: its Runner runs Claude Code, and its
-   * Creator has a Claude credential. `models` is undefined until the Runner has said them, when
-   * only Claude Code's default is offered.
+   * The Models to pick from: a Session's Creator's, as SessionModels sent them, or, for a new
+   * Session, the signed-in person's own; undefined until the Hub has sent them.
    */
-  readonly claudeCode?: { readonly models: RunnerModels | undefined }
-  /**
-   * The Creator's Models through pi, when its Runner runs pi (ADR 0029), from their
-   * ProvidersState: undefined until the Hub has sent it. Each Provider's group is headed by the
-   * name the Hub gives it in `connectable`.
-   */
-  readonly pi?: {
-    readonly models: ReadonlyArray<ProviderModel> | undefined
-    readonly connectable?: ReadonlyArray<ConnectableProvider> | undefined
-  }
-  /** The setting: a `provider/id` model is pi's, anything else Claude Code's (ADR 0030). */
+  readonly models: ReadonlyArray<ProviderModel> | undefined
+  /** The Hub's names for the Providers, which head each group (ProvidersState). */
+  readonly connectable?: ReadonlyArray<ConnectableProvider> | undefined
+  /** The setting: a `provider/id` model, or none, for the Hub's pick. */
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
+  /**
+   * Whose Providers the Models are, by name, when they aren't the signed-in person's: a Session
+   * runs on its Creator's, who is the one to connect another.
+   */
+  owner?: string | undefined
+  /** A note under the list, such as whose accounts the Models are. */
+  footer?: ReactNode
   disabled?: boolean
   /** Which way the lists open: up, from the composer at the bottom of the page. */
   side?: MenuSide
@@ -120,94 +95,46 @@ export interface ModelPickerProps {
 }
 
 /**
- * The model a Session runs and its thinking level, as two small buttons side by side, as claude.ai
- * and ChatGPT pick them (#128): one named by the model opens the models, the other named by the
- * level opens a slider over the levels it takes, and is left out for a model that takes none.
+ * The model a Session or thread runs and its thinking level, as two small buttons side by side,
+ * as claude.ai and ChatGPT pick them (#128): one named by the model opens the models, the other
+ * named by the level opens a slider over the levels it takes, and is left out for a model that
+ * takes none.
  *
- * One list for every Session (ADR 0030), grouped by what runs each model: Claude Code's, from its
- * Runner, then Claude's through pi, then each other Provider's, valued as `openai/gpt-6-sol`. A
- * Provider can list hundreds (OpenRouter), so it opens with a search. Picking another Harness's
- * model is allowed: the Session switches Harness with a handoff, which its caller says first.
+ * One list, grouped by Provider, Claude's under Anthropic, valued as `openai/gpt-6-sol`. A
+ * Provider can list hundreds (OpenRouter), so it opens with a search.
  */
 export function ModelPicker({
-  claudeCode,
-  pi,
+  models,
+  connectable,
   value,
   onChange,
+  owner,
+  footer,
   disabled = false,
   side = "bottom",
   appearance = "bar",
 }: ModelPickerProps) {
-  const runnerModels = claudeCode?.models
-  const providerModels = pi?.models
-  const harness = harnessOfModel(value.model)
-  const onPi = harness === "Pi"
-  const runnerModel = onPi ? undefined : modelOf(runnerModels, value)
-  const providerModel = onPi ? providerModelOf(providerModels, value) : undefined
+  const model = providerModelOf(models, value)
   // A model that isn't listed takes no level here: the Hub would refuse one for it.
-  const levels = onPi
-    ? (providerModel?.thinkingLevels ?? [])
-    : runnerModel?.reasoning === true
-      ? thinkingLevelsOf(runnerModels)
-      : []
-  const name = onPi ? providerModelLabel(providerModels, value) : modelName(runnerModels, value)
+  const levels = model?.thinkingLevels ?? []
+  const name = providerModelLabel(models, value)
 
-  const groups: Array<SearchSelectGroup> = [
-    ...(claudeCode === undefined
-      ? []
-      : [
-          {
-            label: providerGroupLabel("anthropic", "ClaudeCode"),
-            options: [
-              {
-                value: defaultRow,
-                label:
-                  runnerModels === undefined
-                    ? "Default"
-                    : `Default · ${runnerModels.default.label}`,
-              },
-              ...(runnerModels?.models ?? []).map((option) => ({
-                value: option.alias,
-                label: option.label,
-                keywords: `${option.alias} ${option.id}`,
-              })),
-            ],
-          },
-        ]),
-    ...groupByProvider(providerModels ?? []).map((group) => ({
-      label: providerGroupLabel(group.provider, "Pi", pi?.connectable),
-      options: group.models.map((model) => ({
-        value: providerModelName(model),
-        label: model.label,
-        keywords: model.id,
-      })),
+  const groups: Array<SearchSelectGroup> = groupByProvider(models ?? []).map((group) => ({
+    label: providerName(group.provider, connectable),
+    options: group.models.map((each) => ({
+      value: providerModelName(each),
+      label: each.label,
+      keywords: each.id,
     })),
-  ]
-  const picked = onPi
-    ? providerModel && providerModelName(providerModel)
-    : value.model === undefined
-      ? defaultRow
-      : (runnerModel?.alias ?? value.model)
+  }))
+  const picked = model && providerModelName(model)
 
   // A level the model picked doesn't take is dropped: the Hub refuses it with one.
   const chooseModel = (row: string) => {
     const level = value.thinkingLevel
-    let takesLevel: boolean
-    if (row !== defaultRow && harnessOfModel(row) === "Pi") {
-      const model = providerModels && findProviderModel(providerModels, row)
-      takesLevel = level !== undefined && model !== undefined && takesThinkingLevel(model, level)
-    } else {
-      const model =
-        row === defaultRow ? runnerModels?.default : runnerModels && findModel(runnerModels, row)
-      takesLevel =
-        level !== undefined &&
-        model?.reasoning === true &&
-        thinkingLevelsOf(runnerModels).includes(level)
-    }
-    onChange({
-      ...(row !== defaultRow && { model: row }),
-      ...(takesLevel && level !== undefined && { thinkingLevel: level }),
-    })
+    const next = models && findProviderModel(models, row)
+    const takesLevel = level !== undefined && next !== undefined && takesThinkingLevel(next, level)
+    onChange({ model: row as never, ...(takesLevel && { thinkingLevel: level }) })
   }
   const chooseLevel = (thinkingLevel: ThinkingLevel | undefined) =>
     onChange({
@@ -222,12 +149,7 @@ export function ModelPicker({
         align="start"
         label={`Model: ${name}`}
         trigger={
-          <Button
-            {...look(appearance)}
-            disabled={disabled}
-            title={`${name}, on ${harnessNames[harness]}`}
-            sx={styles.trigger}
-          >
+          <Button {...look(appearance)} disabled={disabled} title={name} sx={styles.trigger}>
             <span {...stylex.props(styles.label)}>{name}</span>
             <ChevronDownIcon />
           </Button>
@@ -238,10 +160,13 @@ export function ModelPicker({
         searchLabel="Search Models"
         noMatch={(query) => `No Models match "${query}".`}
         empty={
-          pi !== undefined && providerModels === undefined
-            ? "Loading your Models…"
-            : "No Models yet. Connect a Provider on your Account page."
+          models === undefined
+            ? "Loading the Models…"
+            : owner === undefined
+              ? "No Models yet. Connect a Provider on your Account page."
+              : `No Models yet. ${owner} needs to connect a Provider on their Account page.`
         }
+        {...(footer !== undefined && { footer })}
       />
       {levels.length > 0 && (
         <ThinkingPicker
@@ -258,53 +183,10 @@ export function ModelPicker({
 }
 
 /**
- * The model a Session runs and its thinking level, named as the picker names them, from the same
- * models, for someone who can't change them: watching a Session they didn't start (ADR 0026). For a
- * pi Model, whose Creator's Models only they are sent, `knownLabel` is its name as the transcript
- * last gave it.
- */
-export function ModelSettingLabel({
-  claudeCode,
-  pi,
-  value,
-  knownLabel,
-}: Pick<ModelPickerProps, "claudeCode" | "pi" | "value"> & { knownLabel?: string | undefined }) {
-  let name: string
-  let takesLevel: boolean
-  if (harnessOfModel(value.model) === "Pi") {
-    const current = providerModelOf(pi?.models, value)
-    name = providerModelLabel(pi?.models, value, knownLabel)
-    // A Model not known here is shown with the level set: the Hub checked it.
-    takesLevel = current === undefined || current.thinkingLevels.length > 0
-  } else {
-    const models = claudeCode?.models
-    name = modelName(models, value)
-    // As the picker: a level only for a model that takes one.
-    takesLevel = modelOf(models, value)?.reasoning === true && thinkingLevelsOf(models).length > 0
-  }
-  const level =
-    takesLevel && value.thinkingLevel !== undefined
-      ? thinkingLevelNames[value.thinkingLevel]
-      : undefined
-  return (
-    <span title="The model and thinking level this Session runs on" {...stylex.props(styles.shown)}>
-      <span {...stylex.props(styles.label)}>{name}</span>
-      {level !== undefined && (
-        <>
-          <span aria-hidden="true">·</span>
-          <span>{level}</span>
-        </>
-      )}
-    </span>
-  )
-}
-
-/**
  * The thinking button and its slider. The slider shows where it is dragged or stepped to, and sets
  * the level where it is let go or clicked, on Enter, or when it closes other than by Escape on a
  * level other than the one set; Escape takes it back. Each change goes to the Hub, and between
- * Turns pi switches to it and Claude Code restarts, which asks first while agents run, so stepping
- * through the levels doesn't set each.
+ * Turns the agent switches to it, so stepping through the levels doesn't set each.
  */
 function ThinkingPicker({
   levels,

@@ -47,7 +47,7 @@ const copy = {
   },
   invite: {
     title: "You're invited to kndl",
-    lede: "Sign in with GitHub to join this Hub, where people watch and drive Claude Code Sessions together.",
+    lede: "Sign in with GitHub to join this Hub, where people watch and drive agent Sessions together.",
     broken:
       "Open the Invite as it was sent to you, all of it: the part after # is what lets you in.",
     signedIn: "This Invite is for someone who isn't a Member yet. It is still unused.",

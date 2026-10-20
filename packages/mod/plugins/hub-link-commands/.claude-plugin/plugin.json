@@ -1,7 +1,0 @@
-{
-  "name": "hub-link-commands",
-  "version": "0.3.0",
-  "description": "Runs its kndl's commands in a Claude Code Session: prompts, stops, and messages to subagents.",
-  "author": { "name": "kddige" },
-  "types": "./types/index.d.ts"
-}

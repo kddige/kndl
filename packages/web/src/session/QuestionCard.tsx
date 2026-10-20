@@ -166,21 +166,18 @@ const styles = stylex.create({
 })
 
 /**
- * A question Claude asked (#193), docked above the prompt box: the card to answer it, or, once
- * someone else has, who did and how. Only the Session's Creator answers (ADR 0026): anyone else
- * sees the question, and what the Creator picks, without the controls to answer it.
+ * A question the agent asked (#193), docked above the prompt box: the card to answer it, or, once
+ * someone else has, who did and how. Anyone in the Session answers it, as everyone drives it in
+ * the Pi Durable spike (docs/design/durable-harness.md); each sees what the others pick.
  */
 export function QuestionDock({
   summary,
   questions,
   picks,
-  drives,
 }: {
   summary: SessionSummary
   questions: ReadonlyMap<ToolCallId, QuestionView>
   picks: QuestionPicksState | null
-  /** Whether the signed-in person drives the Session, and so answers it. */
-  drives: boolean
 }) {
   const hub = useHub()
   const you = useHubState((state) => state.you)
@@ -200,16 +197,12 @@ export function QuestionDock({
         open={open}
         picks={picks?.toolCallId === open.toolCallId ? picks.picks : []}
         you={you}
-        {...(drives
-          ? {
-              onAnswer: (answer: QuestionAnswerFromWeb) => {
-                const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
-                if (!sent) notSent("Answer")
-                return sent
-              },
-              onPick,
-            }
-          : { answerer: summary.creator.name })}
+        onAnswer={(answer: QuestionAnswerFromWeb) => {
+          const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
+          if (!sent) notSent("Answer")
+          return sent
+        }}
+        onPick={onPick}
       />
     )
   }
@@ -229,8 +222,8 @@ export function QuestionDock({
 }
 
 /**
- * The question last shown here, once someone else has closed it: answered at the terminal or by
- * another Participant first, or dismissed. Not a Stop's, which the transcript says.
+ * The question last shown here, once someone else has closed it: answered by another
+ * Participant first, or dismissed. Not a Stop's, which the transcript says.
  */
 function useClosedQuestion(
   open: OpenQuestion | undefined,
@@ -248,9 +241,9 @@ function useClosedQuestion(
 }
 
 /**
- * Answers Claude's questions, one at a time, as Claude Code's dialog does: an option, several for
- * a multi-select question, or something else typed in. Picking the last question's answer sends
- * them all; Skip leaves a question unanswered, and × dismisses them, as Esc does at the terminal.
+ * Answers the agent's questions, one at a time: an option, several for a multi-select question,
+ * or something else typed in. Picking the last question's answer sends them all; Skip leaves a
+ * question unanswered, and × dismisses them.
  * Without `onAnswer`, it only shows them, waiting on `answerer`.
  */
 export function QuestionCard({
@@ -312,7 +305,7 @@ function AnsweredQuestion({
   const waitsFor =
     open.async === true
       ? "The agent works on meanwhile, and reads your answer when it comes."
-      : "It waits for an answer here or at the terminal."
+      : "It waits for an answer."
 
   // Everyone sees what the others have picked so far, a moment after they pick it.
   const shared = useRef<Record<string, string>>({})
@@ -663,8 +656,8 @@ function WatchedQuestion({
           {open.async === true
             ? `${answerer === undefined ? "An answer" : `${answerer}'s answer`} reaches the agent when it comes: it works on meanwhile.`
             : answerer === undefined
-              ? "Waiting on an answer, here or at the terminal."
-              : `Waiting on ${answerer} to answer, here or at the terminal.`}
+              ? "Waiting on an answer."
+              : `Waiting on ${answerer} to answer.`}
         </span>
       </div>
     </div>

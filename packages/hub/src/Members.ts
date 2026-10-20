@@ -15,11 +15,8 @@
 //   new Invite to come back. Their Sessions and their Claude credential stay, but their awake
 //   Sessions are put to sleep, and none wakes on their credential until they are back (ADR 0026,
 //   SessionRelay.ts). The Owner can't be removed.
-// - Each Member chooses which Harness runs Claude's Models in their new Sessions (ADR 0030): Claude
-//   Code unless they chose pi.
 
 import {
-  type Harness,
   InviteId,
   InviteLifetimeMs,
   type Member,
@@ -118,16 +115,6 @@ export class Members extends Context.Service<
      * Owner.
      */
     readonly newSetupLink: Effect.Effect<string, SqlError | SetupLinkRefused>
-    /**
-     * Which Harness runs Claude's Models in the Member's new Sessions (ADR 0030): Claude Code, on
-     * their setup token, unless they chose pi.
-     */
-    readonly claudeHarness: (id: ParticipantId) => Effect.Effect<Harness, SqlError>
-    /** Sets which Harness runs Claude's Models in the Member's new Sessions. */
-    readonly setClaudeHarness: (
-      id: ParticipantId,
-      harness: Harness,
-    ) => Effect.Effect<void, SqlError>
   }
 >()("@kndl/hub/Members") {
   static readonly layer = Layer.effect(
@@ -343,24 +330,6 @@ export class Members extends Context.Service<
         return rows.length > 0
       })
 
-      const claudeHarness = Effect.fn("Members.claudeHarness")(function* (id: ParticipantId) {
-        const chosen = yield* sql<{ readonly harness: string | null }>`
-          SELECT claude_harness AS harness FROM participants WHERE id = ${id}
-        `
-        return chosen[0]?.harness === "Pi" ? ("Pi" as const) : ("ClaudeCode" as const)
-      })
-
-      const setClaudeHarness = Effect.fn("Members.setClaudeHarness")(function* (
-        id: ParticipantId,
-        harness: Harness,
-      ) {
-        // Claude Code, the default, is kept as none.
-        yield* sql`
-          UPDATE participants SET claude_harness = ${harness === "Pi" ? harness : null}
-          WHERE id = ${id}
-        `
-      })
-
       return Members.of({
         admit,
         admitLocal,
@@ -372,8 +341,6 @@ export class Members extends Context.Service<
         pendingInvites,
         revokeInvite,
         newSetupLink,
-        claudeHarness,
-        setClaudeHarness,
       })
     }),
   )

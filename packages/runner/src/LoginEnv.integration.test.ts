@@ -1,11 +1,11 @@
 // An Environment's login environment (#67) on a real microsandbox VM, so it is skipped unless
 // KNDL_SANDBOX_IT=1: a build on buildpack-deps:bookworm whose bootstrap installs mise, puts
 // its activation in ~/.bashrc and installs bun with it, then a Session whose start script and
-// whose Claude Code's environment both find `bun` with nothing else done, and a stored probe that
+// whose agent's environment both find `bun` with nothing else done, and a stored probe that
 // holds no variable's value; then a Test build on Alpine, which has no bash. It needs `msb`
 // installed for the current user and network access to Docker Hub, mise.run and GitHub (for mise
 // and bun), and to npm the first time a Claude Code version is cached. It runs no Claude Code,
-// only shell commands with the environment Claude Code would get: no model calls, no
+// only shell commands with the environment the agent would get: no model calls, no
 // credentials; the variables are made up. Everything it creates is named it-67-… and removed at the end, pass or
 // fail.
 //
@@ -29,7 +29,7 @@ import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { loginEnvGuestPath, readLoginEnv } from "./EnvironmentBuilds.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude } from "./Sandbox.ts"
+import type { SandboxPi } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
@@ -59,15 +59,15 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     }),
   )
 
-/** Runs `command` in the Session's Sandbox with Claude Code's environment, in the Workspace. */
-const bash = (sessionId: SessionId, claude: SandboxClaude, command: string) =>
+/** Runs `command` in the Session's Sandbox with the agent's environment, in the Workspace. */
+const bash = (sessionId: SessionId, pi: SandboxPi, command: string) =>
   Effect.gen(function* () {
     const backend = yield* SandboxBackend
     const ran = yield* backend.exec(sessionId, {
       command: "bash",
       args: ["-c", command],
       cwd: workspaceGuestPath,
-      env: claude.env,
+      env: pi.env,
     })
     return ran.stdout + ran.stderr
   })
@@ -171,18 +171,18 @@ test.skipIf(!enabled)(
       expect(terminal).toContain("start saw the runtime variable")
       expect(terminal).toMatch(/start bun \d+\.\d+\.\d+ at \/root\/\.local\/share\/mise\//)
 
-      // Claude Code's environment finds bun too, and the variables. (Its Bash tool also sources
+      // The agent's environment finds bun too, and the variables. (Its Bash tool also sources
       // ~/.bashrc for the functions there itself.)
       const tool = yield* timed(
-        "Bash with Claude Code's environment: bun --version",
-        bash(sessionId, started.claude, 'echo "tool bun $(bun --version) [$RUNTIME_ONLY]"'),
+        "Bash with the agent's environment: bun --version",
+        bash(sessionId, started.pi, 'echo "tool bun $(bun --version) [$RUNTIME_ONLY]"'),
       )
       expect(tool).toMatch(/tool bun \d+\.\d+\.\d+/)
       expect(tool).toContain(`[${runtimeValue}]`)
 
       // The stored probe ran with no variable: the ~/.bashrc line saw neither, and no value is
       // anywhere in it.
-      const stored = yield* bash(sessionId, started.claude, `cat ${loginEnvGuestPath}`)
+      const stored = yield* bash(sessionId, started.pi, `cat ${loginEnvGuestPath}`)
       expect(stored).toContain("IT67_SEEN")
       expect(stored).toContain("[][]")
       expect(stored).toContain("mise")
@@ -197,7 +197,7 @@ test.skipIf(!enabled)(
         "wake, same version",
         sandboxes.start(sessionId, directories, { repo, environment: v1 }),
       )
-      expect(yield* bash(sessionId, woken.claude, "bun --version")).toMatch(/\d+\.\d+\.\d+/)
+      expect(yield* bash(sessionId, woken.pi, "bun --version")).toMatch(/\d+\.\d+\.\d+/)
 
       // A Sandbox of a build made before builds kept a login environment reads as having none.
       const backend = yield* SandboxBackend

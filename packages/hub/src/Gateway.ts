@@ -14,10 +14,10 @@
 //   noted, so a refusal of it later is tried once more too.
 // - A redirect isn't followed. Bodies stream both ways; answers come back compressed or not, as
 //   sent.
-// - A pi Session's model call (ADR 0029) goes to its Provider's own API, through its Creator's
+// - A Session's model call (ADR 0029) goes to its Provider's own API, through its Creator's
 //   Connected provider (ConnectedProviders' `call`), if it is one of the calls pi makes there: an
 //   inference or model-listing endpoint of one of the Provider's Models' APIs (PiProviders.ts).
-//   Not a Claude Code Session's, nor one its Creator's connection can't take now, which is refused
+//   Not one its Creator's connection can't take now, which is refused
 //   before its body is read. A Session runs a few at once, and the Hub holds a sign-in's bodies,
 //   to send again once a sign-in refused is refreshed, up to ModelCallLimits; an API key's stream
 //   through. The answer streams back; a redirect isn't followed.
@@ -199,8 +199,6 @@ export type ModelCallSent =
     }
   /** The Session isn't Active, or there is no such Session. */
   | { readonly _tag: "NotActive" }
-  /** The Session runs Claude Code, which reaches no Connected provider. */
-  | { readonly _tag: "NotPi" }
   /** Not one of the calls pi makes to the Provider's API: nothing else is sent. */
   | { readonly _tag: "NotAllowed" }
   /** The path would leave the Provider's API. */
@@ -557,7 +555,6 @@ export class Gateway extends Context.Service<
       ): Effect.fn.Return<ModelCallSent, SqlError> {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session) || session.value.state !== "Active") return { _tag: "NotActive" }
-        if (session.value.harness !== "Pi") return { _tag: "NotPi" }
         if (upstreamUrl("https://gateway.invalid", call.path) === undefined) {
           return { _tag: "BadAddress" }
         }

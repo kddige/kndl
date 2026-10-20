@@ -39,6 +39,13 @@ export const AgentId = Schema.NonEmptyString.pipe(Schema.brand("AgentId"))
 export type AgentId = typeof AgentId.Type
 
 /**
+ * A thread of a Session (docs/design/durable-harness.md): a conversation forked off the main
+ * loop at one of its Turns, minted by the Hub. Absent on the main loop's events.
+ */
+export const ThreadId = Schema.NonEmptyString.pipe(Schema.brand("ThreadId"))
+export type ThreadId = typeof ThreadId.Type
+
+/**
  * A Session's conversation as its Harness names it, which the Harness takes back to resume it
  * when the Session wakes: Claude Code's session id, or pi's. The mod sends it from the Sandbox, and
  * the Runner names files on the host after it, so only a plain name decodes: never `../` or a path.

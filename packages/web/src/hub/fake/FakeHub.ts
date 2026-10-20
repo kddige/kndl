@@ -11,10 +11,10 @@
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too. What it refuses of a Session, and how its Prompt
 // queue and Steer behave, it decides by the protocol's Session rules (SessionRules.ts), as the real
-// Hub does; HubContract.test.ts runs the same HubClient tests against both. Only a Session's
-// Creator drives it (ADR 0026), on their setup token: the fake refuses anyone else's prompts,
-// answers, stops, controls and terminal, and assumes every Creator but the signed-in person has a
-// token stored.
+// Hub does; HubContract.test.ts runs the same HubClient tests against both. Every Session runs the
+// durable agent (docs/design/durable-harness.md) on its Creator's Models, which everyone who joins
+// it is sent, and everyone drives it: prompts, steers, stops, answers, threads, compaction and the
+// terminal. Its threads stream beside the main loop, and a post into a busy one steers it.
 
 import {
   admissionLink,
@@ -30,8 +30,6 @@ import {
   CliLoginCodeLifetimeMs,
   QuestionClosed,
   questionClosedText,
-  findModel,
-  harnessOfModel,
   formatCliLoginCode,
   formatPairingCode,
   deliveryBlocked,
@@ -84,6 +82,7 @@ import {
   attachmentsNotSent,
   stopAgentRefusal,
   stopTurnRefusal,
+  threadTitleFrom,
   type Harness,
   type ThinkingLevel,
   UpdateDrainMillis,
@@ -102,8 +101,10 @@ import type {
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
 import { FakeMcpServers, type McpServerChangeCommand } from "./mcpServers.ts"
 import {
+  claudeModels,
   FakeProviders,
   pasteProblem,
+  providerModels,
   providerName,
   seedProviders,
   signInSteps,
@@ -124,6 +125,8 @@ import {
   seedRunners,
   seedSessions,
   taskNotification,
+  backoffThreadId,
+  threadReplyTo,
   you as defaultYou,
 } from "./script.ts"
 import { FakeTerminal } from "./terminal.ts"
@@ -153,6 +156,8 @@ import type {
   SessionInstallationWire,
   SessionSummaryWire,
   SignInStepWire,
+  ThreadSummaryWire,
+  ProviderModelWire,
 } from "./wire.ts"
 
 const decodeParticipant = Schema.decodeUnknownSync(Participant)
@@ -206,11 +211,6 @@ export interface FakeHubOptions {
    * its Models.
    */
   providers?: ReadonlyArray<ConnectedProviderWire>
-  /**
-   * Which Harness runs Claude's Models in the signed-in person's new Sessions, as their Account
-   * page sets it (ADR 0030). Default Claude Code.
-   */
-  claudeHarness?: Harness
   /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
@@ -240,13 +240,6 @@ interface FakeSession {
    * or failed: each keeps its place in the queue until then.
    */
   steering: Set<string>
-  /** Whether its mod said in its hello that it steers (#195): one from before steering doesn't. */
-  modSteers: boolean
-  /**
-   * Whether its mod said in its hello that it marks the attachments of a steered prompt, a
-   * message to a subagent and a reply (#278): one from before doesn't.
-   */
-  modAttaches: boolean
   /** People the script puts in the Session, besides whoever is connected. */
   guests: Array<PresentParticipantWire>
   /** Cancels the running Turn's remaining steps. */
@@ -261,7 +254,76 @@ interface FakeSession {
   ports: ReadonlyArray<OpenPortWire>
   /** Its Open question (#193), while Claude waits for an answer. */
   asking?: FakeQuestion | null
+  /** Its threads (docs/design/durable-harness.md), in the order they started. */
+  threads: Map<string, FakeThread>
+  /** What its main loop has spent so far, in dollars. */
+  spent: number
 }
+
+/** A thread of a Session's, as the Hub and the durable agent hold it. */
+interface FakeThread {
+  summary: ThreadSummaryWire
+  /** Its running Turn, if any. */
+  turnId: string | null
+  /** Ends its running Turn early, as a stop does; null while none runs. */
+  stop: (() => void) | null
+  /** What it has spent so far, in dollars. */
+  spent: number
+}
+
+/** A seeded Session's threads, as its log says they are, and what each spent. */
+function threadsFromLog(log: ReadonlyArray<LogEntryWire>): Map<string, FakeThread> {
+  const threads = new Map<string, FakeThread>()
+  for (const { event } of log) {
+    // As in Sessions.threadsOf, a summary needs a known model; old history may lack one.
+    if (event._tag === "ThreadStarted" && event.model !== undefined) {
+      threads.set(event.threadId, {
+        summary: {
+          id: event.threadId,
+          title: event.title,
+          anchorTurnId: event.anchorTurnId,
+          startedBy: event.startedBy,
+          running: false,
+          model: event.model,
+          ...(event.thinkingLevel !== undefined && { thinkingLevel: event.thinkingLevel }),
+        },
+        turnId: null,
+        stop: null,
+        spent: 0,
+      })
+    }
+    if (event._tag === "UsageChanged" && event.threadId !== undefined) {
+      const thread = threads.get(event.threadId)
+      if (thread) thread.spent = event.usage.cost
+    }
+  }
+  return threads
+}
+
+/** What a seeded Session's main loop spent, as its log last said. */
+function spentFromLog(log: ReadonlyArray<LogEntryWire>): number {
+  const said = log.findLast(
+    ({ event }) =>
+      event._tag === "UsageChanged" && event.threadId === undefined && event.agentId === undefined,
+  )?.event
+  return said?._tag === "UsageChanged" ? said.usage.cost : 0
+}
+
+/** What a conversation spends on a Turn of `steps`, made up, in dollars. */
+const turnCost = (steps: number) => 0.012 + steps * 0.004
+
+/** The request id a command carries, for the Hub to name in what it refuses. */
+const requestIdOf = (message: object): string | undefined =>
+  "requestId" in message && typeof message.requestId === "string" ? message.requestId : undefined
+
+/** The running total a UsageChanged says, from dollars. */
+const usageOf = (cost: number) => ({
+  input: Math.round(cost * 40_000),
+  output: Math.round(cost * 6_000),
+  cacheRead: Math.round(cost * 300_000),
+  cacheWrite: Math.round(cost * 20_000),
+  cost: Math.round(cost * 10_000) / 10_000,
+})
 
 /** An Open question, as the mod and the Hub hold it (#193). */
 interface FakeQuestion {
@@ -346,18 +408,8 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
-/** Why a Session can't be created without the person's own setup token (ADR 0026). */
-const noCredentialText =
-  "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
-
 /** A Harness as the Hub names it in what it says, Claude Code for a Session that says none. */
 const harnessName = (harness: Harness | undefined) => (harness === "Pi" ? "pi" : "Claude Code")
-
-/**
- * Whether a model switch from a Session running on `now` to a model of `to` stops its agent, as
- * the Hub's relaunch does, interrupting its agents: all but pi's, which switches in place.
- */
-const relaunches = (now: Harness, to: Harness) => now !== "Pi" || to !== "Pi"
 
 /** Why a pi Session can't wake for its Creator, as the Hub words it (Harnesses.ts). */
 const noModelsToWakeText =
@@ -486,7 +538,7 @@ export class FakeHub implements HubTransport {
     this.#hubUpdateRun = options.hubUpdateRun ?? null
     this.#hubUpdateOutcome = options.hubUpdateOutcome ?? "Succeeded"
     this.#reply = options.reply ?? replyTo
-    this.providers = new FakeProviders(options.providers ?? seedProviders(), options.claudeHarness)
+    this.providers = new FakeProviders(options.providers ?? seedProviders())
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -495,6 +547,8 @@ export class FakeHub implements HubTransport {
       this.sessions.set(seed.summary.id, {
         summary: {
           ...seed.summary,
+          // Every Session runs the durable agent now.
+          harness: "Pi",
           ...(listed.length > 0 && { agents: listed }),
           ...(seed.summary.state === "Active" &&
             seed.ports !== undefined && { openPorts: seed.ports }),
@@ -504,14 +558,14 @@ export class FakeHub implements HubTransport {
         queue: [],
         inFlight: null,
         steering: new Set(),
-        modSteers: true,
-        modAttaches: true,
         guests: [],
         stopTurn: null,
         terminal: null,
         startLog: "",
         agents,
         ports: seed.ports ?? [],
+        threads: threadsFromLog(log),
+        spent: spentFromLog(log),
       })
     }
   }
@@ -693,29 +747,6 @@ export class FakeHub implements HubTransport {
   }
 
   /**
-   * The Session's Claude Code runs a mod from before steering (#195), as on a Runner not updated
-   * yet: its queued prompts can't be steered. In the browser,
-   * `fakeHub.modFromBeforeSteering("s-demo")` in the console.
-   */
-  modFromBeforeSteering(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (session) {
-      session.modSteers = false
-      session.modAttaches = false
-    }
-  }
-
-  /**
-   * The Session's Claude Code runs a mod from before attachments went beyond prompts (#278): it
-   * steers, but files can't be steered, sent to a subagent or replied with. In the browser,
-   * `fakeHub.modFromBeforeAttaching("s-demo")` in the console.
-   */
-  modFromBeforeAttaching(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (session) session.modAttaches = false
-  }
-
-  /**
    * The attachments a prompt, message or reply names, marked sent as the Hub marks them (#276,
    * #278): only those its sender uploaded to the Session, all or none; none, having refused the
    * command, if not.
@@ -725,6 +756,7 @@ export class FakeHub implements HubTransport {
     message: {
       readonly _tag: string
       readonly sessionId: string
+      readonly requestId?: string
       readonly attachments?: ReadonlyArray<string>
     },
     what: string,
@@ -736,7 +768,13 @@ export class FakeHub implements HubTransport {
         : [],
     )
     if (taken.length === named.length) return taken
-    this.#fail(socket, message._tag, attachmentsNotSent(what).refusal, message.sessionId)
+    this.#fail(
+      socket,
+      message._tag,
+      attachmentsNotSent(what).refusal,
+      message.sessionId,
+      message.requestId,
+    )
     return undefined
   }
 
@@ -991,7 +1029,7 @@ export class FakeHub implements HubTransport {
       session.guests.push({ ...bob, forwardingFrom: ["bob-mbp"] })
       this.#presence(session)
     })
-    // Its Creator prompts it, as from another tab: only they drive it (ADR 0026).
+    // Alice prompts it, as from another tab.
     this.#after(6, () =>
       this.#prompt(
         session,
@@ -1000,6 +1038,12 @@ export class FakeHub implements HubTransport {
         scriptedTurn,
       ),
     )
+    // While it works, Bob asks more in his thread: it answers beside the main conversation.
+    this.#after(22, () => {
+      const thread = session.threads.get(backoffThreadId)
+      if (thread)
+        this.#threadPrompt(session, thread, bob, "And on flaky Wi-Fi, does it ever give up?")
+    })
   }
 
   // ── The channel ──────────────────────────────────────────────────────────
@@ -1099,11 +1143,6 @@ export class FakeHub implements HubTransport {
       }
       case "RefreshProviderModels":
         this.providers.refresh(message.provider)
-        this.#providersChanged(socket, message.requestId)
-        break
-      // Which Harness runs Claude's Models in the person's new Sessions (ADR 0030).
-      case "SetClaudeHarness":
-        this.providers.claudeHarness = message.harness
         this.#providersChanged(socket, message.requestId)
         break
       case "StartSignIn":
@@ -1260,16 +1299,12 @@ export class FakeHub implements HubTransport {
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
-          ...(message.harness !== undefined && { harness: message.harness }),
           ...(message.model !== undefined && { model: message.model }),
           ...(message.thinkingLevel !== undefined && { thinkingLevel: message.thinkingLevel }),
         })
         break
-      // As the Hub does (#128): its Creator may (ADR 0026), but not in an Archived Session; the
-      // Runner's Claude Code must have the model and level. A running Turn finishes on the old
-      // model. The model says its Harness (ADR 0030): one of the other Harness's, that the
-      // Session's Runner runs, switches the Session to it once no Turn runs, which ModelSwitched
-      // says when the setting was the other Harness's.
+      // Everyone picks from the Creator's Models. A busy conversation switches between Turns,
+      // without relaunching the durable agent or interrupting its threads and subagents.
       case "SetSessionModel": {
         const session = this.#drivenFor(socket, message)
         if (!session) break
@@ -1278,20 +1313,9 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
-        const was = harnessOfModel(session.summary.model)
-        const harness = harnessOfModel(message.model)
-        const now = session.summary.harness ?? "ClaudeCode"
-        const checked =
-          harness === "Pi"
-            ? this.#checkProviderModel(message)
-            : this.#checkModel(session.summary.runnerId, message)
+        const checked = this.#checkProviderModel(message, this.#sessionModels(session))
         if (typeof checked === "string") {
           this.#fail(socket, message._tag, checked, message.sessionId)
-          break
-        }
-        const refusal = harness !== now ? this.#harnessRefusal(session, harness) : undefined
-        if (refusal !== undefined) {
-          this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
         const { model: _, thinkingLevel: __, modelPending: ___, ...rest } = session.summary
@@ -1300,14 +1324,10 @@ export class FakeHub implements HubTransport {
           session.summary.thinkingLevel === checked.thinkingLevel
         )
           break
-        // Once no Turn runs, pi switches in place; Claude Code restarts with it, and a switch of
-        // Harness relaunches the agent in the same Sandbox, both interrupting its agents. Until
-        // then, the Session runs on the Harness it ran on.
         const pending = session.summary.currentTurn !== null
-        if (!pending && relaunches(now, harness)) this.#interruptAgents(session)
         session.summary = {
           ...rest,
-          harness: pending ? now : harness,
+          harness: "Pi",
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
           ...(pending && { modelPending: true }),
@@ -1318,7 +1338,6 @@ export class FakeHub implements HubTransport {
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.label !== undefined && { modelLabel: checked.label }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
-          ...(harness !== was && { harness }),
         })
         this.#summaryChanged(session)
         break
@@ -1337,6 +1356,12 @@ export class FakeHub implements HubTransport {
           _tag: "PromptQueueChanged",
           sessionId: message.sessionId,
           queue: session.queue,
+        })
+        // Its Creator's Models, so anyone can switch it or start a thread on another.
+        socket.deliver({
+          _tag: "SessionModels",
+          sessionId: message.sessionId,
+          models: [...this.#sessionModels(session)],
         })
         if (session.asking && session.asking.picks.length > 0) {
           socket.deliver({
@@ -1364,6 +1389,201 @@ export class FakeHub implements HubTransport {
         socket.joined.delete(message.sessionId)
         const session = this.sessions.get(message.sessionId)
         if (session) this.#presence(session)
+        break
+      }
+      // Threads (docs/design/durable-harness.md): anyone starts one off a main-loop Turn, posts
+      // into it, stops it or switches its Model.
+      case "CreateThread": {
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
+        const { requestId } = message
+        if (session.summary.state === "Archived") {
+          this.#fail(
+            socket,
+            message._tag,
+            "The Session is archived: restore it first.",
+            message.sessionId,
+            requestId,
+          )
+          break
+        }
+        const anchored = session.log.some(
+          ({ event }) =>
+            event._tag === "TurnStarted" &&
+            event.turnId === message.anchorTurnId &&
+            event.threadId === undefined,
+        )
+        if (!anchored) {
+          this.#fail(
+            socket,
+            message._tag,
+            "There is no such Turn in the Session to start a Thread off.",
+            message.sessionId,
+            requestId,
+          )
+          break
+        }
+        // A thread has a model of its own, as on the Hub: the Session's as it is now when none is
+        // asked for, which it keeps, and the thinking level goes with the model it was asked on.
+        const own = message.model !== undefined
+        const model =
+          message.model ?? (session.summary.harness === "Pi" ? session.summary.model : undefined)
+        const thinkingLevel = own
+          ? message.thinkingLevel
+          : (message.thinkingLevel ?? session.summary.thinkingLevel)
+        const checked = this.#checkProviderModel(
+          {
+            ...(model !== undefined && { model }),
+            ...(thinkingLevel !== undefined && { thinkingLevel }),
+          },
+          this.#sessionModels(session),
+        )
+        if (typeof checked === "string") {
+          this.#fail(socket, message._tag, checked, message.sessionId, requestId)
+          break
+        }
+        // Woken first, then marked sent, then logged, in the Hub's order.
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a Thread", this.#you)
+        const attachments = this.#markSentOrRefuse(socket, message, "prompt")
+        if (!attachments) break
+        const threadId = `thr-${++this.#ids}`
+        const thread: FakeThread = {
+          summary: {
+            id: threadId,
+            title: threadTitleFrom(message.text === "" ? "Attachments" : message.text),
+            anchorTurnId: message.anchorTurnId,
+            startedBy: this.#you,
+            running: false,
+            model: checked.model,
+            ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
+          },
+          turnId: null,
+          stop: null,
+          spent: 0,
+        }
+        session.threads.set(threadId, thread)
+        this.#append(session, {
+          _tag: "ThreadStarted",
+          threadId,
+          anchorTurnId: message.anchorTurnId,
+          title: thread.summary.title,
+          startedBy: this.#you,
+          model: thread.summary.model,
+          ...(thread.summary.thinkingLevel !== undefined && {
+            thinkingLevel: thread.summary.thinkingLevel,
+          }),
+        })
+        this.#threadPrompt(session, thread, this.#you, message.text, attachments, requestId)
+        socket.deliver({ _tag: "ThreadCreated", requestId, sessionId: message.sessionId, threadId })
+        this.#threadsChanged(session)
+        break
+      }
+      case "PromptThread": {
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
+        if (session.summary.state === "Archived") {
+          this.#fail(
+            socket,
+            message._tag,
+            "The Session is archived: restore it first.",
+            message.sessionId,
+            message.requestId,
+          )
+          break
+        }
+        const thread = this.#threadFor(socket, session, message)
+        if (!thread) break
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken by a Thread", this.#you)
+        const attachments = this.#markSentOrRefuse(socket, message, "prompt")
+        if (!attachments) break
+        this.#threadPrompt(session, thread, this.#you, message.text, attachments, message.requestId)
+        break
+      }
+      case "StopThread": {
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
+        const thread = this.#threadFor(socket, session, message)
+        if (!thread) break
+        // As on the Hub, there is nothing to stop in a thread that isn't replying.
+        if (!thread.summary.running) {
+          this.#fail(socket, message._tag, "No Turn runs in the Thread.", message.sessionId)
+          break
+        }
+        this.#append(session, {
+          _tag: "TurnStopRequested",
+          by: this.#you,
+          threadId: thread.summary.id,
+        })
+        thread.stop?.()
+        break
+      }
+      case "SetThreadModel": {
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
+        const thread = this.#threadFor(socket, session, message)
+        if (!thread) break
+        const checked = this.#checkProviderModel(message, this.#sessionModels(session))
+        if (typeof checked === "string") {
+          this.#fail(socket, message._tag, checked, message.sessionId)
+          break
+        }
+        const { model: _, thinkingLevel: __, ...rest } = thread.summary
+        thread.summary = {
+          ...rest,
+          model: checked.model,
+          ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
+        }
+        this.#append(session, {
+          _tag: "ThreadModelChanged",
+          threadId: thread.summary.id,
+          by: this.#you,
+          model: checked.model,
+          ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
+        })
+        this.#threadsChanged(session)
+        break
+      }
+      // The agent summarizes the conversation's older messages, a few steps later.
+      case "CompactConversation": {
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
+        const thread =
+          message.threadId === undefined ? undefined : this.#threadFor(socket, session, message)
+        if (message.threadId !== undefined && !thread) break
+        if (session.summary.state === "Archived") {
+          this.#fail(
+            socket,
+            message._tag,
+            "The Session is archived: restore it first.",
+            message.sessionId,
+          )
+          break
+        }
+        const of = message.threadId === undefined ? {} : { threadId: message.threadId }
+        const compact = () => {
+          this.#append(session, {
+            _tag: "CompactionStarted",
+            ...of,
+            reason: "manual",
+            by: this.#you,
+          })
+          this.#after(10, () =>
+            this.#append(session, {
+              _tag: "CompactionEnded",
+              ...of,
+              outcome: "compacted",
+              summary: `${thread ? `In "${thread.summary.title}"` : "So far"}: ${message.instructions ? `(keeping ${message.instructions}) ` : ""}the web client reconnects with afterSeq and a 10s backoff cap, and tool calls start collapsed. Tests pass.`,
+            }),
+          )
+        }
+        // An Asleep Session is woken for it, as for a prompt; the agent compacts once it is up.
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken to compact", this.#you)
+        const run = () => {
+          const { state, starting } = session.summary
+          if (state === "Active" && starting === undefined) compact()
+          else this.#after(2, run)
+        }
+        this.#after(1, run)
         break
       }
       case "SendPrompt": {
@@ -1405,10 +1625,6 @@ export class FakeHub implements HubTransport {
             session.summary.state === "Active" &&
             session.summary.currentTurn !== null &&
             !this.#goingToSleep(session),
-          modSteers: session.modSteers,
-          hasAttachments:
-            (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1454,7 +1670,6 @@ export class FakeHub implements HubTransport {
         const cantAttach = answerAttachmentsRefusal({
           replied: answer._tag === "Replied",
           hasAttachments: (message.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (cantAttach !== undefined) {
           this.#fail(socket, message._tag, cantAttach.refusal, message.sessionId)
@@ -1487,8 +1702,6 @@ export class FakeHub implements HubTransport {
           state: session.summary.state,
           goingToSleep: this.#goingToSleep(session),
           agentKnown: session.agents.has(message.agentId),
-          hasAttachments: (message.attachments?.length ?? 0) > 0,
-          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1965,55 +2178,16 @@ export class FakeHub implements HubTransport {
   // ── What the Hub does ────────────────────────────────────────────────────
 
   /**
-   * A model setting as the Runner's Claude Code has it, as the Hub checks it (#128): the setting
-   * to keep, with the `default` alias as none, and the model's name; or why it is refused.
-   */
-  #checkModel(
-    runnerId: string,
-    asked: { readonly model?: string; readonly thinkingLevel?: ThinkingLevel },
-  ): { model?: string; thinkingLevel?: ThinkingLevel; label?: string } | string {
-    const runner = this.runners.find((candidate) => candidate.id === runnerId)
-    const models = runner?.models
-    if (models === undefined) {
-      if (asked.model === undefined && asked.thinkingLevel === undefined) return {}
-      return `${runner?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
-    }
-    const option = asked.model === undefined ? models.default : findModel(models, asked.model)
-    if (option === undefined) return modelNotFoundText(asked.model ?? "")
-    if (asked.thinkingLevel !== undefined) {
-      if (!option.reasoning) return `${option.label} takes no thinking level.`
-      if (!models.thinkingLevels.includes(asked.thinkingLevel))
-        return `Claude Code on ${runner?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
-    }
-    return {
-      ...(option !== models.default && asked.model !== undefined && { model: asked.model }),
-      ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
-      label: option.label,
-    }
-  }
-
-  /**
-   * Why a Session can't switch to the Harness, as the Hub refuses it (ADR 0030): its Runner doesn't
-   * run it, or, for Claude Code, its Creator has no setup token. Undefined when it can.
-   */
-  #harnessRefusal(session: FakeSession, harness: Harness): string | undefined {
-    const runner = this.runners.find((candidate) => candidate.id === session.summary.runnerId)
-    const runs = runner?.harnesses ?? ["ClaudeCode"]
-    if (!runs.includes(harness))
-      return `${runner?.name ?? "Its Runner"} doesn't run ${harness === "Pi" ? "pi" : "Claude Code"}.`
-    if (harness === "ClaudeCode" && this.#claudeCredential === null) return noCredentialText
-    return undefined
-  }
-
-  /**
    * A pi Session's model setting, as the Hub checks it against its Creator's Models (ADR 0029):
    * with none asked for, their first, Claude's when they have a credential. Or why it is refused.
    */
-  #checkProviderModel(asked: {
-    readonly model?: string
-    readonly thinkingLevel?: ThinkingLevel
-  }): { model: string; thinkingLevel?: ThinkingLevel; label: string } | string {
-    const models = this.#providersState().models
+  #checkProviderModel(
+    asked: {
+      readonly model?: string
+      readonly thinkingLevel?: ThinkingLevel
+    },
+    models: ReadonlyArray<ProviderModelWire> = this.#providersState().models,
+  ): { model: string; thinkingLevel?: ThinkingLevel; label: string } | string {
     if (models.length === 0) return noModelsText
     const found =
       asked.model === undefined
@@ -2030,16 +2204,19 @@ export class FakeHub implements HubTransport {
   }
 
   /**
-   * The model a Session's Turns run, as their usage names it (TurnUsage.model): as its Runner's
-   * Claude Code resolves its setting, or, on pi, its model name, `<provider>/<id>`.
+   * A Session's Models, its Creator's (ADR 0026), as the Hub sends everyone who joins it: the
+   * signed-in person's own for theirs; for anyone else's, Claude's and OpenAI's.
    */
+  #sessionModels(session: FakeSession): ReadonlyArray<ProviderModelWire> {
+    if (session.summary.creator.id === this.#you.id) return this.#providersState().models
+    return [...claudeModels, ...providerModels("openai")]
+  }
+
+  /** The model a Session's Turns run, as their usage names it (TurnUsage.model): `<provider>/<id>`. */
   #modelId(session: FakeSession): string {
-    if (session.summary.harness === "Pi") return session.summary.model ?? "openai/gpt-6-sol"
-    const models = this.runners.find((runner) => runner.id === session.summary.runnerId)?.models
-    const { model } = session.summary
-    if (models === undefined) return model ?? "claude-opus-5-5"
-    const option = model === undefined ? models.default : findModel(models, model)
-    return option?.id ?? model ?? models.default.id
+    if (session.summary.model !== undefined) return session.summary.model
+    const first = defaultProviderModel(this.#sessionModels(session))
+    return first ? providerModelName(first) : "anthropic/claude-opus-5-5"
   }
 
   #create(
@@ -2049,7 +2226,6 @@ export class FakeHub implements HubTransport {
     branch: BranchChoice,
     runnerId: string | undefined,
     asked: {
-      readonly harness?: Harness
       readonly model?: string
       readonly thinkingLevel?: ThinkingLevel
     },
@@ -2063,41 +2239,10 @@ export class FakeHub implements HubTransport {
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
     }
-    // As the Hub picks it (newSessionHarness): the model's (ADR 0030), which a Harness asked for
-    // must agree with; without a model, the one asked for, or Claude Code on a Runner without pi;
-    // with neither, Claude Code when the Creator's default Model is Claude's and their Account page
-    // runs Claude's Models there, and pi otherwise (ADR 0029).
-    const runsPi = runner.harnesses?.includes("Pi") === true
-    let harness: Harness
-    if (asked.model !== undefined) {
-      harness = harnessOfModel(asked.model)
-      if (asked.harness !== undefined && asked.harness !== harness) {
-        const message = `${asked.model} runs on ${harnessName(harness)}, not ${harnessName(asked.harness)}.`
-        socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
-        return
-      }
-    } else if (asked.harness !== undefined || !runsPi) {
-      harness = asked.harness ?? "ClaudeCode"
-    } else {
-      const first = defaultProviderModel(this.#providersState().models)
-      harness =
-        first?.provider === "anthropic" && this.providers.claudeHarness === "ClaudeCode"
-          ? "ClaudeCode"
-          : "Pi"
-    }
-    if (harness === "Pi" && !runsPi) {
-      const message = `${runner.name} doesn't run pi: update it, or start a Claude Code Session there.`
-      socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
-      return
-    }
-    // A Claude Code Session runs on its Creator's own setup token, with no fallback (ADR 0026).
-    if (harness === "ClaudeCode" && this.#claudeCredential === null) {
-      const message = noCredentialText
-      socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
-      return
-    }
-    const checked =
-      harness === "Pi" ? this.#checkProviderModel(asked) : this.#checkModel(runner.id, asked)
+    // Every Session runs the durable agent, on one of its Creator's Models
+    // (docs/design/durable-harness.md): Claude's through the Claude bridge, as `anthropic/<id>`.
+    const harness: Harness = "Pi"
+    const checked = this.#checkProviderModel(asked)
     if (typeof checked === "string") {
       socket.deliver({
         _tag: "CommandFailed",
@@ -2135,14 +2280,14 @@ export class FakeHub implements HubTransport {
       queue: [],
       inFlight: null,
       steering: new Set(),
-      modSteers: true,
-      modAttaches: true,
       guests: [],
       stopTurn: null,
       terminal: null,
       startLog: "",
       agents: new Map(),
       ports: [],
+      threads: new Map(),
+      spent: 0,
     }
     this.sessions.set(id, session)
     this.#start(session)
@@ -2486,23 +2631,16 @@ export class FakeHub implements HubTransport {
             output: 180 + steps.length * 40,
             cacheRead: 24_000,
             cacheWrite: 900,
+            cost: turnCost(steps.length),
           },
         }),
       })
+      session.spent += turnCost(steps.length)
+      this.#append(session, { _tag: "UsageChanged", usage: usageOf(session.spent) })
       session.stopTurn = null
-      // A model switched while it ran takes over now: pi switches to it in place, and the Hub
-      // restarts Claude Code with it, or relaunches the Session on the other Harness.
-      const switched = session.summary.modelPending
-        ? harnessOfModel(session.summary.model)
-        : undefined
-      if (switched !== undefined && relaunches(session.summary.harness ?? "ClaudeCode", switched))
-        this.#interruptAgents(session)
+      // A Model switch takes over now, in place. Threads and background agents keep running.
       const { modelPending: _, ...summary } = session.summary
-      session.summary = {
-        ...summary,
-        ...(switched !== undefined && { harness: switched }),
-        currentTurn: null,
-      }
+      session.summary = { ...summary, currentTurn: null }
       this.#summaryChanged(session)
       this.#after(2, () => this.#next(session))
     }
@@ -2525,6 +2663,29 @@ export class FakeHub implements HubTransport {
           case "tool":
           case "pause":
             at = this.#layoutStep(session, { turnId }, step, at, schedule, openTools)
+            break
+          case "plan":
+            // The agent's update_plan call, and the Plan it sets.
+            schedule(1, () => {
+              const toolCallId = `tool-${++this.#ids}`
+              const input = JSON.stringify(step.plan)
+              this.#append(session, {
+                _tag: "ToolCallStarted",
+                turnId,
+                toolCallId,
+                tool: "update_plan",
+                input,
+              })
+              this.#append(session, { _tag: "PlanChanged", plan: step.plan })
+              this.#append(session, {
+                _tag: "ToolCallEnded",
+                turnId,
+                toolCallId,
+                tool: "update_plan",
+                outcome: "Succeeded",
+                output: "Plan updated.",
+              })
+            })
             break
           case "question":
             schedule(1, () =>
@@ -2690,7 +2851,7 @@ export class FakeHub implements HubTransport {
    */
   #layoutStep(
     session: FakeSession,
-    loop: { turnId: string; agentId?: string } | null,
+    loop: { turnId: string; agentId?: string; threadId?: string } | null,
     step: ReplyStep,
     at: number,
     schedule: (delay: number, fn: () => void) => void,
@@ -2903,7 +3064,7 @@ export class FakeHub implements HubTransport {
     this.#summaryChanged(session)
   }
 
-  /** Its Claude Code stopped: its Running agents are Interrupted, as on the Hub. */
+  /** Its agent stopped: its Running agents are Interrupted, as on the Hub. */
   #interruptAgents(session: FakeSession): void {
     for (const [agentId, agent] of session.agents) {
       if (agent.summary.status !== "Running") continue
@@ -2915,14 +3076,9 @@ export class FakeHub implements HubTransport {
   #terminal(session: FakeSession): FakeTerminal {
     if (session.terminal) return session.terminal
     const terminal = new FakeTerminal(
-      {
-        after: (steps, fn) => void this.#after(steps, fn),
-        changed: () => this.#terminalOutput(session),
-      },
-      {
-        cwd: `/workspace/${session.summary.repo.split("/").at(-1) ?? "repo"}`,
-        demo: session.summary.id === demoSessionId,
-      },
+      { changed: () => this.#terminalOutput(session) },
+      // A plain shell in /workspace, as the real terminal is.
+      { cwd: "/workspace", demo: session.summary.id === demoSessionId },
     )
     session.terminal = terminal
     return terminal
@@ -2991,6 +3147,177 @@ export class FakeHub implements HubTransport {
     if (state === "Active" && !wasActive && !session.summary.starting) this.#snapshot(session)
   }
 
+  /** The thread a command names, or none, having refused the command, as the Hub does. */
+  #threadFor(
+    socket: FakeSocket,
+    session: FakeSession,
+    message: {
+      readonly _tag: string
+      readonly sessionId: string
+      readonly requestId?: string
+      readonly threadId?: string
+    },
+  ): FakeThread | undefined {
+    const thread =
+      message.threadId === undefined ? undefined : session.threads.get(message.threadId)
+    if (!thread)
+      this.#fail(
+        socket,
+        message._tag,
+        "The Session has no such Thread.",
+        message.sessionId,
+        message.requestId,
+      )
+    return thread
+  }
+
+  /** Tells everyone the Session's threads changed: who runs, and on what. */
+  #threadsChanged(session: FakeSession): void {
+    session.summary = {
+      ...session.summary,
+      threads: [...session.threads.values()].map((thread) => thread.summary),
+    }
+    this.#summaryChanged(session)
+  }
+
+  /**
+   * Someone posts into a thread: logged as sent at once; a step later the agent starts a Turn
+   * from it, or, while one runs, steers it in, and reads it a few steps after. An Asleep Session
+   * is woken before it, by the command (`wokenFor` on the Hub).
+   */
+  #threadPrompt(
+    session: FakeSession,
+    thread: FakeThread,
+    sender: ParticipantWire,
+    text: string,
+    attachments: ReadonlyArray<AttachmentWire> = [],
+    requestId?: string,
+  ): void {
+    const promptId = `p-${++this.#ids}`
+    const threadId = thread.summary.id
+    this.#append(session, {
+      _tag: "ThreadPromptSent",
+      threadId,
+      promptId,
+      ...(requestId !== undefined && { requestId }),
+      sender,
+      text,
+      ...(attachments.length > 0 && { attachments }),
+    })
+    const deliver = () => {
+      const { state, starting } = session.summary
+      if (state !== "Active" || starting !== undefined) {
+        this.#after(2, deliver)
+        return
+      }
+      const turnId = thread.turnId
+      if (turnId === null) {
+        this.#runThreadTurn(
+          session,
+          thread,
+          {
+            text: `[${sender.name}] ${withAttachmentMarkers(text, attachments)}`,
+            sender: { _tag: "FromParticipant", participant: sender },
+            promptId,
+            ...(attachments.length > 0 && { attachments: [...attachments] }),
+          },
+          threadReplyTo(text),
+        )
+        return
+      }
+      this.#append(session, {
+        _tag: "PromptSteered",
+        turnId,
+        threadId,
+        promptId,
+        text,
+        sender,
+        ...(attachments.length > 0 && { attachments: [...attachments] }),
+      })
+      this.#after(3, () => {
+        if (thread.turnId === turnId)
+          this.#append(session, { _tag: "SteeredPromptRead", turnId, threadId, promptId })
+      })
+    }
+    this.#after(1, deliver)
+  }
+
+  /** A Turn of a thread: its steps on a schedule of its own, beside the main loop's. */
+  #runThreadTurn(
+    session: FakeSession,
+    thread: FakeThread,
+    start: TurnStart & { readonly attachments?: ReadonlyArray<AttachmentWire> },
+    steps: ReadonlyArray<ReplyStep>,
+  ): void {
+    const turnId = `t-${++this.#ids}`
+    const threadId = thread.summary.id
+    const started = Date.now()
+    const { model } = thread.summary
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    const openTools = new Map<string, string>()
+    let ended = false
+    const end = (reason: "stop" | "aborted") => {
+      if (ended) return
+      ended = true
+      for (const timer of timers) {
+        clearTimeout(timer)
+        this.#timers.delete(timer)
+      }
+      for (const [toolCallId, tool] of openTools) {
+        this.#append(session, {
+          _tag: "ToolCallEnded",
+          turnId,
+          threadId,
+          toolCallId,
+          tool,
+          outcome: "Failed",
+          output: "Interrupted: the Turn was stopped.",
+        })
+      }
+      this.#append(session, {
+        _tag: "TurnEnded",
+        turnId,
+        threadId,
+        reason,
+        durationMs: Date.now() - started,
+        ...(reason === "stop" && {
+          usage: {
+            model,
+            input: 900 + steps.length * 200,
+            output: 140 + steps.length * 30,
+            cacheRead: 18_000,
+            cacheWrite: 600,
+            cost: turnCost(steps.length),
+          },
+        }),
+      })
+      thread.turnId = null
+      thread.stop = null
+      thread.spent += turnCost(steps.length)
+      this.#append(session, { _tag: "UsageChanged", threadId, usage: usageOf(thread.spent) })
+      thread.summary = { ...thread.summary, running: false }
+      this.#threadsChanged(session)
+    }
+    thread.turnId = turnId
+    thread.stop = () => end("aborted")
+    thread.summary = { ...thread.summary, running: true }
+    this.#threadsChanged(session)
+    this.#append(session, { _tag: "TurnStarted", turnId, threadId, ...start })
+    let at = 1
+    const schedule = (delay: number, fn: () => void) => {
+      at += delay
+      timers.push(this.#after(at, fn))
+    }
+    for (const step of steps) {
+      if (step.kind === "plan") {
+        schedule(1, () => this.#append(session, { _tag: "PlanChanged", threadId, plan: step.plan }))
+        continue
+      }
+      at = this.#layoutStep(session, { turnId, threadId }, step, at, schedule, openTools)
+    }
+    schedule(1, () => end("stop"))
+  }
+
   #append(session: FakeSession, event: SessionEventWire): void {
     const entry: LogEntryWire = { seq: session.log.length, at: Date.now(), event }
     session.log.push(entry)
@@ -3056,9 +3383,9 @@ export class FakeHub implements HubTransport {
   ): FakeSession | undefined {
     const session = this.#sessionFor(socket, message)
     if (!session) return undefined
-    const refused = driveRefusal(this.#you, session.summary.creator, session.summary.harness)
+    const refused = driveRefusal(this.#you, session.summary.creator)
     if (refused === undefined) return session
-    this.#fail(socket, message._tag, refused.refusal, message.sessionId)
+    this.#fail(socket, message._tag, refused.refusal, message.sessionId, requestIdOf(message))
     return undefined
   }
 
@@ -3106,12 +3433,19 @@ export class FakeHub implements HubTransport {
     }
   }
 
-  #fail(socket: FakeSocket, command: string, message: string, sessionId?: string): void {
+  #fail(
+    socket: FakeSocket,
+    command: string,
+    message: string,
+    sessionId?: string,
+    requestId?: string,
+  ): void {
     socket.deliver({
       _tag: "CommandFailed",
       command,
       message,
       ...(sessionId !== undefined && { sessionId }),
+      ...(requestId !== undefined && { requestId }),
     })
   }
 
@@ -3466,6 +3800,18 @@ export class FakeHub implements HubTransport {
   #providersChanged(socket: FakeSocket, requestId: string): void {
     socket.deliver(this.#providersState(requestId))
     this.#toOthers(socket, this.#providersState())
+    this.#sessionModelsChanged()
+  }
+
+  /** The Creator's Models changed: those who joined their Sessions are sent them again, as the Hub does. */
+  #sessionModelsChanged(): void {
+    for (const session of this.sessions.values()) {
+      if (session.summary.creator.id !== this.#you.id) continue
+      const models = [...this.#sessionModels(session)]
+      for (const socket of this.#joinedSockets(session)) {
+        socket.deliver({ _tag: "SessionModels", sessionId: session.summary.id, models })
+      }
+    }
   }
 
   /**
@@ -3516,6 +3862,7 @@ export class FakeHub implements HubTransport {
     this.providers.signedIn(signIn.provider)
     this.#endSignIn("Connected")
     this.#toAll(this.#providersState())
+    this.#sessionModelsChanged()
   }
 
   #endSignIn(outcome: "Connected" | "Failed" | "Cancelled", message?: string): void {

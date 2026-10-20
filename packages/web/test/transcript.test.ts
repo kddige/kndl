@@ -701,20 +701,36 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
   const promptId = () => pick(["p-0", "p-1"])
   const person = () => pick([alice, bob])
   const inAgent = (): { agentId?: string } => (next() < 0.3 ? { agentId: agentId() } : {})
+  const threadId = () => pick(["thr-0", "thr-1"])
+  // Most events are the main loop's; some are a thread's (docs/design/durable-harness.md).
+  const inThread = (): { threadId?: string } => (next() < 0.35 ? { threadId: threadId() } : {})
+  const inLoop = (): { threadId?: string; agentId?: string } => {
+    const roll = next()
+    return roll < 0.25 ? { agentId: agentId() } : roll < 0.5 ? { threadId: threadId() } : {}
+  }
+  const plan = () => ({
+    steps: [
+      { text: "Read", status: pick(["done", "in_progress"] as const) },
+      { text: "Write", status: pick(["pending", "in_progress", "done"] as const) },
+    ],
+  })
   const makers: ReadonlyArray<() => EventEncoded> = [
     () => ({
       _tag: "TurnStarted",
       turnId: turnId(),
+      ...inThread(),
       text: "[Alice] go",
       sender: pick([
         fromAlice,
         fromBob,
         { _tag: "FromTerminal" },
         { _tag: "FromAgent", agentId: agentId() },
+        { _tag: "Resumed" },
       ]),
       ...(next() < 0.5 && { promptId: promptId() }),
     }),
     () => ({ _tag: "TextDelta", turnId: turnId(), ...inAgent(), text: pick(["a", "b "]) }),
+    () => ({ _tag: "TextDelta", turnId: turnId(), threadId: threadId(), text: "t" }),
     () => ({ _tag: "TextDelta", turnId: turnId(), text: "c" }),
     () => {
       // Each subagent's calls have ids of their own, so no subagent's card is in its own blocks.
@@ -723,8 +739,9 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
         _tag: "ToolCallStarted",
         turnId: turnId(),
         ...loop,
+        ...(loop.agentId === undefined && inThread()),
         toolCallId: loop.agentId === undefined ? pick(["c-0", "c-1", "c-2"]) : `c-${loop.agentId}`,
-        tool: pick(["Bash", "Agent", "AskUserQuestion"]),
+        tool: pick(["Bash", "Agent", "AskUserQuestion", "update_plan"]),
         input: "{}",
       }
     },
@@ -740,7 +757,7 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
     () => ({
       _tag: "TurnEnded",
       turnId: turnId(),
-      ...inAgent(),
+      ...inLoop(),
       reason: pick(["stop", "aborted", "length", "error"] as const),
       durationMs: 1,
     }),
@@ -750,6 +767,7 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
       return {
         _tag: "AgentStarted",
         turnId: turnId(),
+        ...inThread(),
         agentId: started,
         toolCallId: pick(started === "a-0" ? ["c-0", "c-1", "c-a-1"] : ["c-0", "c-1", "c-2"]),
         agentType: "Explore",
@@ -780,15 +798,57 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
       outcome: { _tag: "Dismissed" },
       ...(next() < 0.5 && { by: person() }),
     }),
-    () => ({ _tag: "TurnStopRequested", by: person() }),
+    () => ({ _tag: "TurnStopRequested", by: person(), ...inThread() }),
     () => ({
       _tag: "PromptSteered",
       turnId: turnId(),
+      ...inThread(),
       promptId: promptId(),
       text: "also this",
       sender: person(),
     }),
-    () => ({ _tag: "SteeredPromptRead", turnId: turnId(), promptId: promptId() }),
+    () => ({ _tag: "SteeredPromptRead", turnId: turnId(), ...inThread(), promptId: promptId() }),
+    () => ({
+      _tag: "ThreadStarted",
+      threadId: threadId(),
+      anchorTurnId: turnId(),
+      title: pick(["Why?", "And Windows?"]),
+      startedBy: person(),
+      model: "openai/gpt-6-sol",
+    }),
+    () => ({
+      _tag: "ThreadPromptSent",
+      threadId: threadId(),
+      promptId: promptId(),
+      sender: person(),
+      text: "in the thread",
+    }),
+    () => ({
+      _tag: "ThreadPromptFailed",
+      threadId: threadId(),
+      promptId: promptId(),
+      message: "storage is full",
+      ...(next() < 0.2 && { threadDropped: true }),
+    }),
+    () => ({ _tag: "ThreadModelChanged", threadId: threadId(), by: person(), model: "x/y" }),
+    () => ({
+      _tag: "CompactionStarted",
+      ...inLoop(),
+      reason: pick(["threshold", "overflow", "manual"] as const),
+      ...(next() < 0.5 && { by: person() }),
+    }),
+    () => ({
+      _tag: "CompactionEnded",
+      ...inLoop(),
+      outcome: pick(["compacted", "skipped", "failed"] as const),
+      ...(next() < 0.5 && { summary: "summed up" }),
+    }),
+    () => ({ _tag: "PlanChanged", ...inLoop(), plan: plan() }),
+    () => ({
+      _tag: "UsageChanged",
+      ...inLoop(),
+      usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: next() },
+    }),
     () => ({ _tag: "SessionStateChanged", state: pick(["Active", "Asleep"] as const) }),
     () => ({ _tag: "SandboxNoted", message: "noted" }),
     () => ({ _tag: "ModelSwitched", by: person(), model: "sonnet" }),
@@ -796,6 +856,415 @@ function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
   const length = 1 + Math.floor(next() * 60)
   return entries(Array.from({ length }, () => pick(makers)()))
 }
+
+const posted = (promptId: string, sender: typeof alice, text: string): EventEncoded => ({
+  _tag: "ThreadPromptSent",
+  threadId: "thr-1",
+  promptId,
+  sender,
+  text,
+})
+const step = (text: string, status: "pending" | "in_progress" | "done") => ({ text, status })
+const markers = (blocks: ReadonlyArray<{ kind: string }> | undefined) =>
+  blocks?.filter((block) => block.kind === "plan").length
+const spent = (cost: number) => ({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost })
+
+describe("threads, the Plan, compaction and Resumed Turns (docs/design/durable-harness.md)", () => {
+  /** A finished main-loop Turn, t-1, which threads fork off. */
+  const answered: ReadonlyArray<EventEncoded> = [
+    { _tag: "TurnStarted", turnId: "t-1", text: "[Alice] add /health", sender: fromAlice },
+    { _tag: "TextDelta", turnId: "t-1", text: "Added it." },
+    { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 900, usage },
+  ]
+  const started: EventEncoded = {
+    _tag: "ThreadStarted",
+    threadId: "thr-1",
+    anchorTurnId: "t-1",
+    title: "What about Windows?",
+    startedBy: bob,
+    model: "openai/gpt-6-sol",
+  }
+
+  test("a pre-upgrade thread without a recorded model stays readable and can change model", () => {
+    const { model: _, ...legacy } = started
+    const log = entries([...answered, legacy, posted("p-1", bob, "What about Windows?")])
+    const before = transcriptOf(log).threads.get("thr-1" as never)
+    expect(before?.title).toBe("What about Windows?")
+    expect(before?.model).toBeUndefined()
+    expect(before?.sent.map((prompt) => prompt.text)).toEqual(["What about Windows?"])
+
+    const after = transcriptOf(
+      entries([
+        ...answered,
+        legacy,
+        { _tag: "ThreadModelChanged", threadId: "thr-1", by: bob, model: "openai/gpt-6-sol" },
+      ]),
+    ).threads.get("thr-1" as never)
+    expect(after?.model).toBe("openai/gpt-6-sol" as never)
+  })
+
+  test("a thread's events fold into its own Turns, and leave the main loop as it was", () => {
+    const transcript = transcriptOf(
+      entries([
+        ...answered,
+        started,
+        posted("p-1", bob, "What about Windows?"),
+        {
+          _tag: "TurnStarted",
+          turnId: "t-2",
+          threadId: "thr-1",
+          text: "[Bob] What about Windows?",
+          sender: fromBob,
+          promptId: "p-1",
+        },
+        { _tag: "TextDelta", turnId: "t-2", threadId: "thr-1", text: "Windows needs " },
+        {
+          _tag: "ToolCallStarted",
+          turnId: "t-2",
+          threadId: "thr-1",
+          toolCallId: "c-1",
+          tool: "bash",
+          input: '{"command":"ls"}',
+        },
+      ]),
+    )
+    // The main loop has its one Turn, finished: a thread running doesn't make it busy.
+    expect(turns(transcript.items).map((turn) => turn.turnId)).toEqual(["t-1"] as never)
+    expect(transcript.running).toBeUndefined()
+
+    const thread = transcript.threads.get("thr-1" as never)
+    expect(thread?.title).toBe("What about Windows?")
+    expect(thread?.startedBy.name).toBe("Bob")
+    expect(thread?.model).toBe("openai/gpt-6-sol" as never)
+    const [turn] = turns(thread?.items ?? [])
+    expect(turn?.prompt).toBe("What about Windows?")
+    expect(turn?.blocks.map((block) => block.kind)).toEqual(["text", "tool"])
+    expect(thread?.running?.turnId).toBe("t-2" as never)
+    // It hangs off the Turn it forked from.
+    expect(transcript.anchored.get("t-1" as never)?.map((each) => each.threadId)).toEqual([
+      "thr-1",
+    ] as never)
+  })
+
+  test("a prompt posted shows as sent until a Turn starts from it or it steers the running one", () => {
+    const log = entries([
+      ...answered,
+      started,
+      posted("p-1", bob, "What about Windows?"),
+      posted("p-2", alice, "and macOS"),
+    ])
+    const before = transcriptOf(log).threads.get("thr-1" as never)
+    expect(before?.sent.map((prompt) => prompt.text)).toEqual(["What about Windows?", "and macOS"])
+    expect(before?.items).toEqual([])
+    expect(before?.people.map((person) => person.name)).toEqual(["Bob", "Alice"])
+    expect(before?.replies).toBe(2)
+
+    const after = transcriptOf(
+      entries(
+        [
+          {
+            _tag: "TurnStarted",
+            turnId: "t-2",
+            threadId: "thr-1",
+            text: "[Bob] What about Windows?",
+            sender: fromBob,
+            promptId: "p-1",
+          },
+          {
+            _tag: "PromptSteered",
+            turnId: "t-2",
+            threadId: "thr-1",
+            promptId: "p-2",
+            text: "and macOS",
+            sender: alice,
+          },
+        ],
+        log.length,
+      ).reduce((all, entry) => [...all, entry], [...log]),
+    ).threads.get("thr-1" as never)
+    // Each is shown once: as the Turn, and as a prompt steered into it.
+    expect(after?.sent).toEqual([])
+    const [turn] = turns(after?.items ?? [])
+    expect(turn?.promptId).toBe("p-1" as never)
+    expect(turn?.unread.map((prompt) => prompt.promptId)).toEqual(["p-2"] as never)
+    // The prompts and the answer to the first.
+    expect(after?.replies).toBe(3)
+  })
+
+  test("a prompt the agent failed leaves those sent and shows as failed, as it does after a reload", () => {
+    const log = entries([
+      ...answered,
+      started,
+      posted("p-1", bob, "What about Windows?"),
+      posted("p-2", alice, "and macOS"),
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-2",
+        message: "storage is full",
+      },
+    ])
+    const thread = transcriptOf(log).threads.get("thr-1" as never)
+    expect(thread?.sent.map((prompt) => prompt.text)).toEqual(["What about Windows?"])
+    expect(
+      thread?.failed.map((prompt) => [prompt.text, prompt.sender.name, prompt.message]),
+    ).toEqual([["and macOS", "Alice", "storage is full"]])
+    // Folded a few entries at a time, as they arrive, it is the same.
+    expect(viewOf(foldInBatches(log, () => 1))).toEqual(transcriptOf(log))
+  })
+
+  test("a thread that failed to start with its first prompt is gone, whatever comes after", () => {
+    const log = entries([
+      ...answered,
+      started,
+      posted("p-1", bob, "What about Windows?"),
+      posted("p-2", alice, "hello?"),
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-1",
+        message: "The main loop has nothing to fork a Thread from yet.",
+        threadDropped: true,
+      },
+      {
+        _tag: "ThreadPromptFailed",
+        threadId: "thr-1",
+        promptId: "p-2",
+        message: "The Session has no such thread.",
+      },
+    ])
+    const transcript = transcriptOf(log)
+    expect(transcript.threads.has("thr-1" as never)).toBe(false)
+    expect(transcript.anchored.get("t-1" as never)).toBeUndefined()
+    expect(viewOf(foldInBatches(log, () => 1))).toEqual(transcript)
+    // A later event of it doesn't bring it back.
+    const later = transcriptOf([...log, ...entries([posted("p-3", bob, "again")], log.length)])
+    expect(later.threads.has("thr-1" as never)).toBe(false)
+  })
+
+  test("a stop asked for in a thread stops its Turn, not the main loop's", () => {
+    const transcript = transcriptOf(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
+        started,
+        { _tag: "TurnStarted", turnId: "t-2", threadId: "thr-1", text: "go", sender: fromBob },
+        { _tag: "TurnStopRequested", by: bob, threadId: "thr-1" },
+      ]),
+    )
+    expect(transcript.running?.stopRequests).toEqual([])
+    expect(transcript.threads.get("thr-1" as never)?.running?.stopRequests).toEqual([bob] as never)
+  })
+
+  test("a subagent a thread's Turn started has its card in that Turn", () => {
+    const transcript = transcriptOf(
+      entries([
+        ...answered,
+        started,
+        { _tag: "TurnStarted", turnId: "t-2", threadId: "thr-1", text: "go", sender: fromBob },
+        {
+          _tag: "ToolCallStarted",
+          turnId: "t-2",
+          threadId: "thr-1",
+          toolCallId: "c-1",
+          tool: "agent",
+          input: "{}",
+        },
+        {
+          _tag: "AgentStarted",
+          turnId: "t-2",
+          threadId: "thr-1",
+          agentId: "a-1",
+          toolCallId: "c-1",
+          agentType: "general",
+          description: "Check Windows",
+          model: "openai/gpt-6-sol",
+          background: true,
+        },
+        { _tag: "TextDelta", turnId: "t-9", agentId: "a-1", text: "Looking" },
+      ]),
+    )
+    const [turn] = turns(transcript.threads.get("thr-1" as never)?.items ?? [])
+    const card = turn?.blocks[0]
+    expect(card?.kind).toBe("agent")
+    expect(card?.kind === "agent" && card.agent.blocks).toEqual([
+      { kind: "text", key: "text-7", text: "Looking" },
+    ])
+    expect(transcript.agents.get("a-1" as never)?.threadId).toBe("thr-1" as never)
+  })
+
+  test("a thread streaming leaves every main-loop Turn as it was", () => {
+    const log = entries([
+      ...answered,
+      started,
+      { _tag: "TurnStarted", turnId: "t-2", threadId: "thr-1", text: "go", sender: fromBob },
+    ])
+    const before = foldTranscript(emptyTranscript, log)
+    const after = foldTranscript(
+      before,
+      entries([{ _tag: "TextDelta", turnId: "t-2", threadId: "thr-1", text: "more" }], log.length),
+    )
+    expect(after.items).toBe(before.items)
+    expect(after.threads.get("thr-1" as never)).not.toBe(before.threads.get("thr-1" as never))
+  })
+
+  test("a Turn resumed after a restart goes on from the one the restart ended", () => {
+    const items = build(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "[Alice] go", sender: fromAlice },
+        { _tag: "TextDelta", turnId: "t-1", text: "Working on it" },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "aborted", durationMs: 9 },
+        { _tag: "SessionStateChanged", state: "Active" },
+        { _tag: "TurnStarted", turnId: "t-2", text: "", sender: { _tag: "Resumed" } },
+        { _tag: "TextDelta", turnId: "t-2", text: "and done." },
+      ]),
+    )
+    const [interrupted, resumed] = turns(items)
+    expect(interrupted?.continued).toBe(true)
+    expect(resumed?.sender._tag).toBe("Resumed")
+    expect(resumed?.continued).toBeUndefined()
+  })
+
+  test("a Turn that finished on its own isn't continued by a Resumed one", () => {
+    const items = build(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "[Alice] go", sender: fromAlice },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "stop", durationMs: 9 },
+        { _tag: "TurnStarted", turnId: "t-2", text: "", sender: { _tag: "Resumed" } },
+      ]),
+    )
+    const [finished] = turns(items)
+    expect(finished?.continued).toBeUndefined()
+  })
+
+  test("a compaction shows in the Turn it ran in, or between Turns, with how it ended", () => {
+    const transcript = transcriptOf(
+      entries([
+        { _tag: "CompactionStarted", reason: "manual", by: alice },
+        { _tag: "CompactionEnded", outcome: "skipped" },
+        { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
+        { _tag: "CompactionStarted", reason: "threshold" },
+        { _tag: "TextDelta", turnId: "t-1", text: "still working" },
+        { _tag: "CompactionEnded", outcome: "compacted", summary: "We added a route." },
+        started,
+        { _tag: "CompactionStarted", threadId: "thr-1", reason: "overflow" },
+        { _tag: "CompactionEnded", threadId: "thr-1", outcome: "failed", error: "429" },
+      ]),
+    )
+    const [between, turn] = transcript.items
+    expect(between).toEqual({
+      kind: "compaction",
+      key: "compaction-0",
+      compaction: {
+        at: 1_790_000_000_000,
+        reason: "manual",
+        by: alice,
+        end: { outcome: "skipped" },
+      } as never,
+    })
+    const inTurn = turn?.kind === "turn" ? turn.turn.blocks : []
+    expect(inTurn.map((block) => block.kind)).toEqual(["compaction", "text"])
+    expect(inTurn[0]?.kind === "compaction" && inTurn[0].compaction.end).toEqual({
+      outcome: "compacted",
+      summary: "We added a route.",
+    })
+    const [threadItem] = transcript.threads.get("thr-1" as never)?.items ?? []
+    expect(threadItem?.kind === "compaction" && threadItem.compaction.end).toEqual({
+      outcome: "failed",
+      error: "429",
+    })
+  })
+
+  test("a compaction running shows as running", () => {
+    const [item] = build(entries([{ _tag: "CompactionStarted", reason: "threshold" }]))
+    expect(item?.kind === "compaction" && item.compaction.end).toBeUndefined()
+  })
+
+  test("the Plan is each conversation's latest, marked where it changed, in place of its call", () => {
+    const first = { steps: [step("Add the route", "in_progress"), step("Test it", "pending")] }
+    const second = { steps: [step("Add the route", "done"), step("Test it", "in_progress")] }
+    const transcript = transcriptOf(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
+        {
+          _tag: "ToolCallStarted",
+          turnId: "t-1",
+          toolCallId: "c-1",
+          tool: "update_plan",
+          input: "{}",
+        },
+        { _tag: "PlanChanged", plan: first },
+        {
+          _tag: "ToolCallEnded",
+          turnId: "t-1",
+          toolCallId: "c-1",
+          tool: "update_plan",
+          outcome: "Succeeded",
+          output: "ok",
+        },
+        { _tag: "PlanChanged", plan: second },
+        started,
+        { _tag: "PlanChanged", threadId: "thr-1", plan: first },
+        { _tag: "PlanChanged", agentId: "a-1", plan: second },
+      ]),
+    )
+    expect(transcript.plan).toEqual(second as never)
+    const [turn] = turns(transcript.items)
+    expect(turn?.blocks).toEqual([
+      { kind: "plan", key: "tool-c-1", plan: first },
+      { kind: "plan", key: "plan-4", plan: second, previous: first },
+    ] as never)
+    expect(transcript.threads.get("thr-1" as never)?.plan).toEqual(first as never)
+    // Between Turns, the thread's Plan shows; nothing is marked.
+    expect(transcript.threads.get("thr-1" as never)?.items).toEqual([])
+  })
+
+  test("a Plan the agent reports again as it starts is no update, for any conversation", () => {
+    const plan = { steps: [step("Add the route", "in_progress"), step("Test it", "pending")] }
+    const transcript = transcriptOf(
+      entries([
+        started,
+        { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
+        agentStarted("a-1", "c-1"),
+        { _tag: "PlanChanged", agentId: "a-1", plan },
+        { _tag: "TurnStarted", turnId: "t-2", threadId: "thr-1", text: "go", sender: fromBob },
+        // The restarted agent says every conversation's Plan again.
+        { _tag: "PlanChanged", plan },
+        { _tag: "PlanChanged", threadId: "thr-1", plan },
+        { _tag: "PlanChanged", agentId: "a-1", plan: { steps: [...plan.steps] } },
+        { _tag: "PlanChanged", agentId: "a-1", plan: { steps: [step("Add the route", "done")] } },
+      ]),
+    )
+    // The first report of a Plan is a marker; the same one again isn't; a changed one is.
+    expect(markers(transcript.agents.get("a-1" as never)?.blocks)).toBe(2)
+    expect(markers(turns(transcript.items)[0]?.blocks)).toBe(1)
+    const thread = transcript.threads.get("thr-1" as never)
+    expect(markers(turns(thread?.items ?? [])[0]?.blocks)).toBe(1)
+  })
+
+  test("what each conversation spent is the latest it said", () => {
+    const transcript = transcriptOf(
+      entries([
+        started,
+        { _tag: "UsageChanged", usage: spent(0.1) },
+        { _tag: "UsageChanged", threadId: "thr-1", usage: spent(0.02) },
+        { _tag: "UsageChanged", usage: spent(0.3) },
+      ]),
+    )
+    expect(transcript.usage?.cost).toBe(0.3)
+    expect(transcript.threads.get("thr-1" as never)?.usage?.cost).toBe(0.02)
+  })
+
+  test("a change of a thread's model shows in it, and becomes its model", () => {
+    const thread = transcriptOf(
+      entries([
+        started,
+        { _tag: "ThreadModelChanged", threadId: "thr-1", by: alice, model: "anthropic/opus" },
+      ]),
+    ).threads.get("thr-1" as never)
+    expect(thread?.model).toBe("anthropic/opus" as never)
+    expect(thread?.items.map((item) => item.kind)).toEqual(["notice"])
+  })
+})
 
 describe("runningTurn", () => {
   test("is the last Turn while it has no end", () => {

@@ -34,47 +34,6 @@ export function expectRejected(schema: Schema.Codec<unknown, unknown>, input: un
 export const alice = { id: "u-1", login: "alice", name: "Alice" }
 export const bob = { id: "u-2", login: "bob", name: "Bob" }
 
-/** What a Runner's Claude Code takes, as its hello says (#128). */
-export const runnerModels = {
-  default: {
-    alias: "default",
-    id: "claude-opus-5-5",
-    label: "Opus 5.5",
-    description: "Best for everyday, complex tasks",
-    reasoning: true,
-  },
-  models: [
-    {
-      alias: "opus",
-      id: "claude-opus-5-5",
-      label: "Opus 5.5",
-      description: "Best for everyday, complex tasks",
-      reasoning: true,
-    },
-    {
-      alias: "sonnet",
-      id: "claude-sonnet-5-5",
-      label: "Sonnet 5.5",
-      description: "Efficient for routine tasks",
-      reasoning: true,
-    },
-    {
-      alias: "haiku",
-      id: "claude-haiku-4-5-20251001",
-      label: "Haiku 4.5",
-      description: "Fastest for quick answers",
-      reasoning: false,
-    },
-    {
-      alias: "opus[1m]",
-      id: "claude-opus-5-5[1m]",
-      label: "Opus 5.5 (1M context)",
-      reasoning: true,
-    },
-  ],
-  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
-}
-
 export const sessionSummary = {
   id: "s-1",
   repo: "kddige/kndl",
@@ -273,4 +232,67 @@ export const turnEvents = [
     sender: bob,
   },
   { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
+  { _tag: "TurnStarted", turnId: "t-6", text: "", sender: { _tag: "Resumed" } },
+  {
+    _tag: "TurnStarted",
+    turnId: "t-7",
+    threadId: "thr-1",
+    text: "[Bob] what about Windows?",
+    sender: { _tag: "FromParticipant", participant: bob },
+    promptId: "p-7",
+  },
+  { _tag: "TextDelta", turnId: "t-7", threadId: "thr-1", text: "Windows needs" },
+  {
+    _tag: "ToolCallStarted",
+    turnId: "t-7",
+    threadId: "thr-1",
+    toolCallId: "call_7",
+    tool: "bash",
+    input: '{"command":"ls"}',
+  },
+  {
+    _tag: "ToolCallEnded",
+    turnId: "t-7",
+    threadId: "thr-1",
+    toolCallId: "call_7",
+    tool: "bash",
+    outcome: "Succeeded",
+    output: "README.md",
+  },
+  {
+    _tag: "PromptSteered",
+    turnId: "t-7",
+    threadId: "thr-1",
+    promptId: "p-8",
+    text: "and macOS",
+    sender: alice,
+  },
+  { _tag: "SteeredPromptRead", turnId: "t-7", threadId: "thr-1", promptId: "p-8" },
+  { _tag: "TurnEnded", turnId: "t-7", threadId: "thr-1", reason: "stop", durationMs: 900 },
+  { _tag: "CompactionStarted", reason: "threshold" },
+  { _tag: "CompactionStarted", threadId: "thr-1", reason: "manual", by: alice },
+  { _tag: "CompactionStarted", agentId: "a-1", reason: "overflow" },
+  { _tag: "CompactionEnded", outcome: "compacted", summary: "We added a health check." },
+  { _tag: "CompactionEnded", threadId: "thr-1", outcome: "failed", error: "429" },
+  {
+    _tag: "PlanChanged",
+    plan: {
+      steps: [
+        { text: "Add the route", status: "done" },
+        { text: "Test it", status: "in_progress" },
+        { text: "Document it", status: "pending" },
+      ],
+      explanation: "The route works; testing next.",
+    },
+  },
+  { _tag: "PlanChanged", threadId: "thr-1", plan: { steps: [] } },
+  {
+    _tag: "UsageChanged",
+    usage: { input: 1200, output: 300, cacheRead: 40_000, cacheWrite: 0, cost: 0.04 },
+  },
+  {
+    _tag: "UsageChanged",
+    threadId: "thr-1",
+    usage: { input: 10, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0 },
+  },
 ]

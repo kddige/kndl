@@ -65,6 +65,7 @@ async function connect(hub: Awaited<ReturnType<typeof startSeededHub>>) {
         protocolVersion: ProtocolVersion,
         name: "mac",
         sessions: [],
+        runsAgent: true,
       }),
     ),
   )

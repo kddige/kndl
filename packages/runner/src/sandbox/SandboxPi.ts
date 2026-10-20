@@ -1,6 +1,7 @@
-// The pi a pi Session runs, in its Sandbox (ADR 0029), beside the Claude Code it bridges to.
+// What a Session's durable agent runs on in its Sandbox (docs/design/durable-harness.md), beside
+// the Claude Code its Claude bridge runs.
 //
-// pi is a Node.js program, so the bundle is two things, both kept in a cache directory on the
+// The agent is a Node.js program, so the bundle is two things, both kept in a cache directory on the
 // Runner's host and mounted read-only into every Sandbox at {@link sandboxPiGuestDir}, as Claude
 // Code's builds are (SandboxClaude.ts):
 //
@@ -8,17 +9,20 @@
 //   nodejs.org, the musl ones from unofficial-builds.nodejs.org. Each is checked against the
 //   SHA-256 pinned here, from the release's SHASUMS256.txt, and only its `bin/node` is kept. A
 //   Sandbox runs the build its image's libc needs, picked as Claude Code's is.
-// - A pinned pi install ({@link PinnedPiVersion}): the committed `packages/runner/pi/package.json`
-//   and `bun.lock`, installed with `bun install --frozen-lockfile --ignore-scripts`. pi is
-//   JavaScript, so one install serves both libcs. Its directory is named after the lockfile's
-//   hash, so a changed lockfile installs anew beside the old one.
+// - A pinned install of pi's packages the agent loads ({@link PinnedPiVersion}): Pi Durable, pi-ai,
+//   chord, codemode and pi-mcp, from the committed `packages/runner/pi/package.json` and
+//   `bun.lock`, installed with `bun install --frozen-lockfile --ignore-scripts`. The agent's own
+//   bundle holds everything else it needs; these it leaves out, as `@earendil-works/*` imports,
+//   which its copy of the mod finds here (SessionMod.ts). They are JavaScript, so one install
+//   serves both libcs. Its directory is named after the lockfile's hash, so a changed lockfile
+//   installs anew beside the old one.
 //
 // Everything lands under a temporary name and is renamed into place, so preparing it is safe to
 // run concurrently, and a cut-short download is tried again. A preparation that takes too long is
 // stopped, its download and install with it, and what one cut short by a killed Runner left is
 // swept away by the next.
 //
-// Upgrading pi: change the version in packages/runner/pi/package.json and here, run
+// Upgrading pi: change the versions in packages/runner/pi/package.json and here, run
 // `bun install --ignore-scripts` in a copy of that directory outside the repository (inside it,
 // Bun would take the root's workspace) and commit its bun.lock. Upgrading Node.js: change
 // PinnedNodeVersion and the SHA-256 of each build from its SHASUMS256.txt.
@@ -40,10 +44,10 @@ import { join, posix, resolve } from "node:path"
 import { Data, Duration, Effect } from "effect"
 import type { Libc } from "./SandboxClaude.ts"
 
-/** The pi version pi Sessions run, as packages/runner/pi/package.json pins it. */
+/** The version of pi's packages the durable agent runs on, as packages/runner/pi/package.json pins it. */
 export const PinnedPiVersion = "1.3.0"
 
-/** The Node.js pi runs on: an LTS release, as pi needs 22.19 or later. */
+/** The Node.js the durable agent runs on: an LTS release, as pi needs 22.19 or later. */
 export const PinnedNodeVersion = "24.22.0"
 
 /** Where the cache directory is mounted in every Sandbox. */
@@ -52,8 +56,11 @@ export const sandboxPiGuestDir = "/opt/kndl/pi"
 /** The committed package.json and bun.lock of the pi install. */
 export const piPackageDir = resolve(import.meta.dir, "../../pi")
 
-/** pi's CLI in its install: the package's `pi` bin. */
-export const piCliInInstall = "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+/**
+ * The manifest of Pi Durable in the install, which says the install is there and of
+ * {@link PinnedPiVersion}.
+ */
+export const durableManifestInInstall = "node_modules/@earendil-works/pi-durable/package.json"
 
 /** A Node.js build for one CPU and libc, and its SHA-256 from the release's SHASUMS256.txt. */
 export interface NodeBuild {
@@ -104,23 +111,23 @@ const nodeDir = (version: string, libc: Libc) => `node-v${version}-${libc}`
 export const sandboxNodePath = (libc: Libc, version: string = PinnedNodeVersion) =>
   posix.join(sandboxPiGuestDir, nodeDir(version, libc), "bin", "node")
 
-/** pi's CLI inside every Sandbox, in the install named `appDir`. */
-export const sandboxPiCliPath = (appDir: string) =>
-  posix.join(sandboxPiGuestDir, appDir, piCliInInstall)
+/** The install's `node_modules` inside every Sandbox, in the install named `appDir`. */
+export const sandboxNodeModulesPath = (appDir: string) =>
+  posix.join(sandboxPiGuestDir, appDir, "node_modules")
 
 /**
- * Readies a Sandbox to run pi: Node.js runs there, with musl's images given the libraries its
+ * Readies a Sandbox to run the durable agent: Node.js runs there, with musl's images given the libraries its
  * builds link, which the default `docker:dind` lacks: `libgcc`, and for the x64 build `libstdc++`
- * (`readelf -d` of 24.22.0's: x64 needs both, arm64 only `libgcc_s`). And pi's state directory
- * exists. Prints nothing when both are so.
+ * (`readelf -d` of 24.22.0's: x64 needs both, arm64 only `libgcc_s`). And the agent's state
+ * directory exists. Prints nothing when both are so.
  */
 export const piNeedsScript = (node: string, stateDir: string) => `set -e
 if ! '${node}' --version >/dev/null 2>&1; then
   if command -v apk >/dev/null 2>&1; then
-    echo "Installing libgcc for pi..."
+    echo "Installing libgcc for the agent's Node.js..."
     apk add --no-cache -q libgcc libstdc++
   fi
-  '${node}' --version >/dev/null || { echo "pi's Node.js doesn't run in this image." >&2; exit 1; }
+  '${node}' --version >/dev/null || { echo "The agent's Node.js doesn't run in this image." >&2; exit 1; }
 fi
 mkdir -p '${stateDir}'`
 
@@ -130,7 +137,7 @@ export class SandboxPiError extends Data.TaggedError("SandboxPiError")<{
 
 /** What the cache holds once the bundle is ready. */
 export interface PiBundleReady {
-  /** The directory of the pi install, under the cache, as {@link sandboxPiCliPath} takes it. */
+  /** The directory of the install, under the cache, as {@link sandboxNodeModulesPath} takes it. */
   readonly appDir: string
 }
 
@@ -158,7 +165,7 @@ export interface EnsurePiOptions {
   readonly fetch?: (url: string, signal?: AbortSignal) => Promise<Response>
   /** Runs `bun install` and `tar`; defaults to spawning them. */
   readonly run?: RunCommand
-  /** The Bun that installs pi: the one the Runner runs on. */
+  /** The Bun that installs the packages: the one the Runner runs on. */
   readonly bun?: string
 }
 
@@ -262,7 +269,7 @@ const ensureNode = async (
   }
 }
 
-/** Makes sure the cache holds the pi install of the committed lockfile, installing it if not. */
+/** Makes sure the cache holds the install of the committed lockfile, installing it if not. */
 const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: AbortSignal) => {
   const packageDir = options.packageDir ?? piPackageDir
   const manifest = await readFile(join(packageDir, "package.json"))
@@ -270,8 +277,8 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: Abor
   const hash = createHash("sha256").update(manifest).update(lockfile).digest("hex").slice(0, 12)
   const appDir = `pi-${PinnedPiVersion}-${hash}`
   const target = join(options.cacheDir, appDir)
-  const cli = join(target, piCliInInstall)
-  if (await exists(cli)) return appDir
+  const done = join(target, durableManifestInInstall)
+  if (await exists(done)) return appDir
 
   const staging = await mkdtemp(join(options.cacheDir, stagingPrefixes[1] ?? ".install-pi-"))
   try {
@@ -286,17 +293,13 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: Abor
     signal.throwIfAborted()
     if (install.exitCode !== 0)
       throw new Error(`installing pi: ${install.stderr.trim() || `exit ${install.exitCode}`}`)
-    const installed = JSON.parse(
-      await readFile(
-        join(staging, "node_modules/@earendil-works/pi-coding-agent/package.json"),
-        "utf8",
-      ),
-    ) as { version?: unknown }
+    const durable = join(staging, durableManifestInInstall)
+    if (!(await exists(durable)))
+      throw new Error(`the pi install has no ${durableManifestInInstall}`)
+    const installed = JSON.parse(await readFile(durable, "utf8")) as { version?: unknown }
     if (installed.version !== PinnedPiVersion)
       throw new Error(`installed pi ${String(installed.version)}, not ${PinnedPiVersion}`)
-    if (!(await exists(join(staging, piCliInInstall))))
-      throw new Error(`the pi install has no ${piCliInInstall}`)
-    await settle(staging, target, cli)
+    await settle(staging, target, done)
   } finally {
     await rm(staging, { recursive: true, force: true })
   }
@@ -304,7 +307,7 @@ const ensureApp = async (options: EnsurePiOptions, run: RunCommand, signal: Abor
 }
 
 /**
- * Makes sure the cache holds Node.js for each libc and the pinned pi install, getting what it
+ * Makes sure the cache holds Node.js for each libc and the pinned install of pi's packages, getting what it
  * lacks, and says where the install is. What earlier preparations cut short left behind goes
  * first. Interrupted, as when it takes too long, it stops its downloads and installs, and
  * removes what they had made.

@@ -31,6 +31,7 @@ const runnerHello = {
   protocolVersion: ProtocolVersion,
   name: "mac",
   sessions: [],
+  runsAgent: true,
 }
 
 const modHello = (sessionId: string) => ({
@@ -274,8 +275,6 @@ describe("mod channel", () => {
       expect(await response.json()).toEqual({
         _tag: "ModWelcome",
         protocolVersion: ProtocolVersion,
-        // So the mod may tell it of a prompt delivered again (#323).
-        alreadySubmitted: true,
       })
     })
 
@@ -445,7 +444,6 @@ describe("web channel", () => {
       { _tag: "ClaudeCredentialState", credential: null },
       {
         _tag: "ProvidersState",
-        claudeHarness: "ClaudeCode",
         connected: [],
         connectable: expect.arrayContaining([
           {

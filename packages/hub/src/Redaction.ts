@@ -332,6 +332,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "TurnStarted":
     case "AgentMessaged":
     case "PromptSteered":
+    case "ThreadPromptSent":
       return {
         ...event,
         text: redact(event.text),
@@ -357,11 +358,36 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
       return { ...event, questions: redactQuestions(needles, event.questions) }
     case "QuestionClosed":
       return { ...event, outcome: redactOutcome(needles, event.outcome) }
+    // A thread's title is the start of its first prompt.
+    case "ThreadStarted":
+      return { ...event, title: redact(event.title) }
+    case "ThreadPromptFailed":
+      return { ...event, message: redact(event.message) }
+    case "CompactionEnded":
+      return {
+        ...event,
+        ...(event.summary !== undefined && { summary: redact(event.summary) }),
+        ...(event.error !== undefined && { error: redact(event.error) }),
+      }
+    case "PlanChanged":
+      return {
+        ...event,
+        plan: {
+          ...event.plan,
+          steps: event.plan.steps.map((step) => ({ ...step, text: redact(step.text) })),
+          ...(event.plan.explanation !== undefined && {
+            explanation: redact(event.plan.explanation),
+          }),
+        },
+      }
     case "TurnEnded":
     case "TurnStopRequested":
     case "ModelSwitched":
     case "AgentStatusChanged":
     case "SteeredPromptRead":
+    case "ThreadModelChanged":
+    case "CompactionStarted":
+    case "UsageChanged":
       return event
   }
 }

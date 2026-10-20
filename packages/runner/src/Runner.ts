@@ -1,5 +1,4 @@
 import { Effect, Layer } from "effect"
-import { ClaudeModelsLive } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -37,10 +36,10 @@ export const runRunner = (options: { readonly backoff?: Backoff } = {}) =>
 export const ModRelayHost = ModRelayLive.pipe(Layer.provide(SessionTokensLive))
 
 /**
- * Sessions on this host: each Session's Claude Code, or pi (ADR 0029), runs in tmux in its own
- * microsandbox VM, on its Creator's setup token, with a Session token for the mod relay, and its
- * Workspace is cloned with host git. Tunnels into those Sandboxes (#177) share the Sessions'
- * sandbox backend.
+ * Sessions on this host: each Session's durable agent runs in tmux in its own microsandbox VM,
+ * beside a shell for its terminal, with a Session token for the mod relay and, for its Claude
+ * bridge, its Creator's setup token, and its Workspace is cloned with host git. Tunnels into those
+ * Sandboxes (#177) share the Sessions' sandbox backend.
  */
 export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(
@@ -52,7 +51,6 @@ export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(HubClaudeCredentialLive),
-  Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(PiBundleLive),
   Layer.provideMerge(HubLinkLive),
   Layer.provideMerge(ModRelayHost),

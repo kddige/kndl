@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start a Session on one of your Models, prompt it while others watch, steer and stop a Turn, answer the agent's questions, use the terminal, and get the work out.
+description: Start a Session on one of your Models, prompt it while others watch, steer and stop a Turn, follow its Plan, answer its questions, use the terminal, and get the work out.
 sidebar:
   order: 1
 ---
@@ -30,7 +30,7 @@ Start a Session on a Repo, drive it while your team watches, and get its work on
 
 4. Leave **Runner** on **Any online Runner**.
 
-5. In **Model**, pick one of your Models, grouped by what runs it. With a Claude credential, it starts on Claude: Claude Code's default, or Claude's first Model on pi if your Account page [runs Claude's Models with pi](/guides/add-your-claude-credential/#choose-what-runs-claudes-models). Without one, it starts on your first Model. Press the thinking button beside it to set a [Thinking level](/guides/manage-a-session/#choose-the-model-and-thinking-level).
+5. In **Model**, pick one of your Models, grouped by Provider. With a Claude credential, it starts on Claude's first Model. Without one, it starts on your first. Press the thinking button beside it to set a [Thinking level](/guides/manage-a-session/#choose-the-model-and-thinking-level).
 
 6. Press **Start Session**.
 
@@ -38,33 +38,33 @@ Start a Session on a Repo, drive it while your team watches, and get its work on
 
 </Steps>
 
-The Session's agent is run by its [Harness](/reference/glossary/#harness): Claude Code for a model under **Anthropic · Claude Code**, and [pi](https://pi.dev), an open-source coding agent, for any other. You can [switch the Model](/guides/manage-a-session/#choose-the-model-and-thinking-level) at any time, to any of yours, and the Session [switches Harness](/guides/manage-a-session/#switch-between-claude-code-and-pi) with it.
-
-### Start a Claude Code Session
-
-To run Claude Code itself, such as for a Repo's Claude Code hooks and plugins, pick a model under **Anthropic · Claude Code**. It runs on your Claude credential.
-
-To have **New Session** start on Claude Code's default whatever your Account page says, add `?harness=claude-code` to the web UI's address, such as `https://hub.example.com/?harness=claude-code`.
-
-A Runner that can't run pi starts Claude Code Sessions only: see [New Sessions run Claude Code](/troubleshooting/sessions/#new-sessions-run-claude-code).
+Every Session runs the same agent, on whichever of your Models you pick. [Switch the Model](/guides/manage-a-session/#choose-the-model-and-thinking-level) at any time, to any of yours.
 
 ## Prompt it while others watch
 
-You started the Session, so you drive it. Everyone else with access to the Repo can open it and follow along live, but can't prompt it: their prompt box says who drives.
+Everyone with access to the Repo can prompt the Session, steer and stop it. It spends the Creator's accounts, whoever prompts. The agent reads each prompt with its sender's name.
 
-- **While the agent works**, new prompts wait in the [Prompt queue](/reference/glossary/) and run in order.
+- **While the agent works**, new prompts wait in the [Prompt queue](/reference/glossary/#prompt-queue) and run in order.
 - **To get a queued prompt in now**, press **Steer** on it. The agent reads it at its next step, usually after the current tool call, and the transcript marks it **Steered in**.
-- **To stop the Turn**, press **Stop** in the prompt box. In a Claude Code Session, a running Bash command moves to the background instead of being killed.
+- **To stop the Turn**, press **Stop** in the prompt box.
 
 The agent never asks for permission to run a tool. Everything it runs stays in the Session's Sandbox: see [Security model](/concepts/security-model/).
 
 ### Read a Turn's footer
 
-Each Turn ends with a footer: how long it took, the tokens in and out, and, for most Models, what it cost in US dollars at the Model's API price, even on a subscription. Claude's Models and Claude Code Sessions show no cost. A Turn that ran on another Model than the Session's current one names it.
+Each Turn ends with a footer: how long it took, the tokens in and out, and a cost in US dollars when its Model reports one. A Turn that ran on another Model than the Session's current one names it. The Session's header shows what the main conversation has cost so far.
+
+## Follow the Plan
+
+For work of several steps, the agent keeps a checklist, the Plan. It shows above the prompt box, live for everyone: steps are pending, in progress or done. A [Thread](/guides/reply-in-a-thread/) starts with the Plan as it was where it forked, then keeps its own.
+
+## Compact the conversation
+
+The agent summarizes a conversation's older messages on its own as it nears its Model's context limit, so a Session doesn't run out. To do it now, choose the compaction action in the Session's actions menu, and say what to keep, if you like. A divider in the transcript marks where it happened. A Thread has its own compaction action.
 
 ## Answer the agent's questions
 
-When the agent asks a question, the Session's row gets an amber dot and its header says **Waiting on you**. A card above the prompt box asks the questions one at a time.
+When the agent asks a question, the Session's row gets an amber dot and its header says **Waiting on an answer**. A card above the prompt box asks the questions one at a time.
 
 ![A question card: "Which date library should the web UI use?", with three options, Bob's pick on Luxon, and a Something else field.](../../../assets/screenshots/question.png)
 
@@ -72,20 +72,21 @@ When the agent asks a question, the Session's row gets an amber dot and its head
 - Type your own answer in **Something else** and press Enter.
 - Press **Skip** to leave a question unanswered.
 
-You answer, and everyone in the Session sees your picks. The answers go to the agent after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
+Anyone in the Session can answer, and everyone sees the picks. The first answer is the one the agent reads. Only the main conversation's agent asks questions: Threads and subagents don't. The answers go to the agent after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
 
 ## Use the terminal
 
-**Terminal**, in the prompt box's bar, opens a panel under the chat with the agent's own screen, pi's or Claude Code's, live, and you can type into it. Use it for what the chat doesn't cover: their own commands and dialogs, Esc and Ctrl-C.
+**Terminal**, in the prompt box's bar, opens a plain shell in `/workspace`. Use it for what the chat doesn't cover: your own commands, Esc and Ctrl-C. It isn't the agent's screen: the agent has none.
 
-Only you see it. Others in the Session don't, since the terminal is where your Claude token is easiest to see. **Fit to my window** sets its size to yours.
+Everyone in the Session sees the same shell and can type into it. **Fit to my window** sets its size to yours. The shell starts again if you exit it, and the agent keeps working.
 
 ## What the agent can use
 
 The agent runs in `/workspace`, the Repo's checkout. Settings on the Runner's machine never apply.
 
-- **pi** loads the Repo's `AGENTS.md`, or its `CLAUDE.md` where there's none, its `.pi/` directory, with pi's settings, skills, prompts and extensions, and the skills in `.agents/skills` and `.claude/skills`, with the MCP servers the Hub adds to its Sessions. Claude Code's hooks, plugins and settings don't apply.
-- **Claude Code** loads the Repo's own `CLAUDE.md`, `.claude/` skills, agents, commands, hooks and settings, and `.mcp.json`, as it would on your machine. The Hub can add more MCP servers to its Sessions: see [Add a remote MCP server](/guides/add-a-remote-mcp-server/).
+- **Instructions.** The Repo's `AGENTS.md` and `CLAUDE.md` at its root, read live, so an edit reaches the next request. Nested ones are listed for the agent to read where it works.
+- **Skills.** Those in `.agents/skills`, `.claude/skills` and `.pi/skills`, by name and description.
+- **MCP servers.** The ones the Hub adds to its Sessions: see [Add a remote MCP server](/guides/add-a-remote-mcp-server/). A Repo's `.mcp.json`, hooks, plugins and Claude Code settings don't apply.
 
 ## Get the work out
 
@@ -108,6 +109,11 @@ Until it's pushed, the work exists only in the Session's Workspace on the Runner
     title="Manage a Session"
     href="/kndl/guides/manage-a-session/"
     description="Rename it, change its model, keep it awake, delete and restore it."
+  />
+  <LinkCard
+    title="Reply in a Thread"
+    href="/kndl/guides/reply-in-a-thread/"
+    description="Fork the conversation at any answer, and let it run beside the main one."
   />
   <LinkCard
     title="Work with subagents"

@@ -12,7 +12,9 @@
 > [!NOTE]
 > Issues and pull requests are open to maintainers only for now, while we set the baseline kndl grows from. Please use [Discussions](https://github.com/kddige/kndl/discussions) for bugs, ideas and questions in the meantime.
 
-kndl (said "kindle") is a self-hosted Hub where a team runs coding-agent Sessions in Sandboxes on any number of Runners, on the Models of any Provider they connect, and watches them together from the web. Each Session is driven by the person who started it.
+kndl (said "kindle") is a self-hosted Hub where a team runs coding-agent Sessions in Sandboxes on any number of Runners, on the Models of any Provider they connect, and works in them together from the web.
+
+> **Experimental branch: Pi Durable.** This draft replaces both agent Harnesses with one headless durable agent. Everyone with access can drive a Session, on its Creator's accounts. Threads fork the conversation and run alongside it; Turns can resume after a restart. This is a spike, not a release or a change to the accepted ADRs. See the [design](docs/design/durable-harness.md) and [local testing guide](docs/design/durable-testing.md).
 
 **Documentation: <https://kddige.github.io/kndl/>**
 
@@ -21,9 +23,9 @@ kndl is early: v1 is being built, and things change quickly.
 ## How it works
 
 - The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI. It is invite-only: its **Owner** invites everyone else.
-- A **Runner**, on each machine that runs Sessions, starts each Session's agent in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing the agent runs touches the host. The agent is [pi](https://pi.dev) or Claude Code, whichever runs the Session's model, and a Session switches between them when its model does, handing the other what it hasn't seen.
+- A **Runner**, on each machine that runs Sessions, starts each Session's agent in its own **Sandbox**, a microVM built from its Repo's **Environment**, so nothing the agent runs touches the host. The agent runs [Pi Durable](https://earendil.com/posts/pi-durable/) over SQLite on the Session's persistent volume. Claude Code is used only by the Claude bridge as a model backend; it is no longer a separate Harness.
 - Each Session runs on its **Creator**'s own accounts: the **Providers** they connected on the Hub, with a subscription sign-in or an API key, and their Claude setup token for Claude's Models. The Hub keeps the Providers' credentials and adds them to model calls on the way out, so they never enter a Sandbox. Claude's token is the exception: Claude Code holds it in the Sandbox and talks to Anthropic directly.
-- Only the Creator drives a Session: prompts it, answers it, stops it, controls it and uses its terminal. Everyone else with access to its Repo watches it live, subagents included.
+- Every Participant with Repo access can prompt, steer, stop, answer, switch Models, start threads and use the shared shell terminal. Threads have independent conversations and can use different Models; the Creator's accounts still pay for all of them.
 
 Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and design decisions are in [`docs/adr/`](docs/adr/).
 
@@ -62,9 +64,9 @@ One Bun workspace in TypeScript, with [Effect](https://effect.website).
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas. |
 | [`packages/hub`](packages/hub) | The Hub: an Effect HTTP server on Bun, with SQLite. |
-| [`packages/runner`](packages/runner) | A Runner: pi or Claude Code in tmux in a microsandbox Sandbox, and the mod relay to the Hub. |
+| [`packages/runner`](packages/runner) | A Runner: the durable agent and a separate shell terminal in tmux in a microsandbox Sandbox, and the mod relay to the Hub. |
 | [`packages/cli`](packages/cli) | The `kndl` command: installs, runs and looks after a Hub and Runner as services. |
-| [`packages/mod`](packages/mod) | The mod each Session loads: a pi extension, with the Claude bridge, and for Claude Code two plugins, `hub-link`, which reports to the Hub, and `hub-link-commands`, which runs its commands. |
+| [`packages/mod`](packages/mod) | The durable agent, its tools, Claude bridge and link to the Hub. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, Base UI and StyleX. |
 | [`packages/docs`](packages/docs) | The documentation site: Astro Starlight. |
 | [`brand/`](brand) | The logo's sources. `bun run --filter @kndl/docs brand` makes the PNG and ICO files from them. |
@@ -78,7 +80,7 @@ From the repo root:
 | `bun run lint` | Lints with oxlint. |
 | `bun run format:check` | Checks formatting with oxfmt; `bun run format` applies it. |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>, beside `bun run hub`. |
-| `bun run mod:check` | Builds the mod and validates its plugins with Claude Code. |
+| `bun run mod:check` | Builds and checks the durable agent. |
 | `bun run docs:dev` | The documentation site on <http://localhost:4321/kndl/>. |
 | `bun run docs:build` | Builds the site into `packages/docs/dist`. |
 

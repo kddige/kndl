@@ -70,11 +70,5 @@
       }
     }
   ],
-  "ignorePatterns": [
-    "**/dist/**",
-    "**/.claude-plugin/types/**",
-    "packages/mod/plugins/*/hooks/hub-link-lib.js",
-    ".agents/**",
-    ".claude/**"
-  ]
+  "ignorePatterns": ["**/dist/**", ".agents/**", ".claude/**"]
 }

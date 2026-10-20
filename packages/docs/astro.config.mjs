@@ -86,6 +86,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             { slug: "guides/work-in-a-session" },
+            { slug: "guides/reply-in-a-thread" },
             { slug: "guides/manage-a-session" },
             { slug: "guides/work-with-subagents" },
             { slug: "guides/forward-a-sessions-ports" },

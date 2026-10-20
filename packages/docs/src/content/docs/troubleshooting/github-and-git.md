@@ -12,7 +12,7 @@ Fixes for cloning and pushing. Two gits run for a Session: the Runner's, which c
 **What you see.** A new Session goes Asleep at once:
 
 ```
-The Session is Asleep: Claude Code could not start on build-box: git clone exited with 128: …
+The Session is Asleep: The agent could not start on build-box: git clone exited with 128: …
 ```
 
 followed by git's message, such as `could not read Username for 'https://github.com'` or `repository '…' not found`.
@@ -35,7 +35,7 @@ gh auth setup-git
 **What you see.**
 
 ```
-The Session is Asleep: Claude Code could not start on build-box: The GitHub App is not installed on owner/name, or can't see it: …
+The Session is Asleep: The agent could not start on build-box: The GitHub App is not installed on owner/name, or can't see it: …
 ```
 
 **Why.** The App isn't installed on the Repo's account, or its installation is limited to other repositories.
@@ -69,7 +69,7 @@ Session 9af3111eb506f54cea59b83c: its Sandbox has no GitHub token, so git and gh
 
 **Fix.** [Set up the GitHub App](/self-hosting/set-up-the-github-app/) and install it on the Repo. Install git and gh in the Environment's [Bootstrap script](/guides/set-up-an-environment/#write-the-bootstrap-script), then **Restart** the Session. Don't run `gh auth login` in the Sandbox.
 
-## Claude pushed to the default branch
+## A Session pushed to the default branch
 
 **What you see.** A Session pushed straight to `main`, or merged its own pull request.
 

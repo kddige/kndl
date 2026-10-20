@@ -1,7 +1,7 @@
 // The terminal mirror end to end: a real Hub, a real Runner with real tmux, and a web client
-// over the Hub's WebSocket. The Session's "Claude Code" is a small Bun script, never `claude`;
-// the Workspace and Sandbox are faked, with tmux run on the host in the Sandbox's place. Skipped
-// when tmux isn't installed.
+// over the Hub's WebSocket. The Session's terminal is a real login shell; its agent is a small
+// script that only waits, never the durable agent. The Workspace and Sandbox are faked, with tmux
+// run on the host in the Sandbox's place. Skipped when tmux isn't installed.
 
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -22,7 +22,6 @@ import {
   webOrigin,
 } from "../../hub/src/testSupport.ts"
 import { ClaudeTokenVariable } from "./ClaudeEnvironment.ts"
-import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -51,30 +50,12 @@ if (tmuxMissing) console.warn("Skipping the terminal mirror test: tmux isn't ins
 const dir = mkdtempSync(join(tmpdir(), "kndl-mirror-"))
 
 /**
- * Stands in for Claude Code: ignores its flags, says it's ready, echoes each line, prints the
- * terminal's size when asked, and survives Ctrl-C, saying so.
- *
- * It is a Bun script rather than a shell loop: macOS's `/bin/sh` is bash 3.2, whose `read`, after
- * running an INT trap, now and then drops the last byte of the next line when the resize's
- * SIGWINCH lands, so `size` arrived as `siz` and the test waited for an answer that never came.
+ * Stands in for the Node.js that runs the durable agent: ignores the agent it is given, says it
+ * runs, and waits to be stopped.
  */
-const fakeClaude = join(dir, "fake-claude")
-writeFileSync(
-  fakeClaude,
-  `#!${process.execPath}
-process.on("SIGINT", () => process.stdout.write("interrupted\\n"))
-process.stdout.write("fake claude ready\\n")
-for await (const line of console) {
-  if (line === "size") {
-    const [cols, rows] = process.stdout.getWindowSize()
-    process.stdout.write(\`\${rows} \${cols}\\n\`)
-  } else {
-    process.stdout.write(\`you said: \${line}\\n\`)
-  }
-}
-`,
-)
-chmodSync(fakeClaude, 0o755)
+const fakeNode = join(dir, "fake-node")
+writeFileSync(fakeNode, "#!/bin/sh\necho fake agent running\nexec sleep 600\n")
+chmodSync(fakeNode, 0o755)
 
 type Frame = Extract<typeof HubToWeb.Encoded, { _tag: "TerminalFrame" }>
 type Tagged = { readonly _tag: string; readonly [key: string]: unknown }
@@ -186,12 +167,11 @@ async function startRunner(hub: TestHub) {
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(StaticClaudeModels(undefined)),
-    Layer.provideMerge(StaticPiBundle(undefined)),
+    Layer.provideMerge(StaticPiBundle({ nodeModules: join(dir, "pi", "node_modules") })),
     Layer.provide([
       Layer.succeed(Tmux, Tmux.of({ ...makeTmux(guestTmux), retireHostServer: Effect.void })),
       new FakeWorkspaces(sessionsRoot).layer,
-      new FakeSandboxes(fakeClaude).layer,
+      new FakeSandboxes(undefined, fakeNode).layer,
       new FakeModRelay().layer,
     ]),
     Layer.provideMerge(
@@ -253,10 +233,17 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
       (message) => (message["session"] as { state: string }).state === "Active",
     )
 
-    // Opening it gets a snapshot of the screen as it is, then what it prints.
+    // Opening it gets a snapshot of the screen as it is, then what it prints: the shell's prompt,
+    // and what it echoes.
     web.send({ _tag: "OpenTerminal", sessionId })
-    const opened = await framesUntil(web, "fake claude ready")
-    // Its Claude Code was started on alice's Claude credential, fetched from the Hub.
+    // What is typed before the shell has started, it may drop: so it is typed until it answers.
+    const opened = await framesUntil(web, "")
+    while (!opened.some((frame) => frame.data.includes("ready-42"))) {
+      web.send({ _tag: "TerminalInput", sessionId, data: "echo ready-$((40+2))\r" })
+      opened.push(...(await framesUntil(web, "ready-42").catch(() => [])))
+    }
+    // Its agent was started on alice's Claude credential, fetched from the Hub, which the shell
+    // doesn't have.
     expect(
       await Effect.runPromise(
         makeTmux(guestTmux).variable(sessionId as SessionId, ClaudeTokenVariable),
@@ -265,26 +252,37 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     expect(opened.some((frame) => frame.kind === "Snapshot")).toBe(true)
     web.send({ _tag: "CloseTerminal", sessionId })
     web.send({ _tag: "OpenTerminal", sessionId })
-    expect((await framesUntil(web, "fake claude ready")).at(-1)).toMatchObject({
+    expect((await framesUntil(web, "ready-42")).at(-1)).toMatchObject({
       kind: "Snapshot",
       size: { cols: 120, rows: 40 },
     })
+    // Tells whether the shell has alice's credential without printing whatever it has instead.
+    web.send({
+      _tag: "TerminalInput",
+      sessionId,
+      data: `case "$${ClaudeTokenVariable}" in *FAKE_TOKEN_FOR_TESTS*) echo leaked-$((0+1));; *) echo clean-$((0+1));; esac\r`,
+    })
+    const checked = await framesUntil(web, "-1\r\n")
+    expect(checked.map((frame) => frame.data).join("")).toContain("clean-1")
 
-    // Keystrokes, Enter and Ctrl-C reach the process; what it prints comes back as Output.
-    web.send({ _tag: "TerminalInput", sessionId, data: "hello\r" })
-    const echoed = await framesUntil(web, "you said: hello")
+    // Keystrokes, Enter and Ctrl-C reach the shell; what it prints comes back as Output.
+    web.send({ _tag: "TerminalInput", sessionId, data: "echo hello-$((1+1))\r" })
+    const echoed = await framesUntil(web, "hello-2")
     expect(echoed.every((frame) => frame.kind === "Output")).toBe(true)
+    web.send({ _tag: "TerminalInput", sessionId, data: "sleep 30\r" })
+    await Bun.sleep(200)
     web.send({ _tag: "TerminalInput", sessionId, data: "\u0003" })
-    await framesUntil(web, "interrupted")
+    web.send({ _tag: "TerminalInput", sessionId, data: "echo interrupted-$((2+1))\r" })
+    await framesUntil(web, "interrupted-3")
 
-    // A resize redraws every viewer from a snapshot at the new size, and the process sees it.
+    // A resize redraws every viewer from a snapshot at the new size, and the shell sees it.
     web.send({ _tag: "TerminalResize", sessionId, size: { cols: 100, rows: 30 } })
-    const resized = await framesUntil(web, "you said: hello")
-    expect(resized.find((frame) => frame.data.includes("you said: hello"))).toMatchObject({
+    const resized = await framesUntil(web, "hello-2")
+    expect(resized.find((frame) => frame.data.includes("hello-2"))).toMatchObject({
       kind: "Snapshot",
       size: { cols: 100, rows: 30 },
     })
-    web.send({ _tag: "TerminalInput", sessionId, data: "size\r" })
+    web.send({ _tag: "TerminalInput", sessionId, data: "stty size\r" })
     expect((await framesUntil(web, "30 100")).at(-1)).toMatchObject({
       kind: "Output",
       size: { cols: 100, rows: 30 },
@@ -299,7 +297,8 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     const reopened = await framesUntil(again, "30 100")
     expect(reopened.map((frame) => frame.kind)).toEqual(["Snapshot"])
     const screen = reopened[0]?.data ?? ""
-    expect(screen.split("you said: hello")).toHaveLength(2)
+    expect(screen.split("\nhello-2")).toHaveLength(2)
+    expect(screen).not.toContain("fake agent running")
     expect(reopened[0]?.size).toEqual({ cols: 100, rows: 30 })
   }, 30_000)
 })

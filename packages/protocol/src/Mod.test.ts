@@ -50,6 +50,13 @@ const modToHub = [
     message: "pi has no Model openai/gpt-6-sol",
   },
   { _tag: "ModelSwitchFailed", model: "openai/gpt-6-luna", message: "No default Model" },
+  {
+    _tag: "ModelSwitchFailed",
+    asked: "openai/gpt-6-sol",
+    model: "openai/gpt-6-luna",
+    message: "No Model openai/gpt-6-sol",
+    threadId: "thr-1",
+  },
 ]
 
 const hubToMod = [
@@ -110,6 +117,37 @@ const hubToMod = [
     earlierBefore: 12,
   },
   { _tag: "DeliverHandoff", sessionId: "s-1", from: "ClaudeCode", text: "" },
+  {
+    _tag: "StartThread",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    anchorTurnId: "t-1",
+    promptId: "p-7",
+    text: "what about Windows?",
+    sender: bob,
+    model: "openai/gpt-6-luna",
+    thinkingLevel: "low",
+  },
+  {
+    _tag: "DeliverThreadPrompt",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    promptId: "p-8",
+    text: "and macOS",
+    sender: alice,
+  },
+  { _tag: "StopThread", sessionId: "s-1", threadId: "thr-1" },
+  { _tag: "StopThread", sessionId: "s-1", threadId: "thr-1", turnId: "t-4" },
+  { _tag: "SwitchThreadModel", sessionId: "s-1", threadId: "thr-1", model: "openai/gpt-6-sol" },
+  { _tag: "Compact", requestId: "c-1", sessionId: "s-1", sender: alice },
+  {
+    _tag: "Compact",
+    requestId: "c-2",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    instructions: "Keep the test names",
+    sender: bob,
+  },
 ]
 
 describe("ModToHub", () => {
@@ -134,19 +172,6 @@ describe("ModToHub", () => {
       ...ended,
       usage: { model: "m", input: 1, output: 1, cacheRead: 0 },
     })
-  })
-
-  test("reads a hello that says the mod steers, and one from a mod from before", () => {
-    const hello = modToHub[0] as Record<string, unknown>
-    expectRoundTrips(ModToHub, [{ ...hello, steers: true }])
-    expect(Schema.decodeUnknownSync(ModToHub)(hello)).not.toHaveProperty("steers")
-    expectRejected(ModToHub, { ...hello, steers: false })
-  })
-
-  test("reads a hello that says the mod marks files beyond prompts (#278)", () => {
-    const hello = modToHub[0] as Record<string, unknown>
-    expectRoundTrips(ModToHub, [{ ...hello, steers: true, attaches: true }])
-    expect(Schema.decodeUnknownSync(ModToHub)(hello)).not.toHaveProperty("attaches")
   })
 
   test("reads a steered prompt of attachments alone (#278)", () => {
@@ -193,6 +218,8 @@ describe("HubToMod", () => {
     expectRejected(HubToMod, { ...hubToMod[3], text: "" })
     expectRejected(HubToMod, { _tag: "DeliverIntoTurn", sessionId: "s-1", promptId: "p-2" })
     expectRejected(HubToMod, { _tag: "StopTurn" })
+    // A Compact without its request id could not be told from one sent again.
+    expectRejected(HubToMod, { _tag: "Compact", sessionId: "s-1", sender: alice })
     expectRejected(HubToMod, { _tag: "PresenceChanged", sessionId: "s-1", participants: [{}] })
     expectRejected(HubToMod, { _tag: "SendPrompt", sessionId: "s-1", text: "web-only message" })
     const answer = hubToMod.find((message) => message._tag === "DeliverAnswer")
@@ -235,17 +262,6 @@ describe("the HTTP bodies", () => {
     expectEveryTag(ModHelloReply, hubToMod.slice(0, 2))
     expectRoundTrips(ModHelloReply, hubToMod.slice(0, 2))
     expectRejected(ModHelloReply, hubToMod[3])
-  })
-
-  test("a welcome says the Hub takes PromptAlreadySubmitted; a mod from before reads it all the same (#323)", () => {
-    const welcome = { _tag: "ModWelcome", protocolVersion: ProtocolVersion, alreadySubmitted: true }
-    expectRoundTrips(ModHelloReply, [welcome])
-    // An older mod's schema has no such key, and ignores it.
-    const before = Schema.TaggedStruct("ModWelcome", { protocolVersion: Schema.Number })
-    expect(Schema.decodeUnknownSync(before)(welcome)).toEqual({
-      _tag: "ModWelcome",
-      protocolVersion: ProtocolVersion,
-    })
   })
 
   test("ModCommands round-trips numbered commands, and none", () => {

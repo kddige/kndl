@@ -1,8 +1,0 @@
-{
-  "extends": "../../../tsconfig.base.json",
-  "compilerOptions": {
-    // The extension runs in Node inside pi: Bun's types carry Node's, and its tests run under Bun.
-    "types": ["bun"]
-  },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
-}

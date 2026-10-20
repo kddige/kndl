@@ -57,6 +57,12 @@ export function dollars(n: number): string {
   return `$${n.toFixed(n < 1 ? 4 : 2)}`
 }
 
+/** What a conversation has spent, to the cent: "$0.04", "$12.30"; "<$0.01" for less. */
+export function spent(n: number): string {
+  if (n > 0 && n < 0.005) return "<$0.01"
+  return `$${n.toFixed(2)}`
+}
+
 /** A size in binary units, with a decimal under ten: "512 B", "9.5 GiB", "186 GiB". */
 export function bytes(n: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"]

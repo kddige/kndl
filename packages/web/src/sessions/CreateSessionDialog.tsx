@@ -1,29 +1,21 @@
 import {
   type BranchChoice,
-  harnessForNewSession,
-  harnessOfModel,
   branchNameProblem,
   newBranchProblem,
   repoKey,
   type RunnerId,
-  type RunnerSummary,
   sameRepo,
   type SessionSummary,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useEffect, useState } from "react"
 import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
 import { ListingUnavailableError } from "../hub/client.ts"
 import { ModelPicker } from "../session/ModelPicker.tsx"
-import {
-  fitProviderSetting,
-  fitSetting,
-  type ModelSetting,
-  sharedModels,
-} from "../session/models.ts"
+import { fitProviderSetting, type ModelSetting } from "../session/models.ts"
 import {
   Banner,
   Button,
@@ -93,30 +85,12 @@ const distinctRepos = (names: ReadonlyArray<string>) => [
   ...new Map(names.map((name) => [repoKey(name), name] as const)).values(),
 ]
 
-const runsPi = (runner: RunnerSummary) => runner.harnesses?.includes("Pi") === true
-/** A Runner from before pi runs Claude Code alone. */
-const runsClaudeCode = (runner: RunnerSummary) =>
-  runner.harnesses === undefined || runner.harnesses.includes("ClaudeCode")
-
-const capitalized = (words: string) => words.charAt(0).toUpperCase() + words.slice(1)
-
-/**
- * Whether the page's URL asks for Claude Code: `?harness=claude-code`, which preselects Claude
- * Code's default whatever the Account page's choice for Claude (ADR 0030).
- */
-export const useClaudeCodeAsked = () =>
-  useRouterState({
-    select: (state) =>
-      (state.location.search as Record<string, unknown>)["harness"] === "claude-code",
-  })
-
 /**
  * "New Session": pick a Repo, a branch (an existing one, directly or on a new Work branch, or a
- * new one made from another; ADR 0023) and, if it matters, the Runner to run it on. Only you drive
- * it (ADR 0026). On a Runner that runs pi, it is a pi Session (ADR 0029), on one of your Models:
- * without any, it says to connect a Provider first. Elsewhere, or when the URL asks for Claude
- * Code, it runs Claude Code on your own setup token: without one, it says to add one first.
- * Opened by `trigger`, a primary "New Session" Button unless given.
+ * new one made from another; ADR 0023), the Runner to run it on if it matters, and one of your
+ * Models. It runs the durable agent (docs/design/durable-harness.md) on your own accounts (ADR
+ * 0026), and everyone with access to the Repo can drive it: without a Model, it says to connect a
+ * Provider first. Opened by `trigger`, a primary "New Session" Button unless given.
  */
 export function CreateSessionDialog({
   trigger,
@@ -128,14 +102,9 @@ export function CreateSessionDialog({
 }) {
   const hub = useHub()
   const runners = useHubState((state) => state.runners)
-  // Null once the Hub says they have stored none; undefined until it says.
-  const claudeCredential = useHubState((state) => state.claudeCredential)
-  // Their Models, for a pi Session; undefined until the Hub says.
+  // Their Models, Claude's among them with a Claude credential; undefined until the Hub says.
   const providerModels = useHubState((state) => state.providers?.models)
   const connectable = useHubState((state) => state.providers?.connectable)
-  // Which Harness runs Claude's Models in their new Sessions, as their Account page says (ADR 0030).
-  const claudeHarness = useHubState((state) => state.providers?.claudeHarness) ?? "ClaudeCode"
-  const claudeCodeAsked = useClaudeCodeAsked()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   useEffect(() => (listen ? onNewSession(() => setOpen(true)) : undefined), [listen])
@@ -151,8 +120,7 @@ export function CreateSessionDialog({
   const [branches, setBranches] = useState<Branches | null>(null)
   const [branchesAsked, setBranchesAsked] = useState(0)
   const [runner, setRunner] = useState<string>(anyRunner)
-  // Claude Code's own default unless one is picked (#128).
-  // None until one is picked: Claude's on the Harness the Account page says (ADR 0030).
+  // None until one is picked: the Hub's pick of your Models, Claude's first (#128).
   const [modelChoice, setModelChoice] = useState<ModelSetting | null>(null)
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -179,49 +147,11 @@ export function CreateSessionDialog({
   const branchInvalid = (touched && branchValue === "") || newNameProblem !== undefined
   const fromInvalid = creating && !fromListed
   const online = (runners ?? []).filter((candidate) => candidate.isOnline)
-  // The Runners it may start on: the one chosen, or any online one.
-  const candidates =
-    runner === anyRunner ? online : (runners ?? []).filter((candidate) => candidate.id === runner)
-  // The Harnesses it can run on: those every Runner it may start on runs. Its Creator picks any of
-  // their Models (ADR 0030): pi's, and Claude Code's on their setup token, without which they're
-  // offered only where nothing else is, so the dialog can say to add one.
-  const piOffered = candidates.length > 0 && candidates.every(runsPi)
-  const claudeCodeOffered =
-    !piOffered ||
-    (candidates.every(runsClaudeCode) && (claudeCredential !== null || claudeCodeAsked))
-  // Until one is picked: Claude's Models on the Harness the Creator's Account page says, unless the
-  // URL asks for Claude Code.
-  const defaultHarness = harnessForNewSession({
-    pi: piOffered,
-    claudeCode: claudeCodeOffered,
-    asked: claudeCodeAsked ? "ClaudeCode" : undefined,
-    models: providerModels,
-    claudeHarness,
-  })
-  // A choice another Runner picked since can't run goes back to the default.
-  const chosenHarness = modelChoice === null ? defaultHarness : harnessOfModel(modelChoice.model)
-  const harness = (chosenHarness === "Pi" ? piOffered : claudeCodeOffered)
-    ? chosenHarness
-    : defaultHarness
-  const pi = harness === "Pi"
-  // The models it can run: the chosen Runner's, or for any Runner, what every online one has.
-  const models = sharedModels(candidates.map((candidate) => candidate.models))
-  // A choice the Runner picked since doesn't have is dropped, not sent to be refused. A pi
-  // Session's is always one of the Creator's Models, named: the Hub's pick until one is picked.
-  const keptChoice = modelChoice !== null && chosenHarness === harness ? modelChoice : {}
-  const modelSetting = pi
-    ? fitProviderSetting(providerModels, keptChoice)
-    : fitSetting(models, keptChoice)
-  // A model says its Harness, but no model says nothing: Claude Code's default is asked for where
-  // the Hub might make it pi.
-  const askClaudeCode = !pi && modelSetting.model === undefined && candidates.some(runsPi)
-  // A Session runs on its Creator's own accounts, with no fallback (ADR 0026): without one, it
-  // can't start, and the dialog says so before the form is filled in. Claude Code needs their
-  // setup token; pi, one of their Models.
-  const needsCredential = !pi && claudeCredential === null
-  // Who does the work: Claude, on Claude Code; on pi, whichever Model is picked.
-  const worker = pi ? "the Session" : "Claude"
-  const needsModels = pi && providerModels?.length === 0
+  // Always one of the Creator's Models, named: the Hub's pick until one is picked.
+  const modelSetting = fitProviderSetting(providerModels, modelChoice ?? {})
+  // A Session runs on its Creator's own accounts, with no fallback (ADR 0026): without a Model,
+  // it can't start, and the dialog says so before the form is filled in.
+  const needsModels = providerModels?.length === 0
 
   // Recent: the person's own Sessions' Repos, newest first. Without a list from the Hub, the
   // suggestions are those and every other Repo the Sessions are in.
@@ -346,7 +276,6 @@ export function CreateSessionDialog({
           search: {
             ...branchSearch(choice),
             ...(runner !== anyRunner && { runner }),
-            ...(askClaudeCode && { harness: "claude-code" as const }),
             ...(modelSetting.model !== undefined && { model: modelSetting.model }),
             ...(modelSetting.thinkingLevel !== undefined && {
               thinking: modelSetting.thinkingLevel,
@@ -359,7 +288,6 @@ export function CreateSessionDialog({
         repo: repoValue,
         branch: choice,
         ...(runner !== anyRunner && { runnerId: runner as RunnerId }),
-        ...(askClaudeCode && { harness: "ClaudeCode" as const }),
         ...modelSetting,
       })
       setOpen(false)
@@ -395,7 +323,7 @@ export function CreateSessionDialog({
             type="submit"
             form="create-session"
             loading={busy}
-            disabled={needsCredential || needsModels}
+            disabled={needsModels}
           >
             Start Session
           </Button>
@@ -403,27 +331,10 @@ export function CreateSessionDialog({
       }
     >
       <form id="create-session" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
-        {needsCredential && (
-          <Banner intent="warning" icon={<KeyIcon />} title="Add your setup token first">
-            A Session runs on its Creator's own Claude account, and only they drive it. Add your
-            setup token on your{" "}
-            <Link
-              to="/account"
-              onClick={() => {
-                setOpen(false)
-                reset()
-              }}
-              {...stylex.props(styles.link, focus.ring)}
-            >
-              Account
-            </Link>{" "}
-            page to start one.
-          </Banner>
-        )}
         {needsModels && (
           <Banner intent="warning" icon={<KeyIcon />} title="Connect a Provider first">
-            A Session runs on its Creator's own Models, and only they drive it. Connect a Provider,
-            or add your Claude setup token, on your{" "}
+            A Session runs on its Creator's own accounts. Connect a Provider, or add your Claude
+            setup token, on your{" "}
             <Link
               to="/account"
               onClick={() => {
@@ -497,7 +408,7 @@ export function CreateSessionDialog({
               // The list can be cut short, so this doesn't stop the Session from starting.
               "Branch not found on GitHub. Pick one, or create it."
             ) : (
-              `The branch ${worker} starts from.`
+              "The branch the agent starts from."
             )
           }
           disabled={!repoPicked}
@@ -550,8 +461,8 @@ export function CreateSessionDialog({
             label="Work on a new branch"
             description={
               newWorkBranch
-                ? `${capitalized(worker)} commits to a new branch made from ${branchValue === "" ? "it" : branchValue}.`
-                : `${capitalized(worker)} commits directly to ${branchValue === "" ? "it" : branchValue}.`
+                ? `The agent commits to a new branch made from ${branchValue === "" ? "it" : branchValue}.`
+                : `The agent commits directly to ${branchValue === "" ? "it" : branchValue}.`
             }
             checked={newWorkBranch}
             onCheckedChange={setNewWorkBranch}
@@ -570,9 +481,7 @@ export function CreateSessionDialog({
           description={
             online.length === 0
               ? "No Runner is online, so the Session can't start yet."
-              : pi
-                ? "Whose machine it runs on: on your own accounts."
-                : "Whose machine it runs on: on your own Claude account."
+              : "Whose machine it runs on, on your own accounts."
           }
         >
           <Select
@@ -590,17 +499,11 @@ export function CreateSessionDialog({
         </Field>
         <Field
           label="Model"
-          description={
-            piOffered && claudeCodeOffered
-              ? "Any of your Models, on Claude Code or pi. You can change it later."
-              : pi
-                ? "One of your Models, from the Providers on your Account page. You can change it later."
-                : "Claude Code's default unless you pick one. You can change it later."
-          }
+          description="One of your Models, from the Providers on your Account page. Anyone in the Session can change it later, and ask another in a Thread."
         >
           <ModelPicker
-            {...(claudeCodeOffered && { claudeCode: { models } })}
-            {...(piOffered && { pi: { models: providerModels, connectable } })}
+            models={providerModels}
+            connectable={connectable}
             value={modelSetting}
             onChange={setModelChoice}
             appearance="field"

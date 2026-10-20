@@ -12,6 +12,7 @@ import {
   Badge,
   Button,
   CloseIcon,
+  CompactIcon,
   IconButton,
   Menu,
   MenuItem,
@@ -146,9 +147,11 @@ const styles = stylex.create({
   sheetBody: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
 })
 
-/** What the Session's Creator can do to it, from its menu and the Composer. */
+/** What anyone in the Session can do to it, from its menu and the Composer. */
 export interface SessionActions {
   rename: () => void
+  /** Asks the agent to summarize the main conversation's older messages, with what to keep. */
+  compact: () => void
   setKeepAwake: (on: boolean) => void
   /** Undefined while it can't be put to sleep: busy, running or with prompts queued. */
   sleep: (() => void) | undefined
@@ -162,16 +165,14 @@ export function TitleStrip({
   summary,
   title,
   meta,
-  drives,
   presence,
   actions,
 }: {
   summary: SessionSummary
   /** The title, or the field renaming it. */
   title: ReactNode
-  /** Where it works and who drives it. */
+  /** Where it works, and whose accounts it runs on. */
   meta: ReactNode
-  drives: boolean
   presence: JoinedSession["presence"]
   actions: SessionActions
 }) {
@@ -193,7 +194,7 @@ export function TitleStrip({
             <SessionStatus state={statusOf(summary.state)} />
             {summary.openQuestion && (
               <Badge intent="warning" icon={<WaitingDot />}>
-                Waiting on {drives ? "you" : summary.creator.name}
+                Waiting on an answer
               </Badge>
             )}
           </span>
@@ -202,9 +203,7 @@ export function TitleStrip({
           <OpenPorts summary={summary} />
           <SessionMcpServers summary={summary} />
           <Presence presence={presence} />
-          {drives && summary.state !== "Archived" && (
-            <SessionMenu summary={summary} actions={actions} />
-          )}
+          {summary.state !== "Archived" && <SessionMenu summary={summary} actions={actions} />}
         </div>
       </div>
       <p {...stylex.props(textRole.meta, styles.meta)}>
@@ -217,7 +216,7 @@ export function TitleStrip({
   )
 }
 
-/** Everything its Creator can do to a Session, in one menu. */
+/** Everything anyone in it can do to a Session, in one menu. */
 function SessionMenu({ summary, actions }: { summary: SessionSummary; actions: SessionActions }) {
   const kept = summary.keepAwake !== undefined
   return (
@@ -234,6 +233,9 @@ function SessionMenu({ summary, actions }: { summary: SessionSummary; actions: S
       </MenuItem>
       <MenuItem icon={<SunIcon />} onClick={() => actions.setKeepAwake(!kept)}>
         {kept ? "Stop keeping awake" : "Keep awake"}
+      </MenuItem>
+      <MenuItem icon={<CompactIcon />} onClick={actions.compact}>
+        Compact conversation…
       </MenuItem>
       {summary.state === "Active" && (
         <MenuItem disabled={actions.sleep === undefined} onClick={() => actions.sleep?.()}>
@@ -257,7 +259,7 @@ function SessionMenu({ summary, actions }: { summary: SessionSummary; actions: S
   )
 }
 
-/** Keep awake and the terminal, at the Composer, where the Creator already is. */
+/** Keep awake and the terminal, at the Composer, where everyone already is. */
 export function ComposerTools({
   keptAwake,
   setKeepAwake,

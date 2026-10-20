@@ -74,10 +74,19 @@ export interface HandoffSent {
   readonly through: EventSeq | undefined
 }
 
+/** A thread command or Compact a Session's agent was sent, not a prompt, until it polls past it. */
+export interface ThreadCommandSent {
+  /** Its number in the mod's outbox. */
+  readonly seq: ModCommandSeq
+  /** Its number among the Session's kept thread commands (ThreadOutbox.ts). */
+  readonly pending: number
+}
+
 /** Claude's text of a Turn's loop, as it streams. */
 export interface TextStream {
   readonly turnId: TextDelta["turnId"]
   readonly agentId: TextDelta["agentId"]
+  readonly threadId: TextDelta["threadId"]
   readonly redactor: StreamRedactor
   flushing: boolean
 }
@@ -166,12 +175,17 @@ interface Pieces {
    * `inFlight` is.
    */
   readonly steering: PerSession<Map<PromptId, ParticipantId>>
-  /** Sessions whose mod said in its hello that it steers (#195). */
-  readonly steers: SessionSet
-  /** Sessions whose mod said in its hello that it marks files beyond prompts (#278). */
-  readonly attaches: SessionSet
-  /** Sessions whose mod said in its hello that it takes a SwitchModel (ADR 0029). */
-  readonly switchesModels: SessionSet
+  /**
+   * The Sessions whose mod has said hello since the Hub started, or since it relaunched the
+   * Session's agent. Until it has, the Hub holds the thread commands and Compacts it keeps and
+   * sends them after the hello, as the mod outbox is numbered afresh then.
+   */
+  readonly greeted: SessionSet
+  /**
+   * The thread commands and Compacts, not prompts, each Session's mod was sent and hasn't polled
+   * past: they are done once it has. ThreadOutbox.ts keeps them; the clearing table is here.
+   */
+  readonly threadCommandsOut: PerSession<Array<ThreadCommandSent>>
   /**
    * The DeliverHandoff each Session's mod was sent and hasn't polled past (ADR 0030). The Session
    * records its Harness as handed what it hadn't seen only then, so a handoff its outbox dropped
@@ -237,7 +251,7 @@ interface Pieces {
   readonly sandboxTokens: PerSession<SandboxTokens> & {
     readonly values: () => Iterable<SandboxTokens>
   }
-  /** Each Session's text streams, by Turn and subagent, until the Turn ends. */
+  /** Each Session's text streams, by Turn, subagent and thread, until the Turn ends. */
   readonly textStreams: PerSession<Map<string, TextStream>>
   /** Each Session's terminal Output, and the last frame's size, for held text let go. */
   readonly terminalStreams: PerSession<TerminalStream>
@@ -250,10 +264,14 @@ type Piece = keyof Pieces
  * nothing changes between a check and the change it decides; it is synchronous, so a write never
  * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
  * check: `sandboxTokenMinted`, as a GitRequest's answer mints a Sandbox token (it waited on
- * GitHub), and `installationWorks`, as the Gateway says an Installation works. One read is too:
- * `handingOff`, as a mod polls, which takes the lock only when its handoff may be collected.
+ * GitHub), and `installationWorks`, as the Gateway says an Installation works. Two reads are too:
+ * `handingOff` and `threadCommandsOut` (through `ThreadOutbox.sending`), as a mod polls, which takes
+ * the lock only when a handoff or a thread command may be collected.
  */
-export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStreams"> {
+export interface LiveSessions extends Pick<
+  Pieces,
+  "textStreams" | "terminalStreams" | "threadCommandsOut"
+> {
   // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
 
   /** The mod was sent the prompt (DeliverPrompt): it is in flight until a Turn starts or it fails. */
@@ -277,23 +295,10 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
    * was sent are dropped, since it won't answer them.
    */
   readonly relaunched: (id: SessionId) => void
-  /**
-   * The Session's mod said hello, saying whether it steers (#195), marks the files of a steered
-   * prompt, a message to a subagent or a reply (#278), and switches models (ADR 0029): prompts
-   * may go to it.
-   */
-  readonly modHello: (
-    id: SessionId,
-    hello: {
-      readonly steers: boolean
-      readonly attaches: boolean
-      readonly switchesModels: boolean
-    },
-  ) => void
-  /** Whether the Session's mod said it marks the files of a message or a reply (#278). */
-  readonly modAttaches: (id: SessionId) => boolean
-  /** Whether the Session's mod said it takes a SwitchModel (ADR 0029). */
-  readonly modSwitchesModels: (id: SessionId) => boolean
+  /** The Session's mod said hello: prompts may go to it. */
+  readonly modHello: (id: SessionId) => void
+  /** Whether the Session's mod has said hello since the Hub started or relaunched its agent. */
+  readonly modGreeted: (id: SessionId) => boolean
   /** The mod was sent a DeliverHandoff (ADR 0030): it is on its way until the mod polls past it. */
   readonly handoffSent: (id: SessionId, handoff: HandoffSent) => void
   /** Whether a DeliverHandoff is on its way to the mod: sent, and not polled past. */
@@ -319,11 +324,9 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
       readonly by: ParticipantId
       readonly turnRunning: boolean
       readonly queued: boolean
-      /** It carries files (#276), which only a mod that says it `attaches` marks (#278). */
-      readonly hasAttachments: boolean
     },
   ) => "ok" | "already" | Refusal
-  /** Why the queued prompt can't be cancelled, if it can't: it is on its way to Claude Code. */
+  /** Why the queued prompt can't be cancelled, if it can't: it is on its way to the agent. */
   readonly cancelRefusal: (id: SessionId, promptId: PromptId) => Refusal | undefined
 
   // ── Stopping and restarting ──
@@ -465,9 +468,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
   ClaudeGone: [
     "inFlight",
     "steering",
-    "steers",
-    "attaches",
-    "switchesModels",
+    "greeted",
+    "threadCommandsOut",
     // Its outbox is dropped: a handoff its mod didn't collect is handed to the next one.
     "handoffs",
     "starting",
@@ -490,9 +492,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
   ClaudeGoneRestarting: [
     "inFlight",
     "steering",
-    "steers",
-    "attaches",
-    "switchesModels",
+    "greeted",
+    "threadCommandsOut",
     "handoffs",
     "starting",
     "starts",
@@ -514,9 +515,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "restarts",
     // Its mod token is revoked: a steer under way is never answered, by a mod that is gone.
     "steering",
-    "steers",
-    "attaches",
-    "switchesModels",
+    "greeted",
+    "threadCommandsOut",
     // Its outbox is dropped, as it is for ClaudeGone.
     "handoffs",
     // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
@@ -535,18 +535,17 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // A start under way is settled by what it says when it is back, too.
     "starts",
     "restarts",
-    // `inFlight`, `starting`, `steering`, the mod's flags, `handoffs`, `installationTrouble` and
-    // the streams are kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its
-    // own, so they stay true while it is Frozen. A Runner back without it ends them with
+    // `inFlight`, `starting`, `steering`, `greeted`, `handoffs`, `threadCommandsOut`,
+    // `installationTrouble` and the streams are kept: the agent can outlive its Runner's restart,
+    // and its mod talks to the Hub on its own, so they stay true while it is Frozen. A Runner back without it ends them with
     // ClaudeGone. Going Frozen clears `openPorts`.
   ],
   // Nothing is left of it: whatever another way left behind goes too.
   Purged: [
     "inFlight",
     "steering",
-    "steers",
-    "attaches",
-    "switchesModels",
+    "greeted",
+    "threadCommandsOut",
     "handoffs",
     "starting",
     "stopping",
@@ -580,9 +579,8 @@ export const makeLiveSessions = (): LiveSessions => {
   const pieces: Pieces = {
     inFlight: new Map(),
     steering: new Map(),
-    steers: new Set(),
-    attaches: new Set(),
-    switchesModels: new Set(),
+    greeted: new Set(),
+    threadCommandsOut: new Map(),
     handoffs: new Map(),
     starting: new Set(),
     stopping: new Map(),
@@ -630,21 +628,18 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     relaunched: (id) => {
       pieces.steering.delete(id)
-      // Its outbox is dropped: a handoff the old mod didn't collect goes to the new one.
+      // Its outbox is dropped: a handoff the old mod didn't collect goes to the new one, as do
+      // thread commands.
       pieces.handoffs.delete(id)
+      pieces.threadCommandsOut.delete(id)
+      pieces.greeted.delete(id)
       pieces.starting.add(id)
     },
-    modHello: (id, { steers, attaches, switchesModels }) => {
-      if (steers) pieces.steers.add(id)
-      else pieces.steers.delete(id)
-      if (attaches) pieces.attaches.add(id)
-      else pieces.attaches.delete(id)
-      if (switchesModels) pieces.switchesModels.add(id)
-      else pieces.switchesModels.delete(id)
+    modHello: (id) => {
+      pieces.greeted.add(id)
       pieces.starting.delete(id)
     },
-    modAttaches: (id) => pieces.attaches.has(id),
-    modSwitchesModels: (id) => pieces.switchesModels.has(id),
+    modGreeted: (id) => pieces.greeted.has(id),
     handoffSent: (id, handoff) => pieces.handoffs.set(id, handoff),
     handingOff: (id) => pieces.handoffs.has(id),
     handoffCollected: (id, after) => {
@@ -653,16 +648,13 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.handoffs.delete(id)
       return sent
     },
-    steer: (id, { promptId, by, turnRunning, queued, hasAttachments }) => {
+    steer: (id, { promptId, by, turnRunning, queued }) => {
       const verdict = steerVerdict({
         queued,
         delivered: pieces.inFlight.get(id) === promptId,
         steering: pieces.steering.get(id)?.has(promptId) === true,
         // One going to sleep takes no steer.
         turnRunning: turnRunning && !pieces.stopping.has(id),
-        modSteers: pieces.steers.has(id),
-        hasAttachments,
-        modAttaches: pieces.attaches.has(id),
       })
       if (verdict !== "ok") return verdict
       // It stays in its place until the mod says it joined the Turn.

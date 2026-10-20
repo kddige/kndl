@@ -1,13 +1,11 @@
 import {
   type BuildVersion,
   CommitIdPattern,
-  type Harness,
   ReleaseVersionPattern,
   RunnerHistoryPointMillis,
   RunnerHistoryRetentionMillis,
   type RunnerHistoryPoint,
   RunnerId,
-  RunnerModels,
   RunnerUpdater,
   type SessionState,
   type Sysinfo,
@@ -30,16 +28,14 @@ export interface KnownRunner {
   readonly openSessions: number
   /** Whether it updates itself, as it last said; null from a Runner too old to say (#87). */
   readonly updater: RunnerUpdater | null
-  /** The models its Claude Code offers, as it last said; null before it first says (#128). */
-  readonly models: RunnerModels | null
   /** Its last sysinfo sample (#350), kept in memory only: null before its first since the Hub started. */
   readonly sysinfo: SysinfoSample | null
   /**
-   * The Harnesses it runs Sessions on (ADR 0029), as its last hello since the Hub started said:
-   * Claude Code alone from one that doesn't say. Kept in memory only: null before its first hello
-   * since the Hub started, when what it runs isn't known.
+   * Whether it can run the durable agent, as its last hello since the Hub started said: its
+   * bundle is ready. Kept in memory only: null before its first hello since the Hub started, when
+   * it isn't known.
    */
-  readonly harnesses: ReadonlyArray<Harness> | null
+  readonly runsAgent: boolean | null
 }
 
 /** The Session states that keep a Runner from being removed. */
@@ -54,16 +50,14 @@ interface RunnerRow {
   readonly lastSeenAt: number | null
   readonly openSessions: number
   readonly updater: string | null
-  readonly models: string | null
 }
 
 const decodeUpdater = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerUpdater))
-const decodeModels = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerModels))
 
 const fromRow = (
   row: RunnerRow,
   sysinfo: SysinfoSample | undefined,
-  harnesses: ReadonlyArray<Harness> | undefined,
+  runsAgent: boolean | undefined,
 ): KnownRunner => ({
   id: RunnerId.make(row.id),
   name: row.name,
@@ -81,9 +75,8 @@ const fromRow = (
   lastSeenAt: row.lastSeenAt,
   openSessions: row.openSessions,
   updater: row.updater === null ? null : Option.getOrNull(decodeUpdater(row.updater)),
-  models: row.models === null ? null : Option.getOrNull(decodeModels(row.models)),
   sysinfo: sysinfo ?? null,
-  harnesses: harnesses ?? null,
+  runsAgent: runsAgent ?? null,
 })
 
 /**
@@ -96,17 +89,15 @@ export class Runners extends Context.Service<
   Runners,
   {
     /**
-     * A Runner said hello: what it said, and that it is connected as of `at`. Its models are kept
-     * from before when it doesn't say, as when its Claude Code couldn't tell it this time. Its
-     * Harnesses (ADR 0029) are kept in memory only: Claude Code alone, when it doesn't say.
+     * A Runner said hello: what it said, and that it is connected as of `at`. Whether it can run
+     * the agent is kept in memory only.
      */
     readonly recordHello: (
       id: RunnerId,
       hello: {
         readonly version: BuildVersion | undefined
         readonly updater: RunnerUpdater | undefined
-        readonly models?: RunnerModels | undefined
-        readonly harnesses?: ReadonlyArray<Harness> | undefined
+        readonly runsAgent: boolean
       },
       at: number,
     ) => Effect.Effect<void, SqlError>
@@ -140,29 +131,26 @@ export class Runners extends Context.Service<
       const sql = yield* SqlClient.SqlClient
 
       /**
-       * Each Runner's Harnesses, as its last hello since the Hub started said (ADR 0029): the one
-       * record of what it runs. A removed Runner's goes as the Runners are listed.
+       * Whether each Runner can run the agent, as its last hello since the Hub started said: the
+       * one record of it. A removed Runner's goes as the Runners are listed.
        */
-      const harnesses = new Map<string, ReadonlyArray<Harness>>()
+      const runsAgent = new Map<string, boolean>()
 
       const recordHello = Effect.fn("Runners.recordHello")(function* (
         id: RunnerId,
         hello: {
           readonly version: BuildVersion | undefined
           readonly updater: RunnerUpdater | undefined
-          readonly models?: RunnerModels | undefined
-          readonly harnesses?: ReadonlyArray<Harness> | undefined
+          readonly runsAgent: boolean
         },
         at: number,
       ) {
-        // A Runner from before pi doesn't say: it runs Claude Code alone.
-        harnesses.set(id, hello.harnesses ?? ["ClaudeCode"])
+        runsAgent.set(id, hello.runsAgent)
         yield* sql`
           UPDATE runners SET version_commit = ${hello.version?.commit ?? null},
             version_branch = ${hello.version?.branch ?? null},
             version_release = ${hello.version?.release ?? null},
             updater = ${hello.updater === undefined ? null : JSON.stringify(hello.updater)},
-            models = COALESCE(${hello.models === undefined ? null : JSON.stringify(hello.models)}, models),
             last_seen_at = ${at}
           WHERE id = ${id}
         `
@@ -218,7 +206,7 @@ export class Runners extends Context.Service<
 
       const select = (where: Fragment) => sql<RunnerRow>`
         SELECT r.id, r.name, r.version_commit AS "commit",
-          r.version_branch AS branch, r.version_release AS release, r.last_seen_at AS lastSeenAt, r.updater, r.models,
+          r.version_branch AS branch, r.version_release AS release, r.last_seen_at AS lastSeenAt, r.updater,
           (SELECT count(*) FROM sessions s
             WHERE s.runner_id = r.id AND s.state IN ${sql.in(openStates)}) AS openSessions
         FROM runners r
@@ -230,8 +218,8 @@ export class Runners extends Context.Service<
         Effect.map((rows) => {
           // What a removed Runner said goes with it.
           const listed = new Set(rows.map((row) => row.id))
-          for (const id of harnesses.keys()) if (!listed.has(id)) harnesses.delete(id)
-          return rows.map((row) => fromRow(row, latest.get(row.id), harnesses.get(row.id)))
+          for (const id of runsAgent.keys()) if (!listed.has(id)) runsAgent.delete(id)
+          return rows.map((row) => fromRow(row, latest.get(row.id), runsAgent.get(row.id)))
         }),
         Effect.withSpan("Runners.list"),
       )
@@ -239,7 +227,7 @@ export class Runners extends Context.Service<
       const get = Effect.fn("Runners.get")(function* (id: RunnerId) {
         const rows = yield* select(sql`AND r.id = ${id}`)
         return Option.fromNullishOr(rows[0]).pipe(
-          Option.map((row) => fromRow(row, latest.get(row.id), harnesses.get(row.id))),
+          Option.map((row) => fromRow(row, latest.get(row.id), runsAgent.get(row.id))),
         )
       })
 

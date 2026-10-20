@@ -8,7 +8,6 @@ import {
 import { readBuildVersion } from "@kndl/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
-import { ClaudeModels } from "./ClaudeModels.ts"
 import { reportSysinfo } from "./HostSysinfo.ts"
 import { HubLink } from "./HubLink.ts"
 import { PiBundle } from "./PiBundle.ts"
@@ -140,8 +139,9 @@ const connectOnce = Effect.scoped(
     const tunnels = yield* Tunnels
     const hub = yield* HubLink
     const makeWebSocket = yield* Socket.WebSocketConstructor
-    // Whether it runs pi Sessions, for the hello: the first connection waits, before it opens,
-    // for the pi bundle the Runner prepares as it starts (PiBundle.ts).
+    // Whether it runs Sessions, for the hello: the first connection waits, before it opens, for
+    // the pi bundle their durable agent runs on, which the Runner prepares as it starts
+    // (PiBundle.ts).
     const pi = yield* (yield* PiBundle).ready
     const url = runnerSocketUrl(config.hubUrl)
     let welcomed = false
@@ -163,7 +163,6 @@ const connectOnce = Effect.scoped(
     )
     const writer = yield* socket.writer
     const hello = yield* updater.hello
-    const models = yield* (yield* ClaudeModels).current
     const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
     yield* write(
@@ -178,8 +177,8 @@ const connectOnce = Effect.scoped(
         asksCloneAccess: true,
         updater: hello.updater,
         ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
-        ...(models !== undefined && { models }),
-        ...(pi !== undefined && { harnesses: ["ClaudeCode", "Pi"] }),
+        // Whether the agent's bundle is ready: when it isn't, the Hub starts no Session here.
+        runsAgent: pi !== undefined,
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,

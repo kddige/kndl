@@ -7,6 +7,7 @@ import { connect } from "node:net"
 import type { OAuthCredential } from "@earendil-works/pi-ai"
 import { SessionId } from "@kndl/protocol"
 import { Effect, Fiber, Option, Redacted } from "effect"
+import { SqlClient } from "effect/sql"
 import { ProviderApis } from "./ConnectedProviders.ts"
 import { Gateway, type ModelCallLimits } from "./Gateway.ts"
 import type { HubConfigInput } from "./HubConfig.ts"
@@ -60,14 +61,15 @@ const oauth = (access: string, expiresIn = 60 * 60 * 1000): OAuthCredential => (
 
 /**
  * A Hub whose Providers are fakes, a Runner, and alice on the web with a Claude credential and a
- * Session: its StartSession, with the mod token. A pi Session unless `harness` says Claude Code.
+ * Session: its StartSession, with the mod token.
  */
 async function scene(
   options: {
-    readonly harness?: "Pi" | "ClaudeCode"
     readonly limits?: Partial<ModelCallLimits>
     readonly idleTimeout?: number
     readonly config?: Partial<HubConfigInput>
+    /** An OpenAI API key alice connects before she starts the Session. */
+    readonly openAiFirst?: boolean
   } = {},
 ) {
   const seen: Array<Seen> = []
@@ -115,28 +117,23 @@ async function scene(
       refresh: (_provider, credential) => fakes.refresh(credential),
     }),
   })
-  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
-    harnesses: options.harness === "ClaudeCode" ? ["ClaudeCode"] : ["ClaudeCode", "Pi"],
-  })
+  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
-  const start = await startSession(web, runner, options.harness ?? "Pi")
+  if (options.openAiFirst === true) {
+    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+  }
+  const start = await startSession(web, runner)
   return { hub, runner, web, start, fakes }
 }
 
 /** Creates a Session of `repo` and plays its Runner's start: the StartSession it was sent. */
-async function startSession(
-  web: Connection<Web>,
-  runner: Connection<ToRunner>,
-  harness: "Pi" | "ClaudeCode",
-) {
+async function startSession(web: Connection<Web>, runner: Connection<ToRunner>) {
   web.send({
     _tag: "CreateSession",
     requestId: `m-${++requests}`,
     repo,
     branch: { _tag: "Existing", name: "main", newWorkBranch: true },
-    // alice's first Model is Claude's, which runs on Claude Code unless pi is asked for (ADR 0030).
-    harness,
   })
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
@@ -461,16 +458,19 @@ describe("the Gateway's model calls", () => {
     expect(fakes.seen.map((seen) => seen.url)).toEqual(["https://api.openai.com/v1/responses"])
   })
 
-  test("refuse a Claude Code Session's model calls: only pi Sessions spend Connected providers", async () => {
-    const { hub, web, start, fakes } = await scene({ harness: "ClaudeCode" })
+  test("take every Session's model calls, one recorded on Claude Code from before too (the durable agent)", async () => {
+    const { hub, web, start, fakes } = await scene()
     await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`UPDATE sessions SET harness = NULL WHERE id = ${start.sessionId}`,
+      ),
+    )
     fakes.seen.length = 0
-    const refused = await call(hub, "/openai/v1/responses", start.modToken)
-    expect(refused.status).toBe(403)
-    expect(await refused.json()).toEqual({
-      error: { message: expect.stringMatching(/pi Session/) },
-    })
-    expect(fakes.seen).toEqual([])
+    const answered = await call(hub, "/openai/v1/responses", start.modToken)
+    expect(answered.status).toBe(200)
+    expect(fakes.seen.map((seen) => seen.url)).toEqual(["https://api.openai.com/v1/responses"])
   })
 
   test("run a few model calls of a Session at once, and answer more with a 429", async () => {
@@ -745,11 +745,8 @@ describe("GET /mod/providers", () => {
   })
 
   test("lists no Claude Models on a Hub with the Claude bridge off (HUB_CLAUDE_MODELS=off)", async () => {
-    const { hub, web, start } = await scene({
-      harness: "ClaudeCode",
-      config: { claudeModels: false },
-    })
-    await ask(web, { _tag: "ConnectProviderKey", provider: "openai", apiKey })
+    // Without Claude's, alice's Models are her Connected providers' alone.
+    const { hub, web, start } = await scene({ config: { claudeModels: false }, openAiFirst: true })
     const answer = (await (
       await fetch(`${hub.url}/mod/providers`, { headers: bearer(start.modToken) })
     ).json()) as { models: Array<{ provider: string; id: string }> }

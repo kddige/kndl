@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.ts",
-    "check": "bun run build && claude plugin validate plugins/hub-link && claude plugin validate plugins/hub-link-commands && claude plugin test plugins/hub-link && claude plugin test plugins/hub-link-commands",
-    "typecheck": "bash scripts/typecheck.sh"
+    "check": "bun run build && bun run typecheck && bun test scripts durable",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p durable",
+    "typecheck:durable": "tsc --noEmit -p durable",
+    "test:durable": "bun test durable"
   },
   "devDependencies": {
+    "@earendil-works/chord": "1.3.0",
     "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-codemode": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0",
+    "@earendil-works/pi-mcp": "1.3.0",
     "@kndl/hub": "workspace:*"
   },
   "dependencies": {

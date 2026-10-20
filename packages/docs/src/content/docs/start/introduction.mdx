@@ -6,16 +6,16 @@ description: What kndl is, who it's for, and how a Hub, Runners and Sandboxes fi
 import { CardGrid, LinkCard } from "@astrojs/starlight/components"
 import HowItWorks from "../../../components/HowItWorks.astro"
 
-kndl (said "kindle") runs coding-agent Sessions on machines you own, on the Models of any Provider you connect. Whoever starts a Session drives it, and your team watches it live from the browser.
+kndl (said "kindle") runs coding-agent Sessions on machines you own, on the Models of any Provider you connect. Your team works in a Session together, live from the browser, on the accounts of whoever started it.
 
-![A Session in kndl's web UI. Claude is mid-Turn: a subagent searches the docs in the background, tool calls are listed with their results, and Bob's prompt waits in the Prompt queue with a Steer button.](../../../assets/screenshots/session-live.png)
+![A Session in kndl's web UI. The agent is mid-Turn: a subagent searches the docs in the background, tool calls are listed with their results, and Bob's prompt waits in the Prompt queue with a Steer button.](../../../assets/screenshots/session-live.png)
 
 ## What you get
 
-- **Shared Sessions.** Everyone with access to a Repo can open its Sessions and follow the agent live. A Session's [Creator](/reference/glossary/#creator) drives it: their prompts sent while Claude works wait in a [Prompt queue](/reference/glossary/#prompt-queue), or join the running Turn with **Steer**.
+- **Shared Sessions.** Everyone with access to a Repo can open its Sessions, follow the agent live and prompt it. Prompts sent while it works wait in a [Prompt queue](/reference/glossary/#prompt-queue), or join the running Turn with **Steer**. A [Thread](/guides/reply-in-a-thread/) forks the conversation at any answer and runs beside it.
 - **A Sandbox per Session.** The agent and every command it runs live in a microVM on a Runner, never on the host.
 - **Your machines.** The Hub and the Runners are yours: a laptop, a Mac mini under a desk, a Linux server. Nothing runs on a kndl service, because there isn't one.
-- **Your own accounts, any Provider.** Each person connects their own [Providers](/guides/connect-your-providers/): a ChatGPT or GitHub Copilot sign-in, an API key, or a Claude setup token. The Sessions they start run on them, on any Runner, and switch Model mid-conversation. Nobody else's prompts reach them.
+- **Your own accounts, any Provider.** Each person connects their own [Providers](/guides/connect-your-providers/): a ChatGPT or GitHub Copilot sign-in, an API key, or a Claude setup token. The Sessions they start run on them, on any Runner, and switch Model mid-conversation. Everyone in a Session spends its Creator's accounts.
 
 ## How it fits together
 
@@ -35,7 +35,7 @@ One machine can be the Hub and a Runner at once. That's how the [Quickstart](/st
 ## What it isn't
 
 - **Not a hosted service.** You run every part. There's no account to make and nothing to pay kndl for.
-- **Not a fork of an agent.** kndl runs [pi](https://pi.dev) and Claude Code as their makers publish them, on your own accounts and under each Provider's terms.
+- **Not a fork of an agent.** The agent is built on [Pi Durable](https://earendil.com/posts/pi-durable/), as its makers publish it, and Claude's Models run through Claude Code as Anthropic publishes it, on your own accounts.
 - **Not affiliated with Anthropic.** kndl is an independent open-source project. Claude and Claude Code are trademarks of Anthropic, PBC.
 - **Not finished.** kndl is early. Expect settings to change between [Releases](/self-hosting/install/#update).
 

@@ -9,7 +9,7 @@ import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
 Connect a machine to the Hub as a Runner, so Sessions can run on it.
 
-Each Runner connects out to the Hub, so the Hub never reaches into it. A Runner needs no Claude Code, no pi and no sign-in at any Provider: its Sessions run on their Creator's [Connected providers](/guides/connect-your-providers/).
+Each Runner connects out to the Hub, so the Hub never reaches into it. A Runner needs no Claude Code, no Node.js and no sign-in at any Provider: its Sessions run on their Creator's [Connected providers](/guides/connect-your-providers/).
 
 ## What you need
 
@@ -94,13 +94,13 @@ A Runner's name is its identity: its Sessions belong to the Runner of that name.
 
 A Runner gets the pinned versions of what Sessions run the first time it needs them, and keeps them for every later start. Each is mounted read-only into every Sandbox.
 
-| What                                                      | When                                       | From                                                                                   | Kept in              |
-| --------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------- |
-| pi, the agent Sessions run                                | As the Runner starts                       | The npm registry, installed with Bun                                                   | `<home>/pi`          |
-| Node.js, which pi runs on                                 | As the Runner starts                       | `nodejs.org` and `unofficial-builds.nodejs.org`, a build for each C library images use | `<home>/pi`          |
-| Claude Code, for Claude's Models and Claude Code Sessions | At the first Session that needs each build | The npm registry                                                                       | `<home>/claude-code` |
+| What                                               | When                                       | From                                                                                   | Kept in              |
+| -------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------- |
+| Pi Durable and its packages, which the agent loads | As the Runner starts                       | The npm registry, installed with Bun                                                   | `<home>/pi`          |
+| Node.js, which the agent runs on                   | As the Runner starts                       | `nodejs.org` and `unofficial-builds.nodejs.org`, a build for each C library images use | `<home>/pi`          |
+| Claude Code, which runs Claude's Models            | At the first Session that needs each build | The npm registry                                                                       | `<home>/claude-code` |
 
-The first start takes a few seconds more while it gets pi. Its log then says `Sessions can run pi …`. If it can't get pi, its log says `Sessions run Claude Code alone: …`, and its new Sessions run Claude Code until it next starts: see [New Sessions run Claude Code](/troubleshooting/sessions/#new-sessions-run-claude-code).
+The first start takes a few seconds more while it gets Pi Durable's packages. Its log then says `Sessions can run the durable agent on pi …`. If it can't, its log says `Sessions can't run: …`, and it runs no Sessions until it next starts: see [A Runner can't run the agent](/troubleshooting/sessions/#a-runner-cant-run-the-agent).
 
 `RUNNER_SANDBOX_PI_CACHE` and `RUNNER_SANDBOX_CLAUDE_CACHE` move the caches: see [Configuration](/reference/configuration/#runner).
 

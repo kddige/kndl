@@ -50,10 +50,7 @@ const sized = (head: Uint8Array, size: number) => {
 }
 
 /** A Session alice created, started, with its mod linked; and a way to upload to it. */
-async function scene(
-  database?: Layer.Layer<SqlClient.SqlClient, unknown>,
-  hello: { readonly attaches?: boolean } = {},
-) {
+async function scene(database?: Layer.Layer<SqlClient.SqlClient, unknown>) {
   const hub = await startHub({ config: { devLogin: true }, ...(database && { database }) })
   const { token } = await issueRunnerToken(hub)
   const runner = await openRunner(hub, token, [], undefined, true)
@@ -68,7 +65,7 @@ async function scene(
   const start = await runner.take("StartSession")
   const sessionId = (await web.take("SessionCreated")).session.id
   const mod = modOf(hub, start.modToken)
-  expect((await mod.hello(sessionId, hello.attaches ?? true)).status).toBe(200)
+  expect((await mod.hello(sessionId)).status).toBe(200)
   runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
   await web.take("SessionUpdated", (m) => m.session.id === sessionId && !m.session.starting)
   return { hub, web, runner, token, sessionId, mod }
@@ -98,16 +95,14 @@ function modOf(hub: TestHub, token: string) {
   }
   return {
     request,
-    /** Its hello: it steers, and, unless from before #278, marks the files of a steer. */
-    hello: (sessionId: string, attaches = true) =>
+    /** Its hello. */
+    hello: (sessionId: string) =>
       request("/mod/hello", {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
         sessionId,
         conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
-        steers: true,
-        ...(attaches && { attaches: true }),
       }),
     post: async (...messages: ReadonlyArray<ModEvent>) =>
       expect((await request("/mod/events", { messages })).status).toBe(204),
@@ -197,21 +192,21 @@ describe("uploading an attachment", () => {
     )
   })
 
-  test("is refused anyone but the Session's Creator, who alone prompts it (ADR 0026)", async () => {
+  test("is taken from anyone who sees the Session, as anyone prompts it (the Pi Durable spike)", async () => {
     const { hub, web, sessionId } = await scene()
     const bob = await openWeb(hub, "bob")
-    const refused = await upload(hub, bob.cookie, sessionId, png)
-    expect(refused.status).toBe(403)
-    expect(await refused.json()).toEqual({
-      error:
-        "Only alice, who started this Session, can drive it: it runs on their Claude credential.",
-    })
-    // What alice attaches, bob still sees.
+    const bobs = await uploaded(await upload(hub, bob.cookie, sessionId, png))
+    // What either attaches, the other sees.
     const id = await uploaded(await upload(hub, web.cookie, sessionId, png))
-    const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${id}`, {
-      headers: { cookie: bob.cookie },
-    })
-    expect(served.status).toBe(200)
+    for (const [cookie, attachment] of [
+      [bob.cookie, id],
+      [web.cookie, bobs],
+    ] as const) {
+      const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${attachment}`, {
+        headers: { cookie },
+      })
+      expect(served.status).toBe(200)
+    }
   })
 
   test("is refused past 5 MB, for what isn't an image Claude reads, and from another site", async () => {
@@ -551,13 +546,6 @@ describe("a prompt with attachments steered into the running Turn (#278)", () =>
     expect(statuses).toEqual([200])
   })
 
-  test("waits for the Turn to end with a mod from before, which can't mark its files", async () => {
-    const at = await scene(undefined, { attaches: false })
-    await steered(at)
-    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
-    expect(await at.mod.commands("DeliverIntoTurn", 100)).toEqual([])
-  })
-
   test("not queued, logs none of the attachments the mod claims that aren't the Session's", async () => {
     const at = await scene()
     await turnRuns(at)
@@ -681,15 +669,6 @@ describe("a message to a subagent with attachments (#278)", () => {
     expect(logged).not.toContain("AgentMessaged")
     expect(statuses).toEqual([404])
   })
-
-  test("with files is refused by a mod from before, which can't mark them", async () => {
-    const at = await scene(undefined, { attaches: false })
-    await agentRuns(at)
-    const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
-    message(at, [shot])
-    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
-    expect(await at.mod.commands("DeliverAgentMessage", 100)).toEqual([])
-  })
 })
 
 /** Alice replies to question q-1. */
@@ -768,15 +747,6 @@ describe("a reply to an Open question with attachments (#278)", () => {
       return [mine]
     })
     expect(statuses).toEqual([404])
-  })
-
-  test("with files is refused by a mod from before, which can't mark them", async () => {
-    const at = await scene(undefined, { attaches: false })
-    await questionOpen(at)
-    const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
-    reply(at, [shot])
-    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
-    expect(await at.mod.commands("DeliverAnswer", 100)).toEqual([])
   })
 })
 

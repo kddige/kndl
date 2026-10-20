@@ -48,6 +48,7 @@ describe("kndl update leaving the push", () => {
             {
               version: { commit: "a".repeat(40) },
               updater: { self: true },
+              runsAgent: true,
             },
             1,
           ),

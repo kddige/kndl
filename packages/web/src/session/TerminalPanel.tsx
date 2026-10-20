@@ -1,5 +1,5 @@
-// The terminal mirror: the Session's Claude Code terminal, live, in xterm.js. Everyone watching
-// sees the same screen and can type into it, as the escape hatch for whatever the chat can't do.
+// The terminal mirror: a bash shell in the Session's Sandbox, live, in xterm.js. Everyone in the
+// Session sees the same screen and can type into it, as the escape hatch for whatever the chat can't do.
 //
 // One terminal, one size: the Runner's tmux pane. Whoever last typed into it or resized it sets
 // that size, fitted to their panel; everyone else draws it at that size, scaled down to fit
@@ -78,9 +78,7 @@ function overlayFor(session: SessionSummary): string | null {
     case "Active":
       return null
     case "Asleep":
-      return session.harness === "Pi"
-        ? "The Session is Asleep. Wake it, or send a prompt, to start its terminal again."
-        : "The Session is Asleep, so Claude Code isn't running. Wake it, or send a prompt, to start its terminal again."
+      return "The Session is Asleep, so its Sandbox is stopped. Wake it, or send a prompt, to start its shell again."
     case "Frozen":
       return "The Session is Frozen: its Runner is offline. The terminal comes back with it."
     case "Archived":
@@ -116,14 +114,13 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
   }, [running])
 
   const overlay = overlayFor(session)
-  const pi = session.harness === "Pi"
   return (
     <div {...stylex.props(styles.panel)}>
       <div {...stylex.props(styles.toolbar)}>
         <span {...stylex.props(styles.note)}>
           {scaled
             ? "Sized for another viewer's window, so it's scaled down. Type into it, or fit it, to size it for yours."
-            : `${pi ? "The Session's" : "Claude Code's"} own terminal, shared with everyone here. Type into it for anything the chat can't do.`}
+            : "A shell in this Session's Sandbox, shared with everyone here. Type into it for anything the conversation can't do."}
         </span>
         {size && (
           <span {...stylex.props(styles.size)} aria-label="Terminal size">
@@ -144,12 +141,7 @@ export function TerminalPanel({ session }: { session: SessionSummary }) {
         </Button>
       </div>
       <div ref={frameRef} {...stylex.props(styles.frame)}>
-        <div
-          ref={hostRef}
-          role="group"
-          aria-label={pi ? "Session terminal" : "Claude Code terminal"}
-          {...stylex.props(styles.host)}
-        />
+        <div ref={hostRef} role="group" aria-label="Session shell" {...stylex.props(styles.host)} />
         {overlay !== null ? (
           <div {...stylex.props(styles.overlay)}>
             <p {...stylex.props(styles.overlayCopy)}>{overlay}</p>

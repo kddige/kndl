@@ -395,7 +395,7 @@ export function testBuildScript(
 }
 
 /**
- * What a Session's start prints before Claude Code is up, as its Runner sends it (#70): the
+ * What a Session's start prints before the agent is up, as its Runner sends it (#70): the
  * Environment's build the first time the Session starts on its version, then its start script.
  * Terminal output, as a build's is: colours, and lines ended with CR LF.
  */
@@ -428,6 +428,6 @@ export function sessionStartScript(
       if (line.trim() !== "") lines.push(`+ ${line}`)
     }
   }
-  lines.push("\u001b[32m✓\u001b[0m Starting Claude Code")
+  lines.push("\u001b[32m✓\u001b[0m Starting the agent")
   return lines.map((line) => `${line}\r\n`)
 }

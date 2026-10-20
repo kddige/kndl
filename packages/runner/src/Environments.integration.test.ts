@@ -27,7 +27,7 @@ import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { buildGroup } from "./EnvironmentBuilds.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
-import type { SandboxClaude } from "./Sandbox.ts"
+import type { SandboxPi } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
@@ -57,16 +57,16 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     }),
   )
 
-/** Runs `command` in the Session's Sandbox as Claude Code's Bash tool would: in the Workspace,
- * with Claude Code's environment. */
-const bash = (sessionId: SessionId, claude: SandboxClaude, command: string) =>
+/** Runs `command` in the Session's Sandbox as the agent's Bash tool would: in the Workspace,
+ * with the agent's environment. */
+const bash = (sessionId: SessionId, pi: SandboxPi, command: string) =>
   Effect.gen(function* () {
     const backend = yield* SandboxBackend
     const ran = yield* backend.exec(sessionId, {
       command: "sh",
       args: ["-c", command],
       cwd: workspaceGuestPath,
-      env: claude.env,
+      env: pi.env,
     })
     return ran.stdout + ran.stderr
   })
@@ -166,7 +166,7 @@ test.skipIf(!enabled)(
         "Bash: variables, build, folders, docker",
         bash(
           sessionId,
-          started.claude,
+          started.pi,
           'echo "tool saw [$RUNTIME_ONLY]"; cat /root/build-saw /root/start-saw; ' +
             "command -v jq; grep -c RUNTIME_ONLY /proc/1/environ; " +
             "mkdir -p node_modules/dep && echo dependency > node_modules/dep/index.js; " +
@@ -210,7 +210,7 @@ test.skipIf(!enabled)(
         "wake, same version",
         sandboxes.start(sessionId, directories, { repo, environment: v1 }),
       )
-      expect(yield* bash(sessionId, woken.claude, "cat node_modules/dep/index.js")).toContain(
+      expect(yield* bash(sessionId, woken.pi, "cat node_modules/dep/index.js")).toContain(
         "dependency",
       )
 
@@ -226,7 +226,7 @@ test.skipIf(!enabled)(
       )
       const recreated = yield* bash(
         sessionId,
-        remade.claude,
+        remade.pi,
         "cat node_modules/dep/index.js /root/start-saw",
       )
       expect(recreated).toContain("dependency")

@@ -21,7 +21,6 @@ import {
   type EnvironmentState,
   type EnvironmentVersion,
   type GitHubLogin,
-  type Harness,
   type HeaderValueInput,
   HubToWeb,
   type Channel,
@@ -32,6 +31,8 @@ import {
   type InviteCreated,
   type InviteId,
   type ModelName,
+  type ThreadId,
+  type TurnId,
   type PairingCodeCreated,
   type PairingCodeId,
   type ParticipantId,
@@ -85,15 +86,8 @@ export interface NewSession {
   readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   /**
-   * What runs its agent (ADR 0029, 0030), as CreateSession takes it: a model names its own, which
-   * this must agree with; absent with no model, the Hub picks. New Session sets it for Claude
-   * Code's default alone, where the Runner might run pi.
-   */
-  readonly harness?: Harness
-  /**
-   * The model to start it on: one of the Runner's Claude Code's, or, for a pi Session, one of the
-   * Creator's Models, as `openai/gpt-6-sol`. Absent, Claude Code's default, or on pi the Creator's
-   * default Model (#128).
+   * The model to start it on: one of the Creator's Models, as `openai/gpt-6-sol`. Absent, the
+   * Creator's default Model (#128).
    */
   readonly model?: ModelName
   readonly thinkingLevel?: ThinkingLevel
@@ -104,9 +98,18 @@ export class ListingUnavailableError extends Error {
   override readonly name = "ListingUnavailableError"
 }
 
-/** A command the Hub refused, or that couldn't be sent. */
+/**
+ * A command the Hub refused, or that couldn't be sent. `unconfirmed`: it was sent, and the
+ * connection went before the Hub answered, so it may have been done after all.
+ */
 export class CommandError extends Error {
   override readonly name = "CommandError"
+  constructor(
+    message: string,
+    readonly unconfirmed = false,
+  ) {
+    super(message)
+  }
 }
 
 const unavailableText = (answer: { readonly hint?: string }) =>
@@ -152,6 +155,7 @@ export class HubClient {
   #state: HubState = initialState
   readonly #listeners = new Set<() => void>()
   readonly #failureListeners = new Set<(failure: CommandFailed) => void>()
+  readonly #failureClaims = new Set<(failure: CommandFailed) => boolean>()
   readonly #retryDelay: (attempt: number) => number
   readonly #requests = new Map<string, PendingRequest>()
   readonly #terminals = new Map<SessionId, Set<TerminalWriter>>()
@@ -182,6 +186,15 @@ export class HubClient {
     return () => this.#failureListeners.delete(listener)
   }
 
+  /**
+   * Lets a view that shows a refusal in place take it: when `claim` returns true for it, the
+   * listeners of {@link onCommandFailed}, which toast it, don't hear of it.
+   */
+  claimCommandFailure(claim: (failure: CommandFailed) => boolean): () => void {
+    this.#failureClaims.add(claim)
+    return () => this.#failureClaims.delete(claim)
+  }
+
   /** Connects, and keeps reconnecting until {@link stop}. */
   start(): void {
     if (this.#running) return
@@ -195,7 +208,7 @@ export class HubClient {
     const socket = this.#socket
     this.#socket = null
     socket?.close()
-    this.#failRequests("Disconnected from the Hub.")
+    this.#failRequests("Disconnected from the Hub.", true)
   }
 
   /** Connects again now, such as after signing in. */
@@ -295,6 +308,94 @@ export class HubClient {
    */
   steerPrompt(sessionId: SessionId, promptId: PromptId): boolean {
     return this.#send({ _tag: "SteerPrompt", sessionId, promptId })
+  }
+
+  /**
+   * Starts a thread off a main-loop Turn, with its first prompt (docs/design/durable-harness.md):
+   * resolves with its id once the Hub has made it, or rejects with the Hub's reason. A `model` is
+   * one of the Session's Models; absent, it starts on the Session's current one, which it keeps.
+   */
+  async createThread(
+    sessionId: SessionId,
+    anchorTurnId: TurnId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+    setting: { readonly model?: ModelName; readonly thinkingLevel?: ThinkingLevel } = {},
+  ): Promise<ThreadId> {
+    const trimmed = text.trim()
+    if (trimmed === "" && attachments.length === 0)
+      throw new CommandError("Write something to start the Thread with.")
+    // Answered, or refused, with its request id: not mixed up with another CreateThread's.
+    const created = await this.#request(
+      {
+        _tag: "CreateThread",
+        sessionId,
+        anchorTurnId,
+        text: trimmed,
+        ...(attachments.length > 0 && { attachments }),
+        ...(setting.model !== undefined && { model: setting.model }),
+        ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
+      },
+      "ThreadCreated",
+    )
+    return created.threadId
+  }
+
+  /**
+   * Posts into a thread: it starts a Turn there, or steers the one running. The request id it
+   * was sent with, which the Hub's echo of it and any refusal carry, or none if it wasn't sent.
+   */
+  promptThread(
+    sessionId: SessionId,
+    threadId: ThreadId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+  ): RequestId | undefined {
+    const trimmed = text.trim()
+    if (trimmed === "" && attachments.length === 0) return undefined
+    const requestId = this.#newRequestId()
+    const sent = this.#send({
+      _tag: "PromptThread",
+      requestId,
+      sessionId,
+      threadId,
+      text: trimmed,
+      ...(attachments.length > 0 && { attachments }),
+    })
+    return sent ? requestId : undefined
+  }
+
+  stopThread(sessionId: SessionId, threadId: ThreadId): boolean {
+    return this.#send({ _tag: "StopThread", sessionId, threadId })
+  }
+
+  /** Runs a thread's next requests on another of the Session's Models. */
+  setThreadModel(
+    sessionId: SessionId,
+    threadId: ThreadId,
+    setting: { readonly model: ModelName; readonly thinkingLevel?: ThinkingLevel },
+  ): boolean {
+    return this.#send({
+      _tag: "SetThreadModel",
+      sessionId,
+      threadId,
+      model: setting.model,
+      ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
+    })
+  }
+
+  /**
+   * Asks the agent to summarize the older messages of the main loop, or of a thread, now, with
+   * what to keep in `instructions`.
+   */
+  compact(sessionId: SessionId, options: { threadId?: ThreadId; instructions?: string } = {}) {
+    const instructions = options.instructions?.trim()
+    return this.#send({
+      _tag: "CompactConversation",
+      sessionId,
+      ...(options.threadId !== undefined && { threadId: options.threadId }),
+      ...(instructions !== undefined && instructions !== "" && { instructions }),
+    })
   }
 
   stopTurn(sessionId: SessionId): boolean {
@@ -464,7 +565,6 @@ export class HubClient {
         repo: input.repo,
         branch: input.branch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
-        ...(input.harness !== undefined && { harness: input.harness }),
         ...(input.model !== undefined && { model: input.model }),
         ...(input.thinkingLevel !== undefined && { thinkingLevel: input.thinkingLevel }),
       },
@@ -878,14 +978,6 @@ export class HubClient {
     )
   }
 
-  /**
-   * Sets which Harness runs Claude's Models in the person's new Sessions (ADR 0030): Claude Code,
-   * on their setup token, or pi. Sessions already started keep theirs.
-   */
-  setClaudeHarness(harness: Harness): Promise<ProvidersState> {
-    return this.#request({ _tag: "SetClaudeHarness", harness }, "ProvidersState")
-  }
-
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────
 
   /** Revokes one of the signed-in person's CLI tokens: the CLI it was for is refused at once. */
@@ -1057,7 +1149,8 @@ export class HubClient {
       case "McpServerLog":
       case "McpServerPackageRead":
       case "InstallationAuthorizing":
-      case "InstallationNeedsClient": {
+      case "InstallationNeedsClient":
+      case "ThreadCreated": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request === undefined || !request.answer.includes(message._tag)) break
@@ -1071,7 +1164,7 @@ export class HubClient {
         if (request?.command === message.command && message.requestId !== undefined) {
           this.#requests.delete(message.requestId)
           request.reject(new CommandError(message.message))
-        } else {
+        } else if (![...this.#failureClaims].some((claim) => claim(message))) {
           for (const listener of this.#failureListeners) listener(message)
         }
         break
@@ -1098,7 +1191,7 @@ export class HubClient {
   #closed(attempt: number): void {
     const wasWelcomed = this.#welcomed
     this.#welcomed = false
-    this.#failRequests("Lost the connection to the Hub.")
+    this.#failRequests("Lost the connection to the Hub.", true)
     if (!this.#running) return
     if (wasWelcomed) {
       this.#scheduleRetry(1)
@@ -1154,8 +1247,9 @@ export class HubClient {
     return true
   }
 
-  #failRequests(reason: string): void {
-    for (const request of this.#requests.values()) request.reject(new CommandError(reason))
+  #failRequests(reason: string, unconfirmed = false): void {
+    for (const request of this.#requests.values())
+      request.reject(new CommandError(reason, unconfirmed))
     this.#requests.clear()
   }
 

@@ -101,7 +101,7 @@ export interface ComposerProps {
    * sent, so the text and files stay.
    */
   onSend: (text: string, attachments: ReadonlyArray<AttachmentId>) => boolean
-  /** Stops what is running; without it, as for someone watching (ADR 0026), there is no Stop. */
+  /** Stops what is running; without it, there is no Stop. */
   onStop?: (() => void) | undefined
   /** A Turn is running, so Stop is offered and a prompt waits in the queue. */
   running: boolean
@@ -115,7 +115,7 @@ export interface ComposerProps {
   tools?: ReactNode
   /** What is written, for one that isn't a prompt: a message to an agent (ADR 0014). */
   copy?: ComposerCopy
-  /** The empty prompt box's words: `Ask Claude` unless said. */
+  /** The empty prompt box's words: `Send a prompt` unless said. */
   placeholder?: string
   /**
    * Uploads a file pasted (#276), dropped or picked with the attach button (#277); without it,
@@ -138,7 +138,7 @@ export interface ComposerCopy {
   readonly stop: string
 }
 
-const promptCopy = (running: boolean, placeholder = "Ask Claude"): ComposerCopy => ({
+const promptCopy = (running: boolean, placeholder = "Send a prompt"): ComposerCopy => ({
   field: "Prompt",
   placeholder: running ? "Queue a prompt for after this Turn" : placeholder,
   send: running ? "Queue prompt" : "Send prompt",
@@ -146,7 +146,7 @@ const promptCopy = (running: boolean, placeholder = "Ask Claude"): ComposerCopy 
 })
 
 /**
- * Where the Creator writes prompts (ADR 0026). A prompt always goes through the Prompt queue,
+ * Where anyone in the Session writes prompts (docs/design/durable-harness.md). A prompt always goes through the Prompt queue,
  * with the images and PDFs pasted, dropped or picked for it, given `attach` (#276, #277). With
  * `copy`, it writes something else, such as a message to an agent.
  */

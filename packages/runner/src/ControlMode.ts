@@ -15,6 +15,8 @@ export type ControlEvent =
   | { readonly _tag: "LayoutChange"; readonly size: TerminalSize }
   /** A format subscribed to with `refresh-client -B` changed value. */
   | { readonly _tag: "SubscriptionChanged"; readonly name: string; readonly value: string }
+  /** The client's attachment has completed, or it has switched to another session. */
+  | { readonly _tag: "SessionChanged" }
   /** The client is detaching: its session was killed, or stdin closed. */
   | { readonly _tag: "Exit"; readonly reason: string | undefined }
 
@@ -88,6 +90,8 @@ export class ControlModeParser {
         if (separator === -1 || args[0] === undefined) return undefined
         return { _tag: "SubscriptionChanged", name: args[0], value: text.slice(separator + 3) }
       }
+      case "%session-changed":
+        return { _tag: "SessionChanged" }
       case "%exit":
         return { _tag: "Exit", reason: args.length > 0 ? args.join(" ") : undefined }
       default:

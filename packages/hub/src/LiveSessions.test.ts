@@ -35,9 +35,8 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
   const promptId = PromptId.make("pr-1")
   live.inFlight.set(sessionId, promptId)
   live.steering.set(sessionId, new Map([[promptId, alice.id]]))
-  live.steers.add(sessionId)
-  live.attaches.add(sessionId)
-  live.switchesModels.add(sessionId)
+  live.greeted.add(sessionId)
+  live.threadCommandsOut.set(sessionId, [{ seq: ModCommandSeq.make(2), pending: 1 }])
   live.handoffs.set(sessionId, {
     seq: ModCommandSeq.make(1),
     harness: "Pi",
@@ -62,7 +61,9 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
   const redactor = new StreamRedactor(needlesOf([]))
   live.textStreams.set(
     sessionId,
-    new Map([["t-1/", { turnId, agentId: undefined, redactor, flushing: false }]]),
+    new Map([
+      ["t-1//", { turnId, agentId: undefined, threadId: undefined, redactor, flushing: false }],
+    ]),
   )
   live.terminalStreams.set(sessionId, { redactor, size: { cols: 80, rows: 24 }, flushing: false })
 }
@@ -70,9 +71,8 @@ const populate = (sessions: LiveSessions, sessionId: SessionId) => {
 const pieces = [
   "inFlight",
   "steering",
-  "steers",
-  "attaches",
-  "switchesModels",
+  "greeted",
+  "threadCommandsOut",
   "handoffs",
   "starting",
   "stopping",
@@ -148,9 +148,8 @@ describe("a Session's live state ending", () => {
     expect(keptAfter("RunnerGone")).toEqual([
       "inFlight",
       "steering",
-      "steers",
-      "attaches",
-      "switchesModels",
+      "greeted",
+      "threadCommandsOut",
       "handoffs",
       "starting",
       "openPorts",
@@ -203,17 +202,20 @@ describe("delivery", () => {
     live.startSent(id, start)
     expect(live.awaitingHello(id)).toBe(true)
     expect(live.view(id).start).toBe(start)
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    expect(live.modGreeted(id)).toBe(false)
+    live.modHello(id)
     expect(live.awaitingHello(id)).toBe(false)
+    expect(live.modGreeted(id)).toBe(true)
     live.relaunched(id)
     expect(live.awaitingHello(id)).toBe(true)
+    expect(live.modGreeted(id)).toBe(false)
   })
 })
 
-/** A Session whose mod said it steers. */
+/** A Session whose mod said hello. */
 const steeringSession = () => {
   const live = makeLiveSessions()
-  live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+  live.modHello(id)
   return live
 }
 
@@ -223,7 +225,7 @@ const refused = (refusal: string) => ({ refusal: expect.stringContaining(refusal
 describe("steering", () => {
   const one = PromptId.make("pr-1")
   const two = PromptId.make("pr-2")
-  const steering = { by: alice.id, turnRunning: true, queued: true, hasAttachments: false }
+  const steering = { by: alice.id, turnRunning: true, queued: true }
 
   test("hands a queued prompt to the running Turn once, until the mod answers", () => {
     const live = steeringSession()
@@ -247,7 +249,7 @@ describe("steering", () => {
     expect(live.cancelRefusal(id, one)).toBeUndefined()
   })
 
-  test("is refused without a running Turn, for a prompt delivered or not queued, and by an old mod", () => {
+  test("is refused without a running Turn, for a prompt delivered or not queued", () => {
     const live = steeringSession()
     expect(live.steer(id, { ...steering, promptId: one, turnRunning: false })).toEqual(
       refused("No Turn is running"),
@@ -258,27 +260,9 @@ describe("steering", () => {
     expect(live.steer(id, { ...steering, promptId: two, queued: false })).toEqual(
       refused("not in the Prompt queue"),
     )
-    live.modHello(id, { steers: false, attaches: false, switchesModels: false })
-    expect(live.steer(id, { ...steering, promptId: two })).toEqual(
-      refused("a mod from before steering"),
-    )
-    // A relaunch's new mod hasn't said whether it steers: its old one's steers are dropped.
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
     expect(live.steer(id, { ...steering, promptId: two })).toBe("ok")
     live.relaunched(id)
     expect(live.cancelRefusal(id, two)).toBeUndefined()
-  })
-
-  test("hands a prompt with files to a mod that marks them, and refuses one from before (#278)", () => {
-    const live = makeLiveSessions()
-    live.modHello(id, { steers: true, attaches: false, switchesModels: false })
-    expect(live.modAttaches(id)).toBe(false)
-    expect(live.steer(id, { ...steering, promptId: one, hasAttachments: true })).toEqual(
-      refused("a mod from before attachments"),
-    )
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
-    expect(live.modAttaches(id)).toBe(true)
-    expect(live.steer(id, { ...steering, promptId: one, hasAttachments: true })).toBe("ok")
   })
 })
 
@@ -394,7 +378,7 @@ describe("what a Session is doing", () => {
       awaitingHello: true,
       startUnderWay: true,
     })
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id)
     expect(doing(live)).toEqual({ ...nothing, settling: true, busy: true, startUnderWay: true })
     live.claudeStarted(id)
     expect(doing(live)).toEqual(nothing)
@@ -417,13 +401,12 @@ describe("what a Session is doing", () => {
 
   test("a steer awaiting the mod's answer blocks delivery alone", () => {
     const live = makeLiveSessions()
-    live.modHello(id, { steers: true, attaches: true, switchesModels: false })
+    live.modHello(id)
     live.steer(id, {
       promptId: one,
       by: alice.id,
       turnRunning: true,
       queued: true,
-      hasAttachments: false,
     })
     expect(doing(live)).toEqual({ ...nothing, blocksDelivery: true })
   })

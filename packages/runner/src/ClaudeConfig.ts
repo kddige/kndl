@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto"
 import {
   chmodSync,
   existsSync,
-  lstatSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -12,18 +11,11 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { Context, Data, Effect } from "effect"
+import { Data, Effect } from "effect"
 
 // What the Runner reads of Claude Code's state on its host, when there is any; none of it is
 // needed: what Claude Code kept of Sessions from before they ran in Sandboxes (ADR 0013), to
 // carry over or forget.
-
-/**
- * Claude Code's session id as it mints one: a UUID, lowercase. A Session's conversation id is
- * one, and the Runner names transcripts after it, so it takes no other.
- */
-export const ClaudeSessionIdPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export class ClaudeConfigError extends Data.TaggedError("ClaudeConfigError")<{
   readonly message: string
@@ -114,11 +106,6 @@ export function claudeProjectsDir(env: Record<string, string | undefined> = proc
   return join(env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects")
 }
 
-/** {@link claudeProjectsDir} for the Runner, or a test's own. */
-export const ClaudeProjectsDir = Context.Reference<string>("@kndl/runner/ClaudeProjectsDir", {
-  defaultValue: () => claudeProjectsDir(),
-})
-
 /**
  * The name of the directory under {@link claudeProjectsDir} that holds what Claude Code keeps of
  * a working directory, given by its real path: every character but a letter or digit becomes `-`,
@@ -128,41 +115,6 @@ export const ClaudeProjectsDir = Context.Reference<string>("@kndl/runner/ClaudeP
 export function claudeProjectDirName(cwd: string): string | undefined {
   const name = cwd.replace(/[^a-zA-Z0-9]/g, "-")
   return name.length <= 200 ? name : undefined
-}
-
-/** Whether `path` is a file itself, not a symlink to one. */
-const isPlainFile = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isFile() === true
-
-/**
- * Where Claude Code on the host kept the transcript of conversation `id` begun in `cwd`, the
- * directory it ran in: `<projects>/<cwd's name>/<id>.jsonl`, looked for under `cwd` as given and
- * as its real path. Undefined when there is none, as for a conversation Claude Code never wrote
- * to, or a path too long to name the way Claude Code does. Sessions ran Claude Code on the host
- * before it moved into their Sandboxes (ADR 0013), whose first wake copies it from here.
- *
- * The id comes from the Sandbox, by way of the mod's hello, so one that isn't a Claude Code
- * session id finds none, as `../` would name a file elsewhere on the host, and so does a
- * symlink in place of the transcript.
- */
-export function hostTranscriptPath(
-  cwd: string,
-  id: string,
-  projectsDir: string = claudeProjectsDir(),
-  exists: (path: string) => boolean = isPlainFile,
-): string | undefined {
-  if (!ClaudeSessionIdPattern.test(id)) return undefined
-  let real = cwd
-  try {
-    real = realpathSync(cwd)
-  } catch {
-    // It doesn't exist (any more): the path as given is all there is.
-  }
-  for (const name of new Set([cwd, real].map(claudeProjectDirName))) {
-    if (name === undefined) continue
-    const path = join(projectsDir, name, `${id}.jsonl`)
-    if (exists(path)) return path
-  }
-  return undefined
 }
 
 function parseConfig(text: string, path: string): Record<string, unknown> {

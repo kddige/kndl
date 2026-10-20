@@ -9,12 +9,7 @@ dist/
 # The lock a running Hub holds beside its database (packages/hub/src/HubLock.ts)
 *.db.lock
 
-# The mod's bundle, built by `bun run mod:build`
-packages/mod/plugins/*/hooks/hub-link-lib.js
-packages/mod/pi/dist/
-
-# Laid by Claude Code beside a mod each time it loads one
-.claude-plugin/types/
+# Local Claude Code settings and worktrees
 .claude/settings.local.json
 .claude/worktrees/
 

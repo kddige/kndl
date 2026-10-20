@@ -1,0 +1,321 @@
+// The messages the durable agent exchanges with the Hub (see the protocol's Mod.ts), checked against the
+// protocol's schemas: every event is validated before it is queued, so one bad event can't make
+// the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
+
+import {
+  attachmentCount,
+  attachmentLabels,
+  attachmentRules,
+  MaxAttachmentBytes,
+  MaxModAttachmentPartBytes,
+  MaxToolSummaryLength,
+  ModAttachment,
+  ModCommands,
+  ModEvent,
+  ModHello,
+  ModHelloReply,
+  ProtocolVersion,
+  withAttachmentMarkers,
+} from "@kndl/protocol"
+import type {
+  MarkedFile,
+  ModCommand,
+  ModEventsEncoded,
+  Participant,
+  Question,
+} from "@kndl/protocol"
+import { Exit, Schema } from "effect"
+
+export type ModEventEncoded = typeof ModEvent.Encoded
+
+/** One of the Hub's commands to a mod, by its tag. */
+export type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { readonly _tag: Tag }>
+
+/** A Participant as JSON: the Hub's commands carry them, and the events say them back. */
+export type Sender = typeof Participant.Encoded
+
+/** Whether `value` is a plain object: not null, and not an array. */
+export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const clipNote = (cut: number) => `… (${cut} more chars)`
+
+/** Shortens `text` to at most `max` characters, saying how much was cut. */
+export const clip = (text: string, max = MaxToolSummaryLength) => {
+  if (text.length <= max) return text
+  // The note's own length depends on how much is cut; leave room for its longest form.
+  const kept = max - clipNote(text.length).length
+  return `${text.slice(0, Math.max(0, kept))}${clipNote(text.length - Math.max(0, kept))}`
+}
+
+/** What a mod's hello says of it. */
+export interface HelloFields {
+  readonly sessionId: string
+  readonly conversationId: string
+  readonly model: string
+}
+
+/** The body of `POST /mod/hello`, in the protocol's shape. */
+export const helloBody = (hello: HelloFields) =>
+  JSON.stringify(
+    Schema.encodeSync(ModHello)(
+      Schema.decodeUnknownSync(ModHello)({
+        _tag: "ModHello",
+        protocolVersion: ProtocolVersion,
+        ...hello,
+      }),
+    ),
+  )
+
+const decodeEvent = Schema.decodeUnknownExit(ModEvent)
+const encodeEvent = Schema.encodeSync(ModEvent)
+
+/**
+ * Checks `event` against the protocol and returns it encoded for the Hub, or the reason it
+ * doesn't decode.
+ */
+export const checkEvent = (
+  event: unknown,
+):
+  | { readonly _tag: "Valid"; readonly event: ModEventEncoded }
+  | { readonly _tag: "Invalid"; readonly reason: string } => {
+  const decoded = decodeEvent(event)
+  if (Exit.isFailure(decoded)) return { _tag: "Invalid", reason: String(decoded.cause) }
+  return { _tag: "Valid", event: encodeEvent(decoded.value) }
+}
+
+/** The body of `POST /mod/events`, from events {@link checkEvent} passed. */
+export const eventsBody = (messages: ReadonlyArray<ModEventEncoded>) =>
+  JSON.stringify({ messages } satisfies ModEventsEncoded)
+
+const decodeHelloReply = Schema.decodeUnknownExit(Schema.fromJsonString(ModHelloReply))
+const decodeCommands = Schema.decodeUnknownExit(Schema.fromJsonString(ModCommands))
+
+/** Reads the Hub's answer to a hello; undefined when it isn't one. */
+export const readHelloReply = (text: string): ModHelloReply | undefined => {
+  const reply = decodeHelloReply(text)
+  return Exit.isSuccess(reply) ? reply.value : undefined
+}
+
+/** Reads the Hub's answer to `GET /mod/commands`; undefined when it isn't one. */
+export const readCommands = (text: string): ModCommands | undefined => {
+  const commands = decodeCommands(text)
+  return Exit.isSuccess(commands) ? commands.value : undefined
+}
+
+/**
+ * A prompt from a Participant, or their message to a subagent, as the model reads it: led by the
+ * sender's name.
+ */
+export const promptFromParticipant = (sender: Pick<Participant, "name">, text: string) =>
+  `[${sender.name}] ${text}`
+
+/**
+ * A prompt a Participant steered into the running Turn (#195, ADR 0018), as the model reads it: as
+ * Claude Code frames a prompt typed while it works, with the sender's name and a marker for each
+ * file it carries (#278), which the model opens by the marker alone.
+ */
+export const steeredPrompt = (
+  sender: Pick<Participant, "name">,
+  text: string,
+  attachments: ReadonlyArray<MarkedFile> = [],
+) =>
+  [
+    "<system-reminder>",
+    `${sender.name} sent a new message while you were working:`,
+    deliveredPrompt(sender, text, attachments),
+    "",
+    "Address the message above as you continue this turn.",
+    "</system-reminder>",
+  ].join("\n")
+
+// ── Attachments (#276, ADR 0024) ───────────────────────────────────────────
+
+/**
+ * A prompt from the Prompt queue as the model reads it: its sender's name, then each file's marker. A
+ * message to a subagent, and a reply to a question, read the same (#278).
+ */
+export const deliveredPrompt = (
+  sender: Pick<Participant, "name">,
+  text: string,
+  attachments: ReadonlyArray<MarkedFile>,
+) => promptFromParticipant(sender, withAttachmentMarkers(text, attachments))
+
+/**
+ * What the model reads beside a prompt with files, and the people never see: to open each one before
+ * answering. The marker alone would do; this makes sure it isn't skipped.
+ */
+export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>, toolName: string) => {
+  const labels = attachmentLabels(attachments)
+  const files = attachments.map((file, index) => `${labels[index]} ${file.name}: id ${file.id}`)
+  return [
+    `This message has ${attachmentCount(attachments)} attached. Look at each before you answer,`,
+    `by calling ${toolName} once per file with its id: ${files.join("; ")}.`,
+  ].join(" ")
+}
+
+interface Base64Source {
+  readonly type: "base64"
+  readonly media_type: string
+  readonly data: string
+}
+
+/**
+ * What the attachment tool answers: the Hub's file as an image block, or a PDF as a document
+ * block (#277); or why it couldn't.
+ */
+export type AttachmentResult =
+  | { readonly deny: string }
+  | {
+      readonly result: readonly [
+        { readonly type: "text"; readonly text: string },
+        (
+          | { readonly type: "image"; readonly source: Base64Source }
+          | { readonly type: "document"; readonly title: string; readonly source: Base64Source }
+        ),
+      ]
+    }
+
+const decodeAttachment = Schema.decodeUnknownExit(Schema.fromJsonString(ModAttachment))
+
+const failed = (why: string) => ({ deny: `Could not open the attachment: ${why}` })
+
+/** The most parts the attachment tool fetches of one file: as many as the largest, a PDF, has. */
+export const maxAttachmentParts = Math.ceil(MaxAttachmentBytes / MaxModAttachmentPartBytes)
+
+/** Where the attachment tool fetches a file's part from `offset` on, on the Hub. */
+export const attachmentPartPath = (id: string, offset: number) =>
+  `/mod/attachments/${encodeURIComponent(id)}?offset=${offset}`
+
+/**
+ * A part of a file, from the Hub's answer to {@link attachmentPartPath}; or the attachment tool's
+ * answer saying why there is none. The mod runtime's fetch reads 4 MiB of a body at most, so a
+ * large file comes in parts, each saying where the next starts.
+ */
+export const attachmentPart = (
+  status: number,
+  body: string,
+): { readonly part: ModAttachment } | { readonly deny: string } => {
+  if (status !== 200) {
+    try {
+      const { error } = JSON.parse(body) as { error?: unknown }
+      if (typeof error === "string") return failed(error)
+    } catch {
+      // Said below.
+    }
+    return failed(`the Hub answered ${status}.`)
+  }
+  const part = decodeAttachment(body)
+  if (Exit.isFailure(part)) return failed("the Hub's answer was not one.")
+  return { part: part.value }
+}
+
+/** A GET of a path on the Hub, with the mod token, as the attachment tool fetches. */
+export type HubGet = (path: string) => Promise<{ readonly status: number; readonly text: string }>
+
+/**
+ * The attachment tool's answer for the file `id`, its parts fetched from the Hub with `get` in
+ * order, each from where the last says the next starts; or why it couldn't.
+ */
+export const openAttachment = async (id: string, get: HubGet): Promise<AttachmentResult> => {
+  if (id === "") return { deny: "Give the attachment's id, from its marker." }
+  const parts: Array<ModAttachment> = []
+  for (let offset: number | undefined = 0; offset !== undefined;) {
+    if (parts.length === maxAttachmentParts) break
+    let response: { readonly status: number; readonly text: string }
+    try {
+      response = await get(attachmentPartPath(id, offset))
+    } catch (error) {
+      return failed(String(error))
+    }
+    const answer = attachmentPart(response.status, response.text)
+    if ("deny" in answer) return answer
+    parts.push(answer.part)
+    offset = answer.part.next
+  }
+  return attachmentResult(parts)
+}
+
+/**
+ * The attachment tool's answer from a file's parts, in order: an image block of the whole, or a
+ * document block for a PDF.
+ */
+export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): AttachmentResult => {
+  const [first] = parts
+  if (first === undefined || parts.at(-1)?.next !== undefined)
+    return failed("the Hub sent only part of it.")
+  const source = {
+    type: "base64",
+    media_type: first.mediaType,
+    data: parts.map((part) => part.data).join(""),
+  } as const
+  const name = { type: "text", text: first.name } as const
+  return {
+    result:
+      attachmentRules(first.mediaType).block === "image"
+        ? [name, { type: "image", source }]
+        : [name, { type: "document", title: first.name, source }],
+  }
+}
+
+// ── AskUserQuestion (#193) ─────────────────────────────────────────────────
+
+const text = (value: unknown) => (typeof value === "string" ? value : "")
+
+/**
+ * AskUserQuestion's `questions` input as the protocol carries them: each question with its
+ * header, options and whether several may be picked. An entry that isn't a question is left out.
+ */
+export const askedQuestions = (questions: unknown): Array<Question> =>
+  (Array.isArray(questions) ? questions : []).filter(isRecord).map((question) => ({
+    question: text(question.question),
+    header: text(question.header),
+    options: (Array.isArray(question.options) ? question.options : [])
+      .filter(isRecord)
+      .map((option) => {
+        const description = text(option.description)
+        return { label: text(option.label), ...(description === "" ? {} : { description }) }
+      }),
+    multiSelect: question.multiSelect === true,
+  }))
+
+const maxQueued = 5_000
+
+/**
+ * The events waiting to go to the Hub, oldest first. Consecutive text pieces of the same loop
+ * are merged; past {@link maxQueued} events the oldest are dropped.
+ */
+export class Outbox {
+  private events: Array<ModEventEncoded> = []
+
+  get size() {
+    return this.events.length
+  }
+
+  push(event: ModEventEncoded) {
+    const last = this.events.at(-1)
+    if (
+      event._tag === "TextDelta" &&
+      last?._tag === "TextDelta" &&
+      last.turnId === event.turnId &&
+      last.agentId === event.agentId
+    ) {
+      this.events[this.events.length - 1] = { ...last, text: last.text + event.text }
+      return
+    }
+    this.events.push(event)
+    if (this.events.length > maxQueued) this.events = this.events.slice(-maxQueued)
+  }
+
+  /** Takes everything queued, for one post. */
+  take(): Array<ModEventEncoded> {
+    const taken = this.events
+    this.events = []
+    return taken
+  }
+
+  /** Puts back a batch that couldn't be posted, ahead of what was queued since. */
+  putBack(batch: ReadonlyArray<ModEventEncoded>) {
+    this.events = [...batch, ...this.events].slice(-maxQueued)
+  }
+}

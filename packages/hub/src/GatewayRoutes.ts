@@ -34,14 +34,14 @@
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
 //
-// A pi Session's model calls (ADR 0029) come through it too, to its Creator's Connected providers:
+// A Session's model calls (ADR 0029) come through it too, to its Creator's Connected providers: the
+// durable agent's, as the pi extension's did, from every Session (docs/design/durable-harness.md).
 //
 // - `/gateway/models/<provider>/<the Provider's API path>`, any method, by the mod token as above.
 //   An Installation's id is 24 random hex characters (Tokens.ts's randomId), so it is never
 //   `models`: the two never meet.
 // - Each refusal is in the Providers' own error shape, `{"error":{"message":…}}`, which pi shows:
-//   - `403`: a Claude Code Session's call (only pi Sessions spend Connected providers); a call that
-//     isn't one pi makes to the Provider's API, its inference or model-listing endpoints, so not
+//   - `403`: a call that isn't one pi makes to the Provider's API, its inference or model-listing endpoints, so not
 //     its files, batches or fine-tuning (PiProviders.ts); a Provider its Creator hasn't
 //     connected, or must connect again. Claude's Models don't come through it: they run through
 //     Claude Code in the Sandbox.
@@ -344,11 +344,6 @@ export const GatewayRoutes = HttpRouter.use(
       switch (sent._tag) {
         case "NotActive":
           return yield* refused(401, "Expected the mod token of an Active Session")
-        case "NotPi":
-          return yield* refused(
-            403,
-            "Only a pi Session's model calls go through the Gateway: this Session runs Claude Code, on its Creator's Claude credential.",
-          )
         case "NotAllowed":
           return yield* refused(
             403,

@@ -46,9 +46,10 @@ describe("RunnerHello", () => {
     protocolVersion: ProtocolVersion,
     name: "studio",
     sessions: [],
+    runsAgent: true,
   }
 
-  test("a minimal one from a Runner from before decodes, with no version and no updater", () => {
+  test("a minimal one decodes, with no version and no updater", () => {
     const decoded = Schema.decodeUnknownSync(RunnerHello)(hello)
     expect(decoded).not.toHaveProperty("version")
     expect(decoded).not.toHaveProperty("updater")
@@ -87,6 +88,7 @@ const carrying = (commit: string) => {
         protocolVersion: ProtocolVersion,
         name: "studio",
         sessions: [],
+        runsAgent: true,
         version,
       },
       { _tag: "UpdateChecked", target: version },

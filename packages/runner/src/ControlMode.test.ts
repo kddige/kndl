@@ -45,6 +45,7 @@ describe("ControlModeParser", () => {
       ),
     )
     expect(events).toEqual([
+      { _tag: "SessionChanged" },
       { _tag: "Reply", lines: ["0 1 1 40 6", "%end 1790899404 287 1"], isError: false },
       { _tag: "Reply", lines: ["can't find pane"], isError: true },
     ])

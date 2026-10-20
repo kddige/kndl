@@ -349,18 +349,26 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     })
     const { web } = scene
     web.send({ _tag: "OpenTerminal", sessionId: scene.sessionId })
-    await web.next("TerminalFrame", (frame) => String(frame["data"]).includes("fake claude ready"))
+    await web.next("TerminalFrame")
 
-    /** How long a line typed at the terminal takes to come back echoed. */
+    /** How long a line typed at the terminal's shell takes to come back answered. */
     const echo = async (n: number) => {
       const sent = Date.now()
-      web.send({ _tag: "TerminalInput", sessionId: scene.sessionId, data: `ping ${n}\r` })
+      web.send({
+        _tag: "TerminalInput",
+        sessionId: scene.sessionId,
+        data: `echo pong-$((${n}+0))\r`,
+      })
+      // The answer's line ending may come in the next frame, so the number must only end there.
+      const answer = new RegExp(`pong-${n}(?![0-9])`)
       const { at } = await web.nextTimed("TerminalFrame", (frame) =>
-        String(frame["data"]).includes(`you said: ping ${n}`),
+        answer.test(String(frame["data"])),
       )
       return at - sent
     }
-    const before = await echo(0)
+    // What is typed before the shell has started, it may drop: so it is typed until it answers.
+    let before: number | undefined
+    for (let n = 0; before === undefined; n--) before = await echo(n).catch(() => undefined)
 
     const forward = await forwardLocally(scene.tunnelUrl(3000), scene.headers)
     let done = false

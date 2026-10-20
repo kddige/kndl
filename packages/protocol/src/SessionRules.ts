@@ -3,7 +3,6 @@
 // the fake can't drift from what the Hub refuses, or why (#263). Each rule takes what the Hub
 // knows of the Session as it is now, and says what is to happen: it changes nothing itself.
 
-import type { Harness } from "./Model.ts"
 import type { AgentStatus, SessionInstallation, SessionState } from "./Session.ts"
 
 /** Why a command is refused, as said to whoever sent it. */
@@ -14,26 +13,22 @@ export interface Refusal {
 // ── Who drives a Session (ADR 0026) ──
 
 /**
- * Why `you` can't drive a Session created by `creator`, or undefined when they can: only its
- * Creator prompts it, steers or cancels its prompts, answers it, stops it or its subagents,
- * controls it, and opens its terminal. It runs on what they connected: Claude Code on their setup
- * token, pi on their Connected providers (ADR 0029); a Session that names no `harness` runs
- * Claude Code. Everyone else with Repo access watches.
+ * Why `you` can't drive a Session created by `creator`, or undefined when they can.
+ *
+ * The Pi Durable spike (docs/design/durable-harness.md) lifts ADR 0026's driving rule for testing:
+ * everyone who can see a Session prompts it, steers or cancels its prompts, answers it, stops it
+ * or its subagents, starts and posts in its threads, compacts it, controls it and opens its
+ * terminal. ADR 0026's billing half stands: the Session still runs on its Creator's accounts. So
+ * this never refuses; it stays, with its callers, as the one place to put the rule back.
  */
 export const driveRefusal = (
-  you: { readonly id: string },
-  creator: { readonly id: string; readonly name: string },
-  harness?: Harness,
-): Refusal | undefined =>
-  you.id === creator.id
-    ? undefined
-    : {
-        refusal: `Only ${creator.name}, who started this Session, can drive it: it runs on their ${harness === "Pi" ? "Connected providers" : "Claude credential"}.`,
-      }
+  _you: { readonly id: string },
+  _creator: { readonly id: string; readonly name: string },
+): Refusal | undefined => undefined
 
 // ── The Prompt queue and Steer (ADR 0018) ──
 
-/** Where a prompt is on its way from the Prompt queue to Claude Code. */
+/** Where a prompt is on its way from the Prompt queue to the agent. */
 export interface PromptHandover {
   /** Whether it is in the Session's Prompt queue. */
   readonly queued: boolean
@@ -50,14 +45,6 @@ export interface PromptHandover {
 }
 
 /**
- * Why files can't go to a Session's mod by a way that is `done` (steered, sent to a subagent,
- * replied with): it is from before they could (#278).
- */
-export const modFromBeforeAttachments = (done: string): Refusal => ({
-  refusal: `This Session's Claude Code runs a mod from before attachments could be ${done}. They can be once the Session starts again on an updated Runner.`,
-})
-
-/**
  * Why a prompt, message or reply (`what`) is refused when not each of its attachments is one its
  * sender uploaded to the Session, or one was deleted a day after upload unsent (#276, #280).
  */
@@ -66,22 +53,17 @@ export const attachmentsNotSent = (what: string): Refusal => ({
 })
 
 const notQueued: Refusal = { refusal: "The prompt is not in the Prompt queue." }
-const alreadyDelivered: Refusal = { refusal: "The prompt was already delivered to Claude Code." }
+const alreadyDelivered: Refusal = { refusal: "The prompt was already delivered to the agent." }
 
 /**
  * Whether a queued prompt can be steered into the running Turn: "ok", and the mod is to be sent the
  * DeliverIntoTurn, the prompt keeping its place in the queue; "already", if it is on its way into
  * the Turn, and nothing is to be done; or why not. `turnRunning` is whether the Session is Active
- * with a Turn, and not going to sleep. `modSteers` is whether its mod said in its hello that it
- * steers (#195). `hasAttachments` is whether the prompt carries files (#276), and `modAttaches`
- * whether the mod said in its hello that it marks them in a steered prompt (#278).
+ * with a Turn, and not going to sleep.
  */
 export const steerVerdict = (
   steer: PromptHandover & {
     readonly turnRunning: boolean
-    readonly modSteers: boolean
-    readonly hasAttachments: boolean
-    readonly modAttaches: boolean
   },
 ): "ok" | "already" | Refusal => {
   if (!steer.turnRunning) {
@@ -89,19 +71,12 @@ export const steerVerdict = (
   }
   if (steer.delivered) return alreadyDelivered
   if (steer.steering) return "already"
-  if (!steer.modSteers) {
-    return {
-      refusal:
-        "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
-    }
-  }
   if (!steer.queued) return notQueued
-  if (steer.hasAttachments && !steer.modAttaches) return modFromBeforeAttachments("steered")
   return "ok"
 }
 
 /**
- * Why a prompt can't be cancelled, if it can't: it is on its way to Claude Code, or not in the
+ * Why a prompt can't be cancelled, if it can't: it is on its way to the agent, or not in the
  * queue. One that can is taken out of the queue.
  */
 export const cancelRefusal = (prompt: PromptHandover): Refusal | undefined => {
@@ -115,7 +90,7 @@ export const cancelRefusal = (prompt: PromptHandover): Refusal | undefined => {
 export interface DeliveryHolds {
   /** A prompt is out for delivery: the mod was sent it, and no Turn started from it yet. */
   readonly promptOut: boolean
-  /** Its Claude Code was started or woken, and its new mod hasn't said hello yet. */
+  /** Its agent was started or woken, and hasn't said hello yet. */
   readonly awaitingHello: boolean
   /** It was asked to stop, for sleep or a restart, and hasn't stopped yet. */
   readonly goingToSleep: boolean
@@ -243,19 +218,14 @@ export const restartVerdict = (session: SessionNow): "wake" | "stop" | Refusal =
 
 // ── Open questions (#193) ──
 
-/**
- * Why an answer to an Open question with attachments is refused, if it is (#278): only a reply
- * carries them, and only to a mod that said it marks them.
- */
+/** Why an answer to an Open question with attachments is refused, if it is: only a reply carries them. */
 export const answerAttachmentsRefusal = (answer: {
   readonly replied: boolean
   readonly hasAttachments: boolean
-  readonly modAttaches: boolean
-}): Refusal | undefined => {
-  if (!answer.hasAttachments) return undefined
-  if (!answer.replied) return { refusal: "Only a reply to a question carries attachments." }
-  return answer.modAttaches ? undefined : modFromBeforeAttachments("replied with")
-}
+}): Refusal | undefined =>
+  answer.hasAttachments && !answer.replied
+    ? { refusal: "Only a reply to a question carries attachments." }
+    : undefined
 
 // ── Subagents (ADR 0014) ──
 
@@ -263,16 +233,11 @@ const noSuchAgent: Refusal = { refusal: "The Session has no such agent." }
 
 /**
  * MessageAgent: "deliver" the message to the Session's mod; "wake" an Asleep Session first, whose
- * new Claude Code resumes the agent from its transcript; or why not. `hasAttachments` is whether
- * the message carries attachments, and `modAttaches` whether the running mod said it marks them
- * (#278). A woken Session's mod is a new one, which does: a Runner behind the Hub wakes no Session
- * (ADR 0011).
+ * new agent resumes the subagent from its storage; or why not.
  */
 export const messageAgentVerdict = (
   session: Pick<SessionNow, "state" | "goingToSleep"> & {
     readonly agentKnown: boolean
-    readonly hasAttachments: boolean
-    readonly modAttaches: boolean
   },
 ): "deliver" | "wake" | Refusal => {
   if (!session.agentKnown) return noSuchAgent
@@ -284,9 +249,7 @@ export const messageAgentVerdict = (
     case "Active":
       if (session.goingToSleep)
         return { refusal: "The Session is going to sleep: message the agent once it is Asleep." }
-      return session.hasAttachments && !session.modAttaches
-        ? modFromBeforeAttachments("sent to a subagent")
-        : "deliver"
+      return "deliver"
     case "Asleep":
       return "wake"
   }

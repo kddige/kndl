@@ -8,7 +8,6 @@ import {
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
-  runnerModels,
   sessionSummary,
   turnEvents,
 } from "./testSupport.ts"
@@ -59,6 +58,47 @@ const sessionEvents = [
     sender: bob,
     text: "fix the tests",
     message: "Only the Creator prompts a Session now",
+  },
+  { _tag: "TurnStopRequested", by: bob, threadId: "thr-1" },
+  // Stored before threads always had their own model: replay must still round-trip it.
+  {
+    _tag: "ThreadStarted",
+    threadId: "thr-old",
+    anchorTurnId: "t-1",
+    title: "Before the upgrade",
+    startedBy: bob,
+  },
+  {
+    _tag: "ThreadStarted",
+    threadId: "thr-1",
+    anchorTurnId: "t-1",
+    title: "what about Windows?",
+    startedBy: bob,
+    model: "openai/gpt-6-luna",
+  },
+  {
+    _tag: "ThreadPromptSent",
+    threadId: "thr-1",
+    promptId: "p-7",
+    requestId: "q-70",
+    sender: bob,
+    text: "what about Windows?",
+  },
+  { _tag: "ThreadPromptSent", threadId: "thr-1", promptId: "p-9", sender: bob, text: "more" },
+  { _tag: "ThreadPromptFailed", threadId: "thr-1", promptId: "p-9", message: "storage is full" },
+  {
+    _tag: "ThreadPromptFailed",
+    threadId: "thr-2",
+    promptId: "p-10",
+    message: "The main loop has nothing to fork a thread from yet.",
+    threadDropped: true,
+  },
+  {
+    _tag: "ThreadModelChanged",
+    threadId: "thr-1",
+    by: alice,
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "high",
   },
 ]
 
@@ -222,13 +262,11 @@ const webToHub = [
   { _tag: "DisconnectProvider", requestId: "q-43", provider: "openai" },
   { _tag: "RefreshProviderModels", requestId: "q-44" },
   { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
-  { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
   {
     _tag: "CreateSession",
     requestId: "q-46",
     repo: "kddige/kndl",
     branch: { _tag: "Create", name: "feature/pi", from: "main" },
-    harness: "Pi",
     model: "openai/gpt-6-sol",
     thinkingLevel: "minimal",
   },
@@ -335,6 +373,44 @@ const webToHub = [
     requestId: "q-42",
     mcpServerId: "@acme/linear-mcp",
     readId: "read-2",
+  },
+  {
+    _tag: "CreateThread",
+    requestId: "q-43",
+    sessionId: "s-1",
+    anchorTurnId: "t-1",
+    text: "what about Windows?",
+    model: "openai/gpt-6-luna",
+  },
+  {
+    _tag: "CreateThread",
+    requestId: "q-44",
+    sessionId: "s-1",
+    anchorTurnId: "t-1",
+    text: "",
+    attachments: ["att-1"],
+  },
+  {
+    _tag: "PromptThread",
+    requestId: "q-45",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    text: "and macOS",
+  },
+  { _tag: "StopThread", sessionId: "s-1", threadId: "thr-1" },
+  {
+    _tag: "SetThreadModel",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    model: "openai/gpt-6-sol",
+    thinkingLevel: "high",
+  },
+  { _tag: "CompactConversation", sessionId: "s-1" },
+  {
+    _tag: "CompactConversation",
+    sessionId: "s-1",
+    threadId: "thr-1",
+    instructions: "Keep the test names",
   },
 ]
 
@@ -574,7 +650,6 @@ const hubToWeb = [
         versionStatus: "Unknown",
         lastSeenAt: 1_790_000_000_000,
         openSessions: 1,
-        models: runnerModels,
         sysinfo: {
           diskFreeBytes: 200 * 1024 ** 3,
           diskTotalBytes: 500 * 1024 ** 3,
@@ -757,7 +832,6 @@ const hubToWeb = [
         thinkingLevels: [],
       },
     ],
-    claudeHarness: "ClaudeCode",
   },
   {
     _tag: "SignInStepped",
@@ -1111,6 +1185,20 @@ const hubToWeb = [
     },
     upgrades: "@acme/linear-mcp",
   },
+  { _tag: "ThreadCreated", requestId: "q-43", sessionId: "s-1", threadId: "thr-1" },
+  {
+    _tag: "SessionModels",
+    sessionId: "s-1",
+    models: [
+      {
+        provider: "openai",
+        id: "gpt-6-sol",
+        label: "GPT-6-Sol",
+        thinkingLevels: ["low", "medium", "high"],
+      },
+    ],
+  },
+  { _tag: "SessionModels", sessionId: "s-1", models: [] },
 ]
 
 describe("SessionEvent", () => {

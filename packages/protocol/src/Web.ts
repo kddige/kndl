@@ -27,6 +27,7 @@ import {
   RequestId,
   RunnerId,
   SessionId,
+  ThreadId,
   ToolCallId,
 } from "./Ids.ts"
 import {
@@ -59,6 +60,14 @@ import {
 } from "./Session.ts"
 import { MaxDiskUsageSessions, RunnerHistoryPoint, SessionDiskSize } from "./Sysinfo.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
+import {
+  ThreadCommand,
+  ThreadMessage,
+  ThreadModelChanged,
+  ThreadPromptFailed,
+  ThreadPromptSent,
+  ThreadStarted,
+} from "./Thread.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -91,6 +100,8 @@ export type SessionStateChanged = typeof SessionStateChanged.Type
 /** A Participant asked to stop the current Turn. */
 export const TurnStopRequested = Schema.TaggedStruct("TurnStopRequested", {
   by: Participant,
+  /** The thread whose Turn they asked to stop; absent for the main loop's. */
+  threadId: Schema.optionalKey(ThreadId),
 })
 export type TurnStopRequested = typeof TurnStopRequested.Type
 
@@ -171,6 +182,10 @@ export const SessionEvent = Schema.Union([
   SandboxNoted,
   ModelSwitched,
   PromptCancelled,
+  ThreadStarted,
+  ThreadPromptSent,
+  ThreadPromptFailed,
+  ThreadModelChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 
@@ -193,22 +208,15 @@ export type WebHello = typeof WebHello.Type
 /**
  * Start a new Session on a Repo, on a branch (ADR 0023): an existing one, directly or on a new
  * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is
- * named. A `model` or `thinkingLevel` its Harness doesn't take is refused (#128): Claude Code's as
- * the Runner's Claude Code has them, absent for its default; pi's among its Creator's Models
- * (ADR 0029), absent for their default Model (`defaultProviderModel`).
+ * named. A `model` or `thinkingLevel` the agent doesn't take is refused (#128): a `model` is one of
+ * its Creator's Models, `openai/gpt-6-sol` (ADR 0029), absent for their default Model
+ * (`defaultProviderModel`).
  */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
   requestId: RequestId,
   repo: RepoName,
   branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
-  /**
-   * What runs its agent (ADR 0029, 0030). Absent, the model says (`harnessOfModel`); without a
-   * model, Claude's Models run on the Creator's `claudeHarness`, and others on pi when the Runner
-   * runs it. Given, it must agree with the model. A pi Session's `model` is one of its Creator's
-   * ProvidersState Models, `openai/gpt-6-sol`.
-   */
-  harness: Schema.optionalKey(Harness),
   model: Schema.optionalKey(ModelName),
   thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
@@ -621,6 +629,7 @@ export const WebToHub = Schema.Union([
   CloseTerminal,
   TerminalInput,
   TerminalResize,
+  ThreadCommand,
   GetEnvironment,
   CheckEnvironmentDraft,
   StartTestBuild,
@@ -977,6 +986,7 @@ export const HubToWeb = Schema.Union([
   QuestionPicks,
   SessionStartLogged,
   TerminalFrame,
+  ThreadMessage,
   CommandFailed,
   EnvironmentState,
   EnvironmentDraftChecked,

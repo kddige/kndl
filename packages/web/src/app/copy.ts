@@ -9,6 +9,26 @@ export function notSent(what: string): void {
   })
 }
 
+/**
+ * Whose accounts a Session's Turns, threads and agents run on: its Creator's (ADR 0026), whoever
+ * drives it. "your accounts" for the Creator, "Alice's accounts" for anyone else.
+ */
+export function accountsOf(
+  session: { readonly creator: { readonly id: string; readonly name: string } },
+  you: { readonly id: string } | null | undefined,
+): string {
+  return you?.id === session.creator.id ? "your accounts" : `${session.creator.name}'s accounts`
+}
+
+/** Who pays for a Session, as its header says it: "Your accounts pay", "Alice's accounts pay". */
+export function accountsPay(...of: Parameters<typeof accountsOf>): string {
+  const accounts = accountsOf(...of)
+  return `${accounts.charAt(0).toUpperCase()}${accounts.slice(1)} pay`
+}
+
+/** The reason as a sentence, with a space after it for the one that follows. */
+export const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)
+
 /** What each Session command does, for a title that names what failed: "Couldn't …". */
 export const commandText: Partial<Record<string, string>> = {
   SleepSession: "put the Session to sleep",
@@ -18,6 +38,11 @@ export const commandText: Partial<Record<string, string>> = {
   RestoreSession: "restore the Session",
   RenameSession: "rename the Session",
   SetSessionModel: "change the Model",
+  CreateThread: "start the Thread",
+  PromptThread: "post in the Thread",
+  StopThread: "stop the Thread",
+  SetThreadModel: "change the Thread's Model",
+  CompactConversation: "compact the conversation",
 }
 
 /** Copies a command to paste in a terminal, and says whether it could. */

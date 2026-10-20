@@ -104,7 +104,7 @@ const applyFix = (
         return
       case "BuildMod":
         yield* runSteps([
-          step(bunPath(), ["run", "mod:build"], { cwd: layout.app, why: "build the hub-link mod" }),
+          step(bunPath(), ["run", "mod:build"], { cwd: layout.app, why: "build the mod" }),
         ])
         return
       case "BuildWeb":

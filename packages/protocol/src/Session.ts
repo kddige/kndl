@@ -10,10 +10,11 @@ import {
   PromptId,
   RunnerId,
   SessionId,
+  ThreadId,
   ToolCallId,
   TurnId,
 } from "./Ids.ts"
-import { Harness, ModelName, RunnerModels, ThinkingLevel } from "./Model.ts"
+import { Harness, ModelName, ThinkingLevel } from "./Model.ts"
 import { SysinfoSample } from "./Sysinfo.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
@@ -232,16 +233,6 @@ export const RunnerSummary = Schema.Struct({
   /** Its update under way, or the last one's refusal or failure (#87). */
   update: Schema.optionalKey(RunnerUpdateState),
   /**
-   * The models and thinking levels its Claude Code takes, as its last hello said (#128); absent
-   * from a Runner too old to say, or that couldn't find out.
-   */
-  models: Schema.optionalKey(RunnerModels),
-  /**
-   * The Harnesses it runs Sessions on, as its last hello said (ADR 0029); absent for one that runs
-   * Claude Code alone.
-   */
-  harnesses: Schema.optionalKey(Schema.Array(Harness)),
-  /**
    * What its host looked like when it last sampled it (#350), kept after it disconnects, for the
    * page to show greyed out; absent from a Runner too old to sample, and before its first sample.
    * Its history is asked for apart, with a GetRunnerHistory.
@@ -281,7 +272,8 @@ export type SessionEnvironmentStatus = typeof SessionEnvironmentStatus.Type
 
 /**
  * An Installation a Session runs with (ADR 0020), with its and its MCP server's names as it
- * started, and the name Claude Code knows its server by, shown as `plugin:kndl:<server>`.
+ * started, and the name the agent knows its server by (`server`), which prefixes its tools as
+ * `mcp__<server>__`.
  */
 export const SessionInstallation = Schema.Struct({
   id: InstallationId,
@@ -333,6 +325,28 @@ export type SessionRestart = typeof SessionRestart.Type
  */
 export const AgentStatus = Schema.Literals(["Running", "Done", "Stopped", "Interrupted"])
 export type AgentStatus = typeof AgentStatus.Type
+
+/**
+ * One of a Session's threads (docs/design/durable-harness.md): a conversation forked off the main
+ * loop at one of its Turns, as its SessionSummary lists them.
+ */
+export const ThreadSummary = Schema.Struct({
+  id: ThreadId,
+  /** The start of its first prompt (`threadTitleFrom`). */
+  title: Schema.NonEmptyString,
+  /** The main loop's Turn it was forked off, at that Turn's answer. */
+  anchorTurnId: TurnId,
+  startedBy: Participant,
+  /** Whether a Turn runs in it now. */
+  running: Schema.Boolean,
+  /**
+   * The model it runs on, `<provider>/<id>`. Its own: it doesn't follow the Session's, and starts
+   * on the Session's current one if none was picked.
+   */
+  model: ModelName,
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
+})
+export type ThreadSummary = typeof ThreadSummary.Type
 
 /** One of a Session's subagents, as the sidebar lists it under the Session. */
 export const AgentSummary = Schema.Struct({
@@ -491,8 +505,8 @@ export const SessionSummary = Schema.Struct({
   state: SessionState,
   runnerId: RunnerId,
   /**
-   * Whose setup token its Claude Code runs on, and the only one who drives it: prompts it, answers
-   * it, stops it, controls it and uses its terminal (ADR 0026). Other Participants watch.
+   * Whose accounts it runs on (ADR 0026). In the Pi Durable spike everyone who sees it drives it
+   * (docs/design/durable-harness.md).
    */
   creator: Participant,
   createdAt: EpochMillis,
@@ -503,6 +517,11 @@ export const SessionSummary = Schema.Struct({
    * Running one keeps the Session working, as a Turn does.
    */
   agents: Schema.optionalKey(Schema.Array(AgentSummary)),
+  /**
+   * Its threads, oldest first (docs/design/durable-harness.md); absent when it has none. A running
+   * one keeps the Session working, as a Turn does.
+   */
+  threads: Schema.optionalKey(Schema.Array(ThreadSummary)),
   /** Present while the Session is Archived. */
   archived: Schema.optionalKey(ArchiveInfo),
   /** Present once its Repo has an Environment. */

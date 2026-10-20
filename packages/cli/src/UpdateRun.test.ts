@@ -194,9 +194,7 @@ describe.skipIf(Bun.which("git") === null)("kndl update", () => {
     })
     expect(status()?.finishedAt).toBeNumber()
     expect(restarts).toEqual(["all"])
-    expect(log()).toContain(
-      "== Building the hub-link mod\n$ /fake/bun run mod:build\nran run mod:build",
-    )
+    expect(log()).toContain("== Building the mod\n$ /fake/bun run mod:build\nran run mod:build")
     // The lock goes with the update.
     expect(existsSync(join(layout.home.dir, UpdateLockPath))).toBe(false)
   })

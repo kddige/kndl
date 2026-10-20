@@ -4,7 +4,6 @@
 
 import { type SessionSummary, sessionTitle } from "@kndl/protocol"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { useDrives } from "../session/drive.ts"
 import { requestRename } from "../sessions/renameRequests.ts"
 import {
   CopyIcon,
@@ -21,7 +20,6 @@ import { useHub } from "./hub.tsx"
 export function SessionRowMenuItems({ session }: { session: SessionSummary }) {
   const hub = useHub()
   const navigate = useNavigate()
-  const drives = useDrives(session)
   const { sessionId } = useParams({ strict: false })
   const title = sessionTitle(session)
   const active = session.state === "Active"
@@ -55,15 +53,13 @@ export function SessionRowMenuItems({ session }: { session: SessionSummary }) {
 
   return (
     <>
-      {drives && (
-        <MenuItem icon={<PencilIcon />} end="F2" onClick={() => requestRename(session.id)}>
-          Rename
-        </MenuItem>
-      )}
+      <MenuItem icon={<PencilIcon />} end="F2" onClick={() => requestRename(session.id)}>
+        Rename
+      </MenuItem>
       <MenuItem icon={<CopyIcon />} onClick={copyLink}>
         Copy link
       </MenuItem>
-      {drives && session.state !== "Archived" && (
+      {session.state !== "Archived" && (
         <MenuItem
           icon={<SunIcon />}
           onClick={() => {
@@ -73,7 +69,7 @@ export function SessionRowMenuItems({ session }: { session: SessionSummary }) {
           {kept ? "Stop keeping awake" : "Keep awake"}
         </MenuItem>
       )}
-      {drives && active && (
+      {active && (
         <MenuItem
           disabled={busy || agentsRunning}
           onClick={() => {
@@ -83,7 +79,7 @@ export function SessionRowMenuItems({ session }: { session: SessionSummary }) {
           Sleep now
         </MenuItem>
       )}
-      {drives && session.state !== "Archived" && (
+      {session.state !== "Archived" && (
         <>
           <MenuSeparator />
           <MenuItem icon={<TrashIcon />} intent="danger" onClick={remove}>

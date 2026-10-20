@@ -18,6 +18,8 @@ import {
   SessionState,
   SessionSummary,
   ThinkingLevel,
+  ThreadId,
+  type ThreadSummary,
   TurnId,
 } from "@kndl/protocol"
 import { Context, Effect, Layer, Option, Schema } from "effect"
@@ -95,6 +97,26 @@ interface SessionRow {
   readonly mcpServers: string | null
 }
 
+/** A thread a Participant started (docs/design/durable-harness.md), as ThreadStarted said. */
+export interface NewThread {
+  readonly id: ThreadId
+  readonly anchorTurnId: TurnId
+  readonly title: string
+  readonly startedBy: ParticipantId
+  /** Its own model and thinking level: a thread doesn't follow the Session's. */
+  readonly model: ModelName
+  readonly thinkingLevel?: ThinkingLevel
+  readonly createdAt: number
+}
+
+/** A thread's Turn running now: which, and since when. */
+export interface ThreadTurn {
+  readonly threadId: ThreadId
+  readonly turnId: TurnId
+  /** When it started, if known. */
+  readonly startedAt: number | undefined
+}
+
 /** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
 export interface KeepingAwake {
   readonly by: ParticipantId
@@ -147,6 +169,7 @@ const toSummary = (
   row: SessionRow,
   agents: ReadonlyArray<AgentSummary> = [],
   installations: ReadonlyArray<SessionInstallation> = [],
+  threads: ReadonlyArray<ThreadSummary> = [],
 ): SessionSummary =>
   SessionSummary.make({
     id: SessionId.make(row.id),
@@ -165,6 +188,7 @@ const toSummary = (
     createdAt: row.createdAt,
     currentTurn: row.currentTurn === null ? null : TurnId.make(row.currentTurn),
     ...(agents.length > 0 && { agents }),
+    ...(threads.length > 0 && { threads }),
     ...(row.archivedById !== null &&
       row.archivedAt !== null &&
       row.purgeAt !== null && {
@@ -412,6 +436,50 @@ export class Sessions extends Context.Service<
       id: SessionId,
       installations: ReadonlyArray<SessionInstallation>,
     ) => Effect.Effect<void, SqlError>
+    /** Records a thread a Participant started (docs/design/durable-harness.md), idle. */
+    readonly threadStarted: (id: SessionId, thread: NewThread) => Effect.Effect<void, SqlError>
+    /**
+     * The thread's title, model and whether a Turn runs in it, and which, or none if the Session
+     * has no such thread.
+     */
+    readonly threadOf: (
+      id: SessionId,
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      Option.Option<
+        ModelSetting & {
+          readonly title: string
+          readonly running: boolean
+          readonly runningTurn?: TurnId
+        }
+      >,
+      SqlError
+    >
+    /** The thread's Turn starts: it runs now. False if there is no such thread. */
+    readonly setThreadTurn: (
+      id: SessionId,
+      threadId: ThreadId,
+      turn: { readonly turnId: TurnId; readonly startedAt: number },
+    ) => Effect.Effect<boolean, SqlError>
+    /**
+     * The thread's Turn `turnId` ended: it is idle, unless a later Turn started in it, which a
+     * late end of an earlier one leaves running. Whether it was idled.
+     */
+    readonly threadTurnEnded: (
+      id: SessionId,
+      threadId: ThreadId,
+      turnId: TurnId,
+    ) => Effect.Effect<boolean, SqlError>
+    /** The thread's model and thinking level. */
+    readonly setThreadModel: (
+      id: SessionId,
+      threadId: ThreadId,
+      setting: ModelSetting & { readonly model: ModelName },
+    ) => Effect.Effect<void, SqlError>
+    /** Forgets a thread the agent never made. Whether the Session had it. */
+    readonly dropThread: (id: SessionId, threadId: ThreadId) => Effect.Effect<boolean, SqlError>
+    /** Its agent stopped: no Turn runs in any of its threads. Returns those that ran. */
+    readonly endThreadTurns: (id: SessionId) => Effect.Effect<ReadonlyArray<ThreadTurn>, SqlError>
   }
 >()("@kndl/hub/Sessions") {
   static readonly layer = Layer.effect(
@@ -445,6 +513,54 @@ export class Sessions extends Context.Service<
             status: decodeAgentStatus(row.status),
           })
           bySession.set(row.sessionId, agents)
+        }
+        return bySession
+      })
+
+      /** The threads of the Sessions `ids`, oldest first, by Session. */
+      const threadsOf = Effect.fn("Sessions.threadsOf")(function* (ids: ReadonlyArray<string>) {
+        const rows = yield* sql<{
+          readonly sessionId: string
+          readonly id: string
+          readonly anchorTurnId: string
+          readonly title: string
+          readonly startedById: string
+          readonly startedByLogin: string
+          readonly startedByName: string
+          readonly startedByAvatarUrl: string | null
+          readonly model: string | null
+          readonly thinkingLevel: string | null
+          readonly runningTurn: string | null
+        }>`
+          SELECT t.session_id AS sessionId, t.thread_id AS id, t.anchor_turn_id AS anchorTurnId,
+            t.title, t.started_by AS startedById, p.login AS startedByLogin,
+            p.name AS startedByName, p.avatar_url AS startedByAvatarUrl, t.model,
+            t.thinking_level AS thinkingLevel, t.running_turn AS runningTurn
+          FROM threads t JOIN participants p ON p.id = t.started_by
+          WHERE t.session_id IN ${sql.in(ids)}
+          ORDER BY t.created_at, t.rowid
+        `
+        const bySession = new Map<string, Array<ThreadSummary>>()
+        for (const row of rows) {
+          // A thread without a model the Hub still takes is hidden: it can't be shown as running on one.
+          const { model, ...setting } = settingOf(row)
+          if (model === undefined) continue
+          const threads = bySession.get(row.sessionId) ?? []
+          threads.push({
+            id: ThreadId.make(row.id),
+            title: row.title,
+            anchorTurnId: TurnId.make(row.anchorTurnId),
+            startedBy: {
+              id: ParticipantId.make(row.startedById),
+              login: row.startedByLogin,
+              name: row.startedByName,
+              ...(row.startedByAvatarUrl !== null && { avatarUrl: row.startedByAvatarUrl }),
+            },
+            running: row.runningTurn !== null,
+            model,
+            ...setting,
+          })
+          bySession.set(row.sessionId, threads)
         }
         return bySession
       })
@@ -483,11 +599,17 @@ export class Sessions extends Context.Service<
         const rows = yield* selectRows(where)
         if (rows.length === 0) return []
         const agents = yield* activeAgents(rows.map((row) => row.id))
+        const threads = yield* threadsOf(rows.map((row) => row.id))
         const installations = yield* mcpServers.installationsOn([
           ...new Set(rows.map((row) => row.repo)),
         ])
         return rows.map((row) =>
-          toSummary(row, agents.get(row.id), installations.get(repoKey(row.repo))),
+          toSummary(
+            row,
+            agents.get(row.id),
+            installations.get(repoKey(row.repo)),
+            threads.get(row.id),
+          ),
         )
       })
 
@@ -788,7 +910,7 @@ export class Sessions extends Context.Service<
             VALUES (${session.id}, ${session.runnerId}, ${at})
           `
         yield* sql`DELETE FROM mod_tokens WHERE session_id = ${session.id}`
-        // The event log, Prompt queue and subagents go with it (ON DELETE CASCADE).
+        // The event log, Prompt queue, subagents and threads go with it (ON DELETE CASCADE).
         yield* sql`DELETE FROM sessions WHERE id = ${session.id}`
       }, sql.withTransaction)
 
@@ -810,6 +932,114 @@ export class Sessions extends Context.Service<
         `
         return rows.length > 0
       })
+
+      const threadStarted = Effect.fn("Sessions.threadStarted")(function* (
+        id: SessionId,
+        thread: NewThread,
+      ) {
+        yield* sql`
+          INSERT INTO threads (
+            session_id, thread_id, anchor_turn_id, title, started_by, model, thinking_level,
+            created_at
+          ) VALUES (
+            ${id}, ${thread.id}, ${thread.anchorTurnId}, ${thread.title}, ${thread.startedBy},
+            ${thread.model}, ${thread.thinkingLevel ?? null}, ${thread.createdAt}
+          )
+        `
+      })
+
+      const threadOf = Effect.fn("Sessions.threadOf")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+      ) {
+        const rows = yield* sql<{
+          readonly title: string
+          readonly model: string | null
+          readonly thinkingLevel: string | null
+          readonly runningTurn: string | null
+        }>`
+          SELECT title, model, thinking_level AS thinkingLevel, running_turn AS runningTurn
+          FROM threads WHERE session_id = ${id} AND thread_id = ${threadId}
+        `
+        return Option.map(Option.fromNullishOr(rows[0]), (row) => ({
+          title: row.title,
+          ...settingOf(row),
+          running: row.runningTurn !== null,
+          ...(row.runningTurn !== null && { runningTurn: TurnId.make(row.runningTurn) }),
+        }))
+      })
+
+      const setThreadTurn = Effect.fn("Sessions.setThreadTurn")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+        turn: { readonly turnId: TurnId; readonly startedAt: number },
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          UPDATE threads SET running_turn = ${turn.turnId}, turn_started_at = ${turn.startedAt}
+          WHERE session_id = ${id} AND thread_id = ${threadId}
+          RETURNING thread_id AS id
+        `
+        return rows.length > 0
+      })
+
+      const threadTurnEnded = Effect.fn("Sessions.threadTurnEnded")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+        turnId: TurnId,
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          UPDATE threads SET running_turn = NULL, turn_started_at = NULL
+          WHERE session_id = ${id} AND thread_id = ${threadId} AND running_turn = ${turnId}
+          RETURNING thread_id AS id
+        `
+        return rows.length > 0
+      })
+
+      const setThreadModel = Effect.fn("Sessions.setThreadModel")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+        setting: ModelSetting & { readonly model: ModelName },
+      ) {
+        yield* sql`
+          UPDATE threads SET model = ${setting.model},
+            thinking_level = ${setting.thinkingLevel ?? null}
+          WHERE session_id = ${id} AND thread_id = ${threadId}
+        `
+      })
+
+      const dropThread = Effect.fn("Sessions.dropThread")(function* (
+        id: SessionId,
+        threadId: ThreadId,
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          DELETE FROM threads WHERE session_id = ${id} AND thread_id = ${threadId}
+          RETURNING thread_id AS id
+        `
+        return rows.length > 0
+      })
+
+      const endThreadTurns = Effect.fn("Sessions.endThreadTurns")(function* (id: SessionId) {
+        // Read before they are cleared: RETURNING gives the values a row has after.
+        const rows = yield* sql<{
+          readonly threadId: string
+          readonly turnId: string
+          readonly startedAt: number | null
+        }>`
+          SELECT thread_id AS threadId, running_turn AS turnId, turn_started_at AS startedAt
+          FROM threads WHERE session_id = ${id} AND running_turn IS NOT NULL
+          ORDER BY created_at, rowid
+        `
+        if (rows.length === 0) return []
+        yield* sql`
+          UPDATE threads SET running_turn = NULL, turn_started_at = NULL
+          WHERE session_id = ${id} AND running_turn IS NOT NULL
+        `
+        return rows.map((row): ThreadTurn => ({
+          threadId: ThreadId.make(row.threadId),
+          turnId: TurnId.make(row.turnId),
+          startedAt: row.startedAt ?? undefined,
+        }))
+      }, sql.withTransaction)
 
       return Sessions.of({
         create,
@@ -847,6 +1077,13 @@ export class Sessions extends Context.Service<
         handoffDone,
         setLastOutput,
         setMcpServers,
+        threadStarted,
+        threadOf,
+        setThreadTurn,
+        threadTurnEnded,
+        setThreadModel,
+        dropThread,
+        endThreadTurns,
       })
     }),
   )

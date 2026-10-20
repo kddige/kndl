@@ -33,6 +33,7 @@ import type {
   PresentParticipant,
   PendingInvite,
   ProviderId,
+  ProviderModel,
   ProvidersState,
   RequestId,
   SignInEnded,
@@ -97,6 +98,11 @@ export interface JoinedSession {
    * shares any. For the question `toolCallId` names, which may have closed since.
    */
   readonly questionPicks: QuestionPicksState | null
+  /**
+   * The Models it can run on, its Creator's (ADR 0026), which the Hub sends everyone who joins it
+   * so anyone can switch it or start a thread on another; null until the Hub has.
+   */
+  readonly models: ReadonlyArray<ProviderModel> | null
 }
 
 /** The Participants' picks for an Open question, as the Hub last shared them (#193). */
@@ -137,14 +143,8 @@ export interface RepoEnvironment {
   readonly versions: ReadonlyArray<EnvironmentVersionInfo>
 }
 
-/**
- * The signed-in person's Connected providers, as the Hub last sent them (ADR 0029), and which
- * Harness runs Claude's Models in their new Sessions (ADR 0030).
- */
-export type Providers = Pick<
-  ProvidersState,
-  "connected" | "connectable" | "models" | "claudeHarness"
->
+/** The signed-in person's Connected providers, as the Hub last sent them (ADR 0029). */
+export type Providers = Pick<ProvidersState, "connected" | "connectable" | "models">
 
 /**
  * A sign-in to a Provider this client started (ADR 0029): the steps the Hub sent for it so far, and
@@ -305,6 +305,7 @@ const emptyJoined: JoinedSession = {
   queue: [],
   startLog: null,
   questionPicks: null,
+  models: null,
 }
 
 export function reduce(state: HubState, action: HubAction): HubState {
@@ -421,6 +422,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...session,
         questionPicks: { toolCallId: action.toolCallId, picks: action.picks },
       }))
+    case "SessionModels":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        models: action.models,
+      }))
+    case "ThreadCreated":
+      // An answer for whoever started the thread: the HubClient hands it to them, by its request id.
+      return state
     case "SessionStartLogged":
       return updateJoined(state, action.sessionId, (session) => {
         // All of it so far, or another start's output: in place of what was held.
@@ -522,7 +531,6 @@ export function reduce(state: HubState, action: HubAction): HubState {
           connected: action.connected,
           connectable: action.connectable,
           models: action.models,
-          claudeHarness: action.claudeHarness,
         },
       }
     case "SignInStarted":

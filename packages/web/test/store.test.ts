@@ -180,6 +180,25 @@ describe("Runners and Sessions", () => {
 })
 
 describe("joining and leaving", () => {
+  test("a joined Session keeps the Models the Hub sends for it, its Creator's", () => {
+    const models = [
+      {
+        provider: "anthropic",
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5",
+        thinkingLevels: [],
+      },
+    ] as const
+    const state = run(
+      joined,
+      hub({ _tag: "SessionModels", sessionId: "s-1", models }),
+      // Another Session's, not joined, are dropped.
+      hub({ _tag: "SessionModels", sessionId: "s-2", models }),
+    )
+    expect(state.joined[s1]?.models?.map((model) => model.label)).toEqual(["Claude Opus 5.5"])
+    expect(state.joined["s-2" as never]).toBeUndefined()
+  })
+
   test("Joined starts an empty Session that waits for its history", () => {
     const state = run(joined)
     expect(state.joined[s1]).toEqual({
@@ -190,6 +209,7 @@ describe("joining and leaving", () => {
       queue: [],
       startLog: null,
       questionPicks: null,
+      models: null,
     })
   })
 
@@ -388,6 +408,7 @@ describe("presence and the Prompt queue", () => {
       queue: [],
       startLog: null,
       questionPicks: null,
+      models: null,
     })
   })
 })
@@ -775,7 +796,6 @@ describe("Connected providers (ADR 0029)", () => {
   } as const
   const providers = hub({
     _tag: "ProvidersState",
-    claudeHarness: "ClaudeCode",
     connected: [
       {
         provider: "openai",
@@ -818,17 +838,9 @@ describe("Connected providers (ADR 0029)", () => {
         connected: [],
         connectable: [],
         models: [],
-        claudeHarness: "Pi",
       }),
     )
-    // With which Harness runs Claude's Models in new Sessions (ADR 0030).
-    expect(state.providers?.claudeHarness).toBe("ClaudeCode")
-    expect(none.providers).toEqual({
-      connected: [],
-      connectable: [],
-      models: [],
-      claudeHarness: "Pi",
-    })
+    expect(none.providers).toEqual({ connected: [], connectable: [], models: [] })
   })
 
   test("a sign-in's steps go to the sign-in in progress, in order; another's are dropped", () => {

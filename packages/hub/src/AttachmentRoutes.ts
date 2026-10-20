@@ -85,8 +85,8 @@ export const AttachmentRoutes = HttpRouter.use(
         const you = yield* authenticateParticipant
         const access = yield* sessionFrom(you)
         if ("refused" in access) return access.refused
-        // Whoever may prompt the Session may attach: its Creator alone.
-        const notYours = driveRefusal(you, access.session.creator, access.session.harness)
+        // Whoever may prompt the Session may attach: anyone who sees it, in the Pi Durable spike.
+        const notYours = driveRefusal(you, access.session.creator)
         if (notYours !== undefined) return errorResponse(403, notYours.refusal)
         const cantSend = sendPromptRefusal(access.session)
         if (cantSend !== undefined) return errorResponse(409, cantSend.refusal)
