@@ -87,6 +87,7 @@ const styles = stylex.create({
     flex: 1,
     minHeight: 0,
   },
+  hidden: { display: "none" },
   // The conversation, and a thread's panel beside it.
   body: {
     display: "flex",
@@ -211,6 +212,7 @@ export function SessionView({
   }
   return (
     <LoadedSession
+      key={summary.id}
       tab={tab}
       onTabChange={onTabChange}
       agentId={agentId}
@@ -441,6 +443,8 @@ function LoadedSession({
       if (!element) return
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       element.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" })
+      element.tabIndex = -1
+      element.focus({ preventScroll: true })
       element.setAttribute("data-flash", "")
       clearTimeout(flashed.current)
       flashed.current = setTimeout(() => element.removeAttribute("data-flash"), 1_400)
@@ -640,9 +644,8 @@ function LoadedSession({
         />
 
         <div {...stylex.props(styles.body)}>
-          {conversationShown &&
-            (agentId !== undefined ? (
-              <div {...stylex.props(styles.conversation)}>
+          {agentId !== undefined ? (
+              <div hidden={!conversationShown} {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}>
                 {titleStrip}
                 <AgentPanel
                   session={summary}
@@ -652,7 +655,7 @@ function LoadedSession({
                 />
               </div>
             ) : (
-              <div {...stylex.props(styles.conversation)}>
+              <div hidden={!conversationShown} {...stylex.props(styles.conversation, !conversationShown && styles.hidden)}>
                 {titleStrip}
                 <div
                   ref={scroller.ref}
@@ -758,7 +761,7 @@ function LoadedSession({
                   />
                 </div>
               </div>
-            ))}
+            )}
           {panelOf !== undefined && (!terminalOpen || wide) && (
             <ThreadPanel
               key={panelOf.kind === "thread" ? panelOf.threadId : `new-${panelOf.anchorTurnId}`}

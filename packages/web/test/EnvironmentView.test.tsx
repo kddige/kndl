@@ -190,7 +190,7 @@ test("a draft made before someone else applied is refused, with a way to reload"
 test("a Repo without an Environment is set up before its first Session", async () => {
   // Slow enough to see the new Session's start. It carries the model and thinking level picked.
   const { hub, page, router, status } = await open(
-    "/repos/acme/new/environment?branch=main&model=sonnet&thinking=high",
+    "/repos/acme/new/environment?branch=main&model=anthropic%2Fclaude-sonnet-5-5&thinking=high",
     15,
   )
   await eventually(() =>
@@ -203,7 +203,7 @@ test("a Repo without an Environment is set up before its first Session", async (
   await step(() => button("Apply and start Session").click())
   await eventually(() => expect(router.state.location.pathname).toStartWith("/sessions/"))
   expect(hub.received.find((message) => message._tag === "CreateSession")).toMatchObject({
-    model: "sonnet",
+    model: "anthropic/claude-sonnet-5-5",
     thinkingLevel: "high",
   })
 

@@ -31,7 +31,6 @@ import {
   QuestionClosed,
   questionClosedText,
   findModel,
-  harnessOfModel,
   formatCliLoginCode,
   formatPairingCode,
   deliveryBlocked,
@@ -417,18 +416,8 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
-/** Why a Session can't be created without the person's own setup token (ADR 0026). */
-const noCredentialText =
-  "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
-
 /** A Harness as the Hub names it in what it says, Claude Code for a Session that says none. */
 const harnessName = (harness: Harness | undefined) => (harness === "Pi" ? "pi" : "Claude Code")
-
-/**
- * Whether a model switch from a Session running on `now` to a model of `to` stops its agent, as
- * the Hub's relaunch does, interrupting its agents: all but pi's, which switches in place.
- */
-const relaunches = (now: Harness, to: Harness) => now !== "Pi" || to !== "Pi"
 
 /** Why a pi Session can't wake for its Creator, as the Hub words it (Harnesses.ts). */
 const noModelsToWakeText =
@@ -1346,11 +1335,8 @@ export class FakeHub implements HubTransport {
           ...(message.thinkingLevel !== undefined && { thinkingLevel: message.thinkingLevel }),
         })
         break
-      // As the Hub does (#128): its Creator may (ADR 0026), but not in an Archived Session; the
-      // Runner's Claude Code must have the model and level. A running Turn finishes on the old
-      // model. The model says its Harness (ADR 0030): one of the other Harness's, that the
-      // Session's Runner runs, switches the Session to it once no Turn runs, which ModelSwitched
-      // says when the setting was the other Harness's.
+      // Everyone picks from the Creator's Models. A busy conversation switches between Turns,
+      // without relaunching the durable agent or interrupting its threads and subagents.
       case "SetSessionModel": {
         const session = this.#drivenFor(socket, message)
         if (!session) break
@@ -1359,20 +1345,9 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
-        const was = harnessOfModel(session.summary.model)
-        const harness = harnessOfModel(message.model)
-        const now = session.summary.harness ?? "ClaudeCode"
-        const checked =
-          harness === "Pi"
-            ? this.#checkProviderModel(message, this.#sessionModels(session))
-            : this.#checkModel(session.summary.runnerId, message)
+        const checked = this.#checkProviderModel(message, this.#sessionModels(session))
         if (typeof checked === "string") {
           this.#fail(socket, message._tag, checked, message.sessionId)
-          break
-        }
-        const refusal = harness !== now ? this.#harnessRefusal(session, harness) : undefined
-        if (refusal !== undefined) {
-          this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
         const { model: _, thinkingLevel: __, modelPending: ___, ...rest } = session.summary
@@ -1381,14 +1356,10 @@ export class FakeHub implements HubTransport {
           session.summary.thinkingLevel === checked.thinkingLevel
         )
           break
-        // Once no Turn runs, pi switches in place; Claude Code restarts with it, and a switch of
-        // Harness relaunches the agent in the same Sandbox, both interrupting its agents. Until
-        // then, the Session runs on the Harness it ran on.
         const pending = session.summary.currentTurn !== null
-        if (!pending && relaunches(now, harness)) this.#interruptAgents(session)
         session.summary = {
           ...rest,
-          harness: pending ? now : harness,
+          harness: "Pi",
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
           ...(pending && { modelPending: true }),
@@ -1399,7 +1370,6 @@ export class FakeHub implements HubTransport {
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.label !== undefined && { modelLabel: checked.label }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
-          ...(harness !== was && { harness }),
         })
         this.#summaryChanged(session)
         break
@@ -2209,47 +2179,6 @@ export class FakeHub implements HubTransport {
   // ── What the Hub does ────────────────────────────────────────────────────
 
   /**
-   * A model setting as the Runner's Claude Code has it, as the Hub checks it (#128): the setting
-   * to keep, with the `default` alias as none, and the model's name; or why it is refused.
-   */
-  #checkModel(
-    runnerId: string,
-    asked: { readonly model?: string; readonly thinkingLevel?: ThinkingLevel },
-  ): { model?: string; thinkingLevel?: ThinkingLevel; label?: string } | string {
-    const runner = this.runners.find((candidate) => candidate.id === runnerId)
-    const models = runner?.models
-    if (models === undefined) {
-      if (asked.model === undefined && asked.thinkingLevel === undefined) return {}
-      return `${runner?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
-    }
-    const option = asked.model === undefined ? models.default : findModel(models, asked.model)
-    if (option === undefined) return modelNotFoundText(asked.model ?? "")
-    if (asked.thinkingLevel !== undefined) {
-      if (!option.reasoning) return `${option.label} takes no thinking level.`
-      if (!models.thinkingLevels.includes(asked.thinkingLevel))
-        return `Claude Code on ${runner?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
-    }
-    return {
-      ...(option !== models.default && asked.model !== undefined && { model: asked.model }),
-      ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
-      label: option.label,
-    }
-  }
-
-  /**
-   * Why a Session can't switch to the Harness, as the Hub refuses it (ADR 0030): its Runner doesn't
-   * run it, or, for Claude Code, its Creator has no setup token. Undefined when it can.
-   */
-  #harnessRefusal(session: FakeSession, harness: Harness): string | undefined {
-    const runner = this.runners.find((candidate) => candidate.id === session.summary.runnerId)
-    const runs = runner?.harnesses ?? ["ClaudeCode"]
-    if (!runs.includes(harness))
-      return `${runner?.name ?? "Its Runner"} doesn't run ${harness === "Pi" ? "pi" : "Claude Code"}.`
-    if (harness === "ClaudeCode" && this.#claudeCredential === null) return noCredentialText
-    return undefined
-  }
-
-  /**
    * A pi Session's model setting, as the Hub checks it against its Creator's Models (ADR 0029):
    * with none asked for, their first, Claude's when they have a credential. Or why it is refused.
    */
@@ -2723,19 +2652,9 @@ export class FakeHub implements HubTransport {
       session.spent += turnCost(steps.length)
       this.#append(session, { _tag: "UsageChanged", usage: usageOf(session.spent) })
       session.stopTurn = null
-      // A model switched while it ran takes over now: pi switches to it in place, and the Hub
-      // restarts Claude Code with it, or relaunches the Session on the other Harness.
-      const switched = session.summary.modelPending
-        ? harnessOfModel(session.summary.model)
-        : undefined
-      if (switched !== undefined && relaunches(session.summary.harness ?? "ClaudeCode", switched))
-        this.#interruptAgents(session)
+      // A Model switch takes over now, in place. Threads and background agents keep running.
       const { modelPending: _, ...summary } = session.summary
-      session.summary = {
-        ...summary,
-        ...(switched !== undefined && { harness: switched }),
-        currentTurn: null,
-      }
+      session.summary = { ...summary, currentTurn: null }
       this.#summaryChanged(session)
       this.#after(2, () => this.#next(session))
     }
@@ -3881,6 +3800,18 @@ export class FakeHub implements HubTransport {
   #providersChanged(socket: FakeSocket, requestId: string): void {
     socket.deliver(this.#providersState(requestId))
     this.#toOthers(socket, this.#providersState())
+    this.#sessionModelsChanged()
+  }
+
+  /** The Creator's Models changed: those who joined their Sessions are sent them again, as the Hub does. */
+  #sessionModelsChanged(): void {
+    for (const session of this.sessions.values()) {
+      if (session.summary.creator.id !== this.#you.id) continue
+      const models = [...this.#sessionModels(session)]
+      for (const socket of this.#joinedSockets(session)) {
+        socket.deliver({ _tag: "SessionModels", sessionId: session.summary.id, models })
+      }
+    }
   }
 
   /**
@@ -3931,6 +3862,7 @@ export class FakeHub implements HubTransport {
     this.providers.signedIn(signIn.provider)
     this.#endSignIn("Connected")
     this.#toAll(this.#providersState())
+    this.#sessionModelsChanged()
   }
 
   #endSignIn(outcome: "Connected" | "Failed" | "Cancelled", message?: string): void {

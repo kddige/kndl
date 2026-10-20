@@ -111,9 +111,9 @@ function startClient(transport: HubTransport): HubClient {
 }
 
 /** Creates a Session through the client, and waits until it has started. */
-async function started(client: HubClient): Promise<SessionId> {
+async function started(client: HubClient, pi = false): Promise<SessionId> {
   await eventually(() => expect(client.getState().connection.status).toBe("online"))
-  const { id } = await client.createSession({ repo, branch })
+  const { id } = await client.createSession({ repo, branch, ...(pi && { model: "anthropic/claude-opus-5-5" }) })
   await eventually(() => {
     const summary = client.getState().sessions?.find((session) => session.id === id)
     expect(summary?.state).toBe("Active")
@@ -153,7 +153,7 @@ const fake: Adapter = {
     // The Runner the Session starts on, the first online one, runs pi too.
     if (pi) hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
     const client = startClient(hub)
-    const sessionId = await started(client)
+    const sessionId = await started(client, pi)
     if (!modSteers) hub.modFromBeforeSteering(sessionId)
     if (!modAttaches) hub.modFromBeforeAttaching(sessionId)
     return {
@@ -409,7 +409,7 @@ const real: Adapter = {
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     await client.setClaudeCredential("sk-ant-oat01-FAKE_TOKEN_FOR_CONTRACT_TESTS_ONLY")
     // Its Runner starts it: the mod says hello, and then the Runner says it started.
-    const creating = started(client)
+    const creating = started(client, pi)
     const start = await runner.take("StartSession")
     const mod = scriptedMod(hub, start.sessionId, start.modToken)
     // Stopped before the clients and the Hub, whose shutdown waits for its held poll.
@@ -876,24 +876,23 @@ for (const adapter of [fake, real]) {
       expect(client.getState().signIn?.ended).toEqual({ outcome: "Cancelled" })
     })
 
-    test("a switch to the other Harness waits for the Turn to end, and the Session runs on it then", async () => {
+    test("a Model switch waits for the Turn to end without changing Harness", async () => {
       const scene = await adapter.scene({ pi: true })
       const session = await turnRunning(scene)
       const harness = () => session.summary()?.harness ?? "ClaudeCode"
-      expect(harness()).toBe("ClaudeCode")
+      expect(harness()).toBe("Pi")
 
       scene.client.setSessionModel(scene.sessionId, { model: "openai/gpt-6-sol" })
       await eventually(() => expect(session.ofTag("ModelSwitched")).toHaveLength(1))
       expect(session.ofTag("ModelSwitched")[0]).toMatchObject({
         model: "openai/gpt-6-sol",
         modelLabel: "GPT-6-Sol",
-        harness: "Pi",
       })
       // The running Turn goes on, on Claude Code: the Session is set to pi's Model.
       await eventually(() =>
         expect(session.summary()).toMatchObject({ model: "openai/gpt-6-sol", modelPending: true }),
       )
-      expect(harness()).toBe("ClaudeCode")
+      expect(harness()).toBe("Pi")
 
       // Another of pi's Models: the setting was pi's already, so the switch names no Harness.
       scene.client.setSessionModel(scene.sessionId, { model: "anthropic/claude-opus-5-5" })
@@ -907,22 +906,23 @@ for (const adapter of [fake, real]) {
       scene.client.setSessionModel(scene.sessionId, { model: "anthropic/claude-opus-5-5" })
 
       scene.client.stopTurn(scene.sessionId)
-      await eventually(() => expect(harness()).toBe("Pi"))
+      await eventually(() => expect(session.summary()?.modelPending).toBeUndefined())
+      expect(harness()).toBe("Pi")
       expect(session.summary()?.model).toBe("anthropic/claude-opus-5-5")
-      expect(session.summary()?.modelPending).toBeUndefined()
       expect(session.ofTag("ModelSwitched")).toHaveLength(2)
       expect(session.failures).toEqual([])
     })
 
-    test("a model of the other Harness that a Session's Creator doesn't have is refused", async () => {
+    test("a Model the Session's Creator doesn't have is refused", async () => {
       const scene = await adapter.scene({ pi: true })
       const session = watch(scene.client, scene.sessionId)
       await eventually(() => expect(session.summary()).toBeDefined())
+      const before = session.summary()?.model
       scene.client.setSessionModel(scene.sessionId, { model: "openai/gpt-0" })
       await eventually(() =>
         expect(session.refusals("SetSessionModel")).toEqual(["Model 'openai/gpt-0' not found"]),
       )
-      expect(session.summary()?.model).toBeUndefined()
+      expect(session.summary()?.model).toBe(before)
       expect(session.ofTag("ModelSwitched")).toEqual([])
     })
 

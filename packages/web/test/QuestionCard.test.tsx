@@ -97,8 +97,8 @@ test("the Creator answers Claude's questions from the chat, as the terminal woul
   const { hub, client, page, card, field, conversation, header, option, answers } = await asked()
 
   // The Session is waiting on someone: on its page, in the sidebar and in the transcript.
-  expect(header()).toContain("Waiting on you")
-  expect(page.querySelector('[role="img"][aria-label="Waiting on you"]')).not.toBeNull()
+  expect(header()).toContain("Waiting on an answer")
+  expect(page.querySelector('[role="img"][aria-label="Waiting on an answer"]')).not.toBeNull()
   expect(conversation()).toContain("Asking a question")
   expect(card()?.textContent).toContain(library)
   expect(card()?.textContent).toContain("1 of 2")
@@ -132,7 +132,7 @@ test("the Creator answers Claude's questions from the chat, as the terminal woul
   // Answered: the card goes, and the transcript says who answered what, and Claude goes on.
   await eventually(() => expect(card()).toBeNull())
   expect(conversation()).toContain(`Alice Kim answered: ${library} Luxon`)
-  expect(header()).not.toContain("Waiting on you")
+  expect(header()).not.toContain("Waiting on an answer")
   expect(field("Prompt")).not.toBeNull()
   await eventually(() => expect(conversation()).toContain("Thanks. Going with that."))
 
@@ -234,7 +234,7 @@ test("an image pasted into a reply goes with it, and shows under the question fo
   expect(page.querySelector('[aria-label="Attachments"]')).toBeNull()
 })
 
-test("someone watching sees Claude's questions and the Creator's picks, with nothing to answer", async () => {
+test("another Participant sees shared picks and can answer the question", async () => {
   // Bob watches Alice's demo Session as she asks Claude to ask first, from another tab.
   const hub = new FakeHub({ stepMs: 2, autoplay: false, you: bob })
   const client = new HubClient(hub, { retryDelay: () => 1 })
@@ -258,11 +258,11 @@ test("someone watching sees Claude's questions and the Creator's picks, with not
   await eventually(() => expect(card()).not.toBeNull())
 
   // It waits on Alice, who drives it: on its page and in the sidebar.
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Waiting on Alice Kim")
-  expect(page.querySelector('[role="img"][aria-label="Waiting on Alice Kim"]')).not.toBeNull()
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Waiting on an answer")
+  expect(page.querySelector('[role="img"][aria-label="Waiting on an answer"]')).not.toBeNull()
   expect(card()?.textContent).toContain(library)
   expect(card()?.textContent).toContain("Luxon")
-  expect(card()?.textContent).toContain("Waiting on Alice Kim to answer")
+  expect(card()?.textContent).not.toContain("Waiting on Alice Kim to answer")
   // Her pick shows; there's nothing to pick, type, skip, dismiss or submit.
   await eventually(() =>
     expect(card()?.querySelector('[aria-label="Picked by: Alice Kim"]')).not.toBeNull(),
@@ -270,13 +270,11 @@ test("someone watching sees Claude's questions and the Creator's picks, with not
   const buttons = [...(card()?.querySelectorAll("button") ?? [])].map(
     (each) => each.getAttribute("aria-label") ?? each.textContent,
   )
-  expect(buttons).toEqual(["Previous question", "Next question"])
-  expect(card()?.querySelector("input")).toBeNull()
-  // The prompt box doesn't reply for them either.
-  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
-  expect(prompt?.disabled).toBe(true)
-  expect(page.querySelector('textarea[aria-label="Reply"]')).toBeNull()
-  expect(
-    hub.received.filter(({ _tag }) => _tag === "AnswerQuestion" || _tag === "PickAnswer"),
-  ).toEqual([])
+  expect(buttons).toContain("Dismiss the question")
+  expect(card()?.querySelector("input")).not.toBeNull()
+  expect(page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reply"]')?.disabled).toBe(false)
+  await step(() => button("Dismiss the question", card() ?? undefined).click())
+  await eventually(() => expect(card()).toBeNull())
+  expect(page.querySelector('[aria-label="Conversation"]')?.textContent).toContain("Bob Lee dismissed the question")
+  expect(hub.received.filter(({ _tag }) => _tag === "AnswerQuestion")).toHaveLength(1)
 })
