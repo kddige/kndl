@@ -1,6 +1,6 @@
-// Claude Code's usage counters onto pi's assistant message. The cost is pi's own reckoning from
-// the Model's prices, which the bridge registers as zero (Models.ts): kndl shows the cost pi
-// reports, and invents none.
+// Claude Code's usage counters onto a pi-ai assistant message. The cost is pi-ai's own reckoning
+// from the Model's prices, which the bridge registers as zero (Models.ts): kndl shows the cost
+// pi-ai reports, and invents none.
 //
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.

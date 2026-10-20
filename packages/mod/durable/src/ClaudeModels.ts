@@ -4,8 +4,9 @@
 //
 // It installs only when the Runner gave the agent Claude Code and the Creator's Claude token
 // (`KNDL_CLAUDE_CODE`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`), and only for the Claude
-// Models the Hub lists. When the Hub lists other Claude Models later, the bridge is made again for
-// them.
+// Models the Hub lists. When the Hub lists other Claude Models later, the provider is made again
+// for them, around the same bridge: its queries and mirrors are the conversations', and outlive any
+// list of Models. The bridge ends only with the agent (`close`).
 
 import type { MutableModels } from "@earendil-works/pi-ai"
 import type { ProviderModel } from "@kndl/protocol"
@@ -20,6 +21,13 @@ import type { ClaudeBridgeOptions, ClaudeBridgeProvider } from "./claude/index.t
 export interface ClaudeInstall {
   /** The Hub listed the Creator's Models again: the bridge serves those of Claude's. */
   update(listed: ReadonlyArray<ProviderModel>): void
+  /**
+   * A conversation's run settled (its Turn ended, stopped or failed): a Claude Code query still
+   * held for it is stopped. `sessionId` is the conversation's provider session id, from Pi
+   * Durable's `ProviderDoc` (`pi.provider`): `(await harness.snapshot(ProviderDoc,
+   * conversationId, context))?.sessionId`. Nothing, for a conversation with none or no query.
+   */
+  runSettled(sessionId: string): void
   close(): Promise<void>
 }
 
@@ -48,7 +56,8 @@ export const installClaude = (
       onNotice: (text, level) => options.log(`kndl: Claude bridge ${level}: ${text}`),
     })
   if (optionsFor([]) === undefined) return undefined
-  let provider: ClaudeBridgeProvider | undefined
+  /** The process's bridge, in the first provider it made: made with the first Claude Models. */
+  let bridge: ClaudeBridgeProvider | undefined
   let served = ""
   const install: ClaudeInstall = {
     update: (next) => {
@@ -56,19 +65,19 @@ export const installClaude = (
       const ids = claude.map((model) => model.id).join("\n")
       if (ids === served) return
       served = ids
-      const before = provider
-      provider = undefined
-      void before?.close().catch((error: unknown) => options.log(`kndl: ${error}`))
+      if (claude.length === 0) return models.deleteProvider(ClaudeProvider)
       const bridgeOptions = optionsFor(claude)
-      if (claude.length === 0 || bridgeOptions === undefined)
-        return models.deleteProvider(ClaudeProvider)
-      provider = create(bridgeOptions)
+      const provider =
+        bridge !== undefined ? bridge.withModels(claude) : bridgeOptions && create(bridgeOptions)
+      if (provider === undefined) return models.deleteProvider(ClaudeProvider)
+      bridge ??= provider
       if (provider.missing.length > 0)
         options.log(`kndl: pi-ai doesn't know anthropic's ${provider.missing.join(", ")}`)
       models.setProvider(provider)
     },
+    runSettled: (sessionId) => bridge?.runSettled(sessionId),
     close: async () => {
-      await provider?.close()
+      await bridge?.close()
     },
   }
   install.update(listed)

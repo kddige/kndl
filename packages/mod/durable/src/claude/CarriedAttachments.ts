@@ -1,10 +1,10 @@
 // Claude Code's own `@file` expansions, carried across a session rebuild.
 //
-// Claude Code expands an `@file` mention itself (pi passes `@` through) and writes the expansion
-// as an `attachment` record in its session. pi never sees it, so rebuilding the session from pi's
-// history would drop the file while keeping the prompt that refers to it. Only `file` attachments
-// are carried: the rest Claude Code writes again each turn, or (`edited_text_file`) repeats what's
-// in pi's history already.
+// Claude Code expands an `@file` mention itself (the agent passes `@` through) and writes the
+// expansion as an `attachment` record in its session. The agent never sees it, so rebuilding the
+// session from the conversation would drop the file while keeping the prompt that refers to it.
+// Only `file` attachments are carried: the rest Claude Code writes again each turn, or
+// (`edited_text_file`) repeats what's in the conversation already.
 //
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.

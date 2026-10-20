@@ -45,7 +45,7 @@ export const testModel = (id = "test-model"): Model<Api> =>
 export function makeCtx(model: Model<Api> = testModel()): { c: QueryContext; stream: FakeStream } {
   const c = new QueryContext()
   const stream = fakeStream()
-  c.currentPiStream = stream as unknown as AssistantMessageEventStream
+  c.currentStream = stream as unknown as AssistantMessageEventStream
   c.resetTurnState(model)
   return { c, stream }
 }

@@ -1,5 +1,5 @@
 // pi's messages as Anthropic messages for Claude Code's session (Convert.ts), and the write path
-// they go through: convertPiMessages → repairToolPairing → Session.importMessages. Ported from
+// they go through: convertMessages → repairToolPairing → Session.importMessages. Ported from
 // pi-claude-bridge 0.9.3's unit-import.mjs, unit-convert-determinism.mjs and
 // unit-session-integrity.mjs (MIT, Copyright (c) 2026 Eli Dickinson).
 
@@ -8,12 +8,12 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createSession, repairToolPairing } from "cc-session-io"
 import type { ContentBlock, Message as SessionMessage } from "cc-session-io"
-import { convertPiMessages } from "./Convert.ts"
+import { convertMessages } from "./Convert.ts"
 import { ClaudeApi } from "./Names.ts"
 
 /** Converts loosely-written pi messages, as tests write them. */
 const convertWith = (messages: ReadonlyArray<unknown>, map = new Map<string, string>()) =>
-  convertPiMessages(messages as never, map)
+  convertMessages(messages as never, map)
 
 const convert = (messages: ReadonlyArray<unknown>, map?: Map<string, string>) =>
   convertWith(messages, map).anthropicMessages
@@ -637,9 +637,9 @@ function expectPrefix(
   }
 }
 
-// A real 310-message pi session, its content scrubbed to placeholders: the structure (roles,
+// A real 310-message conversation (from the pi extension), its content scrubbed to placeholders: the structure (roles,
 // block types, tool ids, parallel calls, thinking signatures) is verbatim.
-const corpus = readFileSync(join(import.meta.dir, "fixtures/pi-history-310.jsonl"), "utf-8")
+const corpus = readFileSync(join(import.meta.dir, "fixtures/conversation-310.jsonl"), "utf-8")
   .split("\n")
   .filter(Boolean)
   .map((line) => JSON.parse(line) as LooseHistoryMessage)

@@ -434,7 +434,7 @@ describe("error results", () => {
     const before = structuredClone(held)
     expect(held.stopReason).toBe("toolUse")
     expect(c.turnOutput).toBeNull()
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
 
     await consume(c, [errorResult], bashMap)
 
@@ -469,7 +469,7 @@ describe("the non-streaming fallback after a stalled stream", () => {
     ])
     expect(c.turnToolCallIds).toEqual(["toolu_a", "toolu_b"])
     expect(message.stopReason).toBe("toolUse")
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
     expect(stream.events.at(-2)?.type).toBe("done")
     expect(stream.events.at(-1)?.type).toBe("end")
   })
@@ -562,7 +562,7 @@ describe("a tool call whose content_block_stop never came", () => {
     expect(live(c).content.map((b) => b.type)).toEqual(["text"])
     expect(c.turnToolCallIds).toEqual([])
     // Left open: Claude Code's resume is more of this same pi turn.
-    expect(c.currentPiStream as unknown).toBe(stream)
+    expect(c.currentStream as unknown).toBe(stream)
     expect(types(stream).some((t) => t === "done" || t === "end")).toBe(false)
   })
 
@@ -577,7 +577,7 @@ describe("a tool call whose content_block_stop never came", () => {
     ])
     expect(c.turnToolCallIds).toEqual(["toolu_resumed"])
     expect(message.stopReason).toBe("toolUse")
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
     expect(stream.events.at(-2)?.type).toBe("done")
     expect(stream.events.at(-1)?.type).toBe("end")
   })
@@ -611,7 +611,7 @@ describe("a tool call whose content_block_stop never came", () => {
       ["toolCall", "toolu_resumed", { summary: "Both fixes done." }],
     ])
     expect(message.stopReason).toBe("toolUse")
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
   })
 
   // Dropping the whole message would throw away a call Claude Code kept and dispatched.
@@ -660,7 +660,7 @@ describe("a tool call whose content_block_stop never came", () => {
     expect(blocks(message)).toEqual([["toolCall", "toolu_first", { summary: "First." }]])
     expect(c.turnToolCallIds).toEqual(["toolu_first"])
     expect(message.stopReason).toBe("toolUse")
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
   })
 
   // The negative control: refusing to dispatch anything would pass every test above.
@@ -711,7 +711,7 @@ describe("a tool call whose content_block_stop never came", () => {
     expect(blocks(message)[1]).toEqual(["toolCall", "toolu_whole", { summary: "Both fixes done." }])
     expect(c.turnToolCallIds).toEqual(["toolu_whole"])
     expect(message.stopReason).toBe("toolUse")
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
     expect(stream.events.at(-2)?.type).toBe("done")
   })
 })
@@ -905,7 +905,7 @@ describe("QueryContext", () => {
     expect(message?.content).toEqual([{ type: "text", text: "hi" }])
     expect(types(stream)).toEqual(["start", "done", "end"])
     expect(c.turnOutput).toBeNull()
-    expect(c.currentPiStream).toBeNull()
+    expect(c.currentStream).toBeNull()
     // Nothing left to end, and nothing to change.
     expect(c.endTurn({ stopReason: "aborted" })).toBeUndefined()
     expect(message?.stopReason).toBe("stop")

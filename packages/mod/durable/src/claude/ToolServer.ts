@@ -1,13 +1,13 @@
-// The in-process MCP server that serves pi's tools to Claude Code.
+// The in-process MCP server that serves the agent's tools to Claude Code.
 //
-// pi declares a tool's parameters as TypeBox objects, which are JSON Schema already, as MCP puts
+// pi-ai declares a tool's parameters as TypeBox objects, which are JSON Schema already, as MCP puts
 // them on the wire, so they're served as they are, not through the SDK's `createSdkMcpServer`,
 // which takes only Zod: its JSON Schema → Zod → JSON Schema round trip loses everything below the
 // top level (nested objects become open records, `anyOf`/`const` vanish). The one exception is a
 // top-level combinator, flattened below because Claude Code drops a tool whose schema has one.
 //
 // Handlers go on the protocol server itself, not through `McpServer.registerTool` (Zod again),
-// which also skips its argument validation: pi validates and runs the tool, and a rejection here
+// which also skips its argument validation: the agent validates and runs the tool, and a rejection here
 // would only strand the call. The SDK treats the instance as an opaque JSON-RPC endpoint
 // (`connectSdkMcpServer` calls `instance.connect(transport)` and nothing else).
 //
@@ -47,7 +47,7 @@ function assertObjectSchema(tool: McpToolDef): void {
 }
 
 // Claude Code drops a tool whose input schema has a top-level anyOf/oneOf/allOf, while a call to
-// it would still reach pi and run while Claude Code answers "No such tool available" and retries.
+// it would still reach the agent and run while Claude Code answers "No such tool available" and retries.
 // So a flat object is advertised instead, built as Claude Code's own normalizer does: root
 // properties win over branch ones, root `required` stays and allOf's joins it, branch `$ref`s
 // into the root's `$defs`/`definitions` are followed, and the lost constraint is restated in the

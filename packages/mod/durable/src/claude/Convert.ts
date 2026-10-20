@@ -1,5 +1,5 @@
-// pi's messages as Anthropic API messages, for writing pi's history into Claude Code's session
-// (SessionMirror.ts).
+// A conversation's pi-ai messages as Anthropic API messages, for writing it into Claude Code's
+// session (SessionMirror.ts).
 //
 // Ported from pi-claude-bridge 0.9.3 (MIT, Copyright (c) 2026 Eli Dickinson): see
 // THIRD_PARTY_NOTICES.md.
@@ -8,7 +8,7 @@ import type { Message as PiMessage } from "@earendil-works/pi-ai"
 import type { ContentBlock, Message as SessionMessage } from "cc-session-io"
 import { ClaudeApi, McpToolPrefix } from "./Names.ts"
 
-/** A block of pi content, loosely: what pi's types promise, and what another extension may add. */
+/** A block of a message's content, loosely: what pi-ai's types promise, and what more may be there. */
 export interface LooseBlock {
   readonly type: string
   readonly text?: string
@@ -16,7 +16,7 @@ export interface LooseBlock {
   readonly mimeType?: string
 }
 
-/** pi's tool call ids, as Claude Code accepts them: letters, digits, `_` and `-`. */
+/** The conversation's tool call ids, as Claude Code accepts them: letters, digits, `_` and `-`. */
 export function sanitizeToolId(id: string, cache: Map<string, string>): string {
   const existing = cache.get(id)
   if (existing !== undefined) return existing
@@ -26,22 +26,22 @@ export function sanitizeToolId(id: string, cache: Map<string, string>): string {
 }
 
 /**
- * A pi tool name as the name a rebuilt transcript has to call it by.
+ * An agent tool's name as the name a rebuilt transcript has to call it by.
  *
- * The query runs with `tools: []`, so every tool Claude can call is a pi tool served over MCP, and
- * its name is `mcp__custom-tools__<pi name>` by construction (`resolveMcpTools`). The map is
- * consulted first only because it carries the served tool's exact casing. A name it lacks is a
- * tool pi ran that isn't served now (an extension since disabled), and naming that after a Claude
+ * The query runs with `tools: []`, so every tool Claude can call is one of the agent's, served over
+ * MCP, and its name is `mcp__custom-tools__<tool name>` by construction (`resolveMcpTools`). The
+ * map is consulted first only because it carries the served tool's exact casing. A name it lacks
+ * is a tool the agent ran that isn't served now (an extension since disabled), and naming that after a Claude
  * Code builtin would tell the model a builtin it can't call is available: the condition behind the
  * reference's phantom-call deadlock.
  */
-export function mapPiToolNameToSdk(name: string, customToolNameToSdk: Map<string, string>): string {
+export function mapToolNameToSdk(name: string, customToolNameToSdk: Map<string, string>): string {
   if (!name) return ""
   const normalized = name.toLowerCase()
-  // pi's history holds pi's tool names; an SDK name here was converted twice.
+  // The conversation holds the agent's tool names; an SDK name here was converted twice.
   if (normalized.startsWith(McpToolPrefix)) {
     throw new Error(
-      `mapPiToolNameToSdk: "${name}" is already an SDK tool name — pi history holds pi tool names`,
+      `mapToolNameToSdk: "${name}" is already an SDK tool name — the conversation holds the agent's tool names`,
     )
   }
   return (
@@ -113,7 +113,7 @@ function toolResultContent(content: string | ReadonlyArray<LooseBlock>): string 
   return blocks
 }
 
-/** What convertPiMessages discarded, for the debug log. */
+/** What convertMessages discarded, for the debug log. */
 export interface DroppedContent {
   thinking: number
   abortedTurns: number
@@ -121,8 +121,8 @@ export interface DroppedContent {
   readonly other: Map<string, number>
 }
 
-/** pi's messages as Anthropic API messages, for importing into Claude Code's session. */
-export function convertPiMessages(
+/** A conversation's messages as Anthropic API messages, for importing into Claude Code's session. */
+export function convertMessages(
   messages: ReadonlyArray<PiMessage>,
   customToolNameToSdk: Map<string, string>,
 ): {
@@ -171,7 +171,7 @@ export function convertPiMessages(
           blocks.push({ type: "text", text: block.text })
         } else if (block.type === "thinking") {
           // Only thinking Claude Code itself produced: a signature minted by any other provider,
-          // pi's own Anthropic provider included, isn't ours to hand back.
+          // pi-ai's own Anthropic provider included, isn't ours to hand back.
           const signature = block.thinkingSignature
           if (msg.api === ClaudeApi && signature) {
             blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature })
@@ -183,7 +183,7 @@ export function convertPiMessages(
           blocks.push({
             type: "tool_use",
             id: sanitizeToolId(block.id, sanitizedIds),
-            name: mapPiToolNameToSdk(block.name, customToolNameToSdk),
+            name: mapToolNameToSdk(block.name, customToolNameToSdk),
             input: block.arguments ?? {},
           })
         } else {
@@ -206,9 +206,10 @@ export function convertPiMessages(
       turnAssistantIdx = anthropicMessages.length
       anthropicMessages.push({ role: "assistant", content: blocks })
     } else if (msg.role === "toolResult") {
-      // pi keeps one message per tool result, but repairToolPairing pairs only results that share
-      // the user message straight after their assistant message, so they're collected into the
-      // turn's first result message, right after it, past any steer pi recorded between them.
+      // The conversation keeps one message per tool result, but repairToolPairing pairs only
+      // results that share the user message straight after their assistant message, so they're
+      // collected into the turn's first result message, right after it, past any steer recorded
+      // between them.
       const block: ContentBlock = {
         type: "tool_result",
         tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds),

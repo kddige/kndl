@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import type { Options } from "@anthropic-ai/claude-agent-sdk"
 import { ProviderDoc } from "@earendil-works/pi-durable"
+import { getSessionPath, normalizeProjectPath } from "cc-session-io"
 import {
   ask,
   context,
@@ -53,6 +54,10 @@ const appended = (options: Options) => {
     ? prompt.append
     : undefined
 }
+
+/** The file Claude Code keeps `sessionId` in, in the directory the queries ran in. */
+const sessionFile = (bridge: DurableBridge, sessionId: string) =>
+  getSessionPath(sessionId, normalizeProjectPath(bridge.dir), bridge.claudeDir)
 
 /** The provider session id of `env`'s root conversation. */
 const providerSession = async (bridge: DurableBridge) =>
@@ -392,7 +397,7 @@ describe("two conversations at once", () => {
 })
 
 describe("a restart", () => {
-  test("goes on from a tool's result by rebuilding Claude Code's session, under its id", async () => {
+  test("goes on from a tool's result by rebuilding Claude Code's session, under a new id", async () => {
     const bridge = await start({ storage: "jsonl" })
     const { fake, gate } = bridge
     fake.scripts.push(
@@ -416,8 +421,12 @@ describe("a restart", () => {
 
     const after = fake.calls[1]
     expect(after?.prompt).toContain("Your session was interrupted and resumed")
-    // The bridge before kept the session's id, which this one rebuilt it under.
-    expect(after?.options.resume).toBe(fake.calls[0]?.sessionId)
+    // The bridge before may have left its Claude Code writing to the session: rebuilt under a new
+    // id, and the file it was in deleted.
+    expect(after?.options.resume).toBeDefined()
+    expect(after?.options.resume).not.toBe(fake.calls[0]?.sessionId)
+    expect(existsSync(sessionFile(bridge, fake.calls[0]?.sessionId ?? ""))).toBe(false)
+    expect(existsSync(sessionFile(bridge, after?.options.resume ?? ""))).toBe(true)
     expect(after?.request?.slice(0, 3)).toEqual([
       "user:wait",
       "assistant:tool_use:toolu_1",
@@ -442,24 +451,58 @@ describe("a held query no request comes back to", () => {
   })
 })
 
-describe("forget", () => {
-  test("stops the conversation's query and deletes its session", async () => {
-    const bridge = await start()
-    bridge.fake.scripts.push(
-      script("held", toolUse("toolu_1", "finish"), callTool("finish", "toolu_1"), untilKilled()),
-    )
-    await ask(bridge.conversation, "finish")
-    const sessionFile = (await import("cc-session-io")).getSessionPath(
-      bridge.fake.calls[0]?.sessionId ?? "",
-      (await import("cc-session-io")).normalizeProjectPath(bridge.dir),
-      bridge.claudeDir,
-    )
-    expect(existsSync(sessionFile)).toBe(true)
+/** A run that ends with its query held at a tool call. */
+const heldAtFinish = () =>
+  script("held", toolUse("toolu_1", "finish"), callTool("finish", "toolu_1"), untilKilled())
 
-    bridge.provider.forget(await providerSession(bridge))
+// The agent tells the bridge when a conversation's run settled: a query held at a tool call that
+// no request comes back to is stopped then, not left to the reaper.
+describe("a conversation's run settling", () => {
+  test("stops the query held at a tool call, which no request comes back to", async () => {
+    const bridge = await start()
+    bridge.fake.scripts.push(heldAtFinish())
+    expect((await ask(bridge.conversation, "finish")).status).toBe("done")
+    expect(bridge.fake.calls[0]?.closed).toBe(false)
+
+    bridge.provider.runSettled(await providerSession(bridge))
 
     expect(bridge.fake.calls[0]?.closed).toBe(true)
+  })
+
+  test("goes on with the conversation's next prompt in a query of its own", async () => {
+    const bridge = await start()
+    bridge.fake.scripts.push(heldAtFinish(), script("next", text("Sure."), result("Sure.")))
+    await ask(bridge.conversation, "finish")
+    bridge.provider.runSettled(await providerSession(bridge))
+
+    expect((await ask(bridge.conversation, "next")).status).toBe("done")
+    expect(bridge.fake.calls).toHaveLength(2)
+    expect(bridge.fake.calls[1]?.steers).toEqual([])
+    expect((await transcript(bridge.conversation)).at(-1)).toBe("assistant:Sure.")
+  })
+
+  test("leaves a query with a turn open alone", async () => {
+    const bridge = await start()
+    const reached = deferred()
+    bridge.fake.scripts.push(
+      script("streaming", partialText("Once upon"), untilKilled(reached.resolve)),
+    )
+    const submission = await bridge.conversation.submit(
+      { type: "input", content: "story" },
+      context,
+    )
+    await reached.promise
+
+    bridge.provider.runSettled(await providerSession(bridge))
     await Bun.sleep(20)
-    expect(existsSync(sessionFile)).toBe(false)
+    expect(bridge.fake.calls[0]?.closed).toBe(false)
+
+    await bridge.conversation.abort(context)
+    await submission.wait(context)
+  })
+
+  test("is no matter for a conversation the bridge doesn't know", async () => {
+    const bridge = await start()
+    expect(() => bridge.provider.runSettled("no-such-conversation")).not.toThrow()
   })
 })

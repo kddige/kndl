@@ -330,3 +330,47 @@ describe("a stop while the turn waits for a stopped Claude Code to exit", () => 
     expect(bridge.fake.calls).toHaveLength(2)
   }, 15_000)
 })
+
+// A query stopped can be slow to end: its Claude Code may keep the session file open for a moment.
+// Everything the conversation started waits for it, a prompt stopped while it waited included, or
+// a third query would resume the session file the first may still be writing.
+describe("prompts in a row while a stopped query hasn't ended", () => {
+  test("a prompt after one stopped while it waited still waits for the first query to end", async () => {
+    const bridge = await start({ settings: NoRetry })
+    const slow = deferred()
+    bridge.fake.scripts.push(
+      answer("first", "Hello."),
+      // Held at a tool call the run is stopped at, and slow to end once it is stopped itself.
+      script("held", [
+        init("cc"),
+        ...toolUse("toolu_wait", "gate"),
+        // One step: a killed query reads no further steps, and this one outlasts the kill.
+        async (stepContext) => {
+          await callTool("gate", "toolu_wait")(stepContext)
+          await slow.promise
+        },
+      ]),
+      answer("third", "Sure."),
+    )
+    await ask(bridge.conversation, "one")
+    await stop(bridge, "wait, please", bridge.gate.started)
+    const [, held] = bridge.fake.calls
+
+    // The next prompt stops the held query, and waits for it to end; it is stopped there.
+    const second = await bridge.conversation.submit({ type: "input", content: "two" }, context)
+    await Bun.sleep(50)
+    expect(held?.closed).toBe(true)
+    await bridge.conversation.abort(context)
+    expect((await second.wait(context)).status).toBe("unanswered")
+
+    const third = await bridge.conversation.submit({ type: "input", content: "three" }, context)
+    await Bun.sleep(100)
+    // The held query's Claude Code hasn't ended: no query resumes its session.
+    expect(bridge.fake.calls).toHaveLength(2)
+
+    slow.resolve()
+    expect((await third.wait(context)).status).toBe("done")
+    expect(bridge.fake.calls).toHaveLength(3)
+    expect((await transcript(bridge.conversation)).at(-1)).toBe("assistant:Sure.")
+  })
+})

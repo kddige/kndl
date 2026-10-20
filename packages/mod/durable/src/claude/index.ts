@@ -8,7 +8,8 @@
 // conversation into a Claude Code session to resume (Bridge.ts).
 //
 // kndl's own port of pi-claude-bridge 0.9.3 by Eli Dickinson (MIT; its notice is in
-// THIRD_PARTY_NOTICES.md), by way of the pi extension's (`packages/mod/pi/src/claude/`). Left out:
+// THIRD_PARTY_NOTICES.md), by way of the pi extension's (deleted; `git show adb3f8e:packages/mod/pi/src/claude/`).
+// Left out:
 // its AskClaude tool, its config file (the Runner's environment says all there is), and its startup
 // notices. Changed: a message the caller holds is never changed again (QueryState.ts), which the
 // reference broke after an abort (docs/research/claude-bridge-spike.md).
@@ -36,8 +37,12 @@ export type { ClaudeQuery, QueryFn } from "./Bridge.ts"
 export type { ListedModel } from "./Models.ts"
 export { ClaudeApi, ClaudeProvider } from "./Names.ts"
 
-/** How long a query held at a tool call waits for the request bringing its results, by default. */
-export const DefaultIdleQueryMs = 30 * 60_000
+/**
+ * How long a query held at a tool call waits for the request bringing its results, by default: the
+ * agent says when a run settled (`runSettled`), so this only catches a run's end it didn't say,
+ * and is longer than any tool a person or an agent may wait on is likely to take.
+ */
+export const DefaultIdleQueryMs = 12 * 60 * 60_000
 
 export interface ClaudeBridgeOptions {
   /** The pinned Claude Code's executable (`KNDL_CLAUDE_CODE`), never the SDK's bundled one. */
@@ -49,11 +54,8 @@ export interface ClaudeBridgeOptions {
   readonly configDir: string
   /** The Session's Creator's setup token (`CLAUDE_CODE_OAUTH_TOKEN`). */
   readonly oauthToken: string
-  /**
-   * Where Claude Code runs: the Workspace, or each conversation's own directory, by its provider
-   * session id (Pi Durable's `pi.provider` document); undefined for a call that names none.
-   */
-  readonly cwd: string | ((sessionId: string | undefined) => string)
+  /** Where Claude Code runs: the Workspace. */
+  readonly cwd: string
   /**
    * The Claude Models the Hub listed for the Creator (`/mod/providers`), in its order: each one
    * pi-ai's catalogue knows is listed, at the context window Claude Code serves it at, and at no
@@ -73,7 +75,7 @@ export interface ClaudeBridgeOptions {
   readonly logPath?: string
   /** What should never happen; to stderr by default. */
   readonly report?: (text: string) => void
-  /** A notice for the people watching the Session: a rate limit reached or near. */
+  /** A notice about a query, such as a rate limit reached or near; the agent writes it to its log. */
   readonly onNotice?: (text: string, level: "info" | "warning" | "error") => void
   /** How long a query held at a tool call waits for its results; {@link DefaultIdleQueryMs}. */
   readonly idleQueryMs?: number
@@ -81,17 +83,31 @@ export interface ClaudeBridgeOptions {
   readonly query?: QueryFn
 }
 
-/** The bridge's provider: pi-ai's, and what ends the Claude Codes it holds. */
+/**
+ * The bridge's provider: pi-ai's, and what ends the Claude Codes it holds. Every provider made
+ * with {@link ClaudeBridgeProvider.withModels} shares one bridge: its queries, mirrors and
+ * Claude Codes.
+ */
 export type ClaudeBridgeProvider = Provider & {
   /** The Models it lists, as `getModels()` does. */
   readonly models: ReadonlyArray<Model<Api>>
   /** The Hub's Claude Models that pi-ai's catalogue doesn't know, so it can't run. */
   readonly missing: ReadonlyArray<string>
   /**
-   * The conversation of provider session id `sessionId` is gone (a thread deleted): its held
-   * query, if any, is stopped, and its Claude Code session deleted.
+   * A provider listing `models` instead, around the same bridge: what the agent sets when the Hub
+   * lists other Claude Models, which leaves every query going as it is.
    */
-  forget(sessionId: string): void
+  withModels(models: ReadonlyArray<ListedModel>): ClaudeBridgeProvider
+  /**
+   * A conversation's run settled: nothing is going to bring the tool result its Claude Code
+   * query may still be held at, so the query is stopped and its process does not live on. One
+   * with a turn open is the run's own, and stays. `sessionId` is the conversation's provider
+   * session id, the `sessionId` of Pi Durable's `ProviderDoc` (`pi.provider`) for it:
+   * `(await harness.snapshot(ProviderDoc, conversationId, context))?.sessionId`, which is what
+   * every request of the conversation passes the bridge as `SimpleStreamOptions.sessionId`. A
+   * conversation that has none yet has no query.
+   */
+  runSettled(sessionId: string): void
   /** Stops every query, and waits for their Claude Codes to exit: before the agent exits. */
   close(): Promise<void>
 }
@@ -123,7 +139,8 @@ export function claudeBridgeOptionsFromEnv(
 /**
  * The `anthropic` provider for the Claude Models the Hub listed, run through Claude Code, for
  * `models.setProvider()`. Its api is its own (`kndl-claude-code`), and its auth is the setup
- * token, which it reports configured.
+ * token, which it reports configured. The one bridge behind it serves every provider made with
+ * `withModels`, and ends with `close()`.
  */
 export function createClaudeBridgeProvider(options: ClaudeBridgeOptions): ClaudeBridgeProvider {
   const log = createLog({
@@ -131,12 +148,6 @@ export function createClaudeBridgeProvider(options: ClaudeBridgeOptions): Claude
     path: options.logPath ?? join(options.configDir, "kndl-claude-bridge.log"),
     report: options.report ?? ((text) => process.stderr.write(`${text}\n`)),
   })
-  const { models, missing } = claudeModels(
-    options.models,
-    options.catalogue ?? anthropicCatalogue(),
-  )
-  if (missing.length > 0)
-    log.diag("unknown_models", { missing, note: "pi-ai's catalogue doesn't know them" })
   const cwd = options.cwd
   const bridge: Bridge = createBridge({
     claudeCodePath: options.claudeCodePath,
@@ -145,7 +156,7 @@ export function createClaudeBridgeProvider(options: ClaudeBridgeOptions): Claude
       [ClaudeTokenVariable]: options.oauthToken,
       [ClaudeConfigVariable]: options.configDir,
     },
-    cwd: typeof cwd === "string" ? () => cwd : cwd,
+    cwd: () => cwd,
     mirrors: new SessionMirrors({
       claudeDir: options.configDir,
       log,
@@ -156,25 +167,32 @@ export function createClaudeBridgeProvider(options: ClaudeBridgeOptions): Claude
     query: options.query ?? sdkQuery,
     idleQueryMs: options.idleQueryMs ?? DefaultIdleQueryMs,
   })
-  const provider = createProvider({
-    id: ClaudeProvider,
-    name: "Claude (Claude Code)",
-    // Claude Code signs in with the setup token itself: there's nothing for pi-ai to add to a
-    // request, only to say the provider is configured, without which it refuses every request.
-    auth: {
-      apiKey: {
-        name: "Claude Code",
-        resolve: async () =>
-          options.oauthToken ? { auth: {}, source: ClaudeTokenVariable } : undefined,
+  const providerFor = (listed: ReadonlyArray<ListedModel>): ClaudeBridgeProvider => {
+    const { models, missing } = claudeModels(listed, options.catalogue ?? anthropicCatalogue())
+    if (missing.length > 0)
+      log.diag("unknown_models", { missing, note: "pi-ai's catalogue doesn't know them" })
+    const provider = createProvider({
+      id: ClaudeProvider,
+      name: "Claude (Claude Code)",
+      // Claude Code signs in with the setup token itself: there's nothing for pi-ai to add to a
+      // request, only to say the provider is configured, without which it refuses every request.
+      auth: {
+        apiKey: {
+          name: "Claude Code",
+          resolve: async () =>
+            options.oauthToken ? { auth: {}, source: ClaudeTokenVariable } : undefined,
+        },
       },
-    },
-    models,
-    api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple },
-  })
-  return Object.assign(provider, {
-    models,
-    missing,
-    forget: bridge.forget,
-    close: bridge.close,
-  })
+      models,
+      api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple },
+    })
+    return Object.assign(provider, {
+      models,
+      missing,
+      withModels: providerFor,
+      runSettled: bridge.runSettled,
+      close: bridge.close,
+    })
+  }
+  return providerFor(options.models)
 }

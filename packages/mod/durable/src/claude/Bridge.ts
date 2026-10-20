@@ -15,9 +15,10 @@
 // own provider session id on every request: everything the bridge keeps is kept by it, in the
 // bridge made by createBridge, so two bridges share nothing either. Nothing tells a provider a run
 // ended or a conversation was compacted, so the bridge finds out: a new prompt for a conversation
-// stops the query it still holds, a held query no request comes back to is stopped after a while
-// (the reaper), and a conversation that doesn't start with the messages a query was given was
-// rewritten under it.
+// stops the query it still holds, the agent says when a conversation's run settled
+// (`runSettled`), a held query no request comes back to is stopped after a long while all the same
+// (the reaper, a backstop), and a conversation that doesn't start with the messages a query was
+// given was rewritten under it.
 //
 // No message is changed once the caller has it (QueryState.ts): a turn's terminal event carries a
 // copy of its message, and an abort or failure with no turn open ends nothing.
@@ -54,10 +55,10 @@ import type { PromptStream } from "./PromptStream.ts"
 import { newAssistantOutput, QueryContext } from "./QueryState.ts"
 import type { Notice, QueryHandle } from "./QueryState.ts"
 import type { Checkpoint } from "./Rewind.ts"
-import { prefixHash } from "./SessionMirror.ts"
+import { prefixHash, sessionKey } from "./SessionMirror.ts"
 import type { SessionMirrors } from "./SessionMirror.ts"
 import {
-  claimCurrentPiStream,
+  claimCurrentStream,
   consumeQuery,
   errorText,
   finalizeCurrentStream,
@@ -68,6 +69,8 @@ import type { SdkMessage } from "./Stream.ts"
 import { extractAllToolResults, hasAbortedResult } from "./ToolResults.ts"
 import type { McpResult } from "./ToolResults.ts"
 import { createToolServer } from "./ToolServer.ts"
+import { updateUsage } from "./Usage.ts"
+import type { SdkUsage } from "./Usage.ts"
 
 /** A Claude Code query, as the bridge drives it: what the SDK's `query()` returns. */
 export type ClaudeQuery = AsyncIterable<unknown> & {
@@ -93,7 +96,11 @@ export interface BridgeConfig {
   readonly log: BridgeLog
   readonly notice: Notice
   readonly query: QueryFn
-  /** How long a query held at a tool call waits for its results before it is stopped. */
+  /**
+   * How long a query held at a tool call waits for its results before it is stopped: a backstop
+   * for a run's end the agent didn't report (`runSettled`), so well past any tool a person or an
+   * agent may wait on.
+   */
   readonly idleQueryMs: number
 }
 
@@ -104,8 +111,12 @@ export interface Bridge {
     transcript: TranscriptContext,
     options?: SimpleStreamOptions,
   ) => AssistantMessageEventStream
-  /** Stops the conversation's query, if one is held, and deletes its mirror. */
-  readonly forget: (sessionId: string) => void
+  /**
+   * The conversation with provider session id `sessionId` has no run going on: its query, if it is
+   * held at a tool call no request is coming back to, is stopped. A query with a turn open is the
+   * run's still, and stays.
+   */
+  readonly runSettled: (sessionId: string) => void
   /** Stops every query, and waits for their Claude Codes to exit. */
   readonly close: () => Promise<void>
   /** The query context of each conversation, by provider session id: for tests to look at. */
@@ -148,20 +159,20 @@ export function effortForReasoning(
 function resolveMcpTools(context: BridgeContext): {
   mcpTools: Array<Tool>
   customToolNameToSdk: Map<string, string>
-  customToolNameToPi: Map<string, string>
+  customToolNameToAgent: Map<string, string>
 } {
   const mcpTools: Array<Tool> = []
   const customToolNameToSdk = new Map<string, string>()
-  const customToolNameToPi = new Map<string, string>()
+  const customToolNameToAgent = new Map<string, string>()
   for (const tool of context.tools ?? []) {
     const sdkName = `${McpToolPrefix}${tool.name}`
     mcpTools.push(tool)
     customToolNameToSdk.set(tool.name, sdkName)
     customToolNameToSdk.set(tool.name.toLowerCase(), sdkName)
-    customToolNameToPi.set(sdkName, tool.name)
-    customToolNameToPi.set(sdkName.toLowerCase(), tool.name)
+    customToolNameToAgent.set(sdkName, tool.name)
+    customToolNameToAgent.set(sdkName.toLowerCase(), tool.name)
   }
-  return { mcpTools, customToolNameToSdk, customToolNameToPi }
+  return { mcpTools, customToolNameToSdk, customToolNameToAgent }
 }
 
 /** The tools' declarations as one string: a query's MCP server serves the ones it opened with. */
@@ -276,9 +287,19 @@ const ContinueAfterRewritePrompt =
   "[Your context was compacted. What precedes this is a summary plus the most recent messages, " +
   "ending with the tool result you were waiting for. Continue the task from there.]"
 
-/** What a query is opened with for a tool result no query holds (a restart, a reaped query). */
+/** What a query is opened with for a tool result no query holds, with nothing to say why: a restart. */
 const ContinueAfterResumePrompt =
   "[Your session was interrupted and resumed. What precedes this ends with the tool result " +
+  "you were waiting for. Continue the task from there.]"
+
+/** What a query is opened with for a tool result when the query that held its call was reaped. */
+const ContinueAfterIdlePrompt =
+  "[Your session was closed after waiting a long time for a tool result, and is reopened. What " +
+  "precedes this ends with the tool result you were waiting for. Continue the task from there.]"
+
+/** What a query is opened with for a tool result when the request after it failed and is retried. */
+const ContinueAfterFailurePrompt =
+  "[Your last request failed and is being retried. What precedes this ends with the tool result " +
   "you were waiting for. Continue the task from there.]"
 
 /** What a query is opened with when the tools changed under a held turn (one tool_search loaded). */
@@ -295,8 +316,6 @@ const ClaudeMdExcludes = ["**/CLAUDE.md", "**/AGENTS.md", "**/.claude/rules/**"]
 
 /** What holds a context while its query waits for the stopped one's Claude Code to exit. */
 const WaitingForExit: QueryHandle = {}
-
-const sessionKey = (sessionId: string | undefined) => sessionId ?? "(none)"
 
 /** A turn that ends at once, with `stopReason` (and the error, for an error). */
 function endedAtOnce(
@@ -324,24 +343,27 @@ export function createBridge(config: BridgeConfig): Bridge {
   /** Each conversation's latest query context, by provider session id. */
   const contexts = new Map<string, QueryContext>()
   /**
-   * Per conversation, the stopped query whose Claude Code may still be writing to the session
-   * file: settles once it has exited, or given up on. The conversation's next query waits for it.
+   * Per conversation, the end of everything it has started and not seen end: its queries, and the
+   * Claude Codes of those stopped, which may still be writing to the session file. The
+   * conversation's next query waits for all of it, one chain a conversation: a query stopped while
+   * it waited, which settles at once, still stands for what it waited on.
    */
-  const stoppingQueries = new Map<string, Promise<void>>()
+  const tails = new Map<string, Promise<void>>()
   /** Queries the conversation moved out from under: their ending touches neither mirror nor stream. */
   const abandonedQueries = new WeakSet<object>()
   let closed = false
 
-  // Queries held at a tool call that no request came back to: the run ended without one (a tool
-  // that ends it, a reset, a failure), or Pi Durable went on with another model.
+  // Queries held at a tool call that no request came back to for a long while, though the agent
+  // says when a run settles (`runSettled`): a backstop, for a run's end it didn't report. It can't
+  // tell a tool still running from one that will never answer, which is why it waits so long.
   const reaper = setInterval(
     () => {
       const now = Date.now()
       for (const c of contexts.values()) {
-        if (c.activeQuery === null || c.activeQuery === WaitingForExit || c.currentPiStream)
-          continue
+        if (c.activeQuery === null || c.activeQuery === WaitingForExit || c.currentStream) continue
         if (now - c.idleSince < config.idleQueryMs) continue
-        log.debug(`reaper: no call came back to ${c.piSessionId}'s held query: stopping it`)
+        log.debug(`reaper: no call came back to ${c.providerSessionId}'s held query: stopping it`)
+        c.reaped = true
         c.stop?.()
       }
     },
@@ -367,23 +389,24 @@ export function createBridge(config: BridgeConfig): Bridge {
 
   /**
    * Holds the conversation's next query until the stopped query's Claude Code has exited, and then
-   * lets the session file be touched again. One that doesn't exit in time leaves the session to be
-   * rebuilt under a new id.
+   * lets the session file be touched again: the query's `settled` waits for the promise this
+   * returns. One that doesn't exit in time leaves the session to be rebuilt under a new id.
    */
-  const noteStoppedQuery = (key: string, claudeProcess: ProcessWatch): void => {
+  const noteStoppedQuery = (key: string, claudeProcess: ProcessWatch): Promise<void> => {
     const settle = (exited: boolean) => {
       mirrors.stoppedClaudeCodeExited(key, exited)
       if (!exited)
         log.debug("provider: the stopped Claude Code didn't exit; the next query rebuilds")
     }
     // No process, nothing writing.
-    if (!claudeProcess.spawned()) return settle(true)
-    const stopping = claudeProcess.exited().then((exited) => {
+    if (!claudeProcess.spawned()) {
+      settle(true)
+      return Promise.resolve()
+    }
+    return claudeProcess.exited().then((exited) => {
       log.debug(`provider: the stopped Claude Code ${exited ? "exited" : "is still running"}`)
       settle(exited)
-      if (stoppingQueries.get(key) === stopping) stoppingQueries.delete(key)
     })
-    stoppingQueries.set(key, stopping)
   }
 
   /**
@@ -408,7 +431,7 @@ export function createBridge(config: BridgeConfig): Bridge {
     }
     c.stop = undefined
     // The killed Claude Code may still write to the session: rotate, as after an abort.
-    mirrors.queryDiscarded(c.piSessionId)
+    mirrors.queryDiscarded(c.providerSessionId)
     log.debug("provider: conversation rewritten under a held query — discarded it")
   }
 
@@ -472,7 +495,14 @@ export function createBridge(config: BridgeConfig): Bridge {
         prompt: promptText,
         options: {
           cwd: config.cwd(options?.sessionId),
-          env: { ...config.childEnv },
+          // Claude Code has no option for it, but this variable: the summary is as long as Pi
+          // Durable's compaction allows it, and no longer.
+          env: {
+            ...config.childEnv,
+            ...(options?.maxTokens
+              ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxTokens) }
+              : {}),
+          },
           settings: { autoMemoryEnabled: false },
           tools: [],
           strictMcpConfig: true,
@@ -496,6 +526,7 @@ export function createBridge(config: BridgeConfig): Bridge {
       let assistantText = ""
       let finalText = ""
       let failure: string | undefined
+      let usage: SdkUsage | undefined
 
       for await (const raw of sdkQuery) {
         const message = raw as SdkMessage
@@ -504,8 +535,10 @@ export function createBridge(config: BridgeConfig): Bridge {
           for (const block of message.message?.content ?? []) {
             if (block.type === "text" && typeof block.text === "string") assistantText += block.text
           }
+          usage = message.message?.usage ?? usage
         } else if (message.type === "result") {
           logServedContextWindow(log, "compact summary", message, model)
+          usage = message.usage ?? usage
           failure = resultErrorText(message)
           if (!failure && message.subtype === "success") finalText = message.result || assistantText
         }
@@ -514,11 +547,9 @@ export function createBridge(config: BridgeConfig): Bridge {
       if (wasAborted) return aborted()
       const text = finalText || assistantText
       if (failure || !text.trim()) return fail(failure ?? "Claude Code summary returned empty text")
-      stream.push({
-        type: "done",
-        reason: "stop",
-        message: newAssistantOutput(model, text, "stop"),
-      })
+      const summary = newAssistantOutput(model, text, "stop")
+      if (usage) updateUsage(summary, usage, model)
+      stream.push({ type: "done", reason: "stop", message: summary })
       stream.end()
     } catch (error) {
       log.debug("runIsolatedSummary threw", error)
@@ -546,9 +577,9 @@ export function createBridge(config: BridgeConfig): Bridge {
   ): AssistantMessageEventStream => {
     const context = toBridgeContext(transcript.messages)
 
+    if (closed) return endedAtOnce(model, "error", "The Claude bridge is closed")
     // Compaction: a Claude Code of its own.
     if (options?.cacheRetention === "none") return isolatedSummary(model, context, options)
-    if (closed) return endedAtOnce(model, "error", "The Claude bridge is closed")
 
     const key = sessionKey(options?.sessionId)
     const lastMsgRole = context.messages.at(-1)?.role
@@ -565,7 +596,7 @@ export function createBridge(config: BridgeConfig): Bridge {
     if (
       holding &&
       held.activeQuery !== WaitingForExit &&
-      held.currentPiStream === null &&
+      held.currentStream === null &&
       allResults.length > 0 &&
       holdsCallsOf(held, allResults)
     ) {
@@ -585,20 +616,21 @@ export function createBridge(config: BridgeConfig): Bridge {
         superseding = "the tools changed"
         toolsChanged = true
       } else {
+        // A message steered in while the tool ran comes after its results. Read before anything
+        // is claimed: a malformed one throws, and a turn claimed by then would never end.
+        const steer = lastMsgRole === "user" ? steerBlocks(context.messages, log) : null
         const stream = createAssistantMessageEventStream()
-        claimCurrentPiStream(stream, "tool-result", held, options)
+        claimCurrentStream(stream, "tool-result", held)
         held.resetTurnState(model)
         // This call's signal stops the query while its turn is open: the last turn's was the
         // generation task's that ended with it.
         held.bindSignal(options?.signal)
         held.idleSince = Date.now()
-        // A message steered in while the tool ran comes after its results.
-        const steer = lastMsgRole === "user" ? steerBlocks(context.messages, log) : null
         // After the steer's write, so detached: the stream goes back now.
         void deliverToolResults(held, allResults, steer, context.messages.length, () =>
-          mirrors.steerMissed(held.piSessionId),
+          mirrors.steerMissed(held.providerSessionId),
         )
-        mirrors.resultsDelivered(held.piSessionId, context.messages)
+        mirrors.resultsDelivered(held.providerSessionId, context.messages)
         held.latestHistory = context.messages
         held.latestPrefixHash = prefixHash(context.messages, context.messages.length)
         return stream
@@ -623,8 +655,8 @@ export function createBridge(config: BridgeConfig): Bridge {
       log.diag("prompt_refused", {
         promptChars: context.systemPrompt?.length ?? 0,
         error: errorText(error),
+        note: "set KNDL_CLAUDE_DEBUG=1 to write the whole prompt to the bridge's log",
       })
-      // As the refusal says: the whole prompt, in the debug log (KNDL_CLAUDE_DEBUG=1).
       log.debug(`provider: the system prompt refused, in full:\n${context.systemPrompt ?? ""}`)
       return endedAtOnce(model, "error", errorText(error))
     }
@@ -642,15 +674,15 @@ export function createBridge(config: BridgeConfig): Bridge {
       queryCtx.lastRateLimitWarnThreshold = held.lastRateLimitWarnThreshold
     }
     contexts.set(key, queryCtx)
-    claimCurrentPiStream(stream, "fresh-query", queryCtx, options)
+    claimCurrentStream(stream, "fresh-query", queryCtx)
     queryCtx.resetTurnState(model)
-    queryCtx.piSessionId = key
+    queryCtx.providerSessionId = key
     queryCtx.latestHistory = context.messages
     queryCtx.latestPrefixHash = prefixHash(context.messages, context.messages.length)
     queryCtx.toolsKey = toolsKey
     queryCtx.idleSince = Date.now()
 
-    const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context)
+    const { mcpTools, customToolNameToSdk, customToolNameToAgent } = resolveMcpTools(context)
     const cwd = config.cwd(options?.sessionId)
     const cliModel = claudeCodeModelId(model, defaultLongContext)
     let settle!: () => void
@@ -671,7 +703,12 @@ export function createBridge(config: BridgeConfig): Bridge {
       if (!promptText && !promptBlocks) {
         if (rewrittenUnderQuery) promptText = ContinueAfterRewritePrompt
         else if (toolsChanged) promptText = ContinueAfterToolsChangedPrompt
-        else if (unparkedToolResult) promptText = ContinueAfterResumePrompt
+        else if (unparkedToolResult)
+          promptText = held?.reaped
+            ? ContinueAfterIdlePrompt
+            : held?.failed
+              ? ContinueAfterFailurePrompt
+              : ContinueAfterResumePrompt
       }
       if (!promptText && !promptBlocks) {
         log.diag("empty_prompt", {
@@ -740,6 +777,8 @@ export function createBridge(config: BridgeConfig): Bridge {
       )
 
       let wasAborted = false
+      /** The stopped Claude Code's exit, which the query's end waits for. */
+      let exitWait: Promise<void> = Promise.resolve()
       const sdkQuery = config.query({ prompt: promptStream.stream, options: queryOptions })
       const handle: QueryHandle = sdkQuery
       queryCtx.activeQuery = handle
@@ -760,11 +799,11 @@ export function createBridge(config: BridgeConfig): Bridge {
         }
       }
       // The open turn's call's signal, and anything that ends the query held (a new prompt, the
-      // reaper, forget, close), stop it.
+      // reaper, a settled run, close), stop it.
       queryCtx.stop = onAbort
       if (queryCtx.signalAborted) onAbort()
 
-      consumeQuery(sdkQuery, customToolNameToPi, model, () => wasAborted, queryCtx)
+      consumeQuery(sdkQuery, customToolNameToAgent, model, () => wasAborted, queryCtx)
         .then(({ capturedSessionId }) => {
           queryCtx.stop = undefined
           // Discarded: the query that took over owns the session and the stream.
@@ -772,11 +811,10 @@ export function createBridge(config: BridgeConfig): Bridge {
 
           if (wasAborted) {
             markStopped(key, cwd, syncResult.checkpoint, capturedSessionId)
-            noteStoppedQuery(key, claudeProcess)
+            exitWait = noteStoppedQuery(key, claudeProcess)
             // The turn open now, if one is, ends aborted, with a new message; a turn that ended
             // already (a tool call the agent was running) is the caller's, and stays as it is.
             queryCtx.endTurn({ stopReason: "aborted", errorMessage: "Operation aborted" })
-            queryCtx.heldRateLimit = undefined
             return
           }
 
@@ -793,7 +831,7 @@ export function createBridge(config: BridgeConfig): Bridge {
               incomplete: queryCtx.missedSteer || queryCtx.failed,
               checkpoint: syncResult.checkpoint,
             })
-            if (cutBack) noteStoppedQuery(key, claudeProcess)
+            if (cutBack) exitWait = noteStoppedQuery(key, claudeProcess)
           }
 
           if (queryCtx.activeQuery === handle) queryCtx.activeQuery = null
@@ -805,11 +843,11 @@ export function createBridge(config: BridgeConfig): Bridge {
           if (abandonedQueries.has(handle)) return
           if (wasAborted) {
             markStopped(key, cwd, syncResult.checkpoint, queryCtx.capturedSessionId)
-            noteStoppedQuery(key, claudeProcess)
-            queryCtx.heldRateLimit = undefined
+            exitWait = noteStoppedQuery(key, claudeProcess)
           } else {
             // The session's state is unknown after the failure: the mirror goes, with its file.
             mirrors.queryFailed(key)
+            queryCtx.failed = true
           }
           promptStream.fail(error instanceof Error ? error : new Error(String(error)))
           if (queryCtx.activeQuery === handle) {
@@ -833,7 +871,7 @@ export function createBridge(config: BridgeConfig): Bridge {
           queryCtx.stop = undefined
           queryCtx.latestHistory = []
           sdkQuery.close()
-          settle()
+          void exitWait.then(settle)
         })
     }
 
@@ -870,18 +908,19 @@ export function createBridge(config: BridgeConfig): Bridge {
         settle()
       }
     }
-    // Any query of the conversation's still going, stopped or not, ends before this one starts.
-    const before = held !== undefined && held.activeQuery !== null ? held.settled : undefined
-    if (before === undefined && !stoppingQueries.has(key)) {
+    // Everything the conversation started before, a query stopped or not and its Claude Code's
+    // exit, ends before this one starts; a later one waits for this one, and all of that.
+    const before = tails.get(key)
+    const tail: Promise<void> = Promise.all([before, queryCtx.settled]).then(() => {
+      if (tails.get(key) === tail) tails.delete(key)
+    })
+    tails.set(key, tail)
+    if (before === undefined) {
       start()
       return stream
     }
     log.debug("provider: waiting for the query before to end, and its Claude Code to exit")
-    void (async () => {
-      await before
-      await stoppingQueries.get(key)
-      start()
-    })()
+    void before.then(start)
     return stream
   }
 
@@ -892,26 +931,21 @@ export function createBridge(config: BridgeConfig): Bridge {
   return {
     streamSimple: streamClaude,
     contexts,
-    forget: (sessionId) => {
-      const key = sessionKey(sessionId)
-      const c = contexts.get(key)
-      c?.stop?.()
-      contexts.delete(key)
-      // Once its Claude Code is gone, which might write the file again.
-      void (async () => {
-        await c?.settled
-        await stoppingQueries.get(key)
-        mirrors.forget(key)
-        log.debug(`forget: ${key}`)
-      })()
+    runSettled: (sessionId) => {
+      const c = contexts.get(sessionKey(sessionId))
+      // A turn open is the run's own, and a query that has ended has nothing to stop.
+      if (c === undefined || c.currentStream !== null || c.stop === undefined) return
+      log.debug(
+        `provider: ${sessionId}'s run settled with its query held at a tool call: stopping it`,
+      )
+      c.stop()
     },
     close: async () => {
       if (closed) return
       closed = true
       clearInterval(reaper)
       stopAll()
-      await Promise.all([...contexts.values()].map((c) => c.settled))
-      await Promise.all(stoppingQueries.values())
+      await Promise.all(tails.values())
     },
   }
 }

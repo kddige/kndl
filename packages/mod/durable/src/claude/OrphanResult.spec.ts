@@ -11,7 +11,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
 import type { Api, AssistantMessage, Context, Message, Model, Tool } from "@earendil-works/pi-ai"
-import type { ClaudeQuery } from "./Bridge.ts"
+import type { ClaudeQuery, QueryFn } from "./Bridge.ts"
 import { ClaudeApi } from "./Names.ts"
 import { makeBridge, transcriptOf } from "./testing/BridgeTesting.ts"
 import type { TestBridge } from "./testing/BridgeTesting.ts"
@@ -46,41 +46,41 @@ const scripts: Array<{ readonly label: string; readonly steps: ReadonlyArray<Ste
 
 let bridge: TestBridge
 
+/** A fake Claude Code: plays the next script, which ends when the query is closed. */
+const query: QueryFn = ({ prompt, options }: { prompt: unknown; options: Options }) => {
+  const script = scripts.shift()
+  if (!script) throw new Error("no fake script queued")
+  const call: Call = { label: script.label, resume: options.resume }
+  calls.push(call)
+  // close() is how the bridge kills Claude Code on an abort; it ends a held script.
+  let closed = false
+  const { promise: killed, resolve: onClose } = Promise.withResolvers<void>()
+  const generator = (async function* () {
+    const first = await (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()
+    const content = (first.value as SDKUserMessage).message.content as Array<{ text?: string }>
+    call.prompt = content[0]?.text
+    for (const step of script.steps) {
+      if (closed) return
+      if (typeof step === "function") {
+        await step(killed)
+        continue
+      }
+      yield step
+    }
+  })()
+  return Object.assign(generator, {
+    interrupt: async () => {},
+    close: () => {
+      closed = true
+      onClose()
+    },
+  }) as ClaudeQuery
+}
+
 beforeEach(() => {
   calls.length = 0
   scripts.length = 0
-  bridge = makeBridge({
-    claudeDir,
-    query: ({ prompt, options }: { prompt: unknown; options: Options }) => {
-      const script = scripts.shift()
-      if (!script) throw new Error("no fake script queued")
-      const call: Call = { label: script.label, resume: options.resume }
-      calls.push(call)
-      // close() is how the bridge kills Claude Code on an abort; it ends a held script.
-      let closed = false
-      const { promise: killed, resolve: onClose } = Promise.withResolvers<void>()
-      const generator = (async function* () {
-        const first = await (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()
-        const content = (first.value as SDKUserMessage).message.content as Array<{ text?: string }>
-        call.prompt = content[0]?.text
-        for (const step of script.steps) {
-          if (closed) return
-          if (typeof step === "function") {
-            await step(killed)
-            continue
-          }
-          yield step
-        }
-      })()
-      return Object.assign(generator, {
-        interrupt: async () => {},
-        close: () => {
-          closed = true
-          onClose()
-        },
-      }) as ClaudeQuery
-    },
-  })
+  bridge = makeBridge({ claudeDir, query })
 })
 
 afterEach(async () => {
@@ -284,6 +284,61 @@ describe("a tool result no query holds", () => {
 
     expect(calls.length).toBe(3)
     expect(replyText(reply)).toBe("answer after retry")
+    // The retry is told why, not that the session was interrupted.
+    expect(calls[2]?.prompt).toMatch(/last request failed and is being retried/)
+    expect(calls[2]?.prompt).not.toMatch(/interrupted and resumed/)
+  })
+
+  test("a held query the reaper stopped is told so, not that the session was interrupted", async () => {
+    await bridge.close()
+    bridge = makeBridge({ claudeDir, query, idleQueryMs: 50 })
+    const tools = [
+      { name: "read", description: "Read a file", parameters: { type: "object", properties: {} } },
+    ] as unknown as Array<Tool>
+    scripts.push(
+      { label: "held", steps: [init("cc-held"), ...toolUse("toolu_8"), (killed) => killed] },
+      { label: "reopened", steps: [init("cc-reopened"), ...text("went on"), result("went on")] },
+    )
+    const ask = user("read a")
+    const held = await call({ messages: [ask], tools }, { sessionId: "pi-reaped" }).result()
+    expect(held.stopReason).toBe("toolUse")
+    // Nothing comes back to the held call for a while: the reaper stops its query.
+    await Bun.sleep(300)
+    expect(calls).toHaveLength(1)
+
+    const reply = await call(
+      { messages: [ask, held, toolResult("toolu_8")], tools },
+      { sessionId: "pi-reaped" },
+    ).result()
+
+    expect(calls.map((c) => c.label)).toEqual(["held", "reopened"])
+    expect(replyText(reply)).toBe("went on")
+    expect(calls[1]?.prompt).toMatch(/waiting a long time for a tool result/)
+    expect(calls[1]?.prompt).not.toMatch(/interrupted and resumed/)
+  })
+
+  test("a steer that can't be read ends no turn it didn't start", async () => {
+    const tools = [
+      { name: "read", description: "Read a file", parameters: { type: "object", properties: {} } },
+    ] as unknown as Array<Tool>
+    scripts.push({
+      label: "held",
+      steps: [init("cc-held"), ...toolUse("toolu_9"), (killed) => killed],
+    })
+    const ask = user("read a")
+    const held = await call({ messages: [ask], tools }, { sessionId: "pi-malformed" }).result()
+    expect(held.stopReason).toBe("toolUse")
+
+    // The steer placed after the tool round is malformed: its content is neither text nor blocks.
+    const malformed = { role: "user", content: 42, timestamp: clock++ } as unknown as Message
+    expect(() =>
+      call(
+        { messages: [ask, held, toolResult("toolu_9"), malformed], tools },
+        { sessionId: "pi-malformed" },
+      ),
+    ).toThrow(/user message content must be a string or block array/)
+    // No turn was claimed for it: none is left open that nothing will end.
+    expect(bridge.contexts.get("pi-malformed")?.currentStream).toBeNull()
   })
 
   test("an abort in one conversation doesn't orphan another's resumed result", async () => {

@@ -536,10 +536,11 @@ describe("a conversation's first query, stopped", () => {
   })
 })
 
-// A restarted bridge knows each conversation's Claude Code session only by its id: it rebuilds it
-// under that id, rather than leaving its file behind.
+// A restarted bridge knows each conversation's Claude Code session only by its id. The bridge
+// before may have been killed with a Claude Code still running, which flushes to the session file
+// late: the session is rebuilt under a new id, and the file left behind deleted.
 describe("the mirrors a bridge before this one kept", () => {
-  test("are rebuilt under their ids", () => {
+  test("are rebuilt under new ids", () => {
     const cwd = mkdtempSync(join(tmpdir(), "kndl-claude-saved-cwd-"))
     const savePath = join(cwd, "saved", "sessions.json")
     const before = new SessionMirrors({ claudeDir, log: silentLog, savePath })
@@ -551,15 +552,22 @@ describe("the mirrors a bridge before this one kept", () => {
     })
 
     const after = new SessionMirrors({ claudeDir, log: silentLog, savePath })
-    expect(after.state("conversation")).toEqual({ sessionId, cursor: 0, cwd, needsRebuild: true })
+    expect(after.state("conversation")).toEqual({
+      sessionId,
+      cursor: 0,
+      cwd,
+      needsRebuild: true,
+      forceRotate: true,
+    })
     const history = [
       { role: "user", content: "one", timestamp: 1 },
       { role: "assistant", content: [{ type: "text", text: "Hello." }], timestamp: 2 },
       { role: "user", content: "two", timestamp: 3 },
     ]
-    expect(after.sync(history as never, cwd, new Map(), undefined, "conversation").sessionId).toBe(
-      sessionId,
-    )
+    const rebuilt = after.sync(history as never, cwd, new Map(), undefined, "conversation")
+    expect(rebuilt.sessionId).not.toBeNull()
+    expect(rebuilt.sessionId).not.toBe(sessionId)
+    expect(after.state("conversation")).toMatchObject({ sessionId: rebuilt.sessionId })
 
     after.forget("conversation")
     expect(JSON.parse(readFileSync(savePath, "utf8")).sessions).toEqual({})

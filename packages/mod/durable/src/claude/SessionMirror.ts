@@ -32,13 +32,20 @@ import {
 import type { BaseRecordFields, JsonlRecord } from "cc-session-io"
 import { collectCarriedAttachments, placeCarriedAttachments } from "./CarriedAttachments.ts"
 import type { CarriedAttachment } from "./CarriedAttachments.ts"
-import { convertPiMessages, userTurnText } from "./Convert.ts"
+import { convertMessages, userTurnText } from "./Convert.ts"
 import type { BridgeLog } from "./Log.ts"
 import { checkpointAt, planRewind, readTail } from "./Rewind.ts"
 import type { Checkpoint } from "./Rewind.ts"
 
+/**
+ * The key a conversation's state is kept by: its provider session id, or a shared one for a call
+ * that names none.
+ */
+export const sessionKey = (providerSessionId: string | null | undefined) =>
+  providerSessionId ?? "(none)"
+
 /** A conversation's messages, as the bridge reads them: system messages aside. */
-export type PiMessages = ReadonlyArray<Message>
+export type ConversationMessages = ReadonlyArray<Message>
 
 export interface SessionState {
   readonly sessionId: string
@@ -53,8 +60,9 @@ export interface SessionState {
    */
   readonly needsRebuild?: boolean | undefined
   /**
-   * Set only where a Claude Code was just killed (an abort, a discarded query): it may still flush
-   * a late record into the session file, so the rebuild takes a new id rather than racing it.
+   * Set only where a Claude Code was just killed (an abort, a discarded query, the agent before a
+   * restart): it may still flush a late record into the session file, so the rebuild takes a new
+   * id rather than racing it.
    */
   readonly forceRotate?: boolean | undefined
   /**
@@ -178,15 +186,15 @@ interface SavedSessions {
 }
 
 /** The cursor and hash of a mirror holding all of `messages`. */
-const holding = (messages: PiMessages) => ({
+const holding = (messages: ConversationMessages) => ({
   cursor: messages.length,
   prefixHash: prefixHash(messages, messages.length),
 })
 
 /**
  * Every conversation's mirror, for one bridge. With `savePath`, each mirror's Claude Code session
- * id is kept there, so a bridge started after a restart rebuilds each conversation's session under
- * the id it had, rather than leaving the file behind and starting another.
+ * id is kept there, so a bridge started after a restart knows the session files the one before
+ * left, and deletes each as it rebuilds the conversation's session under a new id.
  */
 export class SessionMirrors {
   /** Mirrors by provider session id ("(none)" for a call that names none). */
@@ -212,21 +220,15 @@ export class SessionMirrors {
     return this.options.claudeDir
   }
 
-  /** The mirror for `piSessionId`, or null when the conversation has none yet. */
-  state(piSessionId: string | null | undefined): SessionState | null {
-    return this.states.get(key(piSessionId)) ?? null
+  /** The mirror for `providerSessionId`, or null when the conversation has none yet. */
+  state(providerSessionId: string | null | undefined): SessionState | null {
+    return this.states.get(sessionKey(providerSessionId)) ?? null
   }
 
-  /** Replaces (or plants, or with null drops) the mirror for `piSessionId`. */
-  setState(piSessionId: string | null | undefined, state: SessionState | null): void {
-    if (state === null) this.states.delete(key(piSessionId))
-    else this.states.set(key(piSessionId), state)
-    this.save()
-  }
-
-  /** Forgets every mirror, leaving their files. */
-  clear(): void {
-    this.states.clear()
+  /** Replaces (or plants, or with null drops) the mirror for `providerSessionId`. */
+  setState(providerSessionId: string | null | undefined, state: SessionState | null): void {
+    if (state === null) this.states.delete(sessionKey(providerSessionId))
+    else this.states.set(sessionKey(providerSessionId), state)
     this.save()
   }
 
@@ -245,7 +247,7 @@ export class SessionMirrors {
   }
 
   /**
-   * Makes Claude Code's session for `piSessionId` hold the conversation up to the current user
+   * Makes Claude Code's session for `providerSessionId` hold the conversation up to the current user
    * turn, and says which to resume, and where in the conversation the query's prompt starts.
    *
    * - Reuse: in step with the mirror, or ahead of it only by the final assistant message appended
@@ -261,13 +263,13 @@ export class SessionMirrors {
     cwd: string,
     customToolNameToSdk: Map<string, string>,
     modelId?: string,
-    piSessionId?: string | null,
+    providerSessionId?: string | null,
   ): SyncResult {
     // System messages are the conversation's prompt state, never imported, so never counted.
-    const history = nonSystemMessages(messages) as unknown as PiMessages
+    const history = nonSystemMessages(messages) as unknown as ConversationMessages
     const promptStart = turnStart(history)
     const priorMessages = history.slice(0, promptStart)
-    let sharedSession = this.state(piSessionId)
+    let sharedSession = this.state(providerSessionId)
 
     if (
       sharedSession &&
@@ -292,7 +294,7 @@ export class SessionMirrors {
       const trailingAssistantOnly = missed.length === 1 && missed[0]?.role === "assistant"
       if (missed.length === 0 || trailingAssistantOnly) {
         if (trailingAssistantOnly) {
-          this.setState(piSessionId, { ...sharedSession, ...holding(priorMessages), cwd })
+          this.setState(providerSessionId, { ...sharedSession, ...holding(priorMessages), cwd })
           this.log.debug(
             `Case 3: advanced cursor past trailing assistant, resuming session ${sharedSession.sessionId.slice(0, 8)}`,
           )
@@ -328,7 +330,7 @@ export class SessionMirrors {
             cwd,
             customToolNameToSdk,
             modelId,
-            piSessionId,
+            providerSessionId,
           )
       if (rewound !== undefined) return rewound
     }
@@ -338,7 +340,7 @@ export class SessionMirrors {
       // The mirror's session is never resumed again: the query starts one of its own.
       if (sharedSession) {
         this.deleteClaudeSession(sharedSession.sessionId, sharedSession.cwd)
-        this.setState(piSessionId, null)
+        this.setState(providerSessionId, null)
       }
       return { sessionId: null, promptFrom: promptStart }
     }
@@ -364,7 +366,7 @@ export class SessionMirrors {
       session.records.length,
     ))
       this.log.diag("session_verify_fail", { warning, cwd, claudeDir: dir ?? null })
-    this.setState(piSessionId, {
+    this.setState(providerSessionId, {
       sessionId: session.sessionId,
       ...holding(priorMessages),
       cwd,
@@ -389,8 +391,8 @@ export class SessionMirrors {
    * A steer never reached Claude Code, though the cursor counts it already: the next sync
    * rebuilds, taking it from the conversation.
    */
-  steerMissed(piSessionId: string | null | undefined): void {
-    this.change(piSessionId, (state) => ({ ...state, needsRebuild: true }))
+  steerMissed(providerSessionId: string | null | undefined): void {
+    this.change(providerSessionId, (state) => ({ ...state, needsRebuild: true }))
   }
 
   /**
@@ -402,13 +404,17 @@ export class SessionMirrors {
    * rebuilt under its id rather than left behind. Says which, when there is a mirror.
    */
   queryStopped(
-    piSessionId: string | null | undefined,
+    providerSessionId: string | null | undefined,
     checkpoint: Checkpoint | undefined,
     capturedSessionId?: string,
     cwd?: string,
   ): "cut back" | "rebuild" | undefined {
-    if (this.state(piSessionId) === null && capturedSessionId !== undefined && cwd !== undefined) {
-      this.setState(piSessionId, {
+    if (
+      this.state(providerSessionId) === null &&
+      capturedSessionId !== undefined &&
+      cwd !== undefined
+    ) {
+      this.setState(providerSessionId, {
         sessionId: capturedSessionId,
         cursor: 0,
         cwd,
@@ -418,7 +424,7 @@ export class SessionMirrors {
       return "rebuild"
     }
     let next: "cut back" | "rebuild" | undefined
-    this.change(piSessionId, (state) => {
+    this.change(providerSessionId, (state) => {
       const rewindTo =
         checkpoint?.sessionId === state.sessionId &&
         (capturedSessionId === undefined || capturedSessionId === checkpoint.sessionId)
@@ -434,8 +440,8 @@ export class SessionMirrors {
    * A stopped query's Claude Code has exited, so the session can be cut back now; or it hadn't in
    * time, and the session is rebuilt under a new id, which it can't write to.
    */
-  stoppedClaudeCodeExited(piSessionId: string | null | undefined, exited: boolean): void {
-    this.change(piSessionId, (state) =>
+  stoppedClaudeCodeExited(providerSessionId: string | null | undefined, exited: boolean): void {
+    this.change(providerSessionId, (state) =>
       exited
         ? { ...state, forceRotate: undefined }
         : { ...state, needsRebuild: true, forceRotate: true },
@@ -446,16 +452,19 @@ export class SessionMirrors {
    * A query held at a tool call was discarded, as the conversation was rewritten under it: its
    * Claude Code was killed, and may still write, so the next sync rebuilds under a new id.
    */
-  queryDiscarded(piSessionId: string | null | undefined): void {
-    this.change(piSessionId, (state) => ({ ...state, needsRebuild: true, forceRotate: true }))
+  queryDiscarded(providerSessionId: string | null | undefined): void {
+    this.change(providerSessionId, (state) => ({ ...state, needsRebuild: true, forceRotate: true }))
   }
 
   /**
    * A held turn's tool results went to its query: the session holds the conversation up to them,
    * `history` (system messages aside).
    */
-  resultsDelivered(piSessionId: string | null | undefined, history: PiMessages): void {
-    this.change(piSessionId, (state) => ({ ...state, ...holding(history) }))
+  resultsDelivered(
+    providerSessionId: string | null | undefined,
+    history: ConversationMessages,
+  ): void {
+    this.change(providerSessionId, (state) => ({ ...state, ...holding(history) }))
   }
 
   /**
@@ -468,16 +477,16 @@ export class SessionMirrors {
    * Claude Code has exited.
    */
   queryCompleted(
-    piSessionId: string | null | undefined,
+    providerSessionId: string | null | undefined,
     query: {
       readonly sessionId: string
-      readonly history: PiMessages
+      readonly history: ConversationMessages
       readonly cwd: string
       readonly incomplete: boolean
       readonly checkpoint: Checkpoint | undefined
     },
   ): boolean {
-    const state = this.state(piSessionId)
+    const state = this.state(providerSessionId)
     const rewindTo =
       query.incomplete && query.checkpoint?.sessionId === query.sessionId
         ? query.checkpoint
@@ -486,7 +495,7 @@ export class SessionMirrors {
       state !== null && state.sessionId === query.sessionId && state.cursor > query.history.length
         ? { cursor: state.cursor, prefixHash: state.prefixHash }
         : holding(query.history)
-    this.setState(piSessionId, {
+    this.setState(providerSessionId, {
       ...state,
       sessionId: query.sessionId,
       ...held,
@@ -501,26 +510,26 @@ export class SessionMirrors {
    * A query failed, and Claude Code's session is in a state the bridge can't know: the mirror goes,
    * and the session file with it. The next query rebuilds from the conversation.
    */
-  queryFailed(piSessionId: string | null | undefined): void {
-    const state = this.state(piSessionId)
-    this.setState(piSessionId, null)
+  queryFailed(providerSessionId: string | null | undefined): void {
+    const state = this.state(providerSessionId)
+    this.setState(providerSessionId, null)
     if (state) this.deleteClaudeSession(state.sessionId, state.cwd)
   }
 
   /** The conversation is gone: its mirror goes, and its session file. */
-  forget(piSessionId: string | null | undefined): void {
-    this.queryFailed(piSessionId)
+  forget(providerSessionId: string | null | undefined): void {
+    this.queryFailed(providerSessionId)
   }
 
   // --- Its insides ---
 
-  /** Changes `piSessionId`'s mirror, if it has one; the mirror as it was. */
+  /** Changes `providerSessionId`'s mirror, if it has one; the mirror as it was. */
   private change(
-    piSessionId: string | null | undefined,
+    providerSessionId: string | null | undefined,
     edit: (state: SessionState) => SessionState,
   ): SessionState | null {
-    const state = this.state(piSessionId)
-    if (state) this.setState(piSessionId, edit(state))
+    const state = this.state(providerSessionId)
+    if (state) this.setState(providerSessionId, edit(state))
     return state
   }
 
@@ -551,16 +560,16 @@ export class SessionMirrors {
    */
   private importMessages(
     session: Session,
-    messages: PiMessages,
+    messages: ConversationMessages,
     customToolNameToSdk: Map<string, string>,
     carried: ReadonlyArray<CarriedAttachment>,
   ): void {
-    const { anthropicMessages, sanitizedIds, dropped } = convertPiMessages(
+    const { anthropicMessages, sanitizedIds, dropped } = convertMessages(
       messages,
       customToolNameToSdk,
     )
     this.log.debug(
-      `importMessages: ${messages.length} pi msgs → ${anthropicMessages.length} anthropic msgs`,
+      `importMessages: ${messages.length} messages → ${anthropicMessages.length} anthropic msgs`,
     )
     const droppedParts = [
       dropped.thinking
@@ -622,11 +631,11 @@ export class SessionMirrors {
   private rewind(
     state: SessionState,
     checkpoint: Checkpoint,
-    history: PiMessages,
+    history: ConversationMessages,
     cwd: string,
     customToolNameToSdk: Map<string, string>,
     modelId: string | undefined,
-    piSessionId: string | null | undefined,
+    providerSessionId: string | null | undefined,
   ): SyncResult | undefined {
     const refuse = (why: string): undefined => {
       this.log.debug(`rewind: ${why}; rebuilding instead`)
@@ -678,11 +687,11 @@ export class SessionMirrors {
       ))
         this.log.diag("session_verify_fail", { warning, cwd, claudeDir: this.claudeDir ?? null })
       const held = history.slice(0, promptFrom)
-      this.setState(piSessionId, { sessionId: state.sessionId, ...holding(held), cwd })
+      this.setState(providerSessionId, { sessionId: state.sessionId, ...holding(held), cwd })
       this.log.debug(
         `syncResult: path=truncate sessionId=${state.sessionId} kept=${checkpoint.bytes + plan.keep}B ` +
           `prompt=${plan.keptPrompt ? `kept(${prompt})` : "rewritten"} cut=${plan.cut.length} records, ` +
-          `wrote ${rest.length} pi msgs`,
+          `wrote ${rest.length} messages`,
       )
       const next = checkpointAt(state.sessionId, jsonlPath, held)
       return {
@@ -696,8 +705,9 @@ export class SessionMirrors {
   }
 
   /**
-   * Reads back the sessions a bridge before this one kept: each is rebuilt, under its id, at its
-   * conversation's next turn, as what its file holds past its last turn isn't known.
+   * Reads back the sessions a bridge before this one kept: each is rebuilt at its conversation's
+   * next turn, as what its file holds past its last turn isn't known, and under a new id: a Claude
+   * Code the bridge before left running (it was killed, not stopped) may still write to the file.
    */
   private load(): void {
     const path = this.options.savePath
@@ -709,9 +719,15 @@ export class SessionMirrors {
       return
     }
     if (saved.version !== 1) return
-    for (const [piSessionId, { sessionId, cwd }] of Object.entries(saved.sessions ?? {})) {
+    for (const [providerSessionId, { sessionId, cwd }] of Object.entries(saved.sessions ?? {})) {
       if (typeof sessionId !== "string" || typeof cwd !== "string") continue
-      this.states.set(piSessionId, { sessionId, cursor: 0, cwd, needsRebuild: true })
+      this.states.set(providerSessionId, {
+        sessionId,
+        cursor: 0,
+        cwd,
+        needsRebuild: true,
+        forceRotate: true,
+      })
     }
     this.saved = JSON.stringify(this.toSaved())
     this.log.debug(`load: ${this.states.size} conversations' sessions from ${path}`)
@@ -719,8 +735,8 @@ export class SessionMirrors {
 
   private toSaved(): SavedSessions {
     const sessions: Record<string, { sessionId: string; cwd: string }> = {}
-    for (const [piSessionId, state] of this.states)
-      sessions[piSessionId] = { sessionId: state.sessionId, cwd: state.cwd }
+    for (const [providerSessionId, state] of this.states)
+      sessions[providerSessionId] = { sessionId: state.sessionId, cwd: state.cwd }
     return { version: 1, sessions }
   }
 
@@ -740,5 +756,3 @@ export class SessionMirrors {
     }
   }
 }
-
-const key = (piSessionId: string | null | undefined) => piSessionId ?? "(none)"

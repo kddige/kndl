@@ -80,7 +80,8 @@ describe("the guard against sending pi's harness", () => {
     )
     expect(error.message).toContain(PiPreamble)
     expect(error.message).toMatch(/offset \d+ of \d+ chars/)
-    expect(error.message).toMatch(/KNDL_CLAUDE_DEBUG=1/)
+    expect(error.message).toMatch(/AGENTS\.md or CLAUDE\.md/)
+    expect(error.message).not.toContain("KNDL_CLAUDE_DEBUG")
   })
 
   test("lets a mention of pi's preamble mid-line through", () => {

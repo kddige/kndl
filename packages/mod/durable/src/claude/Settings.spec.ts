@@ -130,7 +130,7 @@ describe("the bridge's provider", () => {
       claudeCodePath: "/opt/kndl/claude-code/test/claude",
       configDir: claudeDir,
       oauthToken: "sk-ant-oat-creator",
-      cwd: (sessionId) => `/workspace/${sessionId ?? "none"}`,
+      cwd: "/workspace",
       models: [{ id: "claude-haiku-5-5" }],
       env: { PATH: "/bin", IS_SANDBOX: "1", ...forbidden },
       query: capturing(captured),
@@ -154,7 +154,7 @@ describe("the bridge's provider", () => {
       for (const options of captured) {
         expect(options.pathToClaudeCodeExecutable).toBe("/opt/kndl/claude-code/test/claude")
         expect(options.tools).toEqual([])
-        expect(options.cwd).toBe("/workspace/s-env")
+        expect(options.cwd).toBe("/workspace")
         const env = options.env ?? {}
         for (const name of Object.keys(forbidden)) expect(env[name]).toBeUndefined()
         expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat-creator")

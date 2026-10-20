@@ -169,6 +169,59 @@ describe("a summary request", () => {
     expect(options.cwd).toBe("/workspace")
   })
 
+  test("is as long as the caller allows", async () => {
+    expect(
+      (await summarize(fable, { maxTokens: 4096 })).options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+    ).toBe("4096")
+    const unlimited = await summarize(fable, {})
+    expect(unlimited.options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined()
+  })
+
+  test("reports what Claude Code's result says it used", async () => {
+    const reporting = useQuery(
+      answering([], () => [
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "summary",
+          usage: {
+            input_tokens: 120,
+            output_tokens: 30,
+            cache_read_input_tokens: 10,
+            cache_creation_input_tokens: 5,
+          },
+        },
+      ]),
+    )
+    const message = await reporting
+      .streamSimple(fable, transcriptOf(context), { cacheRetention: "none" })
+      .result()
+    expect(message.usage).toMatchObject({
+      input: 120,
+      output: 30,
+      cacheRead: 10,
+      cacheWrite: 5,
+      totalTokens: 165,
+    })
+  })
+
+  test("starts no query once the bridge is closed", async () => {
+    const calls: Array<{ readonly prompt: unknown; readonly options: Options }> = []
+    const closing = useQuery(
+      answering(calls, () => [
+        { type: "result", subtype: "success", is_error: false, result: "summary" },
+      ]),
+    )
+    await closing.close()
+    const message = await closing
+      .streamSimple(fable, transcriptOf(context), { cacheRetention: "none" })
+      .result()
+    expect(message.stopReason).toBe("error")
+    expect(message.errorMessage).toBe("The Claude bridge is closed")
+    expect(calls).toEqual([])
+  })
+
   test("fails with Claude Code's failure, or when it says nothing", async () => {
     const failing = useQuery(
       answering([], () => [

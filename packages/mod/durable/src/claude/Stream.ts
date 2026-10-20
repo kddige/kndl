@@ -12,11 +12,9 @@ import type {
   AssistantMessageEventStream,
   JsonObject,
   Model,
-  SimpleStreamOptions,
 } from "@earendil-works/pi-ai"
 import type { BridgeLog } from "./Log.ts"
 import type { LiveBlock, QueryContext } from "./QueryState.ts"
-import { rateLimitResponse } from "./RateLimit.ts"
 import type { RateLimitInfo } from "./RateLimit.ts"
 import { updateUsage } from "./Usage.ts"
 import type { SdkUsage } from "./Usage.ts"
@@ -65,6 +63,8 @@ export interface SdkMessage {
     readonly usage?: SdkUsage
   }
   readonly session_id?: string
+  /** A result's: what the query used. */
+  readonly usage?: SdkUsage
   readonly rate_limit_info?: RateLimitInfo
   readonly modelUsage?: Readonly<
     Record<string, { readonly contextWindow?: number; readonly maxOutputTokens?: number }>
@@ -120,18 +120,6 @@ function describeRateLimitFailure(
   return `Claude quota exceeded — rate limit${kind}${resets}: ${failure}`
 }
 
-/** Reports a held rate-limit event to the call owning the open stream, as pi-ai's providers do. */
-async function reportHeldRateLimit(c: QueryContext, model: Model<Api>): Promise<void> {
-  const info = c.heldRateLimit
-  if (!info || !c.currentPiStream || !c.currentOnResponse) return
-  c.heldRateLimit = undefined
-  try {
-    await c.currentOnResponse(rateLimitResponse(info), model)
-  } catch (error) {
-    c.log.debug("rate limit: onResponse failed", error)
-  }
-}
-
 /** The context window Claude Code served, which may differ from the listed one. */
 export function logServedContextWindow(
   log: BridgeLog,
@@ -153,8 +141,11 @@ export function logServedContextWindow(
  * a builtin. Claude Code answers those itself ("No such tool available") and retries under a new
  * id, so one must never reach the agent: it would run a tool Claude Code never ran, and deadlock.
  */
-function piToolNameFor(name: string, customToolNameToPi: Map<string, string>): string | undefined {
-  return customToolNameToPi.get(name) ?? customToolNameToPi.get(name.toLowerCase())
+function agentToolNameFor(
+  name: string,
+  customToolNameToAgent: Map<string, string>,
+): string | undefined {
+  return customToolNameToAgent.get(name) ?? customToolNameToAgent.get(name.toLowerCase())
 }
 
 /** Claude Code's argument names that differ from the coding tools' own. */
@@ -218,17 +209,14 @@ function recordUsage(c: QueryContext, usage: SdkUsage, model: Model<Api>): void 
 
 // --- Streaming into the open turn ---
 
-/** Makes `stream` the open turn's, whose call's `onResponse` hears of rate limits. */
-export function claimCurrentPiStream(
+/** Makes `stream` the open turn's. */
+export function claimCurrentStream(
   stream: AssistantMessageEventStream,
   label: string,
   c: QueryContext,
-  options: SimpleStreamOptions | undefined,
 ): void {
-  if (c.currentPiStream)
-    c.log.debug(`WARNING: currentPiStream overwritten before its end (${label})`)
-  c.currentPiStream = stream
-  c.currentOnResponse = options?.onResponse
+  if (c.currentStream) c.log.debug(`WARNING: currentStream overwritten before its end (${label})`)
+  c.currentStream = stream
 }
 
 /** Ends the open turn as the query left it, at the query's end. */
@@ -244,11 +232,11 @@ export function finalizeCurrentStream(c: QueryContext): AssistantMessage | undef
 /** Maps Anthropic stream events onto pi-ai's (text, thinking, tool calls); a tool call ends the turn. */
 function processStreamEvent(
   message: SdkMessage,
-  customToolNameToPi: Map<string, string>,
+  customToolNameToAgent: Map<string, string>,
   model: Model<Api>,
   c: QueryContext,
 ): void {
-  const stream = c.currentPiStream
+  const stream = c.currentStream
   const output = c.turnOutput
   if (!stream || !output) return
   c.turnSawStreamEvent = true
@@ -283,8 +271,8 @@ function processStreamEvent(
       })
       stream.push({ type: "thinking_start", contentIndex: c.turnBlocks.length - 1, partial })
     } else if (block?.type === "tool_use" && block.id !== undefined) {
-      const piName = piToolNameFor(block.name ?? "", customToolNameToPi)
-      if (!piName) {
+      const agentName = agentToolNameFor(block.name ?? "", customToolNameToAgent)
+      if (!agentName) {
         c.log.debug(
           `processStreamEvent: skipping tool_use for unserved tool ${block.name} [${block.id}]`,
         )
@@ -294,7 +282,7 @@ function processStreamEvent(
       c.turnBlocks.push({
         type: "toolCall",
         id: block.id,
-        name: piName,
+        name: agentName,
         arguments: asJsonObject(block.input),
         partialJson: "",
         ...(index === undefined ? {} : { index }),
@@ -424,11 +412,11 @@ function dropAbandonedStreamBlocks(c: QueryContext, why: string): void {
 function processAssistantMessage(
   message: SdkMessage,
   model: Model<Api>,
-  customToolNameToPi: Map<string, string>,
+  customToolNameToAgent: Map<string, string>,
   c: QueryContext,
 ): void {
   const assistantMsg = message.message
-  const stream = c.currentPiStream
+  const stream = c.currentStream
   const output = c.turnOutput
   if (!assistantMsg?.content || !stream || !output) return
   const partial = output as AssistantMessage
@@ -478,8 +466,8 @@ function processAssistantMessage(
         partial,
       })
     } else if (block.type === "tool_use" && block.id !== undefined) {
-      const piName = piToolNameFor(block.name ?? "", customToolNameToPi)
-      if (!piName) {
+      const agentName = agentToolNameFor(block.name ?? "", customToolNameToAgent)
+      if (!agentName) {
         c.log.debug(`processAssistantMessage: skipping tool_use for unserved tool ${block.name}`)
         continue
       }
@@ -489,8 +477,8 @@ function processAssistantMessage(
       const toolCall: LiveBlock = {
         type: "toolCall",
         id: block.id,
-        name: piName,
-        arguments: mapToolArgs(piName, block.input),
+        name: agentName,
+        arguments: mapToolArgs(agentName, block.input),
       }
       c.turnBlocks.push(toolCall)
       const idx = c.turnBlocks.length - 1
@@ -512,7 +500,7 @@ function processAssistantMessage(
  */
 export async function consumeQuery(
   sdkQuery: AsyncIterable<unknown>,
-  customToolNameToPi: Map<string, string>,
+  customToolNameToAgent: Map<string, string>,
   model: Model<Api>,
   wasAborted: () => boolean,
   queryCtx: QueryContext,
@@ -522,7 +510,6 @@ export async function consumeQuery(
   for await (const raw of sdkQuery) {
     const message = raw as SdkMessage
     if (wasAborted()) break
-    await reportHeldRateLimit(queryCtx, model)
     // Not content, so not behind the open-turn guard below: closing stdin (nothing else closes
     // it, the prompt being a stream), the failure a result carries, and rate-limit events.
     let resultError: string | undefined
@@ -557,19 +544,17 @@ export async function consumeQuery(
         "consumeQuery: rate_limit_event",
         JSON.stringify(info ?? null).slice(0, 300),
       )
-      if (info) queryCtx.heldRateLimit = info
-      await reportHeldRateLimit(queryCtx, model)
       noteRateLimit(queryCtx, info)
       continue
     }
-    if (!queryCtx.currentPiStream || !queryCtx.turnOutput) continue
+    if (!queryCtx.currentStream || !queryCtx.turnOutput) continue
 
     switch (message.type) {
       case "stream_event":
-        processStreamEvent(message, customToolNameToPi, model, queryCtx)
+        processStreamEvent(message, customToolNameToAgent, model, queryCtx)
         break
       case "assistant":
-        processAssistantMessage(message, model, customToolNameToPi, queryCtx)
+        processAssistantMessage(message, model, customToolNameToAgent, queryCtx)
         break
       case "result": {
         // The failure was taken above; on success, the result's text when nothing brought it,
@@ -585,14 +570,14 @@ export async function consumeQuery(
           queryCtx.turnBlocks.push({ type: "text", text })
           const idx = queryCtx.turnBlocks.length - 1
           const partial = queryCtx.turnOutput as AssistantMessage
-          queryCtx.currentPiStream.push({ type: "text_start", contentIndex: idx, partial })
-          queryCtx.currentPiStream.push({
+          queryCtx.currentStream.push({ type: "text_start", contentIndex: idx, partial })
+          queryCtx.currentStream.push({
             type: "text_delta",
             contentIndex: idx,
             delta: text,
             partial,
           })
-          queryCtx.currentPiStream.push({
+          queryCtx.currentStream.push({
             type: "text_end",
             contentIndex: idx,
             content: text,
@@ -622,7 +607,7 @@ export async function consumeQuery(
   return capturedSessionId === undefined ? {} : { capturedSessionId }
 }
 
-/** Tells the person at the terminal of a rate limit reached or near. */
+/** Notices a rate limit reached or near: the agent logs it, and a failure it causes names it. */
 function noteRateLimit(c: QueryContext, info: RateLimitInfo | undefined): void {
   if (info?.status === "rejected") {
     // Held, so the failure Claude Code sends next is named as a rate limit.

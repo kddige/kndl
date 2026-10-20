@@ -141,12 +141,12 @@ export function assertSendablePrompt(systemPrompt: string | undefined): void {
 
   throw new Error(
     [
-      "claude bridge: refusing to send this system prompt. Claude Code's Anthropic path reads a",
-      "  request carrying pi's harness, or the phrase pair its subscription gate rejects, as a",
-      "  third-party app: it fails with 400 or is billed as extra usage.",
+      "claude bridge: refusing to send this system prompt. Claude's subscription reads a request",
+      "  carrying pi's harness text, or the phrase pair its gate rejects, as a third-party app: it",
+      "  fails with 400 or is billed as extra usage.",
       ...findings.map((finding) => `  Found: ${finding}.`),
-      "  If it is your own text, reword or remove it. KNDL_CLAUDE_DEBUG=1 writes the full prompt to",
-      "  the bridge's log.",
+      "  Reword or remove that text where it comes from: the instructions in this workspace's",
+      "  AGENTS.md or CLAUDE.md, or one of its skills.",
     ].join("\n"),
   )
 }

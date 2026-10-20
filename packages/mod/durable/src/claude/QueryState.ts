@@ -28,7 +28,6 @@ import type {
   AssistantMessageEventStream,
   Message,
   Model,
-  SimpleStreamOptions,
   StopReason,
   TextContent,
   ThinkingContent,
@@ -37,10 +36,9 @@ import type {
 import { silentLog } from "./Log.ts"
 import type { BridgeLog } from "./Log.ts"
 import type { PromptStream } from "./PromptStream.ts"
-import type { RateLimitInfo } from "./RateLimit.ts"
 import type { McpResult } from "./ToolResults.ts"
 
-/** A notice for the people watching the Session, such as a rate limit reached. */
+/** A notice about the bridge's queries, such as a rate limit reached: the agent logs it. */
 export type Notice = (text: string, level: "info" | "warning" | "error") => void
 
 export interface PendingToolCall {
@@ -119,14 +117,7 @@ export class QueryContext {
   // The query's.
   activeQuery: QueryHandle | null = null
   /** The open turn's stream, until its terminal event. */
-  currentPiStream: AssistantMessageEventStream | null = null
-  /** onResponse from the provider call that owns currentPiStream. */
-  currentOnResponse: SimpleStreamOptions["onResponse"] | undefined
-  /**
-   * The latest rate_limit_event not reported yet. Claude Code sends it after message_stop, when a
-   * tool call has already ended the turn, so it waits for the next call's stream.
-   */
-  heldRateLimit: RateLimitInfo | undefined
+  currentStream: AssistantMessageEventStream | null = null
   /**
    * The messages (system messages aside) of the latest call into the query: what Claude Code's
    * session holds once the query has answered them, and what the next call's must start with, or
@@ -160,7 +151,7 @@ export class QueryContext {
    * The conversation the query serves (`SimpleStreamOptions.sessionId`): a process serves many at
    * once (threads, subagents), each its own context.
    */
-  piSessionId: string | null = null
+  providerSessionId: string | null = null
   /** A steer never reached Claude Code; the mirror the query completes has to rebuild. */
   missedSteer = false
   /**
@@ -170,6 +161,11 @@ export class QueryContext {
   failed = false
   /** The query was stopped: a tool result a call brings next isn't for it. */
   aborted = false
+  /**
+   * The reaper stopped the query for waiting too long on a tool result: one a call brings later
+   * starts a query, which is told so.
+   */
+  reaped = false
   /** Stops the query as an abort does, while it runs (or the wait before it starts). */
   stop: (() => void) | undefined
   /** Settles once the query has ended and the bridge is done with it. */
@@ -252,8 +248,8 @@ export class QueryContext {
 
   /** Pushes `start` for the open turn, once. */
   ensureTurnStarted(): void {
-    if (!this.turnStarted && this.currentPiStream && this.turnOutput) {
-      this.currentPiStream.push({ type: "start", partial: this.turnOutput as AssistantMessage })
+    if (!this.turnStarted && this.currentStream && this.turnOutput) {
+      this.currentStream.push({ type: "start", partial: this.turnOutput as AssistantMessage })
       this.turnStarted = true
     }
   }
@@ -267,7 +263,7 @@ export class QueryContext {
   endTurn(
     change?: Partial<Pick<AssistantMessage, "stopReason" | "errorMessage">>,
   ): AssistantMessage | undefined {
-    const stream = this.currentPiStream
+    const stream = this.currentStream
     const live = this.turnOutput
     if (!stream || !live) return undefined
     this.unbindSignal()
@@ -284,7 +280,7 @@ export class QueryContext {
       stream.push({ type: "done", reason, message })
     }
     stream.end()
-    this.currentPiStream = null
+    this.currentStream = null
     this.turnOutput = null
     return message
   }
