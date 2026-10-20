@@ -109,23 +109,11 @@
 //   the agent up, and stays open past the end of its Turn: the mod gives the agent the answer as a
 //   message, into the Turn if it still runs, else as a Turn of its own.
 // - Threads (docs/design/durable-harness.md): conversations forked off the main loop at one of its
-//   Turns, which run beside it. Anyone starts one (CreateThread), posts into it (PromptThread),
-//   stops its Turn (StopThread), switches its model to one of the Creator's (SetThreadModel), or
-//   compacts it or the main loop (CompactConversation); an Asleep Session is woken first, as for a
-//   message to a subagent. The Hub mints a thread's id, keeps it with the Session (Sessions.ts),
-//   whose summary lists it with its own Model, the Session's as it was when none was picked,
-//   which it keeps, logs ThreadStarted, ThreadPromptSent and ThreadModelChanged itself, and sends
-//   the mod the command. A prompt the agent fails is logged as a ThreadPromptFailed, and a thread
-//   it could not start is forgotten with it. An agent whose hello said it isn't the durable agent is refused
-//   them, saying to restart it. The commands aren't lost to an outbox dropped as the agent stops,
-//   or sent while it sleeps or starts: each is kept (ThreadCommands.ts) and sent again after every
-//   hello of the agent, until a Turn starts from its prompt or the prompt steers one, or, for the
-//   others, the mod has polled past it. Sent twice, a prompt runs once: the agent submits it with
-//   its id as its request id. A thread's Turn events carry its id: its TurnStarted and TurnEnded
-//   set it running and idle, never the Session's Turn, and its PromptSteered leaves the Prompt
-//   queue alone. A running thread keeps the Session from idling to sleep, and a draining Runner
-//   waits for it, as for a subagent. The agent's compactions, Plan and running cost are logged as
-//   it reports them.
+//   Turns, which run beside it. Their commands (CreateThread, PromptThread, StopThread,
+//   SetThreadModel, CompactConversation) and the agent's events about them are handled by
+//   ThreadRelay.ts, and the commands it sends the agent are kept and sent again by ThreadOutbox.ts.
+//   A running thread keeps the Session from idling to sleep, and a draining Runner waits for it, as
+//   for a subagent. The agent's compactions, Plan and running cost are logged as it reports them.
 // - The agent stopping (put to sleep, exited, failed to start, relaunched, archived, or not running
 //   on a Runner that is back): the Turn its main loop ran, and each thread's, is logged ended
 //   `aborted`, saying why, before the question it asked is cancelled, so the transcript shows it
@@ -278,6 +266,7 @@ import {
   sessionsRefusal,
   type SessionEvent,
   SessionEventLogged,
+  type SessionLogEntry,
   type SessionInstallation,
   failureBlocksStart,
   type InstallationFailure,
@@ -288,20 +277,9 @@ import {
   TurnStarted,
   TurnEnded,
   type TextDelta,
-  Compact,
-  DeliverThreadPrompt,
   SessionModels,
-  StartThread,
-  StopThread,
-  SwitchThreadModel,
-  ThreadCreated,
-  ThreadId,
+  type ThreadId,
   type TurnId,
-  ThreadModelChanged,
-  ThreadPromptFailed,
-  ThreadPromptSent,
-  ThreadStarted,
-  threadTitleFrom,
   SessionId,
   SessionDiskUsage,
   SessionRemoved,
@@ -369,9 +347,8 @@ import {
   type Scope,
   Semaphore,
 } from "effect"
-import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
-import { Attachments } from "./Attachments.ts"
+import { Attachments, carrying } from "./Attachments.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { type CliIdentity, CliTokens } from "./CliTokens.ts"
 import { closeReason } from "./CloseReason.ts"
@@ -385,7 +362,7 @@ import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { readHandoff } from "./Handoff.ts"
-import { type CheckedModel, makeHarnesses, type SessionHarness } from "./Harnesses.ts"
+import { makeHarnesses, type SessionHarness } from "./Harnesses.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
@@ -437,7 +414,8 @@ import { makeSessionDiskUsage } from "./SessionDiskUsage.ts"
 import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { type ModelSetting, Sessions } from "./Sessions.ts"
-import { type ThreadCommand, ThreadCommands } from "./ThreadCommands.ts"
+import { makeThreadOutbox } from "./ThreadOutbox.ts"
+import { isThreadCommand, makeThreadRelay } from "./ThreadRelay.ts"
 import { randomId } from "./Tokens.ts"
 import { type PendingTunnel, TunnelRefused, Tunnels } from "./Tunnels.ts"
 
@@ -466,10 +444,6 @@ export { startLogLimit } from "./LiveSessions.ts"
  */
 export const lastOutputText = (needles: Needles, output: string) =>
   redactText(needles, output).slice(-MaxLastOutputLength)
-
-/** `attachments` as an event's optional field: absent for none. */
-const carrying = (logged: ReadonlyArray<Attachment>) =>
-  logged.length > 0 ? { attachments: logged } : {}
 
 /** Whether two lists of Open ports say the same. */
 const samePorts = (a: ReadonlyArray<OpenPort>, b: ReadonlyArray<OpenPort>) =>
@@ -658,12 +632,6 @@ const streamKey = (event: {
   readonly threadId?: string
 }) => `${event.turnId}/${event.agentId ?? ""}/${event.threadId ?? ""}`
 
-/** The prompt a thread command carries, if it carries one. */
-const promptOfCommand = (command: ThreadCommand) =>
-  command._tag === "StartThread" || command._tag === "DeliverThreadPrompt"
-    ? command.promptId
-    : undefined
-
 export class SessionRelay extends Context.Service<
   SessionRelay,
   {
@@ -779,11 +747,9 @@ export class SessionRelay extends Context.Service<
   static readonly layer = Layer.effect(
     SessionRelay,
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient
       const sessions = yield* Sessions
       const log = yield* SessionLog
       const prompts = yield* PromptQueue
-      const threadCommands = yield* ThreadCommands
       const attachments = yield* Attachments
       const runners = yield* Runners
       const modTokens = yield* ModTokens
@@ -1152,13 +1118,22 @@ export class SessionRelay extends Context.Service<
           Effect.asVoid,
         )
 
+      /** Sends entries already appended to the Session's log to those who joined, and marks it busy. */
+      const broadcast = Effect.fn("SessionRelay.broadcast")(function* (
+        sessionId: SessionId,
+        entries: ReadonlyArray<SessionLogEntry>,
+      ) {
+        for (const entry of entries) {
+          toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
+        }
+        yield* markBusy(sessionId)
+      })
+
       const append = Effect.fn("SessionRelay.append")(function* (
         sessionId: SessionId,
         event: SessionEvent,
       ) {
-        const entry = yield* log.append(sessionId, event)
-        toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
-        yield* markBusy(sessionId)
+        yield* broadcast(sessionId, [yield* log.append(sessionId, event)])
       })
 
       /** Logs the text a stream holds back. */
@@ -1175,6 +1150,15 @@ export class SessionRelay extends Context.Service<
           ...(stream.threadId !== undefined && { threadId: stream.threadId }),
           text,
         })
+      })
+
+      /** Logs the text all of the Session's streams hold back. */
+      const letSessionTextGo = Effect.fn("SessionRelay.letSessionTextGo")(function* (
+        sessionId: SessionId,
+      ) {
+        for (const stream of live.textStreams.get(sessionId)?.values() ?? []) {
+          yield* letTextGo(sessionId, stream)
+        }
       })
 
       /** Logs a TextDelta as far as it can be, redacted, holding back what could start a value. */
@@ -1224,9 +1208,9 @@ export class SessionRelay extends Context.Service<
       ) {
         const needles = yield* needlesForSession(sessionId)
         if (event._tag === "TextDelta") return yield* textDelta(sessionId, needles, event)
+        yield* letSessionTextGo(sessionId)
         const streams = live.textStreams.get(sessionId)
         if (streams !== undefined) {
-          for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
           if (event._tag === "TurnEnded") {
             // The main loop's ends its subagents' streams too; a thread's or a subagent's, its own.
             if (event.agentId !== undefined || event.threadId !== undefined) {
@@ -1784,165 +1768,20 @@ export class SessionRelay extends Context.Service<
 
       // ── Threads (docs/design/durable-harness.md) ─────────────────────────
 
-      /**
-       * Who last switched each thread's model, by `<sessionId>/<threadId>`, to be told if the agent
-       * can't. In memory only: after a Hub restart, a failed switch is only noted in the Session.
-       */
-      const threadModelSwitchers = new Map<string, ParticipantId>()
+      /** The thread commands and Compacts the durable agent hasn't taken, kept and sent again. */
+      const threadOutbox = yield* makeThreadOutbox(live)
 
-      /**
-       * Sends the Session's agent a thread command it hasn't taken yet: one that isn't a prompt is
-       * done once the mod polls past it (`modPolled`), a prompt once its Turn starts or it steers
-       * one.
-       */
-      const sendThreadCommand = Effect.fn("SessionRelay.sendThreadCommand")(function* (
-        sessionId: SessionId,
-        pending: number,
-        command: ThreadCommand,
-      ) {
-        const seq = yield* outbox.enqueue(sessionId, command)
-        if (promptOfCommand(command) === undefined)
-          live.threadCommandSent(sessionId, { seq, pending })
-      })
-
-      /** Sends an already committed command now, if the durable agent is ready for it. */
-      const sendPendingThreadCommand = Effect.fn("SessionRelay.sendPendingThreadCommand")(
-        function* (sessionId: SessionId, pending: number, command: ThreadCommand) {
-          const session = yield* sessions.get(sessionId)
-          if (Option.isNone(session)) return
-          const { state } = session.value
-          const running = state === "Active" || state === "Frozen"
-          if (!running || live.awaitingHello(sessionId) || live.modDurable(sessionId) !== true)
-            return
-          yield* sendThreadCommand(sessionId, pending, command)
-        },
-      )
-
-      /**
-       * Keeps a thread command or Compact before sending it. One starting, or asleep, takes it
-       * after its hello, with every other command it hasn't taken.
-       */
-      const queueThreadCommand = Effect.fn("SessionRelay.queueThreadCommand")(function* (
-        sessionId: SessionId,
-        command: ThreadCommand,
-      ) {
-        const pending = yield* threadCommands.add(sessionId, command)
-        yield* sendPendingThreadCommand(sessionId, pending, command)
-      })
-
-      /**
-       * A thread prompt is admitted all at once: its thread (when new), its visible events and
-       * its replayable command. Never call logEvent or enqueue the in-memory outbox inside this
-       * transaction: neither broadcasts nor live state can roll back. Held text is unrelated to
-       * admission and flushed first, as logEvent would do. Only committed entries are broadcast.
-       * A crash after commit may miss a broadcast/ThreadCreated, but history and the next agent
-       * hello recover the saved prompt; an uncommitted prompt leaves neither history nor command.
-       */
-      const admitThreadPrompt = Effect.fn("SessionRelay.admitThreadPrompt")(function* (
-        sessionId: SessionId,
-        command: StartThread | DeliverThreadPrompt,
-        /** The web command it came from, which its ThreadPromptSent carries back to the sender. */
-        requestId: RequestId,
-      ) {
-        const needles = yield* needlesForSession(sessionId)
-        const streams = live.textStreams.get(sessionId)
-        if (streams !== undefined) {
-          for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
-        }
-        const { threadId, promptId, sender, text, attachments: carried } = command
-        const admitted = yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const events: Array<ThreadStarted | ThreadPromptSent> = []
-            if (command._tag === "StartThread") {
-              const { anchorTurnId, model, thinkingLevel } = command
-              // Redacted before it is kept: the Session's summary lists it to everyone, past what
-              // the log's redaction covers. Before it is clipped, so a value isn't cut in two.
-              const title = threadTitleFrom(redactText(needles, text))
-              yield* sessions.threadStarted(sessionId, {
-                id: threadId,
-                anchorTurnId,
-                title,
-                startedBy: sender.id,
-                model,
-                ...(thinkingLevel !== undefined && { thinkingLevel }),
-                createdAt: yield* Clock.currentTimeMillis,
-              })
-              events.push(
-                ThreadStarted.make({
-                  threadId,
-                  anchorTurnId,
-                  title,
-                  startedBy: sender,
-                  model,
-                  ...(thinkingLevel !== undefined && { thinkingLevel }),
-                }),
-              )
-            }
-            events.push(
-              ThreadPromptSent.make({
-                threadId,
-                promptId,
-                requestId,
-                sender,
-                text,
-                ...carrying(carried ?? []),
-              }),
-            )
-            const entries = []
-            for (const event of events)
-              entries.push(yield* log.append(sessionId, redactEvent(needles, event)))
-            const pending = yield* threadCommands.add(sessionId, command)
-            return { entries, pending }
-          }),
-        )
-        for (const entry of admitted.entries) {
-          toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
-        }
-        yield* markBusy(sessionId)
-        yield* sendPendingThreadCommand(sessionId, admitted.pending, command)
-      })
-
-      /**
-       * The agent couldn't switch a thread's model: the thread runs on what it ran on, its setting
-       * says so again unless it was switched since, and whoever switched it is told, or, if the
-       * Hub doesn't know who, the Session's history says so.
-       */
-      const threadModelSwitchFailed = Effect.fn("SessionRelay.threadModelSwitchFailed")(function* (
-        sessionId: SessionId,
-        threadId: ThreadId,
-        event: Extract<ModEvent, { readonly _tag: "ModelSwitchFailed" }>,
-      ) {
-        const session = yield* sessions.get(sessionId)
-        const thread = yield* sessions.threadOf(sessionId, threadId)
-        if (Option.isNone(session) || Option.isNone(thread)) return
-        if (thread.value.model === event.asked) {
-          const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
-          const { thinkingLevel } = thread.value
-          // Only a Model of its Creator's is taken as the one it runs on; else the setting stays.
-          if (findProviderModel(creatorModels, event.model) !== undefined) {
-            yield* sessions.setThreadModel(sessionId, threadId, {
-              model: event.model,
-              ...(thinkingLevel !== undefined && { thinkingLevel }),
-            })
-            yield* sessionUpdated(sessionId)
-          }
-        }
-        // The title was redacted when it was kept; a thread from before that is redacted now.
-        const needles = yield* needlesForSession(sessionId)
-        const message = redactText(
-          needles,
-          `Couldn't switch the thread “${thread.value.title}” to ${event.asked ?? "another model"}: ${event.message}. It still runs on ${event.model}.`,
-        )
-        const key = `${sessionId}/${threadId}`
-        const switcher = threadModelSwitchers.get(key)
-        threadModelSwitchers.delete(key)
-        if (switcher === undefined) {
-          return yield* logEvent(sessionId, SandboxNoted.make({ message }))
-        }
-        toWeb(
-          CommandFailed.make({ command: "SetThreadModel", sessionId, message }),
-          (client) => client.you.id === switcher,
-        )
+      const threadRelay = yield* makeThreadRelay({
+        live,
+        outbox: threadOutbox,
+        toWeb: (message, to) => toWeb(message, to),
+        logEvent: (sessionId, event) => logEvent(sessionId, event),
+        letTextGo: (sessionId) => letSessionTextGo(sessionId),
+        broadcast: (sessionId, entries) => broadcast(sessionId, entries),
+        needlesFor: (sessionId) => needlesForSession(sessionId),
+        sessionUpdated: (sessionId) => sessionUpdated(sessionId),
+        wake: (session, by) => wake(session, { by }),
+        checkModel: (asked, creatorId) => harnesses.agent.check(asked, { creatorId }),
       })
 
       /** The Models the Session can run on, its Creator's (ADR 0026), as its joiners are sent them. */
@@ -2011,7 +1850,7 @@ export class SessionRelay extends Context.Service<
         // In place of the old one: the old mod has nothing more to say.
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         // Commands the old mod didn't collect are stale, as when it sleeps; thread commands are
-        // kept (ThreadCommands.ts), for the new one.
+        // kept (ThreadOutbox.ts), for the new one.
         yield* outbox.clear(session.id)
         live.relaunched(session.id)
         yield* sessions.setModelPending(session.id, false)
@@ -2052,9 +1891,7 @@ export class SessionRelay extends Context.Service<
         restartGoesOn = false,
       ) {
         // Claude's held text is logged before what says it is gone, as the next event would.
-        for (const stream of live.textStreams.get(session.id)?.values() ?? []) {
-          yield* letTextGo(session.id, stream)
-        }
+        yield* letSessionTextGo(session.id)
         live.ended(session.id, restartGoesOn ? "ClaudeGoneRestarting" : "ClaudeGone")
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
@@ -2115,11 +1952,8 @@ export class SessionRelay extends Context.Service<
           const startedAt = yield* log.mainTurnStartedAt(session.id, currentTurn)
           yield* logEvent(session.id, ended(currentTurn, startedAt))
         }
-        const threads = yield* sessions.endThreadTurns(session.id)
-        for (const turn of threads) {
-          yield* logEvent(session.id, ended(turn.turnId, turn.startedAt, turn.threadId))
-        }
-        return currentTurn !== null || threads.length > 0
+        const threadsEnded = yield* threadRelay.endTurns(session.id, ended)
+        return currentTurn !== null || threadsEnded
       })
 
       /**
@@ -2239,9 +2073,7 @@ export class SessionRelay extends Context.Service<
         // A thread command that carries no prompt, such as a model switch, is taken as it wakes.
         if (
           (yield* prompts.list(sessionId)).length === 0 &&
-          !(yield* threadCommands.pending(sessionId)).some(
-            (pending) => promptOfCommand(pending.command) !== undefined,
-          )
+          !(yield* threadOutbox.hasPrompts(sessionId))
         ) {
           return
         }
@@ -2345,7 +2177,7 @@ export class SessionRelay extends Context.Service<
         const at = yield* Clock.currentTimeMillis
         live.ended(session.id, "Archived")
         yield* outbox.clear(session.id)
-        yield* threadCommands.clear(session.id)
+        yield* threadOutbox.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
         for (const client of peers.webClients) client.terminals.delete(session.id)
@@ -2761,108 +2593,11 @@ export class SessionRelay extends Context.Service<
           }))
         })
 
-        /**
-         * The Session a thread command names, unless it is Archived or its agent doesn't take
-         * threads (docs/design/durable-harness.md); else none, the command refused.
-         */
-        const threadSession = Effect.fn("SessionRelay.threadSession")(function* (
-          message: Extract<
-            WebToHub,
-            {
-              readonly _tag:
-                | "CreateThread"
-                | "PromptThread"
-                | "StopThread"
-                | "SetThreadModel"
-                | "CompactConversation"
-            }
-          >,
-        ) {
-          const { sessionId } = message
-          const session = yield* sessionFor(message)
-          if (Option.isNone(session)) return session
-          if (session.value.state === "Archived") {
-            refuse(message, "The Session is archived: restore it first.")
-            return Option.none<SessionSummary>()
-          }
-          // A mod from before, of pi or Claude Code, that said hello and runs still.
-          const running = session.value.state === "Active" || session.value.state === "Frozen"
-          if (running && !live.awaitingHello(sessionId) && live.modDurable(sessionId) === false) {
-            refuse(message, "This Session's agent doesn't take threads: restart it.")
-            return Option.none<SessionSummary>()
-          }
-          return session
-        })
-
-        /** The Session's thread, or none, the command refused. */
-        const threadFor = Effect.fn("SessionRelay.threadFor")(function* (
-          message: WebToHub & { readonly sessionId: SessionId },
-          threadId: ThreadId,
-        ) {
-          const thread = yield* sessions.threadOf(message.sessionId, threadId)
-          if (Option.isNone(thread)) {
-            refuse(message, "The Session has no such thread.")
-          }
-          return thread
-        })
-
-        /**
-         * A new thread's own model and thinking level, checked against the Session's Creator's
-         * Models: the ones asked for, or, with no model asked for, the Session's as they are now. A
-         * fork keeps the model its parent had when it forked and never follows the Session's
-         * later switches, so the thread is always given one; or none, the command refused.
-         */
-        const threadSetting = Effect.fn("SessionRelay.threadSetting")(function* (
-          message: Extract<WebToHub, { readonly _tag: "CreateThread" }>,
-          session: SessionSummary,
-        ) {
-          // A thinking level alone is for the Session's model. One that goes with another model
-          // is what was asked for it: the Session's doesn't carry over.
-          const model = message.model ?? session.model
-          const thinkingLevel =
-            message.model === undefined
-              ? (message.thinkingLevel ?? session.thinkingLevel)
-              : message.thinkingLevel
-          const checked = yield* harnesses.agent.check(
-            {
-              ...(model !== undefined && { model }),
-              ...(thinkingLevel !== undefined && { thinkingLevel }),
-            },
-            { creatorId: session.creator.id },
-          )
-          if (typeof checked === "string") {
-            refuse(message, checked)
-            return Option.none<CheckedModel["setting"]>()
-          }
-          return Option.some(checked.setting)
-        })
-
-        /**
-         * Wakes the Session for a thread command if it is Asleep, as for a message to a subagent:
-         * whether the command goes on; if not, it was refused.
-         */
-        const wokenFor = Effect.fn("SessionRelay.wokenFor")(function* (
-          message: WebToHub & { readonly sessionId: SessionId },
-          session: SessionSummary,
-        ) {
-          const { sessionId } = message
-          if (session.state !== "Asleep") return true
-          const refused = yield* wake(session, { by: you })
-          if (refused !== undefined) {
-            refuse(message, refused)
-            return false
-          }
-          if (!live.awaitingHello(sessionId)) {
-            refuse(message, "The Session could not be woken: see its history.")
-            return false
-          }
-          return true
-        })
-
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: RelayedCommand) {
           if (isEnvironmentCommand(message))
             return yield* environmentRelay.receiveWeb(client, message)
           if (isRunnerCommand(message)) return yield* runnerRelay.receiveWeb(client, message)
+          if (isThreadCommand(message)) return yield* threadRelay.receiveWeb(client, message)
           switch (message._tag) {
             case "WebHello":
               return
@@ -3332,130 +3067,6 @@ export class SessionRelay extends Context.Service<
               if (cantStop !== undefined) return refuse(message, cantStop.refusal, { sessionId })
               yield* outbox.enqueue(sessionId, StopAgent.make({ sessionId, agentId }))
               return
-            }
-
-            case "CreateThread": {
-              // Anyone who sees the Session may (docs/design/durable-harness.md).
-              const { requestId, sessionId, anchorTurnId } = message
-              const session = yield* threadSession(message)
-              if (Option.isNone(session)) return
-              if ((yield* log.mainTurnStartedAt(sessionId, anchorTurnId)) === undefined) {
-                return refuse(
-                  message,
-                  "There is no such Turn in the Session to start a thread off.",
-                )
-              }
-              const setting = yield* threadSetting(message, session.value)
-              if (Option.isNone(setting)) return
-              if (!(yield* wokenFor(message, session.value))) return
-              // Marked sent as it is logged, so a thread refused, or a wake, keeps none.
-              const sent = yield* markSentOrRefuse(message, message.attachments, "prompt")
-              if (Option.isNone(sent)) return
-              const threadId = ThreadId.make(`thr_${randomId()}`)
-              const promptId = PromptId.make(randomId())
-              const prompt = { promptId, sender: you, text: message.text, ...carrying(sent.value) }
-              yield* admitThreadPrompt(
-                sessionId,
-                StartThread.make({
-                  sessionId,
-                  threadId,
-                  anchorTurnId,
-                  ...prompt,
-                  ...setting.value,
-                }),
-                requestId,
-              )
-              peer.send(ThreadCreated.make({ requestId, sessionId, threadId }))
-              return yield* sessionUpdated(sessionId)
-            }
-
-            case "PromptThread": {
-              // Anyone may post into a thread: it steers a Turn running there.
-              const { requestId, sessionId, threadId } = message
-              const session = yield* threadSession(message)
-              if (Option.isNone(session)) return
-              if (Option.isNone(yield* threadFor(message, threadId))) return
-              if (!(yield* wokenFor(message, session.value))) return
-              const sent = yield* markSentOrRefuse(message, message.attachments, "prompt")
-              if (Option.isNone(sent)) return
-              const prompt = {
-                promptId: PromptId.make(randomId()),
-                sender: you,
-                text: message.text,
-                ...carrying(sent.value),
-              }
-              return yield* admitThreadPrompt(
-                sessionId,
-                DeliverThreadPrompt.make({ sessionId, threadId, ...prompt }),
-                requestId,
-              )
-            }
-
-            case "StopThread": {
-              const { sessionId, threadId } = message
-              const session = yield* threadSession(message)
-              if (Option.isNone(session)) return
-              const thread = yield* threadFor(message, threadId)
-              if (Option.isNone(thread)) return
-              if (!thread.value.running) return refuse(message, "No Turn runs in the thread.")
-              yield* logEvent(sessionId, TurnStopRequested.make({ by: you, threadId }))
-              return yield* queueThreadCommand(sessionId, StopThread.make({ sessionId, threadId }))
-            }
-
-            case "SetThreadModel": {
-              // To one of the Session's Creator's Models (ADR 0026), from its next request on. A
-              // Session asleep takes it as it wakes.
-              const { sessionId, threadId } = message
-              const session = yield* threadSession(message)
-              if (Option.isNone(session)) return
-              const thread = yield* threadFor(message, threadId)
-              if (Option.isNone(thread)) return
-              const checked = yield* harnesses.agent.check(
-                {
-                  model: message.model,
-                  ...(message.thinkingLevel !== undefined && {
-                    thinkingLevel: message.thinkingLevel,
-                  }),
-                },
-                { creatorId: session.value.creator.id },
-              )
-              if (typeof checked === "string") return refuse(message, checked)
-              const { model, thinkingLevel } = checked.setting
-              if (thread.value.model === model && thread.value.thinkingLevel === thinkingLevel) {
-                return
-              }
-              yield* sessions.setThreadModel(sessionId, threadId, checked.setting)
-              threadModelSwitchers.set(`${sessionId}/${threadId}`, you.id)
-              const level = thinkingLevel === undefined ? {} : { thinkingLevel }
-              yield* logEvent(
-                sessionId,
-                ThreadModelChanged.make({ threadId, by: you, model, ...level }),
-              )
-              yield* queueThreadCommand(
-                sessionId,
-                SwitchThreadModel.make({ sessionId, threadId, model, ...level }),
-              )
-              return yield* sessionUpdated(sessionId)
-            }
-
-            case "CompactConversation": {
-              // The main loop's, or a thread's. An Asleep Session is woken for it, as for a prompt.
-              const { sessionId, threadId, instructions } = message
-              const session = yield* threadSession(message)
-              if (Option.isNone(session)) return
-              if (threadId !== undefined && Option.isNone(yield* threadFor(message, threadId))) {
-                return
-              }
-              if (!(yield* wokenFor(message, session.value))) return
-              return yield* queueThreadCommand(
-                sessionId,
-                Compact.make({
-                  sessionId,
-                  ...(threadId !== undefined && { threadId }),
-                  ...(instructions !== undefined && { instructions }),
-                  sender: you,
-                }),
-              )
             }
 
             case "OpenTerminal": {
@@ -4331,21 +3942,18 @@ export class SessionRelay extends Context.Service<
 
       /**
        * The mod polled for its commands after `after`: a handoff among those it took is handed, and
-       * the thread commands among them that aren't prompts are done (ThreadCommands.ts).
+       * the thread commands among them that aren't prompts are done (ThreadOutbox.ts).
        */
       const modPolled = (sessionId: SessionId, after: ModCommandSeq) =>
         // Off the lock unless one is on its way, as most polls find none.
-        live.handingOff(sessionId) || live.sendingThreadCommands(sessionId)
+        live.handingOff(sessionId) || threadOutbox.sending(sessionId)
           ? serialized(
               Effect.gen(function* () {
                 const collected = live.handoffCollected(sessionId, after)
                 if (collected !== undefined) {
                   yield* handedOff(sessionId, collected.harness, collected.through)
                 }
-                yield* threadCommands.taken(
-                  sessionId,
-                  live.threadCommandsCollected(sessionId, after),
-                )
+                yield* threadOutbox.polled(sessionId, after)
               }),
             )
           : Effect.void
@@ -4375,11 +3983,7 @@ export class SessionRelay extends Context.Service<
         yield* handOff(session.value)
         yield* presenceToMod(sessionId)
         // The thread commands its agent hasn't taken, again: its outbox may have been dropped.
-        if (hello.durable === true) {
-          for (const pending of yield* threadCommands.pending(sessionId)) {
-            yield* sendThreadCommand(sessionId, pending.seq, pending.command)
-          }
-        }
+        if (hello.durable === true) yield* threadOutbox.replay(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
 
@@ -4451,40 +4055,7 @@ export class SessionRelay extends Context.Service<
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
-          // A thread's prompt is done with, not sent again, and logged as failed, so everyone sees
-          // it is not sent, now and after a reload. A thread the agent could not start is gone with
-          // its first prompt: it never existed there, and a reply to it would fail alike.
-          const threadPrompt = yield* threadCommands.promptTaken(sessionId, event.promptId)
-          if (Option.isSome(threadPrompt) && promptOfCommand(threadPrompt.value) !== undefined) {
-            const { threadId, sender } = threadPrompt.value as StartThread | DeliverThreadPrompt
-            const dropped =
-              threadPrompt.value._tag === "StartThread" &&
-              (yield* sessions.dropThread(sessionId, threadId))
-            yield* logEvent(
-              sessionId,
-              ThreadPromptFailed.make({
-                threadId,
-                promptId: event.promptId,
-                message: event.message,
-                ...(dropped && { threadDropped: true as const }),
-              }),
-            )
-            if (dropped) {
-              // Its sender is in a thread that is no more: told why, as the thread says nothing.
-              toWeb(
-                CommandFailed.make({
-                  command: "CreateThread",
-                  sessionId,
-                  message: redactText(
-                    yield* needlesForSession(sessionId),
-                    `The thread could not be started: ${event.message}`,
-                  ),
-                }),
-                (client) => client.you.id === sender.id,
-              )
-            }
-            return yield* sessionUpdated(sessionId)
-          }
+          if (yield* threadRelay.promptFailed(sessionId, event)) return
           const steeredBy = live.promptFailed(sessionId, event.promptId)
           if (steeredBy !== undefined) {
             // A steer that failed leaves the prompt in its place, to wait for the Turn to end.
@@ -4516,7 +4087,7 @@ export class SessionRelay extends Context.Service<
           // Delivered again, as after the Hub restarted or the mod's TurnStarted was lost, and not
           // run twice (#323): it is out of the queue, as if its Turn had just started. A thread's is
           // done with.
-          yield* threadCommands.promptTaken(sessionId, event.promptId)
+          yield* threadOutbox.promptTaken(sessionId, event.promptId)
           live.turnStarted(sessionId, event.promptId)
           const removed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(removed)) return
@@ -4546,7 +4117,7 @@ export class SessionRelay extends Context.Service<
         }
 
         if (event._tag === "ModelSwitchFailed" && event.threadId !== undefined) {
-          return yield* threadModelSwitchFailed(sessionId, event.threadId, event)
+          return yield* threadRelay.modelSwitchFailed(sessionId, event.threadId, event)
         }
 
         if (event._tag === "ModelSwitchFailed") {
@@ -4641,6 +4212,8 @@ export class SessionRelay extends Context.Service<
               ? yield* promptSteeredToLog(sessionId, event)
               : event
         if (logged !== undefined) yield* logEvent(sessionId, logged)
+        // A thread's Turn events leave the main loop as it was.
+        if (yield* threadRelay.turnEvent(sessionId, event)) return
         if (event._tag === "AgentStarted") {
           // Its summary shows the description too, redacted as the log has it.
           const now = yield* sessions.get(sessionId)
@@ -4651,16 +4224,6 @@ export class SessionRelay extends Context.Service<
             harness: Option.isSome(now) ? harnessNow(now.value) : "ClaudeCode",
           })
           yield* sessionUpdated(sessionId)
-        } else if (event._tag === "TurnStarted" && event.threadId !== undefined) {
-          // A thread's Turn leaves the main loop as it was; its prompt has reached the agent.
-          yield* sessions.setThreadTurn(sessionId, event.threadId, {
-            turnId: event.turnId,
-            startedAt: yield* Clock.currentTimeMillis,
-          })
-          if (event.promptId !== undefined) {
-            yield* threadCommands.promptTaken(sessionId, event.promptId)
-          }
-          yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnStarted") {
           // A Turn the agent resumed (`Resumed`) runs as any other, from no prompt of the queue.
           yield* sessions.setCurrentTurn(sessionId, event.turnId)
@@ -4670,23 +4233,11 @@ export class SessionRelay extends Context.Service<
             if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
           yield* sessionUpdated(sessionId)
-        } else if (event._tag === "PromptSteered" && event.threadId !== undefined) {
-          // A thread's prompt joined its Turn: it has reached the agent.
-          yield* threadCommands.promptTaken(sessionId, event.promptId)
         } else if (event._tag === "PromptSteered") {
           // It joined the Turn: out of the queue, and shown in the Turn instead.
           live.promptSteered(sessionId, event.promptId)
           const steered = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isSome(steered)) yield* queueChanged(sessionId)
-        } else if (
-          event._tag === "TurnEnded" &&
-          event.agentId === undefined &&
-          event.threadId !== undefined
-        ) {
-          // Only the Turn running there ends it: a late end of an earlier one leaves a later alone.
-          if (yield* sessions.threadTurnEnded(sessionId, event.threadId, event.turnId)) {
-            yield* sessionUpdated(sessionId)
-          }
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
           // Its question can't be answered once it has ended, unless the agent asked it async and

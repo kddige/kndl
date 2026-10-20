@@ -78,7 +78,7 @@ export interface HandoffSent {
 export interface ThreadCommandSent {
   /** Its number in the mod's outbox. */
   readonly seq: ModCommandSeq
-  /** Its number among the Session's thread commands (ThreadCommands.ts). */
+  /** Its number among the Session's kept thread commands (ThreadOutbox.ts). */
   readonly pending: number
 }
 
@@ -188,7 +188,7 @@ interface Pieces {
   readonly durable: PerSession<boolean>
   /**
    * The thread commands and Compacts, not prompts, each Session's mod was sent and hasn't polled
-   * past: they are done once it has (ThreadCommands.ts).
+   * past: they are done once it has. ThreadOutbox.ts keeps them; the clearing table is here.
    */
   readonly threadCommandsOut: PerSession<Array<ThreadCommandSent>>
   /**
@@ -272,7 +272,10 @@ type Piece = keyof Pieces
  * GitHub), and `installationWorks`, as the Gateway says an Installation works. One read is too:
  * `handingOff`, as a mod polls, which takes the lock only when its handoff may be collected.
  */
-export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStreams"> {
+export interface LiveSessions extends Pick<
+  Pieces,
+  "textStreams" | "terminalStreams" | "threadCommandsOut"
+> {
   // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
 
   /** The mod was sent the prompt (DeliverPrompt): it is in flight until a Turn starts or it fails. */
@@ -315,12 +318,6 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
    * as its hello said, or undefined before a mod said hello, as while it starts.
    */
   readonly modDurable: (id: SessionId) => boolean | undefined
-  /** The mod was sent a thread command that isn't a prompt: done once it polls past it. */
-  readonly threadCommandSent: (id: SessionId, sent: ThreadCommandSent) => void
-  /** Whether a thread command that isn't a prompt is on its way to the mod. */
-  readonly sendingThreadCommands: (id: SessionId) => boolean
-  /** The mod polled for the commands after `after`: the thread commands it took up to it. */
-  readonly threadCommandsCollected: (id: SessionId, after: ModCommandSeq) => ReadonlyArray<number>
   /** Whether the Session's mod said it marks the files of a message or a reply (#278). */
   readonly modAttaches: (id: SessionId) => boolean
   /** Whether the Session's mod said it takes a SwitchModel (ADR 0029). */
@@ -691,19 +688,6 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     modAttaches: (id) => pieces.attaches.has(id),
     modDurable: (id) => pieces.durable.get(id),
-    threadCommandSent: (id, sent) => {
-      const out = pieces.threadCommandsOut.get(id) ?? []
-      pieces.threadCommandsOut.set(id, [...out, sent])
-    },
-    sendingThreadCommands: (id) => pieces.threadCommandsOut.has(id),
-    threadCommandsCollected: (id, after) => {
-      const out = pieces.threadCommandsOut.get(id) ?? []
-      const taken = out.filter((sent) => sent.seq <= after)
-      const left = out.filter((sent) => sent.seq > after)
-      if (left.length > 0) pieces.threadCommandsOut.set(id, left)
-      else pieces.threadCommandsOut.delete(id)
-      return taken.map((sent) => sent.pending)
-    },
     modSwitchesModels: (id) => pieces.switchesModels.has(id),
     handoffSent: (id, handoff) => pieces.handoffs.set(id, handoff),
     handingOff: (id) => pieces.handoffs.has(id),

@@ -37,7 +37,6 @@ import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
-import { ThreadCommands } from "./ThreadCommands.ts"
 import { TunnelRoutes } from "./TunnelRoutes.ts"
 import { Tunnels } from "./Tunnels.ts"
 import { WebUiRoutes } from "./WebUi.ts"
@@ -98,7 +97,6 @@ export const hubServices = (
         ModOutbox.layer,
         SessionLog.layer,
         PromptQueue.layer,
-        ThreadCommands.layer,
         Attachments.layer,
         Runners.layer,
         PairingCodes.layer,

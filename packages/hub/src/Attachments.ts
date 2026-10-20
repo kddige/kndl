@@ -16,6 +16,10 @@ export const unsentAttachmentLifetime = Duration.hours(24)
 /** How often the Hub deletes the files nobody sent, besides as it starts. */
 const unsentSweepInterval = Duration.hours(1)
 
+/** `attachments` as an event's optional field: absent for none. */
+export const carrying = (logged: ReadonlyArray<Attachment>) =>
+  logged.length > 0 ? { attachments: logged } : {}
+
 /** An attachment with its bytes, as the Hub serves it. */
 export interface StoredAttachment {
   readonly attachment: Attachment
