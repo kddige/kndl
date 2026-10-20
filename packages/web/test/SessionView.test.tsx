@@ -117,7 +117,7 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/kndl")
   // Alice started it, so she drives it (ADR 0026).
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("you drive it")
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("on your accounts")
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
   // She keeps it awake (ADR 0016).
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Kept awake by you")
@@ -401,12 +401,12 @@ test("a Session whose Claude Code exited on its own shows what it printed, folde
 
   const output = "error: The current working directory was deleted, so that command didn't work."
   await step(() => hub.claudeExits("s-readme", 1, output))
-  await eventually(() => expect(banner()).toContain("Claude Code exited with code 1."))
+  await eventually(() => expect(banner()).toContain("pi exited with code 1."))
   expect(header()).toContain("Asleep")
   // Folded until asked for.
   expect(banner()).not.toContain(output)
-  await step(() => button("Show Claude Code's last output", page).click())
-  expect(page.querySelector('[aria-label="Claude Code\'s last output"]')?.textContent).toBe(output)
+  await step(() => button("Show its last output", page).click())
+  expect(page.querySelector('[aria-label="Its last output"]')?.textContent).toBe(output)
 
   // Started again, it is gone.
   await step(() => button("Wake now", page).click())
@@ -414,7 +414,7 @@ test("a Session whose Claude Code exited on its own shows what it printed, folde
   await choose(page, "Sleep now")
   await eventually(() => expect(banner()).toContain("Put to sleep."))
   expect([...page.querySelectorAll("button")].map((b) => b.textContent)).not.toContain(
-    "Show Claude Code's last output",
+    "Show its last output",
   )
 })
 
@@ -1118,7 +1118,7 @@ test("an image pasted into a message to an agent goes with it, and shows in its 
   )
 })
 
-test("someone watching a Session reads it, but can't drive it or see its terminal (ADR 0026)", async () => {
+test("any Participant can drive another's Session and open its shell", async () => {
   const { router, page, sent } = await openApp(`/sessions/${bobsSessionId}?tab=terminal`)
   const header = () => page.querySelector("h1")?.closest("header")?.textContent ?? ""
   const banner = () =>
@@ -1126,36 +1126,29 @@ test("someone watching a Session reads it, but can't drive it or see its termina
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session is")) ?? ""
   await eventually(() => expect(banner()).toContain("This Session is Asleep"))
-  expect(header()).toContain("Bob Lee drives it")
+  expect(header()).toContain("on Bob Lee's accounts")
   // It waits on Bob to wake it: nothing here wakes it.
-  expect(banner()).toContain("Its Sandbox is stopped until Bob Lee wakes it.")
+  expect(banner()).toContain("Sending a prompt wakes it")
   const labels = () =>
     [...page.querySelectorAll("button")].map(
       (each) => each.getAttribute("aria-label") ?? each.textContent?.trim(),
     )
-  for (const control of ["Wake now", "Rename Session", "Delete Session", "Sleep now", "Attach"])
-    expect(labels()).not.toContain(control)
-  // Its model shows as the picker names it, but doesn't open: Claude Code's default here.
-  expect(labels().some((label) => label?.startsWith("Model:"))).toBe(false)
-  const model = page.querySelector('[title="The model and thinking level this Session runs on"]')
-  expect(model?.textContent).toBe("Opus 5.5")
-  expect(model?.closest("button")).toBeNull()
+  for (const control of ["Wake now", "Attach"])
+    expect(labels()).toContain(control)
+  expect(labels().some((label) => label?.startsWith("Model:"))).toBe(true)
   expect(page.querySelector("header [role=switch]")).toBeNull()
   // Nor rename it from the sidebar.
   expect(labels()).not.toContain("Rename claude/landing-copy")
 
   // The composer is disabled, saying who drives it and why.
   const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
-  expect(prompt?.disabled).toBe(true)
-  expect(prompt?.placeholder).toBe(
-    "Only Bob Lee, who started this Session, can drive it: it runs on their Claude credential.",
-  )
+  expect(prompt?.disabled).toBe(false)
+  expect(prompt?.placeholder).toBe("Send a prompt")
 
   // There's no terminal, even asked for in the URL: no tab, and it's never opened.
   expect(page.querySelector('[role="tab"]')).toBeNull()
-  expect(page.querySelector(".xterm")).toBeNull()
   expect(router.state.location.search).toEqual({ tab: "terminal" })
-  expect(sent()).not.toContain("OpenTerminal")
+  await eventually(() => expect(sent()).toContain("OpenTerminal"))
 
   // The prompt the Hub cancelled shows, as cancelled, with why.
   const cancelled = page.querySelector('[data-cancelled="p-seed-alice"]')?.textContent ?? ""
@@ -1164,7 +1157,7 @@ test("someone watching a Session reads it, but can't drive it or see its termina
   expect(cancelled).toContain("Cancelled · Only the Session's Creator prompts it now")
 })
 
-test("someone watching a live Session sees its Turn and queue, with nothing to stop, steer or cancel", async () => {
+test("any Participant can stop, steer and cancel while another's Session runs", async () => {
   const hub = new FakeHub({ stepMs: 20, you: bob })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(
@@ -1188,20 +1181,16 @@ test("someone watching a live Session sees its Turn and queue, with nothing to s
   await eventually(() =>
     expect(queue()?.textContent).toContain("Then add a line about it to the README"),
   )
-  expect(queue()?.querySelector("button")).toBeNull()
-  const labels = [...page.querySelectorAll("button")].map((each) => each.textContent?.trim())
-  expect(labels).not.toContain("Stop")
-  expect(page.querySelector('[role="tab"]')).toBeNull()
-  // Its model and thinking level show, as the picker names them, with nothing to pick.
-  expect(
-    page.querySelector('[title="The model and thinking level this Session runs on"]')?.textContent,
-  ).toBe("Sonnet 5.5·High")
-  expect(page.querySelector('button[aria-label^="Model:"]')).toBeNull()
-  expect(page.querySelector('button[aria-label^="Thinking:"]')).toBeNull()
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Alice Kim drives it")
+  expect(queue()?.querySelector("button")).not.toBeNull()
+  expect(button("Stop", page)).toBeDefined()
+  expect(page.querySelector('button[aria-label^="Model:"]')).not.toBeNull()
+  expect(page.querySelector('button[aria-label^="Thinking:"]')).not.toBeNull()
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("on Alice Kim's accounts")
+  await step(() => button("Stop", page).click())
+  expect(hub.received.some(message => message._tag === "StopTurn")).toBe(true)
 })
 
-test("the Creator's Session can't wake without their setup token, and leads to the Account page", async () => {
+test("a Session can wake without a Claude token when other Models are connected", async () => {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, claudeCredential: null })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/sessions/s-readme"] }))
@@ -1219,8 +1208,8 @@ test("the Creator's Session can't wake without their setup token, and leads to t
   const banner = () =>
     [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
-      .find((content) => content.startsWith("This Session can't wake")) ?? ""
-  await eventually(() => expect(banner()).toContain("you have none on this Hub"))
-  await step(() => button("Add a setup token", page).click())
-  await eventually(() => expect(router.state.location.pathname).toBe("/account"))
+      .find((content) => content.startsWith("This Session is Asleep")) ?? ""
+  await eventually(() => expect(banner()).not.toBe(""))
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(hub.sessions.get("s-readme")?.summary.state).toBe("Active"))
 })

@@ -116,6 +116,7 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
         "claude/readme-run",
         "claude/pi-harness",
         "claude/web-client",
+        "Does it back off between retries, or hammer the Hub?",
         "Release 0.4",
         "Document the protocol",
         "claude/landing-copy",
@@ -223,13 +224,13 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
 
 test("a Session is renamed in place from its header, and New Session doesn't ask for a name", async () => {
   const { page, hub } = await open("/sessions/s-readme")
-  const title = () => page.querySelector("main > header h1")?.textContent
-  const description = () => page.querySelector("main > header p")?.textContent ?? ""
+  const title = () => page.querySelector("main header h1")?.textContent
+  const description = () => page.querySelector("main header p")?.textContent ?? ""
   await eventually(() => expect(title()).toBe("claude/readme-run"))
   expect(description()).not.toContain("claude/readme-run")
 
   await chooseSessionAction("Rename", page)
-  const field = nameField(page.querySelector("main > header") ?? page)
+  const field = nameField(page.querySelector("main header") ?? page)
   expect(field?.value).toBe("claude/readme-run")
   await step(() => field && typeInto(field, "README: how to run it"))
   await step(() => field && press(field, "Enter"))
@@ -347,12 +348,12 @@ test("a Session's running and interrupted agents nest under it, which only its c
       ?.getAttribute("aria-label"),
   ).toBe("Interrupted")
   // Only a row with agents has a chevron, open to start with, naming the list it controls.
-  const chevron = button("Agents of Release 0.4", nav() ?? document)
+  const chevron = button("Threads and agents of Release 0.4", nav() ?? document)
   expect(chevron.getAttribute("aria-expanded")).toBe("true")
   const controlled = document.getElementById(chevron.getAttribute("aria-controls") ?? "")
   expect(controlled?.querySelectorAll("a").length).toBe(1)
   // The Repos' ⋯ menus aside.
-  expect(nav()?.querySelectorAll("button[aria-expanded]:not([aria-haspopup])").length).toBe(1)
+  expect(nav()?.querySelectorAll("button[aria-expanded]:not([aria-haspopup])").length).toBe(2)
 
   // The chevron folds them, and the fold is kept for this viewer.
   await step(() => chevron.click())
@@ -368,7 +369,7 @@ test("a Session's running and interrupted agents nest under it, which only its c
   expect(nestedUnder("s-release")).toEqual([])
 
   // Opened again, the chevron shows them: the open Session's finished agents too.
-  await step(() => button("Agents of Release 0.4", nav() ?? document).click())
+  await step(() => button("Threads and agents of Release 0.4", nav() ?? document).click())
   await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
   expect(JSON.parse(localStorage.getItem("kndl:sidebar-folded") ?? "[]")).toEqual([])
 })
@@ -398,7 +399,7 @@ test("a fold lasts across reloads, and opens when one of its agents' views opens
   const { router } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
   expect(nestedUnder("s-release")).toEqual([])
-  expect(button("Agents of Release 0.4", nav() ?? document).getAttribute("aria-expanded")).toBe(
+  expect(button("Threads and agents of Release 0.4", nav() ?? document).getAttribute("aria-expanded")).toBe(
     "false",
   )
 
@@ -424,7 +425,7 @@ test("the Sessions are one Tab stop: arrows move, ← → fold, and each row has
         .map((link) => link.textContent),
     ).toEqual(["claude/readme-run"]),
   )
-  expect(button("Agents of Release 0.4", nav() ?? document).tabIndex).toBe(-1)
+  expect(button("Threads and agents of Release 0.4", nav() ?? document).tabIndex).toBe(-1)
   expect(button("claude/readme-run actions", nav() ?? document).tabIndex).toBe(-1)
 
   // ↓ moves to the next row, and it becomes the one Tab enters at.
@@ -438,7 +439,7 @@ test("the Sessions are one Tab stop: arrows move, ← → fold, and each row has
 
   // ← on a row with agents folds them, → opens them again and then moves in.
   const release = row("s-release").querySelector("a") as HTMLAnchorElement
-  const chevron = () => button("Agents of Release 0.4", nav() ?? document)
+  const chevron = () => button("Threads and agents of Release 0.4", nav() ?? document)
   await step(() => release.focus())
   await step(() => press(release, "ArrowLeft"))
   expect(chevron().getAttribute("aria-expanded")).toBe("false")

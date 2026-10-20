@@ -84,19 +84,16 @@ const inputOf = (dialog: HTMLElement, label: string) =>
     `input[id="${[...dialog.querySelectorAll("label")].find((each) => each.textContent === label)?.getAttribute("for")}"]`,
   ) as HTMLInputElement | null
 
-test("needs your own setup token, and without one says so before the form is filled in", async () => {
+test("connected Models work without a Claude setup token", async () => {
   const withToken = await openDialog()
   expect(withToken.dialog.textContent).not.toContain("Add your setup token first")
   expect(withToken.start.disabled).toBe(false)
   await cleanup?.()
 
-  const { dialog, router, start } = await openDialog(false)
-  expect(dialog.textContent).toContain("Add your setup token first")
-  expect(start.disabled).toBe(true)
-  // Its link goes to the Account page, where the token is added.
-  const account = [...dialog.querySelectorAll("a")].find((link) => link.textContent === "Account")
-  await step(() => account?.click())
-  await eventually(() => expect(router.state.location.pathname).toBe("/account"))
+  const { dialog, start } = await openDialog(false)
+  expect(dialog.textContent).not.toContain("Add your setup token first")
+  expect(modelButton(dialog)?.textContent).toBe("GPT-6-Sol")
+  expect(start.disabled).toBe(false)
 })
 
 test("the Branch is disabled until a Repo is picked, then prefills the Repo's default branch", async () => {
@@ -125,7 +122,7 @@ test("starts a Session directly on the branch when Work on a new branch is off, 
   await type(dialog, "Branch", "dev")
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLElement
   await step(() => box.click())
-  expect(dialog.textContent).toContain("Claude commits directly to dev.")
+  expect(dialog.textContent).toContain("The agent commits directly to dev.")
   await step(() => start.click())
   await settle(100)
 
@@ -319,21 +316,19 @@ async function startWith(
   return hub.received.find((m) => m._tag === "CreateSession") as Record<string, unknown>
 }
 
-test("on a Runner that runs both, offers every Model by what runs it, Claude Code's default first", async () => {
+test("offers one Model list grouped by Provider, with the first Model selected", async () => {
   const opened = await openOnPi()
   const { dialog, router } = opened
-  // Claude's Models run on Claude Code unless the Account page says pi.
-  await eventually(() => expect(modelButton(dialog)?.textContent).toBe("Opus 5.5"))
+  await eventually(() => expect(modelButton(dialog)?.textContent).toBe("Claude Opus 5.5"))
   await step(() => modelButton(dialog)?.click())
   await settle()
-  expect(menuGroups()).toEqual(["Anthropic · Claude Code", "Anthropic · pi", "OpenAI"])
-  await step(() => menuRow("Default · Opus 5.5").click())
+  expect(menuGroups()).toEqual(["Anthropic", "OpenAI"])
+  await step(() => menuRow("Claude Opus 5.5").click())
   await settle()
 
-  // Its default is Claude Code's only by saying so: the Hub would otherwise run pi there.
   const sent = await startWith(opened)
-  expect(sent).toMatchObject({ harness: "ClaudeCode" })
-  expect("model" in sent).toBe(false)
+  expect(sent).toMatchObject({ model: "anthropic/claude-opus-5-5" })
+  expect("harness" in sent).toBe(false)
   await eventually(() => expect(router.state.location.pathname).toStartWith("/sessions/s-new-"))
   await settle(200)
 })
@@ -349,10 +344,10 @@ test("starts a pi Session on another Provider's Model, saying no Harness: the mo
   await settle(200)
 })
 
-test("starts a Claude Code Session on one of its models, saying no Harness", async () => {
+test("starts Claude's Models through the durable agent's bridge, with no Harness choice", async () => {
   const opened = await openOnPi()
-  const sent = await startWith(opened, "Sonnet 5.5")
-  expect(sent).toMatchObject({ model: "sonnet" })
+  const sent = await startWith(opened, "Claude Sonnet 5.5")
+  expect(sent).toMatchObject({ model: "anthropic/claude-sonnet-5-5" })
   expect("harness" in sent).toBe(false)
   await settle(200)
 })
@@ -360,7 +355,7 @@ test("starts a Claude Code Session on one of its models, saying no Harness", asy
 test("with pi chosen for Claude on the Account page, preselects Claude through pi", async () => {
   const opened = await openOnPi({ claudeHarness: "Pi" })
   await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Claude Opus 5.5"))
-  expect(modelButton(opened.dialog)?.getAttribute("title")).toBe("Claude Opus 5.5, on pi")
+  expect(modelButton(opened.dialog)?.getAttribute("title")).toBe("Claude Opus 5.5")
   const sent = await startWith(opened)
   expect(sent).toMatchObject({ model: "anthropic/claude-opus-5-5" })
   expect("harness" in sent).toBe(false)
@@ -387,15 +382,16 @@ test("on a pi Runner without Models, says to connect a Provider on the Account p
   await eventually(() => expect(router.state.location.pathname).toBe("/account"))
 })
 
-test("?harness=claude-code preselects Claude Code, whatever the Account page says", async () => {
+test("an obsolete harness URL cannot select a retired Harness", async () => {
   const opened = await openOnPi({ claudeHarness: "Pi" }, "/archive?harness=claude-code")
-  await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Opus 5.5"))
+  await eventually(() => expect(modelButton(opened.dialog)?.textContent).toBe("Claude Opus 5.5"))
   const sent = await startWith(opened)
-  expect(sent).toMatchObject({ harness: "ClaudeCode" })
+  expect(sent).toMatchObject({ model: "anthropic/claude-opus-5-5" })
+  expect(sent).not.toHaveProperty("harness")
   await settle(200)
 })
 
-test("?harness=claude-code goes through the Environment setup of a Repo's first Session", async () => {
+test("the Model goes through Environment setup, but an obsolete Harness does not", async () => {
   const { dialog, router, start } = await openOnPi({}, "/archive?harness=claude-code")
   await type(dialog, "Repo", "acme/fresh")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
@@ -403,5 +399,6 @@ test("?harness=claude-code goes through the Environment setup of a Repo's first 
   await eventually(() =>
     expect(router.state.location.pathname).toBe("/repos/acme/fresh/environment"),
   )
-  expect(router.state.location.search).toMatchObject({ branch: "main", harness: "claude-code" })
+  expect(router.state.location.search).toMatchObject({ branch: "main", model: "anthropic/claude-opus-5-5" })
+  expect(router.state.location.search).not.toHaveProperty("harness")
 })

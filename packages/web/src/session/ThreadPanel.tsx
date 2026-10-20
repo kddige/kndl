@@ -20,6 +20,7 @@ import type { SentPrompt, ThreadView, TurnView } from "../hub/transcript.ts"
 import {
   ArrowLeftIcon,
   Avatar,
+  Button,
   CloseIcon,
   CompactIcon,
   IconButton,
@@ -40,17 +41,11 @@ import { modelLabel, type ModelSetting, providerModelLabel } from "./models.ts"
 import { PlanDock } from "./Plan.tsx"
 import { SentAttachments } from "./SentAttachments.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
+import { pendingThreadPrompts, type PendingThreadPrompt } from "./threadPrompts.ts"
 import { threadActivity } from "./ThreadRows.tsx"
 import { Transcript } from "./Transcript.tsx"
 
-const MOTION_OK = "@media (prefers-reduced-motion: no-preference)"
 const HOVER = "@media (hover: hover)"
-
-const slideIn = stylex.keyframes({
-  from: { opacity: 0, transform: "translateX(12px)" },
-  to: { opacity: 1, transform: "none" },
-})
-const fadeIn = stylex.keyframes({ from: { opacity: 0 }, to: { opacity: 1 } })
 
 const styles = stylex.create({
   panel: {
@@ -67,9 +62,6 @@ const styles = stylex.create({
     borderInlineStartWidth: "1px",
     borderInlineStartStyle: "solid",
     borderInlineStartColor: color.border,
-    animationName: { default: fadeIn, [MOTION_OK]: slideIn },
-    animationDuration: "200ms",
-    animationTimingFunction: motion.easeOut,
   },
   full: { flex: 1, backgroundColor: color.bg },
   header: {
@@ -89,9 +81,7 @@ const styles = stylex.create({
     flex: 1,
     minWidth: 0,
     margin: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    overflowWrap: "anywhere",
     fontSize: text.md,
     fontWeight: weight.semibold,
     // Focus lands here when a thread opens; it isn't a control, so it shows no ring.
@@ -182,12 +172,6 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
   },
   answer: { position: "relative", fontSize: text.sm },
-  // Closed, the answer shows its start, fading out where it's cut.
-  answerClosed: {
-    maxHeight: "7.5rem",
-    overflow: "hidden",
-    maskImage: "linear-gradient(to bottom, black 55%, transparent)",
-  },
   toggle: {
     alignSelf: "flex-start",
     paddingBlock: 0,
@@ -296,16 +280,48 @@ export function ThreadPanel({
   const scroller = useStickToBottom(thread)
   const [compacting, setCompacting] = useState(false)
   // What was sent to start a new thread, while the Hub makes it, or why it couldn't.
-  const [creating, setCreating] = useState<{ text: string; failed?: string } | null>(null)
+  const [creating, setCreating] = useState<{ text: string; attachments: ReadonlyArray<AttachmentId>; failed?: string } | null>(null)
   // The model a new thread is to run on, picked before its first prompt.
   const [newSetting, setNewSetting] = useState<ModelSetting>({})
+  const you = useHubState(state => state.you)
+  const log = useHubState(state => state.joined[session.id]?.log)
+  const connection = useHubState(state => state.connection.status)
+  const [pending, setPending] = useState<ReadonlyArray<PendingThreadPrompt>>([])
+  const nextPrompt = useRef(0)
+  const previews = of.kind === "thread"
+    ? pendingThreadPrompts(pending, log ?? [], of.threadId, you?.id)
+    : pending
+  useEffect(() => {
+    if (previews !== pending) setPending(previews)
+  }, [pending, previews])
+  useEffect(() => {
+    if (connection === "online") return
+    setPending(prompts => prompts.map(prompt => prompt.failed === undefined
+      ? { ...prompt, failed: "Delivery not confirmed. Reconnect and check the thread before retrying" }
+      : prompt))
+  }, [connection])
+  useEffect(() => hub.onCommandFailed(failure => {
+    if (failure.command !== "PromptThread" || failure.sessionId !== session.id) return
+    setPending(prompts => {
+      const first = prompts.find(prompt => prompt.failed === undefined)
+      return prompts.map(prompt => prompt === first ? { ...prompt, failed: failure.message } : prompt)
+    })
+  }), [hub, session.id])
 
   // Opening a thread moves focus to it: its title, or, for a new one, where to write.
   const opened = of.kind === "thread" ? of.threadId : `new:${of.anchorTurnId}`
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (of.kind === "new") panel.current?.querySelector("textarea")?.focus()
     else heading.current?.focus({ preventScroll: true })
     setCreating(null)
+    return () => {
+      // A replacement panel gets focus first. Only return to the opener when no other control
+      // took focus (closing this one), and the opener still exists.
+      queueMicrotask(() => {
+        if (document.activeElement === document.body && opener?.isConnected) opener.focus()
+      })
+    }
     // Once per thread opened, not on every change in it.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [opened])
@@ -337,14 +353,17 @@ export function ThreadPanel({
     if (of.kind === "thread") {
       const sent = hub.promptThread(session.id, of.threadId, prompt, attachments)
       if (!sent) notSent("Reply")
+      else setPending(prompts => [...prompts, {
+        key: nextPrompt.current++, after: log?.at(-1)?.seq, text: prompt.trim(), attachments,
+      }])
       return sent
     }
     if (creating !== null && creating.failed === undefined) return false
-    setCreating({ text: prompt })
+    setCreating({ text: prompt, attachments })
     hub.createThread(session.id, of.anchorTurnId, prompt, attachments, newSetting).then(
       (threadId) => onCreated(threadId),
       (error: unknown) =>
-        setCreating({ text: prompt, failed: error instanceof Error ? error.message : "Not sent" }),
+        setCreating({ text: prompt, attachments, failed: error instanceof Error ? error.message : "Not sent" }),
     )
     return true
   }
@@ -398,6 +417,12 @@ export function ThreadPanel({
     <aside
       ref={panel}
       aria-labelledby={titleId}
+      onKeyDown={event => {
+        if (event.key === "Escape" && !event.defaultPrevented && event.target === heading.current) {
+          event.preventDefault()
+          onClose()
+        }
+      }}
       {...stylex.props(styles.panel, layout === "side" ? styles.side : styles.full)}
     >
       <header {...stylex.props(styles.header)}>
@@ -497,7 +522,23 @@ export function ThreadPanel({
           {thread !== undefined && thread.sent.length > 0 && (
             <SentList sent={thread.sent} running={running} />
           )}
-          {creating !== null && <CreatingPrompt text={creating.text} failed={creating.failed} />}
+          {previews.map(prompt => (
+            <div key={prompt.key} data-pending-reply="">
+              <CreatingPrompt text={prompt.text} failed={prompt.failed} reply />
+              {prompt.attachments.length > 0 && <p {...stylex.props(styles.intro)}>{prompt.attachments.length} attached</p>}
+              {prompt.failed !== undefined && (
+                <Button size="sm" intent="secondary" onClick={() => {
+                  if (send(prompt.text, prompt.attachments)) setPending(prompts => prompts.filter(each => each.key !== prompt.key))
+                }}>Retry reply</Button>
+              )}
+            </div>
+          ))}
+          {creating !== null && (
+            <div>
+              <CreatingPrompt text={creating.text} failed={creating.failed} />
+              {creating.failed !== undefined && <Button size="sm" intent="secondary" onClick={() => send(creating.text, creating.attachments)}>Retry starting thread</Button>}
+            </div>
+          )}
         </div>
       </div>
 
@@ -602,8 +643,8 @@ function AnchorQuote({ turn, onJump }: { turn: TurnView; onJump: () => void }) {
             : "It answered with tool calls alone."}
         </p>
       ) : (
-        <div id={id} {...stylex.props(styles.answer, long && !open && styles.answerClosed)}>
-          <Markdown text={answer} />
+        <div id={id} {...stylex.props(styles.answer)}>
+          {long && !open ? <p>{answer.slice(0, longAnswer)}…</p> : <Markdown text={answer} />}
         </div>
       )}
       {long && (
@@ -653,20 +694,20 @@ function SentList({ sent, running }: { sent: ReadonlyArray<SentPrompt>; running:
 }
 
 /** The first prompt of a thread being started, until the Hub has made it, or why it couldn't. */
-function CreatingPrompt({ text: prompt, failed }: { text: string; failed?: string | undefined }) {
+function CreatingPrompt({ text: prompt, failed, reply = false }: { text: string; failed?: string | undefined; reply?: boolean }) {
   return (
     <div {...stylex.props(styles.sent)}>
-      <div {...stylex.props(styles.sentHead)}>
+      <div role={failed === undefined ? "status" : "alert"} {...stylex.props(styles.sentHead)}>
         <span {...stylex.props(styles.sentNote, failed !== undefined && styles.failedNote)}>
           {failed === undefined ? (
             <>
               <Spinner size="sm" />
-              Starting the thread…
+              {reply ? "Sending reply…" : "Starting the thread…"}
             </>
           ) : (
             <>
               <WarningIcon />
-              {`Not started: ${failed}`}
+              {`${reply ? "Reply not sent" : "Thread not started"}: ${failed}. Retry below.`}
             </>
           )}
         </span>

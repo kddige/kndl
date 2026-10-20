@@ -840,7 +840,7 @@ function Toggles() {
   const [cache, setCache] = useState(false)
   const [autoStop, setAutoStop] = useState(true)
   const [lines, setLines] = useState(2)
-  const [harness, setHarness] = useState<"ClaudeCode" | "Pi">("ClaudeCode")
+  const [appearance, setAppearance] = useState<"light" | "dark">("light")
   const log = BUILD_LOG.split("\n").slice(0, lines).join("\n")
   return (
     <Section
@@ -849,13 +849,13 @@ function Toggles() {
     >
       <Row label="segmented">
         <SegmentedControl
-          label="Run Claude's Models with"
+          label="Appearance"
           options={[
-            { value: "ClaudeCode", label: "Claude Code" },
-            { value: "Pi", label: "pi" },
+            { value: "light", label: "Light" },
+            { value: "dark", label: "Dark" },
           ]}
-          value={harness}
-          onValueChange={setHarness}
+          value={appearance}
+          onValueChange={setAppearance}
         />
         <SegmentedControl
           label="Disabled"
