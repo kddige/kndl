@@ -218,7 +218,8 @@ test("a queued prompt steered into the running Turn leaves the queue and joins i
 
   await step(() => typeInto(prompt, "Rename the flag"))
   await step(() => button("Send prompt", page).click())
-  await eventually(() => expect(button("Queue prompt", page)).toBeDefined())
+  // Running: an empty prompt offers live voice, so the field says it queues.
+  await eventually(() => expect(prompt.placeholder).toBe("Queue a prompt for after this Turn"))
   await step(() => typeInto(prompt, "And a line in the changelog"))
   await step(() => button("Queue prompt", page).click())
   await eventually(() => expect(queue()).toContain("And a line in the changelog"))
@@ -266,7 +267,8 @@ test("a steer the Turn ends before keeps the prompt in its place, and its spinne
   if (!prompt) throw new Error("no prompt field")
   await step(() => typeInto(prompt, "Rename the flag"))
   await step(() => button("Send prompt", page).click())
-  await eventually(() => expect(button("Queue prompt", page)).toBeDefined())
+  // Running: an empty prompt offers live voice, so the field says it queues.
+  await eventually(() => expect(prompt.placeholder).toBe("Queue a prompt for after this Turn"))
   await step(() => typeInto(prompt, "And a line in the changelog"))
   await step(() => button("Queue prompt", page).click())
   await eventually(() => expect(queue()).toContain("And a line in the changelog"))

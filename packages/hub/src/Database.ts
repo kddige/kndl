@@ -870,6 +870,25 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP TABLE hub_device`
     yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
   }),
+  // The live voice Model and voice a Member talks to Sessions with (ADR 0033), as JSON: null for
+  // the default.
+  "0047_live_voice": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN live_voice TEXT`
+  }),
+  // Each Member's live voice connection (ADR 0033), the Codex CLI's ChatGPT sign-in, encrypted,
+  // gone with the Member.
+  "0048_live_voice_connections": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE live_voice_connections (
+        participant_id TEXT PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+        credential TEXT NOT NULL,
+        label TEXT NOT NULL,
+        connected_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

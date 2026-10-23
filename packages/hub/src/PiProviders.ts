@@ -483,6 +483,23 @@ export const reasonIn = (body: string) => {
 export const reasonOf = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, reasonLimit)
 
+/**
+ * The ChatGPT account a Codex sign-in's access token is for, its `chatgpt_account_id` claim, which
+ * ChatGPT's backend takes in a `chatgpt-account-id` header (ADR 0033). Read without checking the
+ * signature: the backend checks the token.
+ */
+export function chatgptAccountOf(access: string): string | undefined {
+  const payload = access.split(".")[1]
+  if (payload === undefined) return undefined
+  try {
+    const claims = record(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")))
+    const id = record(claims?.["https://api.openai.com/auth"])?.chatgpt_account_id
+    return typeof id === "string" && id !== "" ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A request to a Provider's API, without its credential, which goes in `keyHeader`. */
 export interface ApiCall {
   readonly method: string

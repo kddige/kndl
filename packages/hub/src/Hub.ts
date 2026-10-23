@@ -15,6 +15,8 @@ import { Gateway } from "./Gateway.ts"
 import { GatewayRoutes } from "./GatewayRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { LiveVoiceConnections } from "./LiveVoiceConnections.ts"
+import { LiveVoiceRoutes } from "./LiveVoiceRoutes.ts"
 import { McpServerIconRoutes } from "./McpServerIconRoutes.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServerOAuthRoutes } from "./McpServerOAuthRoutes.ts"
@@ -51,6 +53,7 @@ export const HubRoutes = Layer.mergeAll(
   CliRoutes,
   ForwardRoutes,
   GatewayRoutes,
+  LiveVoiceRoutes,
   ModRoutes,
   PairingRoutes,
   McpServerIconRoutes,
@@ -86,6 +89,8 @@ export const hubServices = (
         Sessions.layer,
         // Above ClaudeCredentials: Claude's Models are listed under a Member's Claude credential.
         ConnectedProviders.layer,
+        // Beside it, on the same ProviderApis: live voice's own sign-in (ADR 0033).
+        LiveVoiceConnections.layer,
       ),
     ),
     Layer.provideMerge(

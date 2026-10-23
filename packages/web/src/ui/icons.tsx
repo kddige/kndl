@@ -118,6 +118,42 @@ export function InboxIcon(props: IconProps) {
   )
 }
 
+/** A microphone: live voice (ADR 0033). */
+export function MicIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.5a2 2 0 0 0-2 2V8a2 2 0 0 0 4 0V4.5a2 2 0 0 0-2-2zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5" />
+    </Icon>
+  )
+}
+
+/** Sound waves: start live voice (ADR 0033), in place of Send while there is nothing to send. */
+export function WavesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 7v2M5 5v6M8 3v10M11 5v6M13.5 7v2" />
+    </Icon>
+  )
+}
+
+/** A handset laid down: hang up a live voice call. */
+export function PhoneDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.2 9.4c-.4-.4-.4-1 0-1.4C5.4 5 10.6 5 13.8 8c.4.4.4 1 0 1.4l-1.1 1.1c-.3.3-.8.4-1.2.1l-1.4-1a.9.9 0 0 1-.4-.8V7.6a7.3 7.3 0 0 0-3.4 0v1.2c0 .3-.2.6-.4.8l-1.4 1c-.4.3-.9.2-1.2-.1z" />
+    </Icon>
+  )
+}
+
+/** A microphone struck through: live voice muted. */
+export function MicOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 6.5V4.5a2 2 0 0 0-3.75-1M6 6v2a2 2 0 0 0 3.2 1.6M11.3 9a3.5 3.5 0 0 1-6.8-1.5M8 11v2.5M3 3l10 10" />
+    </Icon>
+  )
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <Icon {...props}>

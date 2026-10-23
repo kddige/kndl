@@ -30,6 +30,7 @@ import {
   ProvidersState,
   type RequestId,
   SignInEnded,
+  type SignInFor,
   type SignInStep,
   SignInStepped,
   type WebToHub,
@@ -37,6 +38,7 @@ import {
 import { Cause, Effect, Exit, Fiber, Option, Redacted, Schema, type Scope } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { ConnectedProviders, type ProviderRefusal } from "./ConnectedProviders.ts"
+import { LiveVoiceConnections } from "./LiveVoiceConnections.ts"
 import { Members } from "./Members.ts"
 import type { Peer } from "./Peers.ts"
 
@@ -69,6 +71,8 @@ export interface ProviderRelayHost {
 interface SignIn {
   readonly requestId: RequestId
   readonly provider: ProviderId
+  /** Present for the live voice connection's sign-in (ADR 0033). */
+  readonly for?: SignInFor
   readonly peer: Peer<HubToWeb>
   /** Answers the step waiting for one, if any. */
   answer?: (value: string) => void
@@ -213,6 +217,7 @@ const answeringFailures =
 export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRelayHost) {
   const providers = yield* ConnectedProviders
   const members = yield* Members
+  const liveVoice = yield* LiveVoiceConnections
   const scope = yield* Effect.scope
   /** The sign-in running for each Member. */
   const signIns = new Map<ParticipantId, SignIn>()
@@ -222,7 +227,11 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     participantId: ParticipantId,
     requestId?: RequestId,
   ) {
+    const setting = yield* members.liveVoice(participantId)
+    const connection = liveVoice.info(participantId)
     return ProvidersState.make({
+      ...(setting !== undefined && { liveVoice: setting }),
+      ...(connection !== undefined && { liveVoiceConnection: connection }),
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
       claudeHarness: yield* members.claudeHarness(participantId),
@@ -258,21 +267,24 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     client: ProviderWebClient,
     requestId: RequestId,
     provider: ProviderId,
+    forWhat?: SignInFor,
   ) {
     const { you, peer } = client
     yield* cancel(you.id)
-    const signIn: SignIn = { requestId, provider, peer }
+    const voice = forWhat === "LiveVoice"
+    const about = { provider, ...(voice && { for: forWhat }) }
+    const signIn: SignIn = { requestId, ...about, peer }
     signIns.set(you.id, signIn)
     const ended = (outcome: SignInEnded["outcome"], message?: string) =>
       peer.send(
         SignInEnded.make({
           requestId,
-          provider,
+          ...about,
           outcome,
           ...(message !== undefined && { message }),
         }),
       )
-    const show = (step: SignInStep) => peer.send(SignInStepped.make({ requestId, provider, step }))
+    const show = (step: SignInStep) => peer.send(SignInStepped.make({ requestId, ...about, step }))
     const ask: Ask = (step, signal) =>
       new Promise<string>((resolve, reject) => {
         const withdraw = () => {
@@ -289,35 +301,44 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         signIn.answer = answer
         show(step)
       })
-    signIn.fiber = yield* providers
-      .signIn(you.id, provider, {
-        notify: (event) => {
-          const step = stepOf(provider, event)
-          if (step !== undefined) show(step)
-        },
-        prompt: (prompt, signal) => answerTo(provider, prompt, ask, signal),
-      })
-      .pipe(
-        Effect.onExit((exit) =>
-          Effect.gen(function* () {
-            if (signIns.get(you.id) === signIn) signIns.delete(you.id)
-            if (Exit.isSuccess(exit)) {
-              yield* Effect.logInfo(`${you.login} signed in to ${provider}`)
-              ended("Connected")
-              return yield* changed(you.id)
-            }
-            if (Cause.hasInterruptsOnly(exit.cause)) return ended("Cancelled")
-            const error = Cause.findErrorOption(exit.cause)
-            if (Option.isSome(error) && error.value._tag === "ProviderRefusal") {
-              return ended("Failed", error.value.message)
-            }
-            yield* Effect.logError("A sign-in failed", exit.cause)
-            ended("Failed", "The Hub could not keep the connection; try again.")
-          }),
-        ),
-        Effect.ignore,
-        Effect.forkIn(scope),
-      )
+    const interaction = {
+      notify: (event: AuthEvent) => {
+        const step = stepOf(provider, event)
+        if (step !== undefined) show(step)
+      },
+      prompt: (prompt: AuthPrompt, signal: AbortSignal) => answerTo(provider, prompt, ask, signal),
+    }
+    // Live voice's own sign-in is the Codex CLI's, for OpenAI alone (ADR 0033).
+    if (voice && provider !== "openai") {
+      return ended("Failed", "Live voice signs in with ChatGPT alone.")
+    }
+    signIn.fiber = yield* (
+      voice
+        ? liveVoice.signIn(you.id, interaction)
+        : providers.signIn(you.id, provider, interaction)
+    ).pipe(
+      Effect.onExit((exit) =>
+        Effect.gen(function* () {
+          if (signIns.get(you.id) === signIn) signIns.delete(you.id)
+          if (Exit.isSuccess(exit)) {
+            yield* Effect.logInfo(
+              `${you.login} signed in to ${voice ? "ChatGPT (Codex) for live voice" : provider}`,
+            )
+            ended("Connected")
+            return yield* changed(you.id)
+          }
+          if (Cause.hasInterruptsOnly(exit.cause)) return ended("Cancelled")
+          const error = Cause.findErrorOption(exit.cause)
+          if (Option.isSome(error) && error.value._tag === "ProviderRefusal") {
+            return ended("Failed", error.value.message)
+          }
+          yield* Effect.logError("A sign-in failed", exit.cause)
+          ended("Failed", "The Hub could not keep the connection; try again.")
+        }),
+      ),
+      Effect.ignore,
+      Effect.forkIn(scope),
+    )
   })
 
   /**
@@ -350,7 +371,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
           }),
         )
       case "StartSignIn":
-        return yield* startSignIn(client, message.requestId, message.provider)
+        return yield* startSignIn(client, message.requestId, message.provider, message.for)
       case "AnswerSignIn": {
         const running = signIns.get(you.id)
         if (running?.requestId !== message.requestId || running.answer === undefined) {
@@ -381,6 +402,16 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         )
       case "SetClaudeHarness": {
         yield* members.setClaudeHarness(you.id, message.harness)
+        return yield* changed(you.id, asker)
+      }
+      case "DisconnectLiveVoice": {
+        if (yield* liveVoice.disconnect(you.id)) {
+          yield* Effect.logInfo(`${you.login} disconnected their live voice`)
+        }
+        return yield* changed(you.id, asker)
+      }
+      case "SetLiveVoice": {
+        yield* members.setLiveVoice(you.id, message.setting)
         return yield* changed(you.id, asker)
       }
     }

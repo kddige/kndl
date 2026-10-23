@@ -364,6 +364,7 @@ import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { makeLiveSessions, type TextStream, type Why } from "./LiveSessions.ts"
+import { LiveVoiceConnections } from "./LiveVoiceConnections.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { isMcpServerCommand, makeMcpServerRelay, type McpServerRelay } from "./McpServerRelay.ts"
 import { McpServers } from "./McpServers.ts"
@@ -752,6 +753,7 @@ export class SessionRelay extends Context.Service<
       const claudeCredentials = yield* ClaudeCredentials
       const modelCatalog = yield* ModelCatalog
       const connectedProviders = yield* ConnectedProviders
+      const liveVoiceConnections = yield* LiveVoiceConnections
       const members = yield* Members
       const tunnels = yield* Tunnels
       const cliTokens = yield* CliTokens
@@ -1079,6 +1081,7 @@ export class SessionRelay extends Context.Service<
           ...live.sandboxTokensOf(repo),
           ...claudeCredentials.values(),
           ...connectedProviders.values(),
+          ...liveVoiceConnections.values(),
         ])
         needlesByRepo.set(repo, needles)
         return needles
