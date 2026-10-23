@@ -316,6 +316,9 @@ import {
   TunnelCloseCode,
   repoKey,
   sameRepo,
+  hearthBranch,
+  hearthGatewayServer,
+  isHearthRepo,
   messageAgentVerdict,
   answerAttachmentsRefusal,
   attachmentsNotSent,
@@ -526,15 +529,17 @@ const notInstalledForTestBuild = (repo: string) =>
   `The GitHub App isn't installed on ${repo}, so a Test build can't clone it: install the App on the Repo, then try again.`
 
 /** StartSession's and RelaunchSession's MCP servers, for the Installations (ADR 0020). */
-const gatewayServers = (installations: ReadonlyArray<SessionInstallation>) =>
-  installations.length === 0
-    ? {}
-    : {
-        mcpServers: installations.map((installation) => ({
-          installationId: installation.id,
-          server: installation.server,
-        })),
-      }
+const gatewayServers = (installations: ReadonlyArray<SessionInstallation>, repo: string) => {
+  const servers = [
+    ...installations.map((installation) => ({
+      installationId: installation.id,
+      server: installation.server,
+    })),
+    // A Hearth also gets the Hub's own kndl MCP server (ADR 0032), which no Installation is.
+    ...(isHearthRepo(repo) ? [hearthGatewayServer] : []),
+  ]
+  return servers.length === 0 ? {} : { mcpServers: servers }
+}
 
 /** That the Installation failed its Session, and why (#216). */
 const failureOf = (
@@ -1785,7 +1790,7 @@ export class SessionRelay extends Context.Service<
             ...(switching ? { harness: harnessNow(session) } : harnesses.of(session).flag),
             ...modelFlags(session),
             // The same as before: a change to the Repo's waits for its next wake or Restart.
-            ...gatewayServers(session.mcpServers ?? []),
+            ...gatewayServers(session.mcpServers ?? [], session.repo),
           }),
         )
         // Its agents stop with the old Claude Code.
@@ -1909,7 +1914,7 @@ export class SessionRelay extends Context.Service<
             gitIdentity: creatorIdentity(session.creator),
             ...harnesses.of(session).flag,
             ...modelFlags(session),
-            ...gatewayServers(installations),
+            ...gatewayServers(installations, session.repo),
           }),
         )
         return undefined
@@ -2199,7 +2204,10 @@ export class SessionRelay extends Context.Service<
         const { repo, runner } = plan
         const nothing = yield* plan.harness.whyNotRunnable(plan.creator, plan.why.by)
         if (nothing !== undefined) return nothing.refusal
-        const missing = yield* environmentRelay.missingEnvironment(repo)
+        // A Hearth may run on the Runner's default image until it is given an Environment.
+        const missing = isHearthRepo(repo)
+          ? undefined
+          : yield* environmentRelay.missingEnvironment(repo)
         if (missing !== undefined) return missing
         const needed = yield* environments.valuesNeeded(repo)
         if (needed.length > 0) return cantStartText(repo, needed)
@@ -2216,6 +2224,7 @@ export class SessionRelay extends Context.Service<
           ...plan.harness.flag,
           ...modelFlags(plan.model ?? {}),
         })
+        if (isHearthRepo(repo)) yield* sessions.setName(id, "Hearth")
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
         const installations = yield* startMcpServers(id, session.repo, runner)
         yield* startSent(id, environment)
@@ -2234,7 +2243,7 @@ export class SessionRelay extends Context.Service<
             gitIdentity: creatorIdentity(session.creator),
             ...harnesses.of(session).flag,
             ...modelFlags(session),
-            ...gatewayServers(installations),
+            ...gatewayServers(installations, session.repo),
           }),
         )
         // As recorded now, with the Installations it starts with.
@@ -2523,9 +2532,21 @@ export class SessionRelay extends Context.Service<
                 creatorId: you.id,
               })
               if (typeof model === "string") return refuse(message, model, { requestId })
+              // A Member has one Hearth (ADR 0032), on its one branch.
+              const hearth = isHearthRepo(message.repo)
+              if (hearth) {
+                const existing = (yield* sessions.list).find(
+                  (session) => sameRepo(session.repo, message.repo) && session.state !== "Archived",
+                )
+                if (existing !== undefined) {
+                  return refuse(message, "You have a Hearth already: you can only have one.", {
+                    requestId,
+                  })
+                }
+              }
               // Repo access was checked before the lock was taken. The branches are the form's
               // word (ADR 0023): one that isn't there fails the clone, as it always has.
-              const { branch } = message
+              const branch = hearth ? hearthBranch : message.branch
               const created = yield* startNew({
                 repo: message.repo,
                 branch,
@@ -2702,6 +2723,12 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               if (session.value.state === "Archived") {
                 return refuse(message, "The Session is already archived.", { sessionId })
+              }
+              // There is only ever one Hearth, and its Workspace is its memory (ADR 0032).
+              if (isHearthRepo(session.value.repo)) {
+                return refuse(message, "A Hearth can't be archived: put it to sleep instead.", {
+                  sessionId,
+                })
               }
               return yield* archive(session.value, you)
             }

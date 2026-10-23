@@ -1,6 +1,16 @@
-import { chmodSync, existsSync, lstatSync, readdirSync, realpathSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
-import type { SessionId, StartSession } from "@kndl/protocol"
+import { HearthBranch, isHearthRepo, type SessionId, type StartSession } from "@kndl/protocol"
 import { Context, Data, Effect, FileSystem, Layer } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import {
@@ -110,6 +120,72 @@ export const removeSessionFiles = (
     })
   })
 
+/** What a new Hearth's Workspace starts with (ADR 0032): what it is, and where its memory goes. */
+export const hearthAgentsFile = `# Hearth
+
+You are a Hearth: the one persistent kndl Session of the person who started you, their main
+session for everything. This Workspace is yours alone. It lives on your Runner's disk, not on
+GitHub, and outlives every Sandbox: whatever you write here is still here when you wake.
+
+## What you can do
+
+- The \`kndl\` MCP server's tools reach the person's other kndl Sessions, as them: list, read and
+  wait for them, create Sessions on a Repo, prompt them, stop their Turns and answer their
+  questions. Real work on a Repo belongs in a Session of its own: start one, prompt it, and
+  follow it, rather than cloning the Repo here.
+- The other MCP servers you have are the Installations on for your Hearth, as for any Repo.
+
+## Memory
+
+- Keep what you should remember in \`MEMORY.md\`: the person's preferences, the Sessions you
+  started and why, what is still to do. Read it at the start of a Turn when it could matter.
+- Keep notes and files in \`notes/\`. Commit what matters: git here is local, for history.
+`
+
+/** The memory file a new Hearth starts with. */
+const hearthMemoryFile = `# Memory
+
+Nothing yet.
+`
+
+/**
+ * Makes a new Hearth's Workspace on the host (ADR 0032): a git repository of its own on its one
+ * branch, with no remote, holding what the Hearth is told it is, and its memory.
+ */
+export const makeHearthWorkspace = (workspace: string) =>
+  Effect.try({
+    try: () => {
+      mkdirSync(join(workspace, "notes"), { recursive: true })
+      writeFileSync(join(workspace, "AGENTS.md"), hearthAgentsFile)
+      // Claude Code reads CLAUDE.md, pi AGENTS.md: one file for both.
+      writeFileSync(join(workspace, "CLAUDE.md"), "@AGENTS.md\n")
+      writeFileSync(join(workspace, "MEMORY.md"), hearthMemoryFile)
+      writeFileSync(join(workspace, "notes", ".gitkeep"), "")
+      const git = (...args: Array<string>) =>
+        execFileSync("git", args, { cwd: workspace, stdio: "pipe" })
+      git("init", "--quiet", `--initial-branch=${HearthBranch}`)
+      git("add", "--all")
+      git(
+        "-c",
+        "user.name=kndl",
+        "-c",
+        "user.email=kndl@localhost",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "The Hearth is lit",
+      )
+    },
+    catch: (cause) => {
+      rmSync(workspace, { recursive: true, force: true })
+      return new WorkspaceError({
+        message: `Could not make the Hearth's Workspace: ${cause instanceof Error ? cause.message : String(cause)}`,
+      })
+    },
+  })
+
 /**
  * Asks the Hub how host git reaches the Session's Repo for the clone: with a GitHub App token, or
  * with the host's own credentials.
@@ -175,7 +251,9 @@ export const WorkspacesGitClone = Layer.effect(
               message: `Session ${start.sessionId} has no Workspace at ${directories.workspace} to wake with`,
             })
           }
-          yield* clone(start, directories.workspace)
+          // A Hearth has no Repo on GitHub to clone (ADR 0032).
+          if (isHearthRepo(start.repo)) yield* makeHearthWorkspace(directories.workspace)
+          else yield* clone(start, directories.workspace)
           return directories
         }),
       remove: (sessionId) => removeSessionFiles(sessionDirectories(config.sessionsRoot, sessionId)),

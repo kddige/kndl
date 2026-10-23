@@ -118,6 +118,15 @@ export function InboxIcon(props: IconProps) {
   )
 }
 
+/** A flame: a Member's Hearth (ADR 0032). */
+export function FlameIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 14c2.5 0 4-1.75 4-4 0-2.5-2-4-2.5-6.5C8 5 7.5 6 7.5 7.5 6.5 7 6 6 6 5c-1.5 1.25-2 3-2 5 0 2.25 1.5 4 4 4z" />
+    </Icon>
+  )
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <Icon {...props}>

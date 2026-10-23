@@ -1,13 +1,17 @@
 import {
   type AgentSummary,
   describeBuild,
+  hearthBranch,
+  hearthRepoOf,
+  isHearthOf,
+  isHearthRepo,
   MaxSessionNameLength,
   type SessionId,
   type SessionSummary,
   sessionTitle,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useParams, useRouterState, useSearch } from "@tanstack/react-router"
+import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { recentAgents } from "../hub/transcript.ts"
@@ -24,6 +28,7 @@ import {
   ArchiveIcon,
   Avatar,
   CloseIcon,
+  FlameIcon,
   IconButton,
   InlineEdit,
   Menu,
@@ -144,8 +149,10 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const archive = pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname)
   useRememberPlace(pathname)
 
+  // A Hearth is no Repo's (ADR 0032): it has a row of its own, above them.
   const groups = useMemo(
-    () => (sessions ? groupByRepo(sessions.filter(isListed)) : null),
+    () =>
+      sessions ? groupByRepo(sessions.filter((s) => isListed(s) && !isHearthRepo(s.repo))) : null,
     [sessions],
   )
   const known = useMemo(() => new Set((sessions ?? []).map((session) => session.id)), [sessions])
@@ -254,6 +261,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         </>
       }
     >
+      {you && sessions && <HearthRow login={you.login} sessions={sessions} current={sessionId} />}
       {/* The Sessions are one Tab stop; arrow keys move between them (#400). */}
       <div ref={setList} onKeyDown={onListKeyDown} {...stylex.props(styles.sessions)}>
         {groups === null ? (
@@ -304,6 +312,85 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         )}
       </div>
     </Sidebar>
+  )
+}
+
+/**
+ * Your Hearth (ADR 0032): your one persistent Session, leading to it; or, before you have one, the
+ * button that lights it, on the first Runner online and your default Model.
+ */
+function HearthRow({
+  login,
+  sessions,
+  current,
+}: {
+  login: string
+  sessions: ReadonlyArray<SessionSummary>
+  current: string | undefined
+}) {
+  const hub = useHub()
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hearth = sessions.find(
+    (session) => isHearthOf(session.repo, login) && session.state !== "Archived",
+  )
+  if (hearth !== undefined) {
+    return (
+      <NavSection>
+        <NavItem
+          render={<Link to="/sessions/$sessionId" params={{ sessionId: hearth.id }} />}
+          icon={<FlameIcon />}
+          current={hearth.id === current}
+          trailing={
+            hearth.openQuestion ? (
+              <span {...stylex.props(styles.waiting)}>
+                <WaitingDot />
+              </span>
+            ) : hearth.currentTurn !== null ? (
+              <span {...stylex.props(styles.busy)}>
+                <Spinner size="sm" label="Working" />
+              </span>
+            ) : (
+              <SessionStatus state={statusOf(hearth.state)} variant="dot" />
+            )
+          }
+        >
+          Hearth
+        </NavItem>
+      </NavSection>
+    )
+  }
+  const light = () => {
+    setBusy(true)
+    setError(null)
+    hub
+      .createSession({ repo: hearthRepoOf(login), branch: hearthBranch })
+      .then((session) =>
+        navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } }),
+      )
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <NavSection>
+      <NavItem
+        render={<button type="button" onClick={light} disabled={busy} />}
+        icon={<FlameIcon />}
+        {...(error !== null && { title: error })}
+        trailing={
+          busy ? (
+            <Spinner size="sm" label="Lighting your Hearth" />
+          ) : error !== null ? (
+            <span {...stylex.props(styles.warning)}>
+              <WarningIcon />
+            </span>
+          ) : undefined
+        }
+      >
+        Light your Hearth
+      </NavItem>
+    </NavSection>
   )
 }
 

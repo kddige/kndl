@@ -104,6 +104,29 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
     expect(await run(start("w-1"))).toMatchObject({ _tag: "Success" })
   })
 
+  test("makes a Hearth's Workspace on the host, with nothing cloned (ADR 0032)", async () => {
+    const result = await run(
+      start("w-hearth", { repo: "~/alice", baseBranch: "main", workBranch: "main" }),
+    )
+
+    expect(result).toMatchObject({ _tag: "Success" })
+    const workspace = join(sessionsRoot, "w-hearth", "workspace")
+    expect(git(workspace, "branch", "--show-current")).toBe("main")
+    expect(git(workspace, "remote")).toBe("")
+    expect(git(workspace, "ls-files").split("\n")).toEqual([
+      "AGENTS.md",
+      "CLAUDE.md",
+      "MEMORY.md",
+      "notes/.gitkeep",
+    ])
+    // Waking keeps what it wrote.
+    writeFileSync(join(workspace, "MEMORY.md"), "remember this")
+    expect(await run(start("w-hearth", { repo: "~/alice", resume: "c" }))).toMatchObject({
+      _tag: "Success",
+    })
+    expect(readFileSync(join(workspace, "MEMORY.md"), "utf8")).toBe("remember this")
+  })
+
   test("fails, leaving no Workspace behind, when the clone fails", async () => {
     const result = await run(start("w-2", { repo: "acme/missing" }))
 
