@@ -79,6 +79,8 @@ export type HeardEvent =
   | { readonly kind: "elsewhere"; readonly target: string }
   | { readonly kind: "closed"; readonly reason?: string }
   | { readonly kind: "error"; readonly message: string; readonly code?: string }
+  /** The reasoning model behind the voice did something else: a sign it is at work. */
+  | { readonly kind: "reasoning" }
   /**
    * The reasoning model behind the voice called a kndl tool (spike): the browser runs it, and
    * answers with {@link toolOutput}.
@@ -117,12 +119,12 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
     // to run. Either protocol, as far as is known.
     case "response.event": {
       const inner = (event["event"] ?? {}) as Record<string, unknown>
-      if (inner["type"] !== "response.output_item.done") return undefined
+      if (inner["type"] !== "response.output_item.done") return { kind: "reasoning" }
       const call = (inner["item"] ?? {}) as Record<string, unknown>
       const callId = stringOf(call["call_id"])
       const name = stringOf(call["name"])
       if (call["type"] !== "function_call" || callId === undefined || name === undefined) {
-        return undefined
+        return { kind: "reasoning" }
       }
       return { kind: "toolCall", callId, name, arguments: stringOf(call["arguments"]) ?? "{}" }
     }

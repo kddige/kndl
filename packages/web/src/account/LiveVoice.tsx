@@ -53,7 +53,7 @@ export function LiveVoiceSection() {
   const setting = choosing ?? providers.liveVoice
   // Until they choose, the first they have.
   const model = liveVoiceModelFor(setting, has)
-  const mode = liveVoiceModeOf(setting)
+  const mode = liveVoiceModeOf(setting, model)
   /** The setting as shown, which each control changes a part of. */
   const current: LiveVoiceSetting = setting ?? { model: model.name }
   const running = signIn !== null && signIn.ended === null
@@ -167,20 +167,30 @@ export function LiveVoiceSection() {
             onValueChange={(voice) => choose({ ...current, voice })}
           />
         </PropertyRow>
-        <PropertyRow
-          label="Works with"
-          description="With a reasoning model, the voice hands what you ask to a stronger OpenAI model, which thinks, can search the web, and drives the Session's agent for you. Talk only hands it straight to the agent."
-        >
-          <SegmentedControl
-            label="Live voice works with"
-            options={[
-              { value: "Reasoning", label: "A reasoning model" },
-              { value: "Talk", label: "Talk only" },
-            ]}
-            value={mode}
-            onValueChange={(next) => choose({ ...current, mode: next })}
-          />
-        </PropertyRow>
+        {/* Through ChatGPT, Talk only: its backend runs no reasoning model's tools. */}
+        {!model.reasoning ? (
+          <PropertyRow
+            label="Works with"
+            description="GPT-Live through ChatGPT hands what you ask straight to the Session's agent: ChatGPT's backend runs no reasoning model's tools. A reasoning model behind the voice needs GPT-Live 1 (API key)."
+          >
+            Talk only
+          </PropertyRow>
+        ) : (
+          <PropertyRow
+            label="Works with"
+            description="With a reasoning model, the voice hands what you ask to a stronger OpenAI model, which thinks, can search the web, and drives the Session's agent for you. Talk only hands it straight to the agent."
+          >
+            <SegmentedControl
+              label="Live voice works with"
+              options={[
+                { value: "Reasoning", label: "A reasoning model" },
+                { value: "Talk", label: "Talk only" },
+              ]}
+              value={mode}
+              onValueChange={(next) => choose({ ...current, mode: next })}
+            />
+          </PropertyRow>
+        )}
         {mode === "Reasoning" && (
           <PropertyRow label="Reasoning model" description="Runs on the same OpenAI connection.">
             <Select

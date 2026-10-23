@@ -29,6 +29,12 @@ export interface LiveVoiceModelInfo {
    */
   readonly connection: LiveVoiceCredential
   readonly protocol: LiveVoiceProtocol
+  /**
+   * Whether a reasoning model can work behind it (Responses delegation): GPT-Live's API documents
+   * it; ChatGPT's backend, as Codex uses it, takes client delegation alone, and a reasoning model's
+   * tool calls never reach the browser.
+   */
+  readonly reasoning: boolean
   /** The voices it speaks with, the first its default. */
   readonly voices: ReadonlyArray<string>
 }
@@ -85,6 +91,7 @@ export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
     label: "GPT-Live 1 (ChatGPT, through Codex)",
     connection: "Codex",
     protocol: "Codex",
+    reasoning: false,
     voices: gptLiveChatGptVoices,
   },
   {
@@ -94,6 +101,7 @@ export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
     label: "GPT-Live 1 (API key)",
     connection: "ApiKey",
     protocol: "Live",
+    reasoning: true,
     voices: gptLiveVoices,
   },
 ]
@@ -172,9 +180,14 @@ export type LiveVoiceConnection = typeof LiveVoiceConnection.Type
  */
 export type LiveVoiceMode = "Reasoning" | "Talk"
 
-/** The mode a setting asks for: with a reasoning model unless it says `Talk`. */
-export const liveVoiceModeOf = (setting: LiveVoiceSetting | undefined): LiveVoiceMode =>
-  setting?.mode ?? "Reasoning"
+/**
+ * The mode a call runs in: with a reasoning model unless the setting says `Talk`, or the Model can't
+ * have one behind it, as GPT-Live through ChatGPT can't.
+ */
+export const liveVoiceModeOf = (
+  setting: LiveVoiceSetting | undefined,
+  model: Pick<LiveVoiceModelInfo, "reasoning">,
+): LiveVoiceMode => (model.reasoning ? (setting?.mode ?? "Reasoning") : "Talk")
 
 /** The reasoning models offered, the default first: as OpenAI's GPT-Live guide suggests them. */
 export const ReasoningModels: ReadonlyArray<{ readonly id: string; readonly label: string }> = [
