@@ -24,11 +24,20 @@
 //   if that is shorter). A failure to ask isn't cached, nor an answer slower than
 //   `lookupTimeout`: the next check asks again.
 //   `forget` drops what is cached for a person and a Repo, for a check asked again by hand.
+// - A Hearth's Repo, `~/<login>` (ADR 0032), is on no GitHub: only the Member of that login has
+//   access to it, a dev login too, and GitHub is never asked of it.
 // - GitHub's names ignore case, so every spelling of a Repo's name gets the same answer, cached
 //   once (#197); GitHub is asked by the spelling first asked about. `fullName` says how GitHub
 //   spells it, for the Hub to keep that spelling.
 
-import { type Participant, type RepoName, repoKey, sameRepo } from "@kndl/protocol"
+import {
+  isHearthOf,
+  isHearthRepo,
+  type Participant,
+  type RepoName,
+  repoKey,
+  sameRepo,
+} from "@kndl/protocol"
 import {
   Cache,
   Context,
@@ -235,6 +244,8 @@ export class RepoAccess extends Context.Service<
         participant: Participant,
         repo: RepoName,
       ): Effect.fn.Return<RepoStatus, RepoAccessUnknown> {
+        // A Hearth (ADR 0032) is its Member's alone, whatever GitHub or dev login says.
+        if (isHearthRepo(repo)) return isHearthOf(repo, participant.login) ? "Allowed" : "NoAccess"
         if (participant.id.startsWith("dev:")) {
           if (Option.isNone(config.devLogin)) return "NoAccess"
           if (!app.isConfigured) return "Allowed"
@@ -248,6 +259,7 @@ export class RepoAccess extends Context.Service<
         participant: Participant,
         repo: RepoName,
       ) {
+        if (isHearthRepo(repo)) return isHearthOf(repo, participant.login)
         // Whatever GitHub says: a dev login isn't a collaborator anywhere.
         if (participant.id.startsWith("dev:")) return Option.isSome(config.devLogin)
         return (yield* status(participant, repo)) === "Allowed"
@@ -350,7 +362,7 @@ export class RepoAccess extends Context.Service<
       })
 
       const fullName = (repo: RepoName) =>
-        app.isConfigured
+        app.isConfigured && !isHearthRepo(repo)
           ? Cache.get(fullNames, new Asked("", repo)).pipe(
               Effect.map(Option.some),
               Effect.catchTag("RepoAccessUnknown", (error) =>

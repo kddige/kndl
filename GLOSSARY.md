@@ -138,6 +138,10 @@ _Avoid_: interrupt, inject, push
 A question the agent asked in a Turn, with its question tool, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one the agent reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep. An agent may ask it _async_: it works on meanwhile, the question stays open after the Turn ends, and the answer reaches it as a message, into the Turn if it still runs, else as a Turn of its own.
 _Avoid_: prompt, dialog, permission request
 
+**Hearth**:
+A Member's one persistent Session (ADR 0032), on a Repo of its own, `~/<login>`, that nobody else sees. Its Workspace is made on its Runner rather than cloned, and keeps its memory. Its agent drives the Member's other Sessions, as them, with the kndl MCP server the Hub serves it. It can't be archived, only put to sleep.
+_Avoid_: home, main session, assistant, personal agent
+
 **Workspace**:
 The Session's checkout of its Repo, which outlives any single Sandbox.
 _Avoid_: working directory, volume, clone

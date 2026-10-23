@@ -3,6 +3,7 @@ import {
   type GitAsk,
   GitCredentials,
   type GitIdentity,
+  isHearthRepo,
   type Participant,
   type RepoName,
   type SessionSummary,
@@ -49,6 +50,12 @@ export class SessionGit extends Context.Service<
 
       const answer = Effect.fn("SessionGit.answer")(
         function* (session: SessionSummary, ask: GitAsk) {
+          // A Hearth's Workspace is made on its Runner (ADR 0032): there is no GitHub to reach.
+          if (isHearthRepo(session.repo)) {
+            return GitAnswer.cases.GitFailed.make({
+              message: "A Hearth has no GitHub Repo: its Workspace lives on its Runner",
+            })
+          }
           switch (ask._tag) {
             case "GitAccess": {
               if (!app.isConfigured) {
