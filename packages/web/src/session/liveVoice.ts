@@ -27,6 +27,11 @@ export type LiveVoiceStatus =
       readonly muted: boolean
       /** When the call connected, for its timer. */
       readonly since: number
+      /**
+       * The last thing the voice really handed to the Session: a prompt, or a reply to its
+       * question. What the voice says it passed on, and this doesn't show, it didn't.
+       */
+      readonly handedOff?: { readonly text: string; readonly reply: boolean }
     }
   | { readonly phase: "failed"; readonly message: string }
 
@@ -41,6 +46,7 @@ class LiveVoiceCall {
   #unsubscribe: (() => void) | undefined
   #speaking = ""
   #muted = false
+  #handed: { readonly text: string; readonly reply: boolean } | undefined
   #since = 0
   #protocol: LiveVoiceProtocol = "Live"
   /** Both sides of the call, mixed for the call bar's bars: never played, only measured. */
@@ -55,9 +61,13 @@ class LiveVoiceCall {
   ) {
     this.#bridge = new VoiceBridge(
       {
-        sendPrompt: (text) => hub.sendPrompt(sessionId, text),
+        sendPrompt: (text) => this.#handedOff(text, false, hub.sendPrompt(sessionId, text)),
         reply: (question, text) =>
-          hub.answerQuestion(sessionId, question.toolCallId, { _tag: "Replied", text }),
+          this.#handedOff(
+            text,
+            true,
+            hub.answerQuestion(sessionId, question.toolCallId, { _tag: "Replied", text }),
+          ),
       },
       (event) => this.#send(event),
     )
@@ -177,7 +187,17 @@ class LiveVoiceCall {
       speaking: this.#speaking,
       muted: this.#muted,
       since: this.#since,
+      ...(this.#handed !== undefined && { handedOff: this.#handed }),
     })
+  }
+
+  /** Shows what went to the Session, if it went: `sent`, passed on. */
+  #handedOff(text: string, reply: boolean, sent: boolean): boolean {
+    if (sent) {
+      this.#handed = { text, reply }
+      this.#live()
+    }
+    return sent
   }
 
   #fail(message: string) {
@@ -208,6 +228,10 @@ class LiveVoiceCall {
         return this.#live()
       case "delegated":
         return this.#bridge.delegated(event.id, event.asked)
+      case "elsewhere":
+        // Configured to delegate to kndl alone: one to anywhere else never reaches the Session.
+        console.warn(`Live voice: GPT-Live delegated to "${event.target}", not to this Session`)
+        return
       case "closed":
         // Ended by GPT-Live, not by Hang up: say why.
         return this.#fail(

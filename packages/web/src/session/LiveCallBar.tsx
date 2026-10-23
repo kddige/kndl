@@ -1,6 +1,7 @@
 // The live call's bar (ADR 0033): floating over the Composer while a live voice call is up, so the
 // call is never out of sight. It says the call is live and for how long, shows bars that move with
-// what either side says, and holds the call's controls: the voice's settings, mute and hang up.
+// what either side says, what the voice says, and what it last really handed to the Session, and
+// holds the call's controls: the voice's settings, mute and hang up.
 
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
@@ -109,6 +110,15 @@ const styles = stylex.create({
     outlineOffset: "2px",
     ":focus-visible": { outlineWidth: "2px", outlineStyle: "solid", outlineColor: color.focus },
   },
+  handedOff: {
+    minWidth: 0,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    color: color.textSecondary,
+    fontSize: text.xs,
+  },
+  handedOffLabel: { fontWeight: 500, color: color.text },
   caption: {
     minWidth: 0,
     overflow: "hidden",
@@ -250,6 +260,15 @@ export function LiveCallBar({
       {live && status.speaking !== "" && (
         <p aria-live="polite" title={status.speaking} {...stylex.props(styles.caption)}>
           <bdi>{status.speaking}</bdi>
+        </p>
+      )}
+      {/* What really went to the Session: a hand-off the voice claims, and this lacks, didn't happen. */}
+      {live && status.handedOff !== undefined && (
+        <p title={status.handedOff.text} {...stylex.props(styles.handedOff)}>
+          <span {...stylex.props(styles.handedOffLabel)}>
+            {status.handedOff.reply ? "Answered the agent:" : "Sent to the agent:"}
+          </span>{" "}
+          <bdi>{status.handedOff.text}</bdi>
         </p>
       )}
     </section>

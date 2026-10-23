@@ -98,3 +98,28 @@ test("while connecting, the call bar can be hung up but not muted", async () => 
   expect(has(view.container, "Mute")).toBe(false)
   expect(has(view.container, "Hang up")).toBe(true)
 })
+
+test("the call bar shows what really went to the agent, and whether it answered a question", async () => {
+  const base = { phase: "live", speaking: "", muted: false, since: Date.now() } as const
+  for (const [handedOff, label] of [
+    [{ text: "Run the tests", reply: false }, "Sent to the agent:"],
+    [{ text: "SQLite", reply: true }, "Answered the agent:"],
+  ] as const) {
+    const view = await render(
+      <LiveCallBar
+        status={{ ...base, handedOff }}
+        levels={() => false}
+        onMute={() => {}}
+        onHangUp={() => {}}
+      />,
+    )
+    expect(view.container.textContent).toContain(`${label} ${handedOff.text}`)
+    await view.unmount()
+  }
+  // Nothing handed off yet: no such line.
+  const view = await render(
+    <LiveCallBar status={base} levels={() => false} onMute={() => {}} onHangUp={() => {}} />,
+  )
+  cleanup = view.unmount
+  expect(view.container.textContent).not.toContain("to the agent")
+})
