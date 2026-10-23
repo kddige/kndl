@@ -274,7 +274,9 @@ export const LiveVoiceRoutes = HttpRouter.use(
             `OpenAI didn't start the voice: ${providerReason(answered.response.status, text)}`,
           )
         }
-        const sdp = model.connection === "Codex" ? text.trim() || undefined : answerSdp(text)
+        // As sent: an SDP's every line ends with CRLF, the last too, or browsers lose that line.
+        const sdp =
+          model.connection === "Codex" ? (text.trim() === "" ? undefined : text) : answerSdp(text)
         if (sdp === undefined) {
           return errorResponse(502, "OpenAI's answer had no WebRTC answer in it.")
         }

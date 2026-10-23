@@ -91,7 +91,7 @@ async function scene() {
         if (url.host === "chatgpt.com" && url.pathname === "/backend-api/codex/realtime/calls") {
           const status = fakes.codexStatus.shift()
           if (status !== undefined) return new Response("Unauthorized", { status })
-          return new Response("v=0 codex answer", {
+          return new Response("v=0 codex answer\r\na=ice-pwd:x\r\n", {
             status: 201,
             headers: { "content-type": "application/sdp", location: "/v1/live/rtc_1" },
           })
@@ -173,7 +173,8 @@ describe("live voice", () => {
     const response = await talk(hub, start.sessionId, web.cookie)
     expect(response.status).toBe(201)
     expect(await response.json()).toEqual({
-      sdp: "v=0 codex answer",
+      // Byte for byte: its last line's CRLF too.
+      sdp: "v=0 codex answer\r\na=ice-pwd:x\r\n",
       model: "openai/gpt-live-1-codex",
       voice: "cove",
       protocol: "Codex",

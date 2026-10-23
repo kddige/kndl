@@ -13,6 +13,7 @@ import { Schema } from "effect"
 import { useEffect, useRef, useState } from "react"
 import { useHub } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
+import { toast } from "../ui/index.ts"
 import { VoiceBridge, type VoiceEvent } from "./voiceBridge.ts"
 
 export type LiveVoiceStatus =
@@ -53,7 +54,7 @@ export type HeardEvent =
   | { readonly kind: "heard"; readonly text: string }
   | { readonly kind: "spoke"; readonly text: string }
   | { readonly kind: "delegated"; readonly id: string; readonly asked?: string }
-  | { readonly kind: "closed" }
+  | { readonly kind: "closed"; readonly reason?: string }
   | { readonly kind: "error"; readonly message: string }
 
 /** The value, if it is a string. */
@@ -73,8 +74,10 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
       const error = (event["error"] ?? {}) as Record<string, unknown>
       return { kind: "error", message: stringOf(error["message"]) ?? "GPT-Live reported an error." }
     }
-    case "session.closed":
-      return { kind: "closed" }
+    case "session.closed": {
+      const reason = stringOf(event["reason"])
+      return { kind: "closed", ...(reason !== undefined && { reason }) }
+    }
   }
   if (protocol === "Live") {
     switch (event["type"]) {
@@ -166,8 +169,10 @@ class LiveVoiceCall {
       this.#channel = channel
       channel.addEventListener("message", (message) => this.#received(message.data))
       pc.addEventListener("connectionstatechange", () => {
+        console.debug("Live voice connection:", pc.connectionState)
         if (pc.connectionState === "failed") this.#fail("The voice connection was lost.")
       })
+      channel.addEventListener("close", () => console.debug("Live voice: data channel closed"))
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
       const response = await fetch(liveVoicePath(this.sessionId), {
@@ -186,7 +191,9 @@ class LiveVoiceCall {
       }
       const answer = decodeAnswer(JSON.parse(text))
       this.#protocol = answer.protocol
-      await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp })
+      // Every SDP line ends with CRLF, the last too, or the browser drops it.
+      const sdp = /\r?\n$/.test(answer.sdp) ? answer.sdp : `${answer.sdp}\r\n`
+      await pc.setRemoteDescription({ type: "answer", sdp })
       // Follow the Session as the store has it: it is joined while its view is open.
       const observe = () => {
         const state = this.hub.getState()
@@ -241,6 +248,8 @@ class LiveVoiceCall {
 
   #received(data: unknown) {
     if (typeof data !== "string") return
+    // Which events come, for whoever debugs a call: their types alone, never what was said.
+    console.debug("Live voice event:", /"type"\s*:\s*"([^"]+)"/.exec(data)?.[1] ?? "?")
     const event = heardEvent(this.#protocol, data)
     switch (event?.kind) {
       case "heard":
@@ -252,7 +261,10 @@ class LiveVoiceCall {
       case "delegated":
         return this.#bridge.delegated(event.id, event.asked)
       case "closed":
-        return this.stop()
+        // Ended by GPT-Live, not by Hang up: say why.
+        return this.#fail(
+          `GPT-Live ended the call${event.reason === undefined ? "" : ` (${event.reason})`}.`,
+        )
       case "error":
         console.warn("Live voice:", event.message)
         return
@@ -264,6 +276,12 @@ class LiveVoiceCall {
 export function useLiveVoice(sessionId: SessionId) {
   const hub = useHub()
   const [status, setStatus] = useState<LiveVoiceStatus>({ phase: "off" })
+  // A call that fails or is ended says why, where it can be read.
+  useEffect(() => {
+    if (status.phase === "failed") {
+      toast.show({ title: "Live voice stopped", description: status.message, intent: "warning" })
+    }
+  }, [status])
   const call = useRef<LiveVoiceCall | undefined>(undefined)
   // Leaving the Session hangs up.
   useEffect(
