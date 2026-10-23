@@ -57,6 +57,7 @@ import {
   type SharedVariable,
   type SharedVariableInput,
   type SignInEnded,
+  type SignInFor,
   type TerminalFrame,
   type TerminalSize,
   type TestBuild,
@@ -833,11 +834,17 @@ export class HubClient {
    * follows its steps as the Hub sends them; resolves with how it ended, or rejects with the Hub's
    * reason, which the store holds too.
    */
-  startSignIn(provider: ProviderId): Promise<SignInEnded> {
+  startSignIn(provider: ProviderId, forWhat?: SignInFor): Promise<SignInEnded> {
     if (!this.#welcomed) return Promise.reject(new CommandError("Not connected to the Hub."))
     const requestId = this.#newRequestId()
-    this.#dispatch({ _tag: "SignInStarted", requestId, provider })
-    return this.#request({ _tag: "StartSignIn", provider }, "SignInEnded", requestId)
+    const about = { provider, ...(forWhat !== undefined && { for: forWhat }) }
+    this.#dispatch({ _tag: "SignInStarted", requestId, ...about })
+    return this.#request({ _tag: "StartSignIn", ...about }, "SignInEnded", requestId)
+  }
+
+  /** Forgets the person's live voice connection (ADR 0033). */
+  disconnectLiveVoice(): Promise<ProvidersState> {
+    return this.#request({ _tag: "DisconnectLiveVoice" }, "ProvidersState")
   }
 
   /** Answers the sign-in in progress's Paste or Choose step: the text pasted, or the option's id. */

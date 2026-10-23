@@ -223,6 +223,8 @@ const webToHub = [
   { _tag: "RefreshProviderModels", requestId: "q-44" },
   { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
   { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
+  { _tag: "DisconnectLiveVoice", requestId: "q-47c" },
+  { _tag: "StartSignIn", requestId: "q-47d", provider: "openai", for: "LiveVoice" },
   {
     _tag: "SetLiveVoice",
     requestId: "q-47b",

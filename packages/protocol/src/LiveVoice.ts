@@ -23,10 +23,11 @@ export interface LiveVoiceModelInfo {
   readonly id: string
   readonly label: string
   /**
-   * How that Connected provider must be connected for it: GPT-Live's API takes a key alone, and a
-   * ChatGPT sign-in reaches GPT-Live only through ChatGPT's backend, as another Model.
+   * What it runs on: `Codex`, the Member's live voice connection, the Codex CLI's ChatGPT sign-in,
+   * through ChatGPT's backend; `ApiKey`, their Connected provider for OpenAI, connected with an
+   * API key, through OpenAI's API, which takes nothing else.
    */
-  readonly connection: "ApiKey" | "SignIn"
+  readonly connection: LiveVoiceCredential
   readonly protocol: LiveVoiceProtocol
   /** The voices it speaks with, the first its default. */
   readonly voices: ReadonlyArray<string>
@@ -72,8 +73,8 @@ const gptLiveVoices = [
 ]
 
 /**
- * Every live voice Model kndl talks to. One Provider's for now: GPT-Live, through ChatGPT for a
- * sign-in and through OpenAI's API for a key. Another Provider's, such as xAI's, joins this list
+ * Every live voice Model kndl talks to. One Provider's for now: GPT-Live, through ChatGPT for the
+ * live voice connection and through OpenAI's API for a key. Another Provider's, such as xAI's, joins this list
  * with its own way of starting a session (LiveVoiceRoutes.ts).
  */
 export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
@@ -81,8 +82,8 @@ export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
     name: "openai/gpt-live-1-codex",
     provider: "openai",
     id: "gpt-live-1-codex",
-    label: "GPT-Live 1 (ChatGPT)",
-    connection: "SignIn",
+    label: "GPT-Live 1 (ChatGPT, through Codex)",
+    connection: "Codex",
     protocol: "Codex",
     voices: gptLiveChatGptVoices,
   },
@@ -101,18 +102,21 @@ export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
 export const liveVoiceModel = (name: string): LiveVoiceModelInfo | undefined =>
   LiveVoiceModels.find((model) => model.name === name)
 
+/** What a live voice Model runs on: the live voice connection, or an OpenAI API key. */
+export type LiveVoiceCredential = "Codex" | "ApiKey"
+
 /**
- * The live voice Model a Member talks to: the one they chose, else the first that runs on how
- * they connected its Provider (`connection`), a ChatGPT sign-in or a key.
+ * The live voice Model a Member talks to: the one they chose, else the first that runs on what
+ * they `has`: their live voice connection, an OpenAI API key, or both.
  */
 export const liveVoiceModelFor = (
   setting: LiveVoiceSetting | undefined,
-  connection: "ApiKey" | "SignIn" | undefined,
+  has: ReadonlyArray<LiveVoiceCredential>,
 ): LiveVoiceModelInfo => {
   const chosen = setting === undefined ? undefined : liveVoiceModel(setting.model)
   if (chosen !== undefined) return chosen
   return (
-    LiveVoiceModels.find((model) => model.connection === connection) ??
+    LiveVoiceModels.find((model) => has.includes(model.connection)) ??
     (LiveVoiceModels[0] as LiveVoiceModelInfo)
   )
 }
@@ -138,6 +142,21 @@ export const liveVoiceOf = (model: LiveVoiceModelInfo, setting?: LiveVoiceSettin
   model.voices.includes(setting.voice)
     ? setting.voice
     : (model.voices[0] ?? "")
+
+/** What a sign-in is for, besides a Connected provider: the live voice connection. */
+export const SignInFor = Schema.Literal("LiveVoice")
+export type SignInFor = typeof SignInFor.Type
+
+/**
+ * A Member's live voice connection, as the Account page shows it: the Codex CLI's ChatGPT sign-in,
+ * apart from their Connected provider for OpenAI, whose sign-in GPT-Live refuses.
+ */
+export const LiveVoiceConnection = Schema.Struct({
+  /** The ChatGPT account, as its token names it. */
+  label: Schema.String,
+  connectedAt: Schema.Number,
+})
+export type LiveVoiceConnection = typeof LiveVoiceConnection.Type
 
 /** Web to Hub: set the signed-in Member's live voice. Answered with ProvidersState. */
 export const SetLiveVoice = Schema.TaggedStruct("SetLiveVoice", {

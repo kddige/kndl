@@ -127,7 +127,7 @@ The ordered prompts from the Creator waiting for the Session to finish its curre
 _Avoid_: backlog, inbox
 
 **Live voice**:
-Talking with a Session (ADR 0033): its Creator's spoken conversation with a live voice Model, such as GPT-Live, which passes what they ask to the Session as their prompt, and says what the agent did and asks. It runs on their own Connected provider, with the Model and voice they choose on the Account page.
+Talking with a Session (ADR 0033): its Creator's spoken conversation with a live voice Model, such as GPT-Live, which passes what they ask to the Session as their prompt, and says what the agent did and asks. It runs on their live voice connection, the Codex CLI's ChatGPT sign-in kept apart from their Connected providers, or on an OpenAI API key, with the Model and voice they choose on the Account page.
 _Avoid_: voice mode, call, dictation
 
 **Attachment**:

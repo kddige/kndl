@@ -50,6 +50,9 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
  */
 const beforeLiveVoice = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  // And 0048, the live voice connections.
+  yield* sql`DROP TABLE live_voice_connections`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'live_voice_connections'`
   yield* sql`ALTER TABLE participants DROP COLUMN live_voice`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'live_voice'`
 })

@@ -43,23 +43,34 @@ interface Seen {
   readonly body: string
 }
 
-/** A ChatGPT sign-in's access token, as a JWT whose claims name its account. */
-const chatgptToken = [
-  "e30",
-  Buffer.from(
-    JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-alice" } }),
-  ).toString("base64url"),
-  "sig",
-].join(".")
+/** A Codex sign-in's access token, as a JWT whose claims name its account, `n` for each refresh. */
+const codexToken = (n: number) =>
+  [
+    "e30",
+    Buffer.from(
+      JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-alice" }, n }),
+    ).toString("base64url"),
+    "sig",
+  ].join(".")
+
+const credential = (access: string): OAuthCredential => ({
+  type: "oauth",
+  access,
+  refresh: `refresh-of-${access.length}`,
+  expires: Date.now() + 60 * 60 * 1000,
+})
 
 async function scene() {
   const seen: Array<Seen> = []
-  const oauth: OAuthCredential = {
-    type: "oauth",
-    access: chatgptToken,
-    refresh: "refresh-chatgpt",
-    expires: Date.now() + 60 * 60 * 1000,
+  const fakes = {
+    /** What the Codex backend answers a call with first: as the test says. */
+    codexStatus: [] as Array<number>,
+    /** What the Codex sign-in was asked to choose, and answered. */
+    chosen: [] as Array<string>,
+    refreshes: 0,
   }
+  // kndl's own ChatGPT sign-in: OpenAI's Sign in with ChatGPT for apps.
+  const oauth = credential("access-siwc")
   const hub = await startHub({
     config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
     providerApis: ProviderApis.layerTest({
@@ -78,6 +89,8 @@ async function scene() {
         }
         // Through ChatGPT's backend, the SDP answer alone, as Codex has it.
         if (url.host === "chatgpt.com" && url.pathname === "/backend-api/codex/realtime/calls") {
+          const status = fakes.codexStatus.shift()
+          if (status !== undefined) return new Response("Unauthorized", { status })
           return new Response("v=0 codex answer", {
             status: 201,
             headers: { "content-type": "application/sdp", location: "/v1/live/rtc_1" },
@@ -93,6 +106,25 @@ async function scene() {
       },
       signIn: async () => oauth,
       refresh: async () => oauth,
+      // The Codex CLI's sign-in: device code, chosen by the Hub, then its code shown.
+      codexSignIn: async (interaction) => {
+        const chosen = await interaction.prompt({
+          type: "select",
+          message: "Select OpenAI Codex login method:",
+          options: [
+            { id: "browser", label: "Browser login (default)" },
+            { id: "device_code", label: "Device code login (headless)" },
+          ],
+        } as never)
+        fakes.chosen.push(chosen)
+        interaction.notify({
+          type: "device_code",
+          verificationUri: "https://auth.openai.com/codex/device",
+          userCode: "ABCD-1234",
+        } as never)
+        return credential(codexToken(0))
+      },
+      codexRefresh: async () => credential(codexToken(++fakes.refreshes)),
     }),
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
@@ -106,7 +138,7 @@ async function scene() {
   })
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
-  return { hub, web, start, seen }
+  return { hub, web, start, seen, fakes }
 }
 
 const talk = (hub: TestHub, sessionId: string, cookie: string, origin = webOrigin) =>
@@ -117,12 +149,27 @@ const talk = (hub: TestHub, sessionId: string, cookie: string, origin = webOrigi
   })
 
 describe("live voice", () => {
-  test("starts GPT-Live through ChatGPT for a ChatGPT sign-in, with client delegation", async () => {
-    const { hub, web, start, seen } = await scene()
-    web.send({ _tag: "StartSignIn", requestId: `v-${++requests}`, provider: "openai" })
-    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+  test("signs in for live voice as the Codex CLI does, and starts GPT-Live through ChatGPT", async () => {
+    const { hub, web, start, seen, fakes } = await scene()
+    web.send({
+      _tag: "StartSignIn",
+      requestId: `v-${++requests}`,
+      provider: "openai",
+      for: "LiveVoice",
+    })
+    // By device code, chosen by the Hub, whose code the Member is shown.
+    expect(await web.take("SignInStepped")).toMatchObject({
+      for: "LiveVoice",
+      step: { _tag: "EnterCode", code: "ABCD-1234" },
+    })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected", for: "LiveVoice" })
+    expect(fakes.chosen).toEqual(["device_code"])
+    const state = await web.take("ProvidersState", (m) => m.liveVoiceConnection !== undefined)
+    // Apart from the Connected providers: nothing there, no Models.
+    expect(state.connected).toEqual([])
+    expect(state.liveVoiceConnection).toMatchObject({ connectedAt: expect.any(Number) })
 
-    // Not chosen yet: the Model for a sign-in, in its default voice.
+    // Not chosen yet: the Model for it, in its default voice.
     const response = await talk(hub, start.sessionId, web.cookie)
     expect(response.status).toBe(201)
     expect(await response.json()).toEqual({
@@ -136,7 +183,7 @@ describe("live voice", () => {
       "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas",
     )
     expect(sent?.headers).toMatchObject({
-      authorization: `Bearer ${chatgptToken}`,
+      authorization: `Bearer ${codexToken(0)}`,
       "chatgpt-account-id": "acct-alice",
       "openai-alpha": "quicksilver=v2",
       "content-type": "application/json",
@@ -152,13 +199,28 @@ describe("live voice", () => {
     })
     expect(body.session.instructions).toContain("on kddige/kndl")
 
-    // The API's Model takes a key alone: chosen with a sign-in, it says what to do.
-    await ask(web, { _tag: "SetLiveVoice", setting: { model: "openai/gpt-live-1" } })
-    const mismatched = await talk(hub, start.sessionId, web.cookie)
-    expect(mismatched.status).toBe(409)
-    expect(((await mismatched.json()) as { error: string }).error).toContain(
-      "pick GPT-Live 1 (ChatGPT)",
+    // A 401 has the sign-in refreshed, and the call sent once more with the new token.
+    fakes.codexStatus.push(401)
+    seen.length = 0
+    expect((await talk(hub, start.sessionId, web.cookie)).status).toBe(201)
+    const calls = seen.filter((request) => request.url.includes("/realtime/calls"))
+    expect(calls.map((call) => call.headers.authorization)).toEqual([
+      `Bearer ${codexToken(0)}`,
+      `Bearer ${codexToken(1)}`,
+    ])
+  })
+
+  test("kndl's own ChatGPT sign-in doesn't start live voice: it says to sign in for it", async () => {
+    const { hub, web, start, seen } = await scene()
+    web.send({ _tag: "StartSignIn", requestId: `v-${++requests}`, provider: "openai" })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    const refused = await talk(hub, start.sessionId, web.cookie)
+    expect(refused.status).toBe(409)
+    expect(((await refused.json()) as { error: string }).error).toContain(
+      "sign in with ChatGPT (Codex)",
     )
+    // Nothing was sent to OpenAI's voice endpoints with it.
+    expect(seen.some((request) => /realtime|live/.test(request.url))).toBe(false)
   })
 
   test("starts GPT-Live through OpenAI's API for an API key", async () => {

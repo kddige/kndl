@@ -35,6 +35,7 @@ import type {
   OAuthCredential,
   ProviderAuthInteraction,
 } from "@earendil-works/pi-ai"
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex"
 import {
   type ConnectableProvider,
   type ConnectedProvider,
@@ -84,8 +85,6 @@ import {
   reasonOf,
   record,
   rejectsKey,
-  chatgptAccountOf,
-  SignInOrigins,
   signInOrigin,
   takesApiKey,
   upstreamUrl,
@@ -127,12 +126,27 @@ export class ProviderApis extends Context.Service<
      * or another address for the Provider's API, as GitHub Copilot's names for each account.
      */
     readonly toAuth: (provider: ProviderId, credential: OAuthCredential) => Promise<ModelAuth>
+    /**
+     * Runs the Codex CLI's ChatGPT sign-in, pi-ai's `openai-codex`, for live voice alone (ADR 0033):
+     * no Connected provider's.
+     */
+    readonly codexSignIn: (
+      interaction: ProviderAuthInteraction,
+      options: LoginOptions,
+    ) => Promise<OAuthCredential>
+    /** Refreshes a Codex sign-in's tokens. Rejects on a refusal. */
+    readonly codexRefresh: (
+      credential: OAuthCredential,
+      signal: AbortSignal,
+    ) => Promise<OAuthCredential>
   }
 >()("@kndl/hub/ProviderApis") {
   static readonly layer = Layer.succeed(ProviderApis, {
     fetch: (request, init) => fetch(request, init as RequestInit),
     signIn: (provider, interaction, options) => oauthOf(provider).login(interaction, options),
     refresh: (provider, credential, signal) => oauthOf(provider).refresh(credential, signal),
+    codexSignIn: (interaction, options) => codexOAuth().login(interaction, options),
+    codexRefresh: (credential, signal) => codexOAuth().refresh(credential, signal),
     toAuth: (provider, credential) => oauthOf(provider).toAuth(credential),
   })
 
@@ -146,6 +160,8 @@ export class ProviderApis extends Context.Service<
       readonly signIn?: ProviderApis["Service"]["signIn"]
       readonly refresh?: ProviderApis["Service"]["refresh"]
       readonly toAuth?: ProviderApis["Service"]["toAuth"]
+      readonly codexSignIn?: ProviderApis["Service"]["codexSignIn"]
+      readonly codexRefresh?: ProviderApis["Service"]["codexRefresh"]
     } = {},
   ) =>
     Layer.succeed(ProviderApis, {
@@ -153,7 +169,18 @@ export class ProviderApis extends Context.Service<
       signIn: fakes.signIn ?? (async () => Promise.reject(new Error("No sign-in in tests"))),
       refresh: fakes.refresh ?? (async () => Promise.reject(new Error("No refresh in tests"))),
       toAuth: fakes.toAuth ?? ((provider, credential) => oauthOf(provider).toAuth(credential)),
+      codexSignIn:
+        fakes.codexSignIn ?? (async () => Promise.reject(new Error("No sign-in in tests"))),
+      codexRefresh:
+        fakes.codexRefresh ?? (async () => Promise.reject(new Error("No refresh in tests"))),
     })
+}
+
+/** pi-ai's `openai-codex` sign-in: the Codex CLI's, which GPT-Live through ChatGPT takes. */
+const codexOAuth = () => {
+  const oauth = openaiCodexProvider().auth.oauth
+  if (oauth === undefined) throw new Error("pi-ai has no Codex sign-in")
+  return oauth
 }
 
 // ── The Models ─────────────────────────────────────────────────────────────
@@ -1121,12 +1148,6 @@ export class ConnectedProviders extends Context.Service<
       ) {
         const { credential, provider } = connection
         if (credential.type !== "oauth") {
-          if (call.signInOrigin !== undefined) {
-            return yield* unusable(
-              "Broken",
-              `This call takes a ${nameOf(provider)} sign-in, not a key.`,
-            )
-          }
           return yield* send(apiOrigin(provider), keyAuth(credential) ?? {}, call, listing)
         }
         const auth = yield* Effect.tryPromise({
@@ -1137,18 +1158,6 @@ export class ConnectedProviders extends Context.Service<
               `${nameOf(provider)}'s sign-in can't be used: ${reasonOf(error)}`,
             ),
         })
-        if (call.signInOrigin !== undefined) {
-          // Only to an origin of the Provider's kndl knows (ADR 0033), with the account it is for.
-          if (!(SignInOrigins[provider] ?? []).includes(call.signInOrigin)) {
-            return yield* unusable("Broken", untrustedAddress(provider))
-          }
-          const account = chatgptAccountOf(credential.access)
-          const headers = {
-            ...auth.headers,
-            ...(account !== undefined && { "chatgpt-account-id": account }),
-          }
-          return yield* send(call.signInOrigin, { ...auth, headers }, call, listing)
-        }
         const origin = signInOrigin(provider, auth)
         if (origin === undefined) {
           return yield* unusable("Broken", untrustedAddress(provider))

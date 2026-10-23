@@ -5,18 +5,19 @@
 //   Creator's live voice Model, with their own Connected provider, and answers with the Provider's
 //   SDP. The credential stays on the Hub, as the Gateway's do. After that, audio and the data
 //   channel run between the browser and the Provider: the Hub isn't in them.
-// - Which GPT-Live depends on how the Creator connected OpenAI. A ChatGPT sign-in reaches only
-//   `gpt-live-1-codex`, through ChatGPT's backend as Codex calls it (`POST https://chatgpt.com/
-//   backend-api/codex/realtime/calls`, `{sdp, session}` in, the SDP answer out, with the sign-in's
-//   account in `chatgpt-account-id`): OpenAI's API refuses it (401). An API key reaches
-//   `gpt-live-1` through the API (`POST /v1/live/sessions`). Until the Creator chooses, the one for
-//   their connection; one chosen for the other connection is refused, saying which to pick.
+// - Which GPT-Live depends on what the Creator has. Their live voice connection, the Codex CLI's
+//   ChatGPT sign-in (LiveVoiceConnections.ts), reaches `gpt-live-1-codex` through ChatGPT's backend
+//   as Codex calls it (`POST https://chatgpt.com/backend-api/codex/realtime/calls`, `{sdp, session}`
+//   in, the SDP answer out, with its account in `chatgpt-account-id`). An OpenAI API key, their
+//   Connected provider, reaches `gpt-live-1` through the API (`POST /v1/live/sessions`). kndl's own
+//   ChatGPT sign-in reaches neither: both answer it 401. Until the Creator chooses, the first they
+//   have; one chosen that they lack is refused, saying what to do.
 // - Either runs with client delegation: it holds the conversation, and when it is asked for work
 //   it delegates to the browser, which prompts the Session. Its instructions say so, and carry the
 //   Session's latest Turns, so it knows what has happened. The answer names the protocol its data
 //   channel speaks, which differs between the two.
-// - Refusals: `403` for anyone but the Creator, `409` for an Archived Session, or a Creator who
-//   hasn't connected the Model's Provider (or must connect it again), `502` with the Provider's
+// - Refusals: `403` for anyone but the Creator, `409` for an Archived Session, or a Creator without
+//   what the Model runs on (or who must connect it again), `502` with the Provider's
 //   reason when it refuses or can't be reached. Logged with the Session, never what is said.
 
 import {
@@ -27,6 +28,7 @@ import {
   liveVoiceModelFor,
   liveVoiceOf,
   type Participant,
+  type ParticipantId,
   SessionId,
   type SessionSummary,
   sessionTitle,
@@ -34,8 +36,9 @@ import {
 import { Effect, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateParticipant, requireSameOrigin } from "./Auth.ts"
-import { ConnectedProviders } from "./ConnectedProviders.ts"
+import { ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
 import { historyPage } from "./Handoff.ts"
+import { LiveVoiceConnections } from "./LiveVoiceConnections.ts"
 import { Members } from "./Members.ts"
 import type { ApiCall } from "./PiProviders.ts"
 import { authorizeAccessFor } from "./SessionAccess.ts"
@@ -99,25 +102,9 @@ const liveApiCall = (sdp: string, session: Record<string, unknown>): ApiCall => 
   body: new TextEncoder().encode(JSON.stringify({ session, transport: { type: "webrtc", sdp } })),
 })
 
-/**
- * GPT-Live through ChatGPT's backend (`gpt-live-1-codex`), for a ChatGPT sign-in, as Codex calls it:
- * `{sdp, session}` in, the SDP answer alone out. ConnectedProviders adds the sign-in and its
- * account; the ids are fresh for each call.
- */
-const chatGptCall = (sdp: string, session: Record<string, unknown>): ApiCall => ({
-  signInOrigin: "https://chatgpt.com",
-  method: "POST",
-  path: "/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas",
-  headers: new Headers({
-    "content-type": "application/json",
-    "openai-alpha": "quicksilver=v2",
-    "session-id": crypto.randomUUID(),
-    "thread-id": crypto.randomUUID(),
-    "x-session-id": crypto.randomUUID(),
-  }),
-  keyHeader: "authorization",
-  body: new TextEncoder().encode(JSON.stringify({ sdp, session })),
-})
+/** Where GPT-Live through ChatGPT's backend starts a call, as Codex calls it. */
+export const codexCallUrl =
+  "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
 
 /** The SDP in GPT-Live's API's answer, `{session: {id}, transport: {type, sdp}}`. */
 const answerSdp = (text: string): string | undefined => {
@@ -145,8 +132,61 @@ const providerReason = (status: number, text: string) => {
 export const LiveVoiceRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const providers = yield* ConnectedProviders
+    const voiceConnections = yield* LiveVoiceConnections
+    const apis = yield* ProviderApis
     const members = yield* Members
     const log = yield* SessionLog
+
+    /**
+     * GPT-Live through ChatGPT's backend (`gpt-live-1-codex`), on the live voice connection, as
+     * Codex calls it: `{sdp, session}` in, the SDP answer alone out, with the account in
+     * `chatgpt-account-id` and fresh ids. A 401 has the sign-in refreshed and the call sent once
+     * more. A failure: why, for the Member.
+     */
+    const codexCall = (
+      participantId: ParticipantId,
+      sdp: string,
+      session: Record<string, unknown>,
+    ) => {
+      const send = (force: boolean) =>
+        Effect.gen(function* () {
+          const access = yield* voiceConnections.access(participantId, { force })
+          const headers = new Headers({
+            authorization: `Bearer ${access.token}`,
+            "content-type": "application/json",
+            "openai-alpha": "quicksilver=v2",
+            "session-id": crypto.randomUUID(),
+            "thread-id": crypto.randomUUID(),
+            "x-session-id": crypto.randomUUID(),
+          })
+          if (access.accountId !== undefined) headers.set("chatgpt-account-id", access.accountId)
+          const response = yield* Effect.tryPromise(() =>
+            apis.fetch(
+              new Request(codexCallUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ sdp, session }),
+                redirect: "manual",
+              }),
+            ),
+          ).pipe(Effect.option)
+          return response._tag === "Some"
+            ? ({ _tag: "Answered", response: response.value } as const)
+            : ({ _tag: "Unreachable" } as const)
+        })
+      return send(false).pipe(
+        Effect.flatMap((first) =>
+          first._tag === "Answered" && first.response.status === 401
+            ? Effect.andThen(
+                Effect.promise(() => first.response.body?.cancel() ?? Promise.resolve()),
+                send(true),
+              )
+            : Effect.succeed(first),
+        ),
+        Effect.mapError((unusable) => unusable.message),
+        Effect.result,
+      )
+    }
 
     yield* router.add(
       "POST",
@@ -178,23 +218,21 @@ export const LiveVoiceRoutes = HttpRouter.use(
         const offer = decodeOffer(yield* request.json.pipe(Effect.orElseSucceed(() => null)))
         if (offer._tag === "None") return errorResponse(400, "Expected a WebRTC offer, {sdp}.")
 
-        // How they connected OpenAI picks the way to GPT-Live: a ChatGPT sign-in through ChatGPT's
-        // backend, a key through the API.
-        const connection = yield* providers.usableAs(you.id, "openai").pipe(Effect.result)
-        if (connection._tag === "Failure") {
-          return errorResponse(
-            409,
-            `${connection.failure.message} Live voice runs on your OpenAI connection: connect it on the Account page.`,
-          )
-        }
+        // What they have picks the way to GPT-Live: their live voice connection through ChatGPT,
+        // or an OpenAI API key through the API.
+        const keyed = yield* providers.usableAs(you.id, "openai").pipe(Effect.option)
+        const has = [
+          ...(voiceConnections.info(you.id) !== undefined ? (["Codex"] as const) : []),
+          ...(keyed._tag === "Some" && keyed.value === "ApiKey" ? (["ApiKey"] as const) : []),
+        ]
         const setting = yield* members.liveVoice(you.id).pipe(Effect.orDie)
-        const model = liveVoiceModelFor(setting, connection.success)
-        if (model.connection !== connection.success) {
+        const model = liveVoiceModelFor(setting, has)
+        if (!has.includes(model.connection)) {
           return errorResponse(
             409,
-            model.connection === "SignIn"
-              ? `${model.label} runs on a ChatGPT sign-in, and your OpenAI connection is an API key: pick another live voice on the Account page, or sign in with ChatGPT.`
-              : `${model.label} runs on an OpenAI API key, and you are signed in with ChatGPT: pick GPT-Live 1 (ChatGPT) on the Account page, or connect a key.`,
+            model.connection === "Codex"
+              ? `${model.label} needs your live voice connection: sign in with ChatGPT (Codex) under Live voice on the Account page.`
+              : `${model.label} runs on an OpenAI API key, and your OpenAI connection isn't one: pick GPT-Live 1 (ChatGPT, through Codex) on the Account page, or connect a key.`,
           )
         }
         const voice = liveVoiceOf(model, setting)
@@ -209,21 +247,19 @@ export const LiveVoiceRoutes = HttpRouter.use(
           delegation: { type: "client" },
         }
 
-        const called = yield* providers
-          .call(
-            you.id,
-            model.provider,
-            model.protocol === "Codex"
-              ? chatGptCall(offer.value.sdp, configured)
-              : liveApiCall(offer.value.sdp, configured),
-          )
-          .pipe(Effect.result)
-        if (called._tag === "Failure") {
-          return errorResponse(
-            409,
-            `${called.failure.message} Live voice runs on your OpenAI connection: connect it on the Account page.`,
-          )
-        }
+        const called =
+          model.connection === "Codex"
+            ? yield* codexCall(you.id, offer.value.sdp, configured)
+            : yield* providers
+                .call(you.id, model.provider, liveApiCall(offer.value.sdp, configured))
+                .pipe(
+                  Effect.mapError(
+                    (unusable) =>
+                      `${unusable.message} Live voice runs on your OpenAI API key: connect it on the Account page.`,
+                  ),
+                  Effect.result,
+                )
+        if (called._tag === "Failure") return errorResponse(409, called.failure)
         const answered = called.success
         if (answered._tag !== "Answered") {
           return errorResponse(502, "OpenAI could not be reached to start the voice.")
@@ -238,7 +274,7 @@ export const LiveVoiceRoutes = HttpRouter.use(
             `OpenAI didn't start the voice: ${providerReason(answered.response.status, text)}`,
           )
         }
-        const sdp = model.protocol === "Codex" ? text.trim() || undefined : answerSdp(text)
+        const sdp = model.connection === "Codex" ? text.trim() || undefined : answerSdp(text)
         if (sdp === undefined) {
           return errorResponse(502, "OpenAI's answer had no WebRTC answer in it.")
         }
