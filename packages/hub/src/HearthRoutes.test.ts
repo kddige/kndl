@@ -35,6 +35,7 @@ async function rpc(hub: TestHub, token: string, method: string, params?: unknown
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++calls, method, params }),
   })
+  // oxlint-disable-next-line typescript/no-explicit-any -- JSON-RPC answers, read loosely
   return { status: response.status, body: (await response.json()) as Record<string, any> }
 }
 
