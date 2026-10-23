@@ -2,7 +2,13 @@ import { expect, test } from "bun:test"
 import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
 import type { TurnView } from "../src/hub/transcript.ts"
 import { ProgressEveryMs, VoiceBridge, type VoiceEvent } from "../src/session/voiceBridge.ts"
-import { heardEvent, wireEvent } from "../src/session/voiceProtocol.ts"
+import {
+  appendChunks,
+  appendsOf,
+  heardEvent,
+  MaxAppendBytes,
+  wireEvent,
+} from "../src/session/voiceProtocol.ts"
 
 const summary = (extra: Partial<SessionSummary> = {}) =>
   ({ id: "s1", currentTurn: null, ...extra }) as unknown as SessionSummary
@@ -240,4 +246,47 @@ test("an older Turn with the same words isn't taken for the new one", () => {
     ],
   })
   expect(sent.at(-1)).toMatchObject({ content: "The agent finished. Its answer: New answer." })
+})
+
+const bytes = (said: string) => new TextEncoder().encode(said).length
+
+test("an append over 500 bytes goes in pieces that each fit, split at spaces, nothing lost", () => {
+  const answer = `The agent finished. Its answer: ${"I fixed the parser and the tests pass now. ".repeat(30)}`
+  const pieces = appendChunks(answer)
+  expect(pieces.length).toBeGreaterThan(2)
+  expect(pieces.join("")).toBe(answer)
+  for (const piece of pieces) expect(bytes(piece)).toBeLessThanOrEqual(MaxAppendBytes)
+  // Each but the last ends after a space: no word is cut in two.
+  for (const piece of pieces.slice(0, -1)) expect(piece.endsWith(" ")).toBe(true)
+  // Short ones go whole.
+  expect(appendChunks("Done.")).toEqual(["Done."])
+})
+
+test("pieces never split a character of more than one byte", () => {
+  const wide = "æøå🙂".repeat(200)
+  const pieces = appendChunks(wide)
+  expect(pieces.join("")).toBe(wide)
+  for (const piece of pieces) {
+    expect(bytes(piece)).toBeLessThanOrEqual(MaxAppendBytes)
+    expect(piece).not.toContain("\uFFFD")
+    expect(new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(piece))).toBe(
+      piece,
+    )
+  }
+})
+
+test("a long event becomes numbered appends of the same kind and delegation", () => {
+  const event: VoiceEvent = {
+    kind: "say",
+    id: "kndl_7",
+    delegationId: "d1",
+    content: "word ".repeat(300),
+  }
+  const pieces = appendsOf(event)
+  expect(pieces.map((piece) => piece.id)).toEqual(pieces.map((_, i) => `kndl_7_${i + 1}`))
+  for (const piece of pieces) {
+    expect(piece).toMatchObject({ kind: "say", delegationId: "d1" })
+    const wire = wireEvent("Codex", piece) as { content: Array<{ text: string }> }
+    expect(bytes(wire.content[0]?.text ?? "")).toBeLessThanOrEqual(MaxAppendBytes)
+  }
 })

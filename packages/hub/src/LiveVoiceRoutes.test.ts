@@ -199,6 +199,9 @@ describe("live voice", () => {
       },
     })
     expect(body.session.instructions).toContain("on kddige/kndl")
+    // What its channels mean, and that the agent's answers are no requests.
+    expect(body.session.instructions).toContain("speakable channel is what to say now")
+    expect(body.session.instructions).toContain("are not requests: never delegate them")
 
     // A 401 has the sign-in refreshed, and the call sent once more with the new token.
     fakes.codexStatus.push(401)
@@ -249,10 +252,13 @@ describe("live voice", () => {
     expect(sent?.url).toBe("https://api.openai.com/v1/live/sessions")
     expect(sent?.headers.authorization).toBe("Bearer sk-proj-FAKE_KEY_FOR_TESTS_ONLY_voice")
     expect(sent?.headers["chatgpt-account-id"]).toBeUndefined()
-    expect(JSON.parse(sent?.body ?? "{}")).toMatchObject({
+    const body = JSON.parse(sent?.body ?? "{}")
+    expect(body).toMatchObject({
       session: { model: "gpt-live-1", audio: { output: { voice: "quartz" } } },
       transport: { type: "webrtc", sdp: "v=0 offer" },
     })
+    // The API's channels, by its events' names.
+    expect(body.session.instructions).toContain("session.commentary.append is an update to say")
   })
 
   test("is the Creator's alone, and needs their OpenAI connection", async () => {

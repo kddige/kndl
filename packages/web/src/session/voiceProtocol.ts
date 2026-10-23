@@ -6,6 +6,51 @@ import type { LiveVoiceProtocol } from "@kndl/protocol"
 import type { VoiceEvent } from "./voiceBridge.ts"
 
 /**
+ * The most UTF-8 bytes one append to GPT-Live carries, as OpenClaw sends them: a longer one is
+ * refused, so the agent's answer goes in several.
+ */
+export const MaxAppendBytes = 500
+
+const encoder = new TextEncoder()
+const bytesOf = (text: string) => encoder.encode(text).length
+
+/**
+ * `text` in pieces of at most `maxBytes` UTF-8 bytes, in order, split after a space where one is
+ * near enough, so each piece reads as speech; else between characters, never inside one.
+ */
+export function appendChunks(text: string, maxBytes = MaxAppendBytes): Array<string> {
+  if (bytesOf(text) <= maxBytes) return [text]
+  const chunks: Array<string> = []
+  let rest = text
+  while (bytesOf(rest) > maxBytes) {
+    // The longest prefix that fits, by whole characters.
+    let fits = 0
+    let used = 0
+    for (const character of rest) {
+      const size = bytesOf(character)
+      if (used + size > maxBytes) break
+      used += size
+      fits += character.length
+    }
+    // Back to the last space within it, in its later half, if any.
+    const space = rest.lastIndexOf(" ", fits - 1)
+    const cut = space > fits / 2 ? space + 1 : fits
+    chunks.push(rest.slice(0, cut))
+    rest = rest.slice(cut)
+  }
+  if (rest !== "") chunks.push(rest)
+  return chunks
+}
+
+/** The event, as appends that each fit, numbered after its id. */
+export const appendsOf = (event: VoiceEvent): Array<VoiceEvent> => {
+  const chunks = appendChunks(event.content)
+  return chunks.length === 1
+    ? [event]
+    : chunks.map((content, index) => ({ ...event, id: `${event.id}_${index + 1}`, content }))
+}
+
+/**
  * What the bridge tells GPT-Live, in the events of its protocol: the API's `session.thinking.append`
  * and `session.commentary.append`; through ChatGPT, Codex's `delegation.context.append` (or
  * `session.context.append`), quiet on its `commentary` channel and said on `speakable`.

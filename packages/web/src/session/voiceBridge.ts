@@ -12,7 +12,7 @@
 import type { OpenQuestion, QueuedPrompt, SessionSummary } from "@kndl/protocol"
 import type { Block, TurnView } from "../hub/transcript.ts"
 
-/** The most characters one append carries: GPT-Live takes 500 tokens at most. */
+/** The most characters the bridge tells GPT-Live at once: liveVoice.ts sends it in 500-byte appends. */
 export const MaxAppendChars = 1800
 
 /** How often GPT-Live is told what a working agent is doing, at most. */

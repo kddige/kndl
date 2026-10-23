@@ -15,7 +15,7 @@ import { useHub } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { toast } from "../ui/index.ts"
 import { VoiceBridge, type VoiceEvent } from "./voiceBridge.ts"
-import { heardEvent, wireEvent } from "./voiceProtocol.ts"
+import { appendsOf, heardEvent, wireEvent } from "./voiceProtocol.ts"
 
 export type LiveVoiceStatus =
   | { readonly phase: "off" }
@@ -186,8 +186,11 @@ class LiveVoiceCall {
   }
 
   #send(event: VoiceEvent) {
-    if (this.#channel?.readyState === "open") {
-      this.#channel.send(JSON.stringify(wireEvent(this.#protocol, event)))
+    const channel = this.#channel
+    if (channel?.readyState !== "open") return
+    // GPT-Live refuses an append over 500 bytes: the agent's answer goes in pieces.
+    for (const piece of appendsOf(event)) {
+      channel.send(JSON.stringify(wireEvent(this.#protocol, piece)))
     }
   }
 
