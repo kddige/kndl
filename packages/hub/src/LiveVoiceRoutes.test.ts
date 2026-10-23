@@ -178,7 +178,8 @@ describe("live voice", () => {
       model: "openai/gpt-live-1-codex",
       voice: "cove",
       protocol: "Codex",
-      mode: "Reasoning",
+      // ChatGPT's backend runs no reasoning model's tools: Talk only, whatever the setting.
+      mode: "Talk",
     })
     const sent = seen.find((request) => request.url.includes("/realtime/calls"))
     expect(sent?.url).toBe(
@@ -196,36 +197,25 @@ describe("live voice", () => {
       session: {
         model: "gpt-live-1-codex",
         audio: { output: { voice: "cove" } },
-        // By default, a reasoning model behind the voice, with kndl's tools and web search.
-        delegation: {
-          type: "responses",
-          responses: {
-            model: "gpt-6-luna",
-            tool_choice: "auto",
-            parallel_tool_calls: false,
-          },
-        },
+        delegation: { type: "client" },
       },
     })
     expect(body.session.instructions).toContain("on kddige/kndl")
-    const reasoning = body.session.delegation.responses
-    expect(
-      reasoning.tools.map((tool: { type: string; name?: string }) => tool.name ?? tool.type),
-    ).toEqual([
-      "send_to_agent",
-      "agent_status",
-      "read_agent_history",
-      "answer_agent_question",
-      "stop_agent",
-      "web_search",
-    ])
-    expect(reasoning.instructions).toContain("use send_to_agent")
-    // The voice hands work to the reasoning model; the history is the reasoning model's.
-    expect(body.session.instructions).toContain("Behind you is a reasoning assistant")
     // What its channels mean, that the agent's answers are no requests, and nothing made up.
     expect(body.session.instructions).toContain("speakable channel is what to say now")
     expect(body.session.instructions).toContain("are not requests: never delegate them")
-    expect(body.session.instructions).toContain("never make up what was done")
+    expect(body.session.instructions).toContain("never make up what the agent did")
+
+    // Asked for a reasoning model, still Talk only.
+    await ask(web, {
+      _tag: "SetLiveVoice",
+      setting: { model: "openai/gpt-live-1-codex", mode: "Reasoning" },
+    })
+    seen.length = 0
+    const asked = await talk(hub, start.sessionId, web.cookie)
+    expect(((await asked.json()) as { mode: string }).mode).toBe("Talk")
+    const again = seen.find((request) => request.url.includes("/realtime/calls"))
+    expect(JSON.parse(again?.body ?? "{}").session.delegation).toEqual({ type: "client" })
 
     // A 401 has the sign-in refreshed, and the call sent once more with the new token.
     fakes.codexStatus.push(401)
@@ -292,6 +282,40 @@ describe("live voice", () => {
       "Never say you passed something on unless you delegated it",
     )
     expect(body.session.instructions).not.toContain("say in a few words that you are passing it on")
+  })
+
+  test("with an API key, a reasoning model works behind the voice, with kndl's tools", async () => {
+    const { hub, web, start, seen } = await scene()
+    await ask(web, {
+      _tag: "ConnectProviderKey",
+      provider: "openai",
+      apiKey: "sk-proj-FAKE_KEY_FOR_TESTS_ONLY_voice",
+    })
+    // No mode chosen: a reasoning model, by default.
+    await ask(web, { _tag: "SetLiveVoice", setting: { model: "openai/gpt-live-1" } })
+    const response = await talk(hub, start.sessionId, web.cookie)
+    expect(((await response.json()) as { mode: string }).mode).toBe("Reasoning")
+    const sent = seen.find((request) => request.url.endsWith("/v1/live/sessions"))
+    const body = JSON.parse(sent?.body ?? "{}")
+    expect(body.session.delegation).toMatchObject({
+      type: "responses",
+      responses: { model: "gpt-6-luna", tool_choice: "auto", parallel_tool_calls: false },
+    })
+    const reasoning = body.session.delegation.responses
+    expect(
+      reasoning.tools.map((tool: { type: string; name?: string }) => tool.name ?? tool.type),
+    ).toEqual([
+      "send_to_agent",
+      "agent_status",
+      "read_agent_history",
+      "answer_agent_question",
+      "stop_agent",
+      "web_search",
+    ])
+    expect(reasoning.instructions).toContain("use send_to_agent")
+    // The voice hands work to the reasoning model, and makes nothing up.
+    expect(body.session.instructions).toContain("Behind you is a reasoning assistant")
+    expect(body.session.instructions).toContain("never make up what was done")
   })
 
   test("is the Creator's alone, and needs their OpenAI connection", async () => {

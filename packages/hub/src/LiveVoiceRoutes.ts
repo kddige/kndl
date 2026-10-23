@@ -304,7 +304,8 @@ export const LiveVoiceRoutes = HttpRouter.use(
         const { turns } = historyPage(entries, { limit: contextTurns, earlier })
         // With a reasoning model behind it (spike), GPT-Live hands what you ask to it, and the
         // browser runs its kndl tools; else straight to the Session, as prompts.
-        const mode = liveVoiceModeOf(setting)
+        // Through ChatGPT, Talk only: its backend runs no reasoning model's tools (as Codex uses it).
+        const mode = liveVoiceModeOf(setting, model)
         const configured = {
           model: model.id,
           instructions:

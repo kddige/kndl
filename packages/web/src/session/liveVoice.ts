@@ -39,6 +39,9 @@ export type LiveVoiceStatus =
 
 const decodeAnswer = Schema.decodeUnknownSync(LiveVoiceAnswer)
 
+/** How long a delegation to the reasoning model may go with no sign of it, before it is said. */
+const ReasoningSilenceMs = 30_000
+
 /** One live voice conversation with a Session, from `start` until `stop`. */
 class LiveVoiceCall {
   #pc: RTCPeerConnection | undefined
@@ -53,6 +56,8 @@ class LiveVoiceCall {
   #protocol: LiveVoiceProtocol = "Live"
   /** How the call works, as the Hub started it: `Reasoning` runs the reasoning model's tools. */
   #mode: LiveVoiceMode = "Talk"
+  /** Set while a delegation to the reasoning model waits for a sign of it at work. */
+  #silence: ReturnType<typeof setTimeout> | undefined
   /** What the reasoning model's kndl tools act through. */
   readonly #tools: ToolHost
   /** Both sides of the call, mixed for the call bar's bars: never played, only measured. */
@@ -185,6 +190,7 @@ class LiveVoiceCall {
     if (this.#channel?.readyState === "open") {
       this.#channel.send(JSON.stringify({ type: "session.close", event_id: "kndl_close" }))
     }
+    this.#unwatch()
     this.#unsubscribe?.()
     this.#channel?.close()
     this.#pc?.close()
@@ -230,6 +236,25 @@ class LiveVoiceCall {
     this.onStatus({ phase: "failed", message })
   }
 
+  /** Waits for a sign of the reasoning model at work, after a delegation to it. */
+  #watch() {
+    this.#unwatch()
+    this.#silence = setTimeout(() => {
+      this.#silence = undefined
+      console.warn("Live voice: the reasoning model gave no sign of life in 30 seconds")
+      toast.show({
+        title: "The reasoning model isn't answering",
+        description: `Nothing came back from it in 30 seconds, so nothing reached the agent. Try "Talk only" under Account → Live voice.`,
+        intent: "warning",
+      })
+    }, ReasoningSilenceMs)
+  }
+
+  #unwatch() {
+    if (this.#silence !== undefined) clearTimeout(this.#silence)
+    this.#silence = undefined
+  }
+
   #send(event: VoiceEvent) {
     const channel = this.#channel
     if (channel?.readyState !== "open") return
@@ -254,12 +279,16 @@ class LiveVoiceCall {
       case "delegated":
         return this.#bridge.delegated(event.id, event.asked)
       case "elsewhere":
-        // With a reasoning model, GPT-Live delegates to it, which calls the kndl tools.
-        if (this.#mode === "Reasoning" && event.target === "responses") return
+        // With a reasoning model, GPT-Live delegates to it, which calls the kndl tools; one that
+        // gives no sign of life is said, not waited on in silence.
+        if (this.#mode === "Reasoning" && event.target === "responses") return this.#watch()
         // Configured to delegate to kndl alone: one to anywhere else never reaches the Session.
         console.warn(`Live voice: GPT-Live delegated to "${event.target}", not to this Session`)
         return
+      case "reasoning":
+        return this.#unwatch()
       case "toolCall": {
+        this.#unwatch()
         const output = runVoiceTool(event.name, event.arguments, this.#tools)
         console.debug(`Live voice: the reasoning model called ${event.name}`)
         const channel = this.#channel

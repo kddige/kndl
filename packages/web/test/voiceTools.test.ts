@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
-import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
+import {
+  liveVoiceModel,
+  liveVoiceModeOf,
+  type OpenQuestion,
+  type SessionSummary,
+} from "@kndl/protocol"
 import type { TurnView } from "../src/hub/transcript.ts"
 import { type SessionView, VoiceBridge, type VoiceEvent } from "../src/session/voiceBridge.ts"
 import { heardEvent, toolOutput } from "../src/session/voiceProtocol.ts"
@@ -131,13 +136,13 @@ test("a function call the reasoning model makes is read from GPT-Live's forwarde
       arguments: '{"prompt":"x"}',
     })
   }
-  // Text the model writes is GPT-Live's to say, not a call.
+  // Text the model writes is GPT-Live's to say, not a call: a sign the model is at work.
   expect(
     heardEvent(
       "Live",
       JSON.stringify({ ...call, event: { type: "response.output_text.delta", delta: "Hi" } }),
     ),
-  ).toBeUndefined()
+  ).toEqual({ kind: "reasoning" })
   expect(toolOutput("call_1", '{"sent":true}', "k")).toEqual([
     {
       type: "response.item.create",
@@ -170,4 +175,16 @@ test("a prompt the reasoning model sends is followed to its answer, said to the 
     delegationId: null,
     content: "The agent finished. Its answer: Fixed.",
   })
+})
+
+test("a reasoning model works behind the voice only where the Model can have one", () => {
+  const chatgpt = liveVoiceModel("openai/gpt-live-1-codex")
+  const api = liveVoiceModel("openai/gpt-live-1")
+  if (chatgpt === undefined || api === undefined) throw new Error("no such Model")
+  // Through ChatGPT: Talk only, whatever is asked.
+  expect(liveVoiceModeOf(undefined, chatgpt)).toBe("Talk")
+  expect(liveVoiceModeOf({ model: chatgpt.name, mode: "Reasoning" }, chatgpt)).toBe("Talk")
+  // Through the API: a reasoning model unless Talk only is chosen.
+  expect(liveVoiceModeOf(undefined, api)).toBe("Reasoning")
+  expect(liveVoiceModeOf({ model: api.name, mode: "Talk" }, api)).toBe("Talk")
 })
