@@ -143,7 +143,7 @@ export interface RepoEnvironment {
  */
 export type Providers = Pick<
   ProvidersState,
-  "connected" | "connectable" | "models" | "claudeHarness"
+  "connected" | "connectable" | "models" | "claudeHarness" | "liveVoice"
 >
 
 /**
@@ -523,6 +523,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
           connectable: action.connectable,
           models: action.models,
           claudeHarness: action.claudeHarness,
+          ...(action.liveVoice !== undefined && { liveVoice: action.liveVoice }),
         },
       }
     case "SignInStarted":

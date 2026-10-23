@@ -126,6 +126,10 @@ _Avoid_: message, run, step
 The ordered prompts from the Creator waiting for the Session to finish its current Turn. A queued prompt waits unless the Creator steers it.
 _Avoid_: backlog, inbox
 
+**Live voice**:
+Talking with a Session (ADR 0033): its Creator's spoken conversation with a live voice Model, such as GPT-Live, which passes what they ask to the Session as their prompt, and says what the agent did and asks. It runs on their own Connected provider, with the Model and voice they choose on the Account page.
+_Avoid_: voice mode, call, dictation
+
 **Attachment**:
 A file a Participant attaches in the web UI, pasted, dropped or picked, to a prompt, a message to a subagent or a reply to an Open question: an image, such as a screenshot, or a PDF. The Hub keeps it for the life of its Session once it is sent, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]` or `[PDF #1: spec.pdf (attachment <id>)]`, and the agent opens it with a tool the mod registers (ADR 0024).
 _Avoid_: upload, paste, file (for what the prompt carries)

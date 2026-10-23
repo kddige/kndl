@@ -870,6 +870,12 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP TABLE hub_device`
     yield* sql`ALTER TABLE hub_device_one RENAME TO hub_device`
   }),
+  // The live voice Model and voice a Member talks to Sessions with (ADR 0033), as JSON: null for
+  // the default.
+  "0047_live_voice": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN live_voice TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

@@ -45,12 +45,22 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0046, the Hub's one device id: the migrator runs only
- * the migrations after the last it ran, so a test of an earlier one undoes this first. The device
+ * Takes the database back to before migration 0047, a Member's live voice (ADR 0033): the migrator
+ * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ */
+const beforeLiveVoice = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE participants DROP COLUMN live_voice`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'live_voice'`
+})
+
+/**
+ * Takes the database back to before migration 0046, the Hub's one device id, and 0047. The device
  * id is kept.
  */
 const beforeOneHubDevice = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeLiveVoice
   yield* sql`CREATE TABLE hub_device_any (id TEXT NOT NULL)`
   yield* sql`INSERT INTO hub_device_any (id) SELECT id FROM hub_device`
   yield* sql`DROP TABLE hub_device`

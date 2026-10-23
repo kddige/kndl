@@ -19,9 +19,11 @@
 //   Code unless they chose pi.
 
 import {
+  defaultLiveVoice,
   type Harness,
   InviteId,
   InviteLifetimeMs,
+  LiveVoiceSetting,
   type Member,
   memberRemovalRefusal,
   type Participant,
@@ -123,6 +125,12 @@ export class Members extends Context.Service<
      * their setup token, unless they chose pi.
      */
     readonly claudeHarness: (id: ParticipantId) => Effect.Effect<Harness, SqlError>
+    /** The live voice the Member talks to Sessions with (ADR 0033): the default until they set one. */
+    readonly liveVoice: (id: ParticipantId) => Effect.Effect<LiveVoiceSetting, SqlError>
+    readonly setLiveVoice: (
+      id: ParticipantId,
+      setting: LiveVoiceSetting,
+    ) => Effect.Effect<void, SqlError>
     /** Sets which Harness runs Claude's Models in the Member's new Sessions. */
     readonly setClaudeHarness: (
       id: ParticipantId,
@@ -361,7 +369,31 @@ export class Members extends Context.Service<
         `
       })
 
+      const decodeLiveVoice = Schema.decodeUnknownOption(Schema.fromJsonString(LiveVoiceSetting))
+
+      const liveVoice = Effect.fn("Members.liveVoice")(function* (id: ParticipantId) {
+        const chosen = yield* sql<{ readonly voice: string | null }>`
+          SELECT live_voice AS voice FROM participants WHERE id = ${id}
+        `
+        const stored = chosen[0]?.voice
+        // One kndl can't talk to any more is the default again.
+        return stored == null
+          ? defaultLiveVoice
+          : Option.getOrElse(decodeLiveVoice(stored), () => defaultLiveVoice)
+      })
+
+      const setLiveVoice = Effect.fn("Members.setLiveVoice")(function* (
+        id: ParticipantId,
+        setting: LiveVoiceSetting,
+      ) {
+        yield* sql`
+          UPDATE participants SET live_voice = ${JSON.stringify(setting)} WHERE id = ${id}
+        `
+      })
+
       return Members.of({
+        liveVoice,
+        setLiveVoice,
         admit,
         admitLocal,
         owner,

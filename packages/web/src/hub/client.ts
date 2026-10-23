@@ -43,6 +43,7 @@ import {
   type McpServersState,
   ProtocolVersion,
   type ProviderId,
+  type LiveVoiceSetting,
   type ProvidersState,
   type QuestionAnswerFromWeb,
   RequestId,
@@ -884,6 +885,11 @@ export class HubClient {
    */
   setClaudeHarness(harness: Harness): Promise<ProvidersState> {
     return this.#request({ _tag: "SetClaudeHarness", harness }, "ProvidersState")
+  }
+
+  /** Sets the live voice Model and voice the person talks to Sessions with (ADR 0033). */
+  setLiveVoice(setting: LiveVoiceSetting): Promise<ProvidersState> {
+    return this.#request({ _tag: "SetLiveVoice", setting }, "ProvidersState")
   }
 
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────

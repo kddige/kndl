@@ -16,6 +16,7 @@ import { GatewayRoutes } from "./GatewayRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HearthRoutes } from "./HearthRoutes.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { LiveVoiceRoutes } from "./LiveVoiceRoutes.ts"
 import { McpServerIconRoutes } from "./McpServerIconRoutes.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServerOAuthRoutes } from "./McpServerOAuthRoutes.ts"
@@ -53,6 +54,7 @@ export const HubRoutes = Layer.mergeAll(
   ForwardRoutes,
   GatewayRoutes,
   HearthRoutes,
+  LiveVoiceRoutes,
   ModRoutes,
   PairingRoutes,
   McpServerIconRoutes,

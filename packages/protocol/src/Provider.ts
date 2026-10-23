@@ -6,6 +6,7 @@ import {
 } from "./ClaudeCredential.ts"
 import { SecretValue } from "./Environment.ts"
 import { RequestId } from "./Ids.ts"
+import { LiveVoiceSetting, SetLiveVoice } from "./LiveVoice.ts"
 import { Harness, type ModelName, ThinkingLevel } from "./Model.ts"
 import { EpochMillis } from "./Session.ts"
 
@@ -352,6 +353,8 @@ export const ProvidersState = Schema.TaggedStruct("ProvidersState", {
    * Account page (ADR 0030): Claude Code, on their setup token, unless they chose pi.
    */
   claudeHarness: Harness,
+  /** The live voice Model and voice they talk to Sessions with (ADR 0033); absent, the default. */
+  liveVoice: Schema.optionalKey(LiveVoiceSetting),
 })
 export type ProvidersState = typeof ProvidersState.Type
 
@@ -390,6 +393,7 @@ export const ProviderCommand = Schema.Union([
   DisconnectProvider,
   RefreshProviderModels,
   SetClaudeHarness,
+  SetLiveVoice,
 ])
 export type ProviderCommand = typeof ProviderCommand.Type
 

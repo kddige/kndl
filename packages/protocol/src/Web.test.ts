@@ -224,6 +224,11 @@ const webToHub = [
   { _tag: "RefreshProviderModels", requestId: "q-45", provider: "xai" },
   { _tag: "SetClaudeHarness", requestId: "q-47", harness: "Pi" },
   {
+    _tag: "SetLiveVoice",
+    requestId: "q-47b",
+    setting: { model: "openai/gpt-live-1", voice: "quartz" },
+  },
+  {
     _tag: "CreateSession",
     requestId: "q-46",
     repo: "kddige/kndl",

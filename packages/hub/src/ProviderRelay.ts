@@ -226,6 +226,7 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
       claudeHarness: yield* members.claudeHarness(participantId),
+      liveVoice: yield* members.liveVoice(participantId),
     })
   })
 
@@ -381,6 +382,10 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
         )
       case "SetClaudeHarness": {
         yield* members.setClaudeHarness(you.id, message.harness)
+        return yield* changed(you.id, asker)
+      }
+      case "SetLiveVoice": {
+        yield* members.setLiveVoice(you.id, message.setting)
         return yield* changed(you.id, asker)
       }
     }

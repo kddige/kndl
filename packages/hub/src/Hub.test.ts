@@ -446,6 +446,7 @@ describe("web channel", () => {
       {
         _tag: "ProvidersState",
         claudeHarness: "ClaudeCode",
+        liveVoice: { model: "openai/gpt-live-1" },
         connected: [],
         connectable: expect.arrayContaining([
           {
