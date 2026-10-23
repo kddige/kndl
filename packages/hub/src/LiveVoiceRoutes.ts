@@ -12,10 +12,13 @@
 //   Connected provider, reaches `gpt-live-1` through the API (`POST /v1/live/sessions`). kndl's own
 //   ChatGPT sign-in reaches neither: both answer it 401. Until the Creator chooses, the first they
 //   have; one chosen that they lack is refused, saying what to do.
-// - Either runs with client delegation: it holds the conversation, and when it is asked for work
-//   it delegates to the browser, which prompts the Session. Its instructions say so, and carry the
-//   Session's latest Turns, so it knows what has happened. The answer names the protocol its data
-//   channel speaks, which differs between the two.
+// - With a reasoning model, the default (spike): GPT-Live runs with Responses delegation, handing
+//   what it is asked to a stronger reasoning model of OpenAI's, the Member's choice, with web search
+//   and the kndl tools (LiveVoiceTools), which the browser runs on the Session as its Creator. Talk
+//   only: GPT-Live runs with client delegation: it holds the conversation, and when it is asked
+//   for work it delegates to the browser, which prompts the Session. Its instructions say so, and
+//   carry the Session's latest Turns, so it knows what has happened. The answer names the protocol
+//   its data channel speaks, which differs between the two, and the mode.
 // - Refusals: `403` for anyone but the Creator, `409` for an Archived Session, or a Creator without
 //   what the Model runs on (or who must connect it again), `502` with the Provider's
 //   reason when it refuses or can't be reached. Logged with the Session, never what is said.
@@ -26,6 +29,9 @@ import {
   type LiveVoiceProtocol,
   LiveVoiceAnswer,
   LiveVoiceOffer,
+  DefaultReasoningModel,
+  LiveVoiceTools,
+  liveVoiceModeOf,
   liveVoiceModelFor,
   liveVoiceOf,
   type Participant,
@@ -74,7 +80,6 @@ export const turnsText = (turns: ReadonlyArray<HistoryTurn>): string => {
   return text.trim()
 }
 
-/** What the voice is told it is, for a Session, its Creator and the Session's latest Turns. */
 /**
  * How each protocol tells the voice what to keep quiet and what to say (as OpenClaw words it): the
  * bridge sends progress quietly, and the agent's answers and questions to say.
@@ -85,6 +90,7 @@ const channelInstructions: Record<LiveVoiceProtocol, string> = {
   Live: "Information in session.thinking.append is silent context: use it when relevant, but don't read it aloud because it arrives. Information in session.commentary.append is an update to say aloud now, naturally, in your own words. Never mention the channel or the delegation.",
 }
 
+/** What the voice is told it is, for a Session, its Creator and the Session's latest Turns. */
 export const voiceInstructions = (
   session: SessionSummary,
   you: Participant,
@@ -105,6 +111,47 @@ export const voiceInstructions = (
       : `Background, so you follow what they talk about: what happened in the Session before this call, oldest first. It may be out of date. Don't answer from it: delegate.\n\n${history}`,
   ].join("\n\n")
 }
+
+/** The history, as background the voice or its reasoning model follows the talk by. */
+const background = (turns: ReadonlyArray<HistoryTurn>) => {
+  const history = turnsText(turns)
+  return history === ""
+    ? "Nothing has happened in the Session yet."
+    : `Background, so you follow what they talk about: what happened in the Session before this call, oldest first. It may be out of date. Don't answer from it: check.\n\n${history}`
+}
+
+/**
+ * What the voice is told it is with a reasoning model behind it (spike): it holds the
+ * conversation, and hands anything that needs thought or action to the reasoning model.
+ */
+export const reasoningVoiceInstructions = (
+  session: SessionSummary,
+  you: Participant,
+  protocol: LiveVoiceProtocol = "Codex",
+): string =>
+  [
+    `You are the voice of a kndl Session, "${sessionTitle(session)}" on ${session.repo}: a coding agent's session. You are talking with ${you.name}, who drives it.`,
+    "Behind you is a reasoning assistant: it thinks, can search the web, and works the Session's coding agent. It gives the agent work, checks on it, reads what it did, answers its questions and stops it. Delegate to it anything that needs thought, facts or action, and anything about the code, the Session or the agent. Handle small talk, and questions about what they want, yourself. Keep the conversation going naturally while it works.",
+    "You can't see the code, the Session or what the agent did, beyond what you are told. Never answer such a request yourself, and never make up what was done, found or said: say only what you are told back. Never say something was passed on or done unless you were told it was.",
+    "Delegate each request once, and wait for its result. A follow-up, a correction or a retry from them is a new request. The agent's progress, answers and questions are not requests: never delegate them, and don't repeat the request when they arrive.",
+    channelInstructions[protocol],
+    "When the agent finishes work it was given, you are told its answer, perhaps in several parts: say it briefly, in plain speech, without reading code, paths or long lists out. If the agent asks a question, put it to them, and delegate their answer.",
+    "Keep every reply short and spoken-friendly.",
+  ].join("\n\n")
+
+/** What the reasoning model behind the voice is told it is, and what its kndl tools are for. */
+export const reasoningInstructions = (
+  session: SessionSummary,
+  you: Participant,
+  turns: ReadonlyArray<HistoryTurn>,
+): string =>
+  [
+    `You are the reasoning assistant behind a voice conversation with ${you.name} about a kndl Session, "${sessionTitle(session)}" on ${session.repo}. The Session's coding agent works on the code there. You can't see the code yourself.`,
+    "To have anything done, checked, explained from the code or changed, use send_to_agent, with a clear, self-contained instruction: what they want, not a transcript of how they said it. It returns at once. The agent's answer reaches the conversation, and them, when the agent is done: don't wait or poll for it.",
+    "Use agent_status for what the agent is doing now, read_agent_history for what it did or answered, answer_agent_question when they answer the agent's question, and stop_agent when they want it stopped. Use web search for facts beyond the code.",
+    "Answer for speech: briefly and plainly, without code or long lists. Say what you did, and nothing you didn't.",
+    background(turns),
+  ].join("\n\n")
 
 const decodeOffer = Schema.decodeUnknownOption(LiveVoiceOffer)
 
@@ -255,11 +302,29 @@ export const LiveVoiceRoutes = HttpRouter.use(
           .lastTurns(session.id, { count: contextTurns })
           .pipe(Effect.orDie)
         const { turns } = historyPage(entries, { limit: contextTurns, earlier })
+        // With a reasoning model behind it (spike), GPT-Live hands what you ask to it, and the
+        // browser runs its kndl tools; else straight to the Session, as prompts.
+        const mode = liveVoiceModeOf(setting)
         const configured = {
           model: model.id,
-          instructions: voiceInstructions(session, you, turns, model.protocol),
+          instructions:
+            mode === "Reasoning"
+              ? reasoningVoiceInstructions(session, you, model.protocol)
+              : voiceInstructions(session, you, turns, model.protocol),
           audio: { output: { voice } },
-          delegation: { type: "client" },
+          delegation:
+            mode === "Reasoning"
+              ? {
+                  type: "responses",
+                  responses: {
+                    model: setting?.reasoningModel ?? DefaultReasoningModel,
+                    instructions: reasoningInstructions(session, you, turns),
+                    tools: [...LiveVoiceTools, { type: "web_search" }],
+                    tool_choice: "auto",
+                    parallel_tool_calls: false,
+                  },
+                }
+              : { type: "client" },
         }
 
         const called =
@@ -296,7 +361,7 @@ export const LiveVoiceRoutes = HttpRouter.use(
           return errorResponse(502, "OpenAI's answer had no WebRTC answer in it.")
         }
         return yield* HttpServerResponse.schemaJson(LiveVoiceAnswer)(
-          { sdp, model: model.name, voice, protocol: model.protocol },
+          { sdp, model: model.name, voice, protocol: model.protocol, mode },
           { status: 201 },
         )
       }),

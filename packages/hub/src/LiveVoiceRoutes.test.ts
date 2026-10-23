@@ -178,6 +178,7 @@ describe("live voice", () => {
       model: "openai/gpt-live-1-codex",
       voice: "cove",
       protocol: "Codex",
+      mode: "Reasoning",
     })
     const sent = seen.find((request) => request.url.includes("/realtime/calls"))
     expect(sent?.url).toBe(
@@ -195,19 +196,36 @@ describe("live voice", () => {
       session: {
         model: "gpt-live-1-codex",
         audio: { output: { voice: "cove" } },
-        delegation: { type: "client" },
+        // By default, a reasoning model behind the voice, with kndl's tools and web search.
+        delegation: {
+          type: "responses",
+          responses: {
+            model: "gpt-6-luna",
+            tool_choice: "auto",
+            parallel_tool_calls: false,
+          },
+        },
       },
     })
     expect(body.session.instructions).toContain("on kddige/kndl")
-    // What its channels mean, and that the agent's answers are no requests.
+    const reasoning = body.session.delegation.responses
+    expect(
+      reasoning.tools.map((tool: { type: string; name?: string }) => tool.name ?? tool.type),
+    ).toEqual([
+      "send_to_agent",
+      "agent_status",
+      "read_agent_history",
+      "answer_agent_question",
+      "stop_agent",
+      "web_search",
+    ])
+    expect(reasoning.instructions).toContain("use send_to_agent")
+    // The voice hands work to the reasoning model; the history is the reasoning model's.
+    expect(body.session.instructions).toContain("Behind you is a reasoning assistant")
+    // What its channels mean, that the agent's answers are no requests, and nothing made up.
     expect(body.session.instructions).toContain("speakable channel is what to say now")
     expect(body.session.instructions).toContain("are not requests: never delegate them")
-    // It answers nothing about the code or the agent itself, nor claims a hand-off it didn't make.
-    expect(body.session.instructions).toContain("never make up what the agent did")
-    expect(body.session.instructions).toContain(
-      "Never say you passed something on unless you delegated it",
-    )
-    expect(body.session.instructions).not.toContain("say in a few words that you are passing it on")
+    expect(body.session.instructions).toContain("never make up what was done")
 
     // A 401 has the sign-in refreshed, and the call sent once more with the new token.
     fakes.codexStatus.push(401)
@@ -242,7 +260,7 @@ describe("live voice", () => {
     })
     const set = await ask(web, {
       _tag: "SetLiveVoice",
-      setting: { model: "openai/gpt-live-1", voice: "quartz" },
+      setting: { model: "openai/gpt-live-1", voice: "quartz", mode: "Talk" },
     })
     expect(set).toMatchObject({ _tag: "ProvidersState", liveVoice: { voice: "quartz" } })
 
@@ -253,6 +271,7 @@ describe("live voice", () => {
       model: "openai/gpt-live-1",
       voice: "quartz",
       protocol: "Live",
+      mode: "Talk",
     })
     const sent = seen.find((request) => request.url.endsWith("/v1/live/sessions"))
     expect(sent?.url).toBe("https://api.openai.com/v1/live/sessions")
@@ -263,8 +282,16 @@ describe("live voice", () => {
       session: { model: "gpt-live-1", audio: { output: { voice: "quartz" } } },
       transport: { type: "webrtc", sdp: "v=0 offer" },
     })
+    // Talk only: straight to the Session's agent.
+    expect(body.session.delegation).toEqual({ type: "client" })
     // The API's channels, by its events' names.
     expect(body.session.instructions).toContain("session.commentary.append is an update to say")
+    // It answers nothing about the code or the agent itself, nor claims a hand-off it didn't make.
+    expect(body.session.instructions).toContain("never make up what the agent did")
+    expect(body.session.instructions).toContain(
+      "Never say you passed something on unless you delegated it",
+    )
+    expect(body.session.instructions).not.toContain("say in a few words that you are passing it on")
   })
 
   test("is the Creator's alone, and needs their OpenAI connection", async () => {

@@ -6,6 +6,7 @@
 import {
   LiveVoiceAnswer,
   liveVoicePath,
+  type LiveVoiceMode,
   type LiveVoiceProtocol,
   type SessionId,
 } from "@kndl/protocol"
@@ -14,8 +15,9 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useHub } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { toast } from "../ui/index.ts"
-import { VoiceBridge, type VoiceEvent } from "./voiceBridge.ts"
-import { appendsOf, heardEvent, wireEvent } from "./voiceProtocol.ts"
+import { type SessionView, VoiceBridge, type VoiceEvent } from "./voiceBridge.ts"
+import { appendsOf, heardEvent, toolOutput, wireEvent } from "./voiceProtocol.ts"
+import { runVoiceTool, type ToolHost } from "./voiceTools.ts"
 
 export type LiveVoiceStatus =
   | { readonly phase: "off" }
@@ -49,6 +51,10 @@ class LiveVoiceCall {
   #handed: { readonly text: string; readonly reply: boolean } | undefined
   #since = 0
   #protocol: LiveVoiceProtocol = "Live"
+  /** How the call works, as the Hub started it: `Reasoning` runs the reasoning model's tools. */
+  #mode: LiveVoiceMode = "Talk"
+  /** What the reasoning model's kndl tools act through. */
+  readonly #tools: ToolHost
   /** Both sides of the call, mixed for the call bar's bars: never played, only measured. */
   #sound: AudioContext | undefined
   #analyser: AnalyserNode | undefined
@@ -71,6 +77,30 @@ class LiveVoiceCall {
       },
       (event) => this.#send(event),
     )
+    this.#tools = {
+      view: () => this.#view(),
+      sendToAgent: (prompt) => this.#bridge.prompt(prompt),
+      answer: (question, text) =>
+        this.#handedOff(
+          text,
+          true,
+          hub.answerQuestion(sessionId, question.toolCallId, { _tag: "Replied", text }),
+        ),
+      stop: () => hub.stopTurn(sessionId),
+    }
+  }
+
+  /** The Session as the store has it: it is joined while its view is open. */
+  #view(): SessionView | undefined {
+    const state = this.hub.getState()
+    const summary = state.sessions?.find((session) => session.id === this.sessionId)
+    const joined = state.joined[this.sessionId]
+    if (summary === undefined || joined === undefined) return undefined
+    return {
+      summary,
+      turns: joined.transcript.items.flatMap((item) => (item.kind === "turn" ? [item.turn] : [])),
+      queue: joined.queue,
+    }
   }
 
   async start() {
@@ -124,22 +154,17 @@ class LiveVoiceCall {
       }
       const answer = decodeAnswer(JSON.parse(text))
       this.#protocol = answer.protocol
+      this.#mode = answer.mode ?? "Talk"
+      // The reasoning model's work isn't one of GPT-Live's delegations: what follows it is said to
+      // the conversation as a whole.
+      this.#bridge.sessionWide = this.#mode === "Reasoning"
       // Every SDP line ends with CRLF, the last too, or the browser drops it.
       const sdp = /\r?\n$/.test(answer.sdp) ? answer.sdp : `${answer.sdp}\r\n`
       await pc.setRemoteDescription({ type: "answer", sdp })
       // Follow the Session as the store has it: it is joined while its view is open.
       const observe = () => {
-        const state = this.hub.getState()
-        const summary = state.sessions?.find((session) => session.id === this.sessionId)
-        const joined = state.joined[this.sessionId]
-        if (summary === undefined || joined === undefined) return
-        this.#bridge.observe({
-          summary,
-          turns: joined.transcript.items.flatMap((item) =>
-            item.kind === "turn" ? [item.turn] : [],
-          ),
-          queue: joined.queue,
-        })
+        const view = this.#view()
+        if (view !== undefined) this.#bridge.observe(view)
       }
       this.#unsubscribe = this.hub.subscribe(observe)
       observe()
@@ -229,16 +254,40 @@ class LiveVoiceCall {
       case "delegated":
         return this.#bridge.delegated(event.id, event.asked)
       case "elsewhere":
+        // With a reasoning model, GPT-Live delegates to it, which calls the kndl tools.
+        if (this.#mode === "Reasoning" && event.target === "responses") return
         // Configured to delegate to kndl alone: one to anywhere else never reaches the Session.
         console.warn(`Live voice: GPT-Live delegated to "${event.target}", not to this Session`)
         return
+      case "toolCall": {
+        const output = runVoiceTool(event.name, event.arguments, this.#tools)
+        console.debug(`Live voice: the reasoning model called ${event.name}`)
+        const channel = this.#channel
+        if (channel?.readyState !== "open") return
+        for (const reply of toolOutput(event.callId, output, `kndl_tool_${event.callId}`)) {
+          channel.send(JSON.stringify(reply))
+        }
+        return
+      }
       case "closed":
         // Ended by GPT-Live, not by Hang up: say why.
         return this.#fail(
           `GPT-Live ended the call${event.reason === undefined ? "" : ` (${event.reason})`}.`,
         )
       case "error":
-        console.warn("Live voice:", event.message)
+        console.warn("Live voice:", event.code ?? "", event.message)
+        // The reasoning model refused, or its tools went unanswered: the call can't think.
+        if (
+          event.code !== undefined &&
+          /responses|outputs_required/.test(event.code) &&
+          this.#mode === "Reasoning"
+        ) {
+          toast.show({
+            title: "The reasoning model didn't run",
+            description: `${event.message} Try "Talk only" under Account → Live voice.`,
+            intent: "warning",
+          })
+        }
         return
     }
   }
