@@ -52,6 +52,7 @@ import { Composer } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
+import { useLiveVoice } from "./liveVoice.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
 import {
   harnessNames,
@@ -224,6 +225,8 @@ function LoadedSession({
   const items = transcript.items
   const running = summary.currentTurn !== null || transcript.running !== undefined
   const scroller = useStickToBottom(items)
+  // Talking with the Session drives it (ADR 0033): the Talk button shows only for its Creator.
+  const voice = useLiveVoice(summary.id)
 
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(summary)
@@ -660,6 +663,7 @@ function LoadedSession({
                       keptAwake={keptAwake}
                       setKeepAwake={(on) => command("Keep awake", hub.setKeepAwake(summary.id, on))}
                       terminal={{ open: terminalOpen, toggle: () => showTerminal(!terminalOpen) }}
+                      voice={voice}
                     />
                   ) : undefined
                 }

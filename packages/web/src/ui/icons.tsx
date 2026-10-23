@@ -118,6 +118,24 @@ export function InboxIcon(props: IconProps) {
   )
 }
 
+/** A microphone: live voice (ADR 0033). */
+export function MicIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.5a2 2 0 0 0-2 2V8a2 2 0 0 0 4 0V4.5a2 2 0 0 0-2-2zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5" />
+    </Icon>
+  )
+}
+
+/** A microphone struck through: live voice muted. */
+export function MicOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 6.5V4.5a2 2 0 0 0-3.75-1M6 6v2a2 2 0 0 0 3.2 1.6M11.3 9a3.5 3.5 0 0 1-6.8-1.5M8 11v2.5M3 3l10 10" />
+    </Icon>
+  )
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <Icon {...props}>
