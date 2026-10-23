@@ -132,6 +132,10 @@ export const LiveVoiceSetting = Schema.Struct({
     ),
   ),
   voice: Schema.optionalKey(Schema.NonEmptyString),
+  /** How the voice works: with a reasoning model unless `Talk`. */
+  mode: Schema.optionalKey(Schema.Literals(["Reasoning", "Talk"])),
+  /** The reasoning model, for `Reasoning`; {@link DefaultReasoningModel} unless set. */
+  reasoningModel: Schema.optionalKey(Schema.NonEmptyString),
 })
 export type LiveVoiceSetting = typeof LiveVoiceSetting.Type
 
@@ -158,6 +162,87 @@ export const LiveVoiceConnection = Schema.Struct({
 })
 export type LiveVoiceConnection = typeof LiveVoiceConnection.Type
 
+// ── A reasoning model behind the voice (spike) ───────────────────────────────
+
+/**
+ * How the voice works (ADR 0033): `Reasoning`, GPT-Live hands what you ask to a stronger reasoning
+ * model of OpenAI's, which thinks, can search the web, and drives the Session's agent with the kndl
+ * tools the browser runs ({@link LiveVoiceTools}); `Talk`, GPT-Live hands it straight to the
+ * Session's agent, as a prompt.
+ */
+export type LiveVoiceMode = "Reasoning" | "Talk"
+
+/** The mode a setting asks for: with a reasoning model unless it says `Talk`. */
+export const liveVoiceModeOf = (setting: LiveVoiceSetting | undefined): LiveVoiceMode =>
+  setting?.mode ?? "Reasoning"
+
+/** The reasoning models offered, the default first: as OpenAI's GPT-Live guide suggests them. */
+export const ReasoningModels: ReadonlyArray<{ readonly id: string; readonly label: string }> = [
+  { id: "gpt-6-luna", label: "GPT-6 Luna (faster)" },
+  { id: "gpt-6-sol", label: "GPT-6 Sol (for harder work)" },
+]
+
+/** The reasoning model unless one is chosen. */
+export const DefaultReasoningModel = "gpt-6-luna"
+
+/**
+ * The kndl tools the reasoning model has, on the Session the call is with, as OpenAI's function
+ * tools take them. The browser runs each as the Session's Creator, through their web connection,
+ * so each can do only what they can.
+ */
+export const LiveVoiceTools = [
+  {
+    type: "function",
+    name: "send_to_agent",
+    description:
+      "Gives the Session's coding agent work, as a prompt from the person: a clear, self-contained instruction, not a transcript of what was said. Returns at once; the agent's answer reaches the conversation when it is done. Don't poll for it.",
+    parameters: {
+      type: "object",
+      properties: { prompt: { type: "string", description: "The instruction for the agent." } },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "agent_status",
+    description:
+      "What the Session's coding agent is doing now: working or idle, what it is running, a question it asks, prompts waiting.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "read_agent_history",
+    description:
+      "The Session's latest Turns, newest last: what the agent was asked, and what it answered, shortened.",
+    parameters: {
+      type: "object",
+      properties: { turns: { type: "integer", minimum: 1, maximum: 10 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "answer_agent_question",
+    description: "Answers the question the agent asks now, in the person's words.",
+    parameters: {
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "stop_agent",
+    description: "Stops what the agent is doing now: its running Turn.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+] as const
+
+/** A kndl tool's name. */
+export type LiveVoiceToolName = (typeof LiveVoiceTools)[number]["name"]
+
 /** Web to Hub: set the signed-in Member's live voice. Answered with ProvidersState. */
 export const SetLiveVoice = Schema.TaggedStruct("SetLiveVoice", {
   requestId: RequestId,
@@ -182,5 +267,7 @@ export const LiveVoiceAnswer = Schema.Struct({
   voice: Schema.String,
   /** The events to speak on its data channel. */
   protocol: LiveVoiceProtocol,
+  /** How it works: the browser runs the kndl tools for `Reasoning`. Absent: `Talk`. */
+  mode: Schema.optionalKey(Schema.Literals(["Reasoning", "Talk"])),
 })
 export type LiveVoiceAnswer = typeof LiveVoiceAnswer.Type

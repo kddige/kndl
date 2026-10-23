@@ -78,7 +78,18 @@ export type HeardEvent =
   /** A delegation GPT-Live addressed to something other than kndl: not the Session's. */
   | { readonly kind: "elsewhere"; readonly target: string }
   | { readonly kind: "closed"; readonly reason?: string }
-  | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "error"; readonly message: string; readonly code?: string }
+  /**
+   * The reasoning model behind the voice called a kndl tool (spike): the browser runs it, and
+   * answers with {@link toolOutput}.
+   */
+  | {
+      readonly kind: "toolCall"
+      readonly callId: string
+      readonly name: string
+      /** As the model wrote them: JSON, unchecked. */
+      readonly arguments: string
+    }
 
 /** The value, if it is a string. */
 const stringOf = (value: unknown) => (typeof value === "string" ? value : undefined)
@@ -95,7 +106,25 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
   switch (event["type"]) {
     case "error": {
       const error = (event["error"] ?? {}) as Record<string, unknown>
-      return { kind: "error", message: stringOf(error["message"]) ?? "GPT-Live reported an error." }
+      const code = stringOf(error["code"]) ?? stringOf(error["type"])
+      return {
+        kind: "error",
+        message: stringOf(error["message"]) ?? "GPT-Live reported an error.",
+        ...(code !== undefined && { code }),
+      }
+    }
+    // The reasoning model's events, as GPT-Live forwards them: a finished function call is a tool
+    // to run. Either protocol, as far as is known.
+    case "response.event": {
+      const inner = (event["event"] ?? {}) as Record<string, unknown>
+      if (inner["type"] !== "response.output_item.done") return undefined
+      const call = (inner["item"] ?? {}) as Record<string, unknown>
+      const callId = stringOf(call["call_id"])
+      const name = stringOf(call["name"])
+      if (call["type"] !== "function_call" || callId === undefined || name === undefined) {
+        return undefined
+      }
+      return { kind: "toolCall", callId, name, arguments: stringOf(call["arguments"]) ?? "{}" }
     }
     case "session.closed": {
       const reason = stringOf(event["reason"])
@@ -148,3 +177,16 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
   }
   return undefined
 }
+
+/**
+ * A kndl tool's result, as GPT-Live takes it back for its reasoning model: the output for its
+ * call, then the go-ahead to carry on, which appending alone doesn't give.
+ */
+export const toolOutput = (callId: string, output: string, id: string): Array<object> => [
+  {
+    type: "response.item.create",
+    event_id: `${id}_output`,
+    item: { type: "function_call_output", call_id: callId, output },
+  },
+  { type: "response.create", event_id: `${id}_continue` },
+]

@@ -108,6 +108,29 @@ export class VoiceBridge {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /**
+   * True once a reasoning model works behind the voice (spike): what the bridge says is then for
+   * the conversation as a whole, not tied to a delegation of GPT-Live's.
+   */
+  sessionWide = false
+
+  /**
+   * The reasoning model's `send_to_agent`: sends the Session the prompt, and follows its Turn, as a
+   * delegation's, to say its answer when it ends. Whether it went.
+   */
+  prompt(text: string): boolean {
+    const task = text.trim()
+    if (task === "" || !this.driver.sendPrompt(task)) return false
+    this.#delegations.push({
+      id: `tool_${++this.#events}`,
+      prompt: task,
+      at: this.now(),
+      before: this.#turnIds(),
+      progressAt: -Infinity,
+    })
+    return true
+  }
+
   /** A delta of what the person said. */
   heard(delta: string): void {
     this.#heard += delta
@@ -231,6 +254,11 @@ export class VoiceBridge {
   }
 
   #emit(kind: VoiceEvent["kind"], delegationId: string | null, content: string) {
-    this.send({ kind, id: `kndl_${++this.#events}`, delegationId, content: clip(content) })
+    this.send({
+      kind,
+      id: `kndl_${++this.#events}`,
+      delegationId: this.sessionWide ? null : delegationId,
+      content: clip(content),
+    })
   }
 }

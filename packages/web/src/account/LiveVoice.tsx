@@ -6,8 +6,11 @@ import {
   type LiveVoiceCredential,
   type LiveVoiceSetting,
   LiveVoiceModels,
+  DefaultReasoningModel,
+  liveVoiceModeOf,
   liveVoiceModelFor,
   liveVoiceOf,
+  ReasoningModels,
 } from "@kndl/protocol"
 import { useState } from "react"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -18,6 +21,7 @@ import {
   Select,
   SettingsList,
   SettingsRow,
+  SegmentedControl,
   SettingsSection,
   toast,
 } from "../ui/index.ts"
@@ -49,6 +53,9 @@ export function LiveVoiceSection() {
   const setting = choosing ?? providers.liveVoice
   // Until they choose, the first they have.
   const model = liveVoiceModelFor(setting, has)
+  const mode = liveVoiceModeOf(setting)
+  /** The setting as shown, which each control changes a part of. */
+  const current: LiveVoiceSetting = setting ?? { model: model.name }
   const running = signIn !== null && signIn.ended === null
 
   const choose = (next: LiveVoiceSetting) => {
@@ -141,7 +148,11 @@ export function LiveVoiceSection() {
               label: option.label,
             }))}
             value={model.name}
-            onValueChange={(name) => choose({ model: name })}
+            onValueChange={(name) => {
+              // A voice is the Model's: another Model starts on its own default.
+              const { voice: _voice, ...rest } = current
+              choose({ ...rest, model: name })
+            }}
           />
         </PropertyRow>
         <PropertyRow label="Voice" description="Changes apply from your next call.">
@@ -153,9 +164,34 @@ export function LiveVoiceSection() {
               label: voice === model.voices[0] ? `${voice} (default)` : voice,
             }))}
             value={liveVoiceOf(model, setting)}
-            onValueChange={(voice) => choose({ model: model.name, voice })}
+            onValueChange={(voice) => choose({ ...current, voice })}
           />
         </PropertyRow>
+        <PropertyRow
+          label="Works with"
+          description="With a reasoning model, the voice hands what you ask to a stronger OpenAI model, which thinks, can search the web, and drives the Session's agent for you. Talk only hands it straight to the agent."
+        >
+          <SegmentedControl
+            label="Live voice works with"
+            options={[
+              { value: "Reasoning", label: "A reasoning model" },
+              { value: "Talk", label: "Talk only" },
+            ]}
+            value={mode}
+            onValueChange={(next) => choose({ ...current, mode: next })}
+          />
+        </PropertyRow>
+        {mode === "Reasoning" && (
+          <PropertyRow label="Reasoning model" description="Runs on the same OpenAI connection.">
+            <Select
+              aria-label="Reasoning model"
+              size="sm"
+              options={ReasoningModels.map((option) => ({ value: option.id, label: option.label }))}
+              value={setting?.reasoningModel ?? DefaultReasoningModel}
+              onValueChange={(reasoningModel) => choose({ ...current, reasoningModel })}
+            />
+          </PropertyRow>
+        )}
       </SettingsList>
     </SettingsSection>
   )

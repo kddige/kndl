@@ -13,6 +13,20 @@ A spike. Talking is a good way to drive an agent: say what you want, hear what i
 - **The bridge, in the browser.** What the person says arrives as transcript deltas. When GPT-Live delegates, what they said since the last delegation goes to the Session as their prompt, or as their reply to its Open question while it asks one. The bridge follows the Turn that prompt started, by the id the Prompt queue gives the prompt, which its Turn carries; else by a Turn since then whose prompt holds its words, as one a background agent's notification starts with the prompt riding along. Neither needs the browser's clock to agree with the Hub's. While it runs, GPT-Live is told quietly what the agent is doing, every 20 seconds at most (`session.thinking.append`). When it ends, it is given the agent's answer, its text after its last tool call, to say (`session.commentary.append`). A question the agent asks is given to it to ask. Each append is at most 500 bytes, as OpenClaw found: a longer one is refused, so a longer message, the agent's answer up to 1800 characters, goes in several, split at spaces. Its instructions say what each channel means, as OpenClaw's do, and that the agent's progress, answers and questions are never requests to delegate.
 - **A live voice setting per Member.** On the Account page, a Member picks the live voice Model they talk with, and its voice. Until they choose, it is the first they have what it needs for: the live voice connection, then an OpenAI API key. A list of Models kndl knows, each with its Provider and what it needs, holds the two GPT-Lives for now. Another Provider's Model, such as xAI's, joins the list with its own way of starting a session.
 
+## Amendment: a reasoning model behind the voice (spike)
+
+Talking is the easy part. What you want is a voice you can think out loud with, that turns the conversation into the right work for the Session's agent, and acts on what comes back. GPT-Live has a mode for that: _Responses delegation_, where it hands what you ask to a stronger reasoning model of OpenAI's, which can search the web and call function tools the app runs. So the voice has three layers now:
+
+- **GPT-Live** holds the conversation, and hands anything that needs thought or action to the reasoning model.
+- **The reasoning model** (`gpt-6-luna` by default, or `gpt-6-sol` for harder work, as OpenAI's guide suggests) thinks, searches the web, and drives the Session's agent with five kndl tools: `send_to_agent`, `agent_status`, `read_agent_history`, `answer_agent_question` and `stop_agent` (`LiveVoiceTools`). Its instructions say to write the agent a clear, self-contained instruction, not a transcript, and carry the Session's latest Turns.
+- **The Session's agent** does the code work, as before.
+
+The browser runs the tools, as the Creator, on the Session the call is with (`voiceTools.ts`): a function call comes as `response.event` wrapping `response.output_item.done`, and its output goes back as `response.item.create`, then `response.create`. `send_to_agent` returns at once; the bridge follows the Turn it started, and says its answer to the conversation as a whole (`delegation_id` null) when it ends, as it does for a prompt in the other mode. So "stop" and "how's it going?" are tools now, not prompts that queue.
+
+It is the default, as **With a reasoning model** on the Account page, beside **Talk only**, the mode above. Unknowns: OpenAI documents Responses delegation for the API's `gpt-live-1`; whether ChatGPT's backend takes it for `gpt-live-1-codex`, and on what it bills, is to be seen. A refusal (`responses_validation_failed`, or a tool left unanswered) shows in a toast, saying to try Talk only.
+
+This reverses the first considered option below, Responses delegation, for the goal it serves: a conversation that ends up driving the agent, not just relaying to it.
+
 ## Considered options
 
 - **kndl's own ChatGPT sign-in for voice too.** Tried first: both GPT-Live endpoints refuse it.
