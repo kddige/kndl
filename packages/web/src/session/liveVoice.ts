@@ -10,7 +10,7 @@ import {
   type SessionId,
 } from "@kndl/protocol"
 import { Schema } from "effect"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useHub } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { toast } from "../ui/index.ts"
@@ -24,6 +24,8 @@ export type LiveVoiceStatus =
       /** What GPT-Live is saying now, the latest of it. */
       readonly speaking: string
       readonly muted: boolean
+      /** When the call connected, for its timer. */
+      readonly since: number
     }
   | { readonly phase: "failed"; readonly message: string }
 
@@ -133,7 +135,11 @@ class LiveVoiceCall {
   #unsubscribe: (() => void) | undefined
   #speaking = ""
   #muted = false
+  #since = 0
   #protocol: LiveVoiceProtocol = "Live"
+  /** Both sides of the call, mixed for the call bar's bars: never played, only measured. */
+  #sound: AudioContext | undefined
+  #analyser: AnalyserNode | undefined
   readonly #bridge: VoiceBridge
 
   constructor(
@@ -160,8 +166,19 @@ class LiveVoiceCall {
       const audio = new Audio()
       audio.autoplay = true
       this.#audio = audio
+      // What is said, by either side, is measured for the call bar.
+      const sound = new AudioContext()
+      const analyser = sound.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.7
+      this.#sound = sound
+      this.#analyser = analyser
+      sound.createMediaStreamSource(this.#mic).connect(analyser)
       pc.ontrack = (event) => {
-        audio.srcObject = event.streams[0] ?? null
+        const stream = event.streams[0]
+        audio.srcObject = stream ?? null
+        // Chrome feeds a remote stream to Web Audio only while it also plays in an element.
+        if (stream !== undefined) sound.createMediaStreamSource(stream).connect(analyser)
       }
       for (const track of this.#mic.getAudioTracks()) pc.addTrack(track, this.#mic)
       // Before the offer, so it is in it.
@@ -207,6 +224,7 @@ class LiveVoiceCall {
       }
       this.#unsubscribe = this.hub.subscribe(observe)
       observe()
+      this.#since = Date.now()
       this.#live()
     } catch (cause) {
       this.#fail(cause instanceof Error ? cause.message : String(cause))
@@ -228,11 +246,29 @@ class LiveVoiceCall {
     this.#pc?.close()
     for (const track of this.#mic?.getTracks() ?? []) track.stop()
     if (this.#audio) this.#audio.srcObject = null
+    void this.#sound?.close().catch(() => undefined)
+    this.#sound = undefined
+    this.#analyser = undefined
     this.onStatus({ phase: "off" })
   }
 
+  /**
+   * How loud the call is now, across `into`'s length, from the lowest pitches up, each 0 to 255;
+   * false while there is nothing to measure.
+   */
+  levels(into: Uint8Array<ArrayBuffer>): boolean {
+    if (this.#analyser === undefined) return false
+    this.#analyser.getByteFrequencyData(into)
+    return true
+  }
+
   #live() {
-    this.onStatus({ phase: "live", speaking: this.#speaking, muted: this.#muted })
+    this.onStatus({
+      phase: "live",
+      speaking: this.#speaking,
+      muted: this.#muted,
+      since: this.#since,
+    })
   }
 
   #fail(message: string) {
@@ -272,6 +308,9 @@ class LiveVoiceCall {
   }
 }
 
+/** What `useLiveVoice` gives: the call's status, and its controls. */
+export type LiveVoice = ReturnType<typeof useLiveVoice>
+
 /** Live voice with the Session: its status, and how to start, stop and mute it. */
 export function useLiveVoice(sessionId: SessionId) {
   const hub = useHub()
@@ -283,6 +322,10 @@ export function useLiveVoice(sessionId: SessionId) {
     }
   }, [status])
   const call = useRef<LiveVoiceCall | undefined>(undefined)
+  const levels = useCallback(
+    (into: Uint8Array<ArrayBuffer>) => call.current?.levels(into) ?? false,
+    [],
+  )
   // Leaving the Session hangs up.
   useEffect(
     () => () => {
@@ -304,5 +347,7 @@ export function useLiveVoice(sessionId: SessionId) {
       call.current = undefined
     },
     setMuted: (muted: boolean) => call.current?.setMuted(muted),
+    /** How loud the call is now, for the call bar: as the call's `levels`. The same each render. */
+    levels,
   }
 }

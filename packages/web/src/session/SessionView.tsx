@@ -52,6 +52,7 @@ import { Composer } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
+import { LiveCallBar } from "./LiveCallBar.tsx"
 import { useLiveVoice } from "./liveVoice.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
 import {
@@ -644,6 +645,14 @@ function LoadedSession({
                 }
                 steering={steering}
               />
+              {drives && (voice.status.phase === "live" || voice.status.phase === "connecting") && (
+                <LiveCallBar
+                  status={voice.status}
+                  levels={voice.levels}
+                  onMute={voice.setMuted}
+                  onHangUp={voice.stop}
+                />
+              )}
               <Composer
                 onSend={send}
                 onStop={drives ? () => hub.stopTurn(summary.id) : undefined}
@@ -655,6 +664,15 @@ function LoadedSession({
                     : hint
                 }
                 attach={drives ? attach : undefined}
+                voice={
+                  drives && !archived
+                    ? {
+                        start: voice.start,
+                        inCall:
+                          voice.status.phase === "live" || voice.status.phase === "connecting",
+                      }
+                    : undefined
+                }
                 {...(pi && { placeholder: "Send a prompt" })}
                 {...(drives && asking && { copy: replyCopy, needsText: true })}
                 tools={
@@ -663,7 +681,6 @@ function LoadedSession({
                       keptAwake={keptAwake}
                       setKeepAwake={(on) => command("Keep awake", hub.setKeepAwake(summary.id, on))}
                       terminal={{ open: terminalOpen, toggle: () => showTerminal(!terminalOpen) }}
-                      voice={voice}
                     />
                   ) : undefined
                 }

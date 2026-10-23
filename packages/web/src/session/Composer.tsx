@@ -11,7 +11,15 @@ import {
   useRef,
   useState,
 } from "react"
-import { ArrowUpIcon, Button, IconButton, PaperclipIcon, StopIcon, Textarea } from "../ui/index.ts"
+import {
+  ArrowUpIcon,
+  Button,
+  IconButton,
+  PaperclipIcon,
+  StopIcon,
+  Textarea,
+  WavesIcon,
+} from "../ui/index.ts"
 import { color, radius, shadow, space, text } from "../ui/tokens.stylex.ts"
 import { pickerAccepts } from "./attachments.ts"
 import { type Attach, AttachmentChips, useAttachments } from "./Attachments.tsx"
@@ -128,6 +136,11 @@ export interface ComposerProps {
   needsText?: boolean
   /** Scales an image down before it is uploaded; Claude Code's way by default. */
   prepare?: (file: File) => Promise<File>
+  /**
+   * Live voice (ADR 0033): while there is nothing to send, Send's place starts a call. Absent where
+   * the Session can't be talked with; `inCall` while a call is up or starting, when Send stays.
+   */
+  voice?: { readonly start: () => void; readonly inCall: boolean } | undefined
 }
 
 /** The words of a composer for something other than prompts. */
@@ -164,6 +177,7 @@ export function Composer({
   cantAttach = "Attachments go with prompts only, not here yet.",
   needsText = false,
   prepare,
+  voice,
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
   const pastes = usePastedTexts(draft, setDraft)
@@ -318,9 +332,26 @@ export function Composer({
               {copy.stop}
             </Button>
           )}
-          <IconButton type="submit" size="sm" intent="primary" label={copy.send} disabled={waiting}>
-            <ArrowUpIcon />
-          </IconButton>
+          {voice !== undefined &&
+          !voice.inCall &&
+          !disabled &&
+          draft.trim() === "" &&
+          attachments.chips.length === 0 ? (
+            // Nothing written or attached: talk instead.
+            <IconButton size="sm" intent="primary" label="Start live voice" onClick={voice.start}>
+              <WavesIcon />
+            </IconButton>
+          ) : (
+            <IconButton
+              type="submit"
+              size="sm"
+              intent="primary"
+              label={copy.send}
+              disabled={waiting}
+            >
+              <ArrowUpIcon />
+            </IconButton>
+          )}
         </span>
       </div>
     </form>
