@@ -254,7 +254,10 @@ function MoreProviders({
 function useSignIn(connectable: ConnectableProvider, onConnected: () => void) {
   const hub = useHub()
   const { provider, name } = connectable
-  const signIn = useHubState((state) => (state.signIn?.provider === provider ? state.signIn : null))
+  // The live voice connection's sign-in is another's (ADR 0033).
+  const signIn = useHubState((state) =>
+    state.signIn?.provider === provider && state.signIn.for === undefined ? state.signIn : null,
+  )
   const [startError, setStartError] = useState<string | null>(null)
 
   const start = () => {
@@ -632,7 +635,7 @@ function KeyForm({
  * sign-in's is the code to enter on the Provider's page. Then what it asks, a paste or a choice, or
  * what it is doing; and Cancel.
  */
-function SignInSteps({ name, signIn }: { name: string; signIn: SignInProgress }) {
+export function SignInSteps({ name, signIn }: { name: string; signIn: SignInProgress }) {
   const hub = useHub()
   // How many steps had come when the last answer was sent: it is asked again only by a new one.
   const [answeredAt, setAnsweredAt] = useState(-1)

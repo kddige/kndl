@@ -6,6 +6,7 @@ import {
 } from "./ClaudeCredential.ts"
 import { SecretValue } from "./Environment.ts"
 import { RequestId } from "./Ids.ts"
+import { LiveVoiceConnection, LiveVoiceSetting, SetLiveVoice, SignInFor } from "./LiveVoice.ts"
 import { Harness, type ModelName, ThinkingLevel } from "./Model.ts"
 import { EpochMillis } from "./Session.ts"
 
@@ -287,8 +288,19 @@ export type ConnectProviderKey = typeof ConnectProviderKey.Type
 export const StartSignIn = Schema.TaggedStruct("StartSignIn", {
   requestId: RequestId,
   provider: ProviderId,
+  /**
+   * `LiveVoice` for the live voice connection (ADR 0033), the Codex CLI's ChatGPT sign-in, kept
+   * apart from the Provider's Connected provider; `provider` is then `openai`.
+   */
+  for: Schema.optionalKey(SignInFor),
 })
 export type StartSignIn = typeof StartSignIn.Type
+
+/** Forget the live voice connection (ADR 0033). Answered with {@link ProvidersState}. */
+export const DisconnectLiveVoice = Schema.TaggedStruct("DisconnectLiveVoice", {
+  requestId: RequestId,
+})
+export type DisconnectLiveVoice = typeof DisconnectLiveVoice.Type
 
 /** Answer a sign-in's Paste or Choose step: the text pasted, or the option's id. */
 export const AnswerSignIn = Schema.TaggedStruct("AnswerSignIn", {
@@ -352,6 +364,10 @@ export const ProvidersState = Schema.TaggedStruct("ProvidersState", {
    * Account page (ADR 0030): Claude Code, on their setup token, unless they chose pi.
    */
   claudeHarness: Harness,
+  /** The live voice Model and voice they talk to Sessions with (ADR 0033); absent, the default. */
+  liveVoice: Schema.optionalKey(LiveVoiceSetting),
+  /** Their live voice connection, the Codex CLI's ChatGPT sign-in; absent until they sign in. */
+  liveVoiceConnection: Schema.optionalKey(LiveVoiceConnection),
 })
 export type ProvidersState = typeof ProvidersState.Type
 
@@ -359,6 +375,8 @@ export type ProvidersState = typeof ProvidersState.Type
 export const SignInStepped = Schema.TaggedStruct("SignInStepped", {
   requestId: RequestId,
   provider: ProviderId,
+  /** Present for the live voice connection's sign-in. */
+  for: Schema.optionalKey(SignInFor),
   step: SignInStep,
 })
 export type SignInStepped = typeof SignInStepped.Type
@@ -370,6 +388,8 @@ export type SignInStepped = typeof SignInStepped.Type
 export const SignInEnded = Schema.TaggedStruct("SignInEnded", {
   requestId: RequestId,
   provider: ProviderId,
+  /** Present for the live voice connection's sign-in. */
+  for: Schema.optionalKey(SignInFor),
   outcome: Schema.Literals(["Connected", "Failed", "Cancelled"]),
   message: Schema.optionalKey(Schema.String),
 })
@@ -390,6 +410,8 @@ export const ProviderCommand = Schema.Union([
   DisconnectProvider,
   RefreshProviderModels,
   SetClaudeHarness,
+  SetLiveVoice,
+  DisconnectLiveVoice,
 ])
 export type ProviderCommand = typeof ProviderCommand.Type
 

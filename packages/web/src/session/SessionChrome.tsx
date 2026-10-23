@@ -14,12 +14,15 @@ import {
   CloseIcon,
   IconButton,
   Menu,
+  MicIcon,
+  MicOffIcon,
   MenuItem,
   MenuSeparator,
   MoreIcon,
   PencilIcon,
   RestartIcon,
   SessionStatus,
+  Spinner,
   SunIcon,
   textRole,
   TrashIcon,
@@ -29,12 +32,24 @@ import {
 } from "../ui/index.ts"
 import { srOnly } from "../ui/shared.ts"
 import { color, radius, space, text } from "../ui/tokens.stylex.ts"
+import type { LiveVoiceStatus } from "./liveVoice.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
 import { WaitingDot } from "./QuestionChip.tsx"
 import { SessionMcpServers } from "./SessionMcpServers.tsx"
 
 const styles = stylex.create({
+  // What the voice is saying, one line, its newest words kept in view.
+  caption: {
+    minWidth: 0,
+    maxWidth: "16rem",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    direction: "rtl",
+    textOverflow: "ellipsis",
+    color: color.textSecondary,
+    fontSize: text.sm,
+  },
   // The strip and the chips share the transcript's column, so everything lines up on one edge.
   column: {
     width: "100%",
@@ -258,11 +273,67 @@ function SessionMenu({ summary, actions }: { summary: SessionSummary; actions: S
 }
 
 /** Keep awake and the terminal, at the Composer, where the Creator already is. */
+/** Live voice's controls (ADR 0033): Talk or Hang up, mute, and what the voice is saying. */
+export interface VoiceControls {
+  readonly status: LiveVoiceStatus
+  readonly start: () => void
+  readonly stop: () => void
+  readonly setMuted: (muted: boolean) => void
+}
+
+function VoiceTools({ voice }: { voice: VoiceControls }) {
+  const { status } = voice
+  if (status.phase === "connecting") {
+    return (
+      <Button size="sm" intent="secondary" onClick={voice.stop} icon={<Spinner size="sm" />}>
+        Connecting
+      </Button>
+    )
+  }
+  if (status.phase === "live") {
+    return (
+      <>
+        <IconButton
+          label={status.muted ? "Unmute" : "Mute"}
+          size="sm"
+          intent={status.muted ? "secondary" : "ghost"}
+          aria-pressed={status.muted}
+          onClick={() => voice.setMuted(!status.muted)}
+        >
+          {status.muted ? <MicOffIcon /> : <MicIcon />}
+        </IconButton>
+        <Button size="sm" intent="secondary" onClick={voice.stop}>
+          Hang up
+        </Button>
+        {status.speaking !== "" && (
+          <span {...stylex.props(styles.caption)} aria-live="polite" title={status.speaking}>
+            <bdi>{status.speaking}</bdi>
+          </span>
+        )}
+      </>
+    )
+  }
+  return (
+    <Button
+      size="sm"
+      intent="ghost"
+      icon={<MicIcon />}
+      onClick={voice.start}
+      {...(status.phase === "failed" && { title: status.message })}
+    >
+      {status.phase === "failed" ? "Talk again" : "Talk"}
+    </Button>
+  )
+}
+
 export function ComposerTools({
   keptAwake,
   setKeepAwake,
   terminal,
+  voice,
 }: {
+  /** Live voice with the Session; undefined where it can't be talked to. */
+  voice?: VoiceControls
   /** Who keeps it awake, said in words; undefined when no one does. */
   keptAwake: string | undefined
   setKeepAwake: (on: boolean) => void
@@ -292,6 +363,7 @@ export function ComposerTools({
           Terminal
         </Button>
       )}
+      {voice && <VoiceTools voice={voice} />}
     </>
   )
 }

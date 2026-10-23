@@ -36,6 +36,7 @@ import type {
   ProvidersState,
   RequestId,
   SignInEnded,
+  SignInFor,
   SignInStep,
   PendingPairingCode,
   McpServer,
@@ -143,7 +144,7 @@ export interface RepoEnvironment {
  */
 export type Providers = Pick<
   ProvidersState,
-  "connected" | "connectable" | "models" | "claudeHarness"
+  "connected" | "connectable" | "models" | "claudeHarness" | "liveVoice" | "liveVoiceConnection"
 >
 
 /**
@@ -154,6 +155,8 @@ export interface SignInProgress {
   /** The StartSignIn's, which its steps, its end and an answer to it carry. */
   readonly requestId: RequestId
   readonly provider: ProviderId
+  /** Present for the live voice connection's sign-in (ADR 0033), not the Provider's. */
+  readonly for?: SignInFor
   /** Oldest first. */
   readonly steps: ReadonlyArray<SignInStep>
   /** Null while it runs. */
@@ -263,7 +266,12 @@ export type ClientEvent =
   | { readonly _tag: "TerminalOpened"; readonly sessionId: SessionId }
   | { readonly _tag: "TerminalClosed"; readonly sessionId: SessionId }
   /** The client sent StartSignIn: follow its steps, in place of any sign-in before. */
-  | { readonly _tag: "SignInStarted"; readonly requestId: RequestId; readonly provider: ProviderId }
+  | {
+      readonly _tag: "SignInStarted"
+      readonly requestId: RequestId
+      readonly provider: ProviderId
+      readonly for?: SignInFor
+    }
   /** The page is done with the last sign-in's outcome; with `requestId`, if it is still that one. */
   | { readonly _tag: "SignInCleared"; readonly requestId?: RequestId }
 
@@ -523,12 +531,22 @@ export function reduce(state: HubState, action: HubAction): HubState {
           connectable: action.connectable,
           models: action.models,
           claudeHarness: action.claudeHarness,
+          ...(action.liveVoice !== undefined && { liveVoice: action.liveVoice }),
+          ...(action.liveVoiceConnection !== undefined && {
+            liveVoiceConnection: action.liveVoiceConnection,
+          }),
         },
       }
     case "SignInStarted":
       return {
         ...state,
-        signIn: { requestId: action.requestId, provider: action.provider, steps: [], ended: null },
+        signIn: {
+          requestId: action.requestId,
+          provider: action.provider,
+          ...(action.for !== undefined && { for: action.for }),
+          steps: [],
+          ended: null,
+        },
       }
     case "SignInStepped": {
       const signIn = state.signIn

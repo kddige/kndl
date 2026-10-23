@@ -43,6 +43,7 @@ import {
   type McpServersState,
   ProtocolVersion,
   type ProviderId,
+  type LiveVoiceSetting,
   type ProvidersState,
   type QuestionAnswerFromWeb,
   RequestId,
@@ -56,6 +57,7 @@ import {
   type SharedVariable,
   type SharedVariableInput,
   type SignInEnded,
+  type SignInFor,
   type TerminalFrame,
   type TerminalSize,
   type TestBuild,
@@ -832,11 +834,17 @@ export class HubClient {
    * follows its steps as the Hub sends them; resolves with how it ended, or rejects with the Hub's
    * reason, which the store holds too.
    */
-  startSignIn(provider: ProviderId): Promise<SignInEnded> {
+  startSignIn(provider: ProviderId, forWhat?: SignInFor): Promise<SignInEnded> {
     if (!this.#welcomed) return Promise.reject(new CommandError("Not connected to the Hub."))
     const requestId = this.#newRequestId()
-    this.#dispatch({ _tag: "SignInStarted", requestId, provider })
-    return this.#request({ _tag: "StartSignIn", provider }, "SignInEnded", requestId)
+    const about = { provider, ...(forWhat !== undefined && { for: forWhat }) }
+    this.#dispatch({ _tag: "SignInStarted", requestId, ...about })
+    return this.#request({ _tag: "StartSignIn", ...about }, "SignInEnded", requestId)
+  }
+
+  /** Forgets the person's live voice connection (ADR 0033). */
+  disconnectLiveVoice(): Promise<ProvidersState> {
+    return this.#request({ _tag: "DisconnectLiveVoice" }, "ProvidersState")
   }
 
   /** Answers the sign-in in progress's Paste or Choose step: the text pasted, or the option's id. */
@@ -884,6 +892,11 @@ export class HubClient {
    */
   setClaudeHarness(harness: Harness): Promise<ProvidersState> {
     return this.#request({ _tag: "SetClaudeHarness", harness }, "ProvidersState")
+  }
+
+  /** Sets the live voice Model and voice the person talks to Sessions with (ADR 0033). */
+  setLiveVoice(setting: LiveVoiceSetting): Promise<ProvidersState> {
+    return this.#request({ _tag: "SetLiveVoice", setting }, "ProvidersState")
   }
 
   // ── The person's CLI tokens (issue #179) ─────────────────────────────────

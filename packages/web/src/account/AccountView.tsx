@@ -25,6 +25,7 @@ import {
   toast,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
+import { LiveVoiceSection } from "./LiveVoice.tsx"
 import { ProvidersSection } from "./Providers.tsx"
 
 const styles = stylex.create({
@@ -64,6 +65,7 @@ export function AccountView() {
       }
     >
       <ProvidersSection />
+      <LiveVoiceSection />
       <CliTokensSection />
     </SettingsPage>
   )
