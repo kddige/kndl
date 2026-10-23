@@ -202,6 +202,12 @@ describe("live voice", () => {
     // What its channels mean, and that the agent's answers are no requests.
     expect(body.session.instructions).toContain("speakable channel is what to say now")
     expect(body.session.instructions).toContain("are not requests: never delegate them")
+    // It answers nothing about the code or the agent itself, nor claims a hand-off it didn't make.
+    expect(body.session.instructions).toContain("never make up what the agent did")
+    expect(body.session.instructions).toContain(
+      "Never say you passed something on unless you delegated it",
+    )
+    expect(body.session.instructions).not.toContain("say in a few words that you are passing it on")
 
     // A 401 has the sign-in refreshed, and the call sent once more with the new token.
     fakes.codexStatus.push(401)

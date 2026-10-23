@@ -290,3 +290,21 @@ test("a long event becomes numbered appends of the same kind and delegation", ()
     expect(bytes(wire.content[0]?.text ?? "")).toBeLessThanOrEqual(MaxAppendBytes)
   }
 })
+
+test("a delegation addressed anywhere but kndl is told apart, in both protocols", () => {
+  expect(
+    heardEvent(
+      "Live",
+      JSON.stringify({
+        type: "session.delegation.created",
+        delegation: { id: "d1", type: "delegation", target: "responses" },
+      }),
+    ),
+  ).toEqual({ kind: "elsewhere", target: "responses" })
+  expect(
+    heardEvent(
+      "Codex",
+      JSON.stringify({ type: "delegation.created", item: { id: "d2", target: "responses" } }),
+    ),
+  ).toEqual({ kind: "elsewhere", target: "responses" })
+})

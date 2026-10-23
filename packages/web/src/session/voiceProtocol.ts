@@ -75,6 +75,8 @@ export type HeardEvent =
   | { readonly kind: "heard"; readonly text: string }
   | { readonly kind: "spoke"; readonly text: string }
   | { readonly kind: "delegated"; readonly id: string; readonly asked?: string }
+  /** A delegation GPT-Live addressed to something other than kndl: not the Session's. */
+  | { readonly kind: "elsewhere"; readonly target: string }
   | { readonly kind: "closed"; readonly reason?: string }
   | { readonly kind: "error"; readonly message: string }
 
@@ -113,9 +115,10 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
       case "session.delegation.created": {
         const delegation = (event["delegation"] ?? {}) as Record<string, unknown>
         const id = stringOf(delegation["id"])
-        return id !== undefined && delegation["target"] === "client"
+        if (id === undefined) return undefined
+        return delegation["target"] === "client"
           ? { kind: "delegated", id }
-          : undefined
+          : { kind: "elsewhere", target: String(delegation["target"]) }
       }
     }
     return undefined
@@ -132,7 +135,8 @@ export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEven
     }
     case "delegation.created": {
       const id = stringOf(item["id"])
-      if (id === undefined || item["target"] !== "client") return undefined
+      if (id === undefined) return undefined
+      if (item["target"] !== "client") return { kind: "elsewhere", target: String(item["target"]) }
       const parts = Array.isArray(item["content"]) ? (item["content"] as Array<unknown>) : []
       const asked = parts
         .map((part) => (part ?? {}) as Record<string, unknown>)
