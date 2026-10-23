@@ -9,10 +9,10 @@
 //   what the agent is doing, now and then; when it ends, it is given the agent's answer to say.
 //   A question the agent asks is put to GPT-Live to ask.
 
-import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
+import type { OpenQuestion, QueuedPrompt, SessionSummary } from "@kndl/protocol"
 import type { Block, TurnView } from "../hub/transcript.ts"
 
-/** The most characters one append carries: GPT-Live takes 500 tokens at most. */
+/** The most characters the bridge tells GPT-Live at once: liveVoice.ts sends it in 500-byte appends. */
 export const MaxAppendChars = 1800
 
 /** How often GPT-Live is told what a working agent is doing, at most. */
@@ -40,6 +40,8 @@ export interface SessionDriver {
 export interface SessionView {
   readonly summary: SessionSummary
   readonly turns: ReadonlyArray<TurnView>
+  /** Its Prompt queue, where a prompt the bridge sent gets the id its Turn will carry. */
+  readonly queue?: ReadonlyArray<QueuedPrompt>
 }
 
 interface Delegation {
@@ -47,6 +49,10 @@ interface Delegation {
   /** The prompt it sent; undefined when it replied to a question instead. */
   readonly prompt: string | undefined
   readonly at: number
+  /** The Turns there were when it was made: its prompt's is none of them. */
+  readonly before: ReadonlySet<string>
+  /** Its prompt's id, once the Prompt queue shows it: the Turn it starts carries it. */
+  promptId?: string
   /** The Turn its prompt started, once seen. */
   turnId?: string
   progressAt: number
@@ -131,6 +137,7 @@ export class VoiceBridge {
         id: delegationId,
         prompt: undefined,
         at: this.now(),
+        before: this.#turnIds(),
         progressAt: -Infinity,
       })
       say("quiet", "Their answer went to the agent; it works on.")
@@ -144,6 +151,7 @@ export class VoiceBridge {
       id: delegationId,
       prompt: task,
       at: this.now(),
+      before: this.#turnIds(),
       progressAt: -Infinity,
     })
     say("quiet", "Passed to the agent; it is working on it.")
@@ -160,13 +168,31 @@ export class VoiceBridge {
     }
     for (const delegation of this.#delegations) {
       if (delegation.turnId === undefined) {
-        // The Turn its prompt started; a reply's goes on in the Turn running.
-        const started = view.turns.find(
-          (turn) =>
-            !this.#delegations.some((other) => other.turnId === turn.turnId) &&
-            (delegation.prompt === undefined
-              ? turn.end === null
-              : turn.prompt.trim() === delegation.prompt && turn.at >= delegation.at - 60_000),
+        const { prompt, before } = delegation
+        // Its prompt's id, from the queue: the Creator's prompt of its text, which no other
+        // delegation took.
+        if (prompt !== undefined && delegation.promptId === undefined) {
+          const queued = (view.queue ?? []).find(
+            (entry) =>
+              entry.sender.id === view.summary.creator.id &&
+              entry.text.trim() === prompt &&
+              !this.#delegations.some((other) => other.promptId === entry.id),
+          )
+          if (queued !== undefined) delegation.promptId = queued.id
+        }
+        const unclaimed = (turn: TurnView) =>
+          !this.#delegations.some((other) => other.turnId === turn.turnId)
+        // The Turn its prompt started: by its id, else a new one that holds its text, as one a
+        // background agent's notification starts with the prompt riding along. A reply's goes on
+        // in the Turn running.
+        const started = view.turns.find((turn) =>
+          prompt === undefined
+            ? turn.end === null && unclaimed(turn)
+            : !before.has(turn.turnId) &&
+              unclaimed(turn) &&
+              (delegation.promptId !== undefined && turn.promptId !== undefined
+                ? turn.promptId === delegation.promptId
+                : turn.prompt.includes(prompt)),
         )
         if (started === undefined) continue
         delegation.turnId = started.turnId
@@ -197,6 +223,11 @@ export class VoiceBridge {
         this.#emit("quiet", delegation.id, progress)
       }
     }
+  }
+
+  /** The Turns the Session has now. */
+  #turnIds(): ReadonlySet<string> {
+    return new Set((this.#view?.turns ?? []).map((turn) => turn.turnId))
   }
 
   #emit(kind: VoiceEvent["kind"], delegationId: string | null, content: string) {

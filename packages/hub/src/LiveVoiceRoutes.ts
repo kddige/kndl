@@ -23,6 +23,7 @@
 import {
   driveRefusal,
   type HistoryTurn,
+  type LiveVoiceProtocol,
   LiveVoiceAnswer,
   LiveVoiceOffer,
   liveVoiceModelFor,
@@ -74,16 +75,29 @@ export const turnsText = (turns: ReadonlyArray<HistoryTurn>): string => {
 }
 
 /** What the voice is told it is, for a Session, its Creator and the Session's latest Turns. */
+/**
+ * How each protocol tells the voice what to keep quiet and what to say (as OpenClaw words it): the
+ * bridge sends progress quietly, and the agent's answers and questions to say.
+ */
+const channelInstructions: Record<LiveVoiceProtocol, string> = {
+  Codex:
+    "Context on the commentary channel is silent background: use it, but never read it aloud. Context on the speakable channel is what to say now: deliver it naturally, in your own words. Never mention the channel or the delegation.",
+  Live: "Information in session.thinking.append is silent context: use it when relevant, but don't read it aloud because it arrives. Information in session.commentary.append is an update to say aloud now, naturally, in your own words. Never mention the channel or the delegation.",
+}
+
 export const voiceInstructions = (
   session: SessionSummary,
   you: Participant,
   turns: ReadonlyArray<HistoryTurn>,
+  protocol: LiveVoiceProtocol = "Codex",
 ): string => {
   const history = turnsText(turns)
   return [
     `You are the voice of a kndl Session, "${sessionTitle(session)}" on ${session.repo}: a coding agent's session. You are talking with ${you.name}, who drives it.`,
     "You do no work yourself and have no tools: the Session's agent does the work. Whenever they ask for anything to be done, checked, explained from the code, or changed, delegate it, and say in a few words that you are passing it on. Handle small talk, and questions about what they want, yourself.",
-    "While the agent works you are told its progress quietly; say something only if asked. When it finishes you are told its answer: say it briefly, in plain speech, without reading code, paths or long lists out. If the agent asks a question, put it to them, and delegate their answer.",
+    "Delegate each request once, and wait for its result. A follow-up, a correction or a retry from them is a new request. The agent's progress, answers and questions are not requests: never delegate them, and don't repeat the request when they arrive.",
+    channelInstructions[protocol],
+    "While the agent works you are told its progress quietly; say something only if asked. When it finishes you are told its answer, perhaps in several parts: say it briefly, in plain speech, without reading code, paths or long lists out. If the agent asks a question, put it to them, and delegate their answer.",
     "Keep every reply short and spoken-friendly.",
     history === ""
       ? "Nothing has happened in the Session yet."
@@ -242,7 +256,7 @@ export const LiveVoiceRoutes = HttpRouter.use(
         const { turns } = historyPage(entries, { limit: contextTurns, earlier })
         const configured = {
           model: model.id,
-          instructions: voiceInstructions(session, you, turns),
+          instructions: voiceInstructions(session, you, turns, model.protocol),
           audio: { output: { voice } },
           delegation: { type: "client" },
         }
