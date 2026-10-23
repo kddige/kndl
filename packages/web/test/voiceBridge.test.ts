@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
 import type { TurnView } from "../src/hub/transcript.ts"
+import { heardEvent, wireEvent } from "../src/session/liveVoice.ts"
 import { ProgressEveryMs, VoiceBridge, type VoiceEvent } from "../src/session/voiceBridge.ts"
 
 const summary = (extra: Partial<SessionSummary> = {}) =>
@@ -44,7 +45,7 @@ test("what was said since the last delegation becomes the Session's prompt", () 
   voice.heard(" for the   parser.")
   voice.delegated("d1")
   expect(prompts).toEqual(["Add a test for the parser."])
-  expect(sent.at(-1)).toMatchObject({ type: "session.thinking.append", delegation_id: "d1" })
+  expect(sent.at(-1)).toMatchObject({ kind: "quiet", delegationId: "d1" })
   // Nothing new said: nothing sent.
   voice.delegated("d2")
   expect(prompts).toHaveLength(1)
@@ -59,8 +60,8 @@ test("the Turn's progress is told quietly, and its answer to say when it ends", 
     turns: [turn("Fix the build", [tool("Bash", '{"command":"bun test"}')], false)],
   })
   expect(sent.at(-1)).toMatchObject({
-    type: "session.thinking.append",
-    delegation_id: "d1",
+    kind: "quiet",
+    delegationId: "d1",
     content: expect.stringContaining("Bash"),
   })
   const before = sent.length
@@ -78,9 +79,9 @@ test("the Turn's progress is told quietly, and its answer to say when it ends", 
     ],
   })
   expect(sent.at(-1)).toEqual({
-    type: "session.commentary.append",
-    event_id: expect.any(String),
-    delegation_id: "d1",
+    kind: "say",
+    id: expect.any(String),
+    delegationId: "d1",
     content: "The agent finished. Its answer: Fixed: a typo.",
   })
   // Once.
@@ -106,11 +107,72 @@ test("the agent's question is put to the person, and their answer replies to it"
   } as unknown as OpenQuestion
   voice.observe({ summary: summary({ openQuestion: question }), turns: [] })
   expect(sent.at(-1)).toMatchObject({
-    type: "session.commentary.append",
+    kind: "say",
     content: expect.stringContaining("Which database? (options: Postgres, SQLite)"),
   })
   voice.heard("SQLite please")
   voice.delegated("d1")
   expect(replies).toEqual(["SQLite please"])
   expect(prompts).toEqual([])
+})
+
+test("the work GPT-Live names, through ChatGPT, is the prompt over what was heard", () => {
+  const { voice, prompts } = bridge()
+  voice.heard(" yes")
+  voice.delegated("d1", "Use SQLite for the cache")
+  expect(prompts).toEqual(["Use SQLite for the cache"])
+})
+
+test("GPT-Live's two protocols, each way", () => {
+  const quiet = { kind: "quiet", id: "k1", delegationId: "d1", content: "working" } as const
+  expect(wireEvent("Live", quiet)).toEqual({
+    type: "session.thinking.append",
+    event_id: "k1",
+    delegation_id: "d1",
+    content: "working",
+  })
+  expect(wireEvent("Codex", { ...quiet, kind: "say" })).toEqual({
+    type: "delegation.context.append",
+    delegation_item_id: "d1",
+    channel: "speakable",
+    content: [{ type: "input_text", text: "working" }],
+  })
+  expect(wireEvent("Codex", { ...quiet, delegationId: null })).toMatchObject({
+    type: "session.context.append",
+    channel: "commentary",
+  })
+
+  expect(
+    heardEvent("Live", JSON.stringify({ type: "session.input_transcript.delta", delta: "hi" })),
+  ).toEqual({ kind: "heard", text: "hi" })
+  expect(
+    heardEvent(
+      "Live",
+      JSON.stringify({
+        type: "session.delegation.created",
+        delegation: { id: "d1", type: "delegation", target: "client" },
+      }),
+    ),
+  ).toEqual({ kind: "delegated", id: "d1" })
+  expect(
+    heardEvent("Codex", JSON.stringify({ type: "input_transcript.added", item: { text: "hi" } })),
+  ).toEqual({ kind: "heard", text: " hi" })
+  expect(
+    heardEvent(
+      "Codex",
+      JSON.stringify({
+        type: "delegation.created",
+        item: {
+          type: "delegation",
+          target: "client",
+          id: "d2",
+          content: [{ type: "input_text", text: "Run the tests" }],
+        },
+      }),
+    ),
+  ).toEqual({ kind: "delegated", id: "d2", asked: "Run the tests" })
+  // Each protocol's own events only.
+  expect(
+    heardEvent("Codex", JSON.stringify({ type: "session.input_transcript.delta", delta: "x" })),
+  ).toBeUndefined()
 })

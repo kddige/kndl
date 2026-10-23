@@ -3,7 +3,12 @@
 // prompts. The Hub only starts it (`POST /sessions/<id>/voice`), with the Creator's own OpenAI
 // connection: audio and events then go between the browser and OpenAI.
 
-import { LiveVoiceAnswer, liveVoicePath, type SessionId } from "@kndl/protocol"
+import {
+  LiveVoiceAnswer,
+  liveVoicePath,
+  type LiveVoiceProtocol,
+  type SessionId,
+} from "@kndl/protocol"
 import { Schema } from "effect"
 import { useEffect, useRef, useState } from "react"
 import { useHub } from "../app/hub.tsx"
@@ -23,6 +28,99 @@ export type LiveVoiceStatus =
 
 const decodeAnswer = Schema.decodeUnknownSync(LiveVoiceAnswer)
 
+/**
+ * What the bridge tells GPT-Live, in the events of its protocol: the API's `session.thinking.append`
+ * and `session.commentary.append`; through ChatGPT, Codex's `delegation.context.append` (or
+ * `session.context.append`), quiet on its `commentary` channel and said on `speakable`.
+ */
+export const wireEvent = (protocol: LiveVoiceProtocol, event: VoiceEvent): object =>
+  protocol === "Live"
+    ? {
+        type: event.kind === "say" ? "session.commentary.append" : "session.thinking.append",
+        event_id: event.id,
+        delegation_id: event.delegationId,
+        content: event.content,
+      }
+    : {
+        type: event.delegationId === null ? "session.context.append" : "delegation.context.append",
+        ...(event.delegationId !== null && { delegation_item_id: event.delegationId }),
+        channel: event.kind === "say" ? "speakable" : "commentary",
+        content: [{ type: "input_text", text: event.content }],
+      }
+
+/** What GPT-Live said on its data channel, as the call acts on it, in either protocol. */
+export type HeardEvent =
+  | { readonly kind: "heard"; readonly text: string }
+  | { readonly kind: "spoke"; readonly text: string }
+  | { readonly kind: "delegated"; readonly id: string; readonly asked?: string }
+  | { readonly kind: "closed" }
+  | { readonly kind: "error"; readonly message: string }
+
+/** The value, if it is a string. */
+const stringOf = (value: unknown) => (typeof value === "string" ? value : undefined)
+
+/** One of GPT-Live's events, in `protocol`; undefined for one the call needn't act on. */
+export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEvent | undefined {
+  let event: Record<string, unknown>
+  try {
+    event = JSON.parse(data) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+  const item = (event["item"] ?? {}) as Record<string, unknown>
+  switch (event["type"]) {
+    case "error": {
+      const error = (event["error"] ?? {}) as Record<string, unknown>
+      return { kind: "error", message: stringOf(error["message"]) ?? "GPT-Live reported an error." }
+    }
+    case "session.closed":
+      return { kind: "closed" }
+  }
+  if (protocol === "Live") {
+    switch (event["type"]) {
+      case "session.input_transcript.delta": {
+        const delta = stringOf(event["delta"])
+        return delta === undefined ? undefined : { kind: "heard", text: delta }
+      }
+      case "session.output_transcript.delta": {
+        const delta = stringOf(event["delta"])
+        return delta === undefined ? undefined : { kind: "spoke", text: delta }
+      }
+      case "session.delegation.created": {
+        const delegation = (event["delegation"] ?? {}) as Record<string, unknown>
+        const id = stringOf(delegation["id"])
+        return id !== undefined && delegation["target"] === "client"
+          ? { kind: "delegated", id }
+          : undefined
+      }
+    }
+    return undefined
+  }
+  switch (event["type"]) {
+    // Whole pieces, not deltas: a space keeps them apart.
+    case "input_transcript.added": {
+      const said = stringOf(item["text"])
+      return said === undefined ? undefined : { kind: "heard", text: ` ${said}` }
+    }
+    case "output_transcript.added": {
+      const said = stringOf(item["text"])
+      return said === undefined ? undefined : { kind: "spoke", text: ` ${said}` }
+    }
+    case "delegation.created": {
+      const id = stringOf(item["id"])
+      if (id === undefined || item["target"] !== "client") return undefined
+      const parts = Array.isArray(item["content"]) ? (item["content"] as Array<unknown>) : []
+      const asked = parts
+        .map((part) => (part ?? {}) as Record<string, unknown>)
+        .filter((part) => part["type"] === "input_text")
+        .map((part) => stringOf(part["text"]) ?? "")
+        .join("")
+      return { kind: "delegated", id, ...(asked.trim() !== "" && { asked }) }
+    }
+  }
+  return undefined
+}
+
 /** One live voice conversation with a Session, from `start` until `stop`. */
 class LiveVoiceCall {
   #pc: RTCPeerConnection | undefined
@@ -32,6 +130,7 @@ class LiveVoiceCall {
   #unsubscribe: (() => void) | undefined
   #speaking = ""
   #muted = false
+  #protocol: LiveVoiceProtocol = "Live"
   readonly #bridge: VoiceBridge
 
   constructor(
@@ -86,6 +185,7 @@ class LiveVoiceCall {
         throw new Error(reason)
       }
       const answer = decodeAnswer(JSON.parse(text))
+      this.#protocol = answer.protocol
       await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp })
       // Follow the Session as the store has it: it is joined while its view is open.
       const observe = () => {
@@ -134,43 +234,28 @@ class LiveVoiceCall {
   }
 
   #send(event: VoiceEvent) {
-    if (this.#channel?.readyState === "open") this.#channel.send(JSON.stringify(event))
+    if (this.#channel?.readyState === "open") {
+      this.#channel.send(JSON.stringify(wireEvent(this.#protocol, event)))
+    }
   }
 
   #received(data: unknown) {
     if (typeof data !== "string") return
-    let event: { type?: string; [key: string]: unknown }
-    try {
-      event = JSON.parse(data) as typeof event
-    } catch {
-      return
-    }
-    switch (event.type) {
-      case "session.input_transcript.delta":
-        if (typeof event["delta"] === "string") this.#bridge.heard(event["delta"])
+    const event = heardEvent(this.#protocol, data)
+    switch (event?.kind) {
+      case "heard":
+        return this.#bridge.heard(event.text)
+      case "spoke":
+        // The caption keeps the latest few hundred characters.
+        this.#speaking = (this.#speaking + event.text).slice(-280)
+        return this.#live()
+      case "delegated":
+        return this.#bridge.delegated(event.id, event.asked)
+      case "closed":
+        return this.stop()
+      case "error":
+        console.warn("Live voice:", event.message)
         return
-      case "session.output_transcript.delta":
-        if (typeof event["delta"] === "string") {
-          // The caption keeps the latest few hundred characters.
-          this.#speaking = (this.#speaking + event["delta"]).slice(-280)
-          this.#live()
-        }
-        return
-      case "session.delegation.created": {
-        const delegation = event["delegation"] as { id?: unknown; target?: unknown } | undefined
-        if (typeof delegation?.id === "string" && delegation.target === "client") {
-          this.#bridge.delegated(delegation.id)
-        }
-        return
-      }
-      case "session.closed":
-        this.stop()
-        return
-      case "error": {
-        const error = event["error"] as { message?: unknown } | undefined
-        console.warn("Live voice:", error?.message ?? event)
-        return
-      }
     }
   }
 }

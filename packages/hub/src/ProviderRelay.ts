@@ -222,11 +222,12 @@ export const makeProviderRelay = Effect.fnUntraced(function* (host: ProviderRela
     participantId: ParticipantId,
     requestId?: RequestId,
   ) {
+    const liveVoice = yield* members.liveVoice(participantId)
     return ProvidersState.make({
+      ...(liveVoice !== undefined && { liveVoice }),
       ...(requestId !== undefined && { requestId }),
       ...(yield* providers.state(participantId)),
       claudeHarness: yield* members.claudeHarness(participantId),
-      liveVoice: yield* members.liveVoice(participantId),
     })
   })
 

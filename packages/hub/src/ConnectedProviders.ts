@@ -84,6 +84,8 @@ import {
   reasonOf,
   record,
   rejectsKey,
+  chatgptAccountOf,
+  SignInOrigins,
   signInOrigin,
   takesApiKey,
   upstreamUrl,
@@ -1119,6 +1121,12 @@ export class ConnectedProviders extends Context.Service<
       ) {
         const { credential, provider } = connection
         if (credential.type !== "oauth") {
+          if (call.signInOrigin !== undefined) {
+            return yield* unusable(
+              "Broken",
+              `This call takes a ${nameOf(provider)} sign-in, not a key.`,
+            )
+          }
           return yield* send(apiOrigin(provider), keyAuth(credential) ?? {}, call, listing)
         }
         const auth = yield* Effect.tryPromise({
@@ -1129,6 +1137,18 @@ export class ConnectedProviders extends Context.Service<
               `${nameOf(provider)}'s sign-in can't be used: ${reasonOf(error)}`,
             ),
         })
+        if (call.signInOrigin !== undefined) {
+          // Only to an origin of the Provider's kndl knows (ADR 0033), with the account it is for.
+          if (!(SignInOrigins[provider] ?? []).includes(call.signInOrigin)) {
+            return yield* unusable("Broken", untrustedAddress(provider))
+          }
+          const account = chatgptAccountOf(credential.access)
+          const headers = {
+            ...auth.headers,
+            ...(account !== undefined && { "chatgpt-account-id": account }),
+          }
+          return yield* send(call.signInOrigin, { ...auth, headers }, call, listing)
+        }
         const origin = signInOrigin(provider, auth)
         if (origin === undefined) {
           return yield* unusable("Broken", untrustedAddress(provider))

@@ -2,17 +2,17 @@
 // Sessions with, and its voice. It runs on their own Connected provider for its Provider.
 
 import {
-  defaultLiveVoice,
   type LiveVoiceSetting,
   LiveVoiceModels,
-  liveVoiceModel,
+  liveVoiceModelFor,
   liveVoiceOf,
 } from "@kndl/protocol"
 import { useState } from "react"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { PropertyRow, Select, SettingsList, SettingsSection, toast } from "../ui/index.ts"
 
-const providerNames = { openai: "OpenAI" } as const
+/** How each live voice Model is reached, as the person connects OpenAI. */
+const connectionNames = { SignIn: "a ChatGPT sign-in", ApiKey: "an OpenAI API key" } as const
 
 export function LiveVoiceSection() {
   const hub = useHub()
@@ -20,14 +20,13 @@ export function LiveVoiceSection() {
   // Shown as chosen until the Hub answers; a refusal shows what is saved again.
   const [choosing, setChoosing] = useState<LiveVoiceSetting | null>(null)
   if (providers === null || providers === undefined) return null
-  const saved = providers.liveVoice ?? defaultLiveVoice
-  const shown = choosing ?? saved
-  const model = liveVoiceModel(shown.model) ?? LiveVoiceModels[0]
-  const connected =
-    model !== undefined && providers.connected.some((c) => c.provider === model.provider)
-  const choose = (setting: LiveVoiceSetting) => {
-    setChoosing(setting)
-    hub.setLiveVoice(setting).then(
+  const connection = providers.connected.find((c) => c.provider === "openai")?.kind
+  const setting = choosing ?? providers.liveVoice
+  // Until they choose, the one for how they connected OpenAI.
+  const model = liveVoiceModelFor(setting, connection)
+  const choose = (next: LiveVoiceSetting) => {
+    setChoosing(next)
+    hub.setLiveVoice(next).then(
       () => setChoosing(null),
       (cause: unknown) => {
         setChoosing(null)
@@ -39,17 +38,14 @@ export function LiveVoiceSection() {
       },
     )
   }
+  const note =
+    connection === undefined
+      ? "Connect OpenAI above, with ChatGPT or an API key, to talk with your Sessions."
+      : model.connection !== connection
+        ? `${model.label} needs ${connectionNames[model.connection]}, and you connected OpenAI with ${connectionNames[connection]}: pick the other Model.`
+        : "Press Talk in a Session you drive to talk with it. The voice passes what you ask to the Session's agent, and says what it did."
   return (
-    <SettingsSection
-      title="Live voice"
-      note={
-        model === undefined
-          ? undefined
-          : connected
-            ? `Press Talk in a Session you drive to talk with it. The voice runs on your ${providerNames[model.provider]} connection, and passes what you ask to the Session's agent.`
-            : `Connect ${providerNames[model.provider]} above to talk with your Sessions.`
-      }
-    >
+    <SettingsSection title="Live voice" note={note}>
       <SettingsList label="Live voice settings">
         <PropertyRow
           label="Model"
@@ -60,26 +56,24 @@ export function LiveVoiceSection() {
             size="sm"
             options={LiveVoiceModels.map((option) => ({
               value: option.name,
-              label: `${option.label} (${providerNames[option.provider]})`,
+              label: option.label,
             }))}
-            value={shown.model}
+            value={model.name}
             onValueChange={(name) => choose({ model: name })}
           />
         </PropertyRow>
-        {model !== undefined && (
-          <PropertyRow label="Voice" description="Changes apply from your next call.">
-            <Select
-              aria-label="Live voice"
-              size="sm"
-              options={model.voices.map((voice) => ({
-                value: voice,
-                label: voice === model.voices[0] ? `${voice} (default)` : voice,
-              }))}
-              value={liveVoiceOf(shown)}
-              onValueChange={(voice) => choose({ model: model.name, voice })}
-            />
-          </PropertyRow>
-        )}
+        <PropertyRow label="Voice" description="Changes apply from your next call.">
+          <Select
+            aria-label="Live voice"
+            size="sm"
+            options={model.voices.map((voice) => ({
+              value: voice,
+              label: voice === model.voices[0] ? `${voice} (default)` : voice,
+            }))}
+            value={liveVoiceOf(model, setting)}
+            onValueChange={(voice) => choose({ model: model.name, voice })}
+          />
+        </PropertyRow>
       </SettingsList>
     </SettingsSection>
   )

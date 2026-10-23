@@ -6,6 +6,14 @@
 import { Schema } from "effect"
 import { RequestId } from "./Ids.ts"
 
+/**
+ * How the browser talks with a live voice session once it is started, on its data channel:
+ * `Live`, the GPT-Live API's events (`session.*`); `Codex`, those of GPT-Live through ChatGPT's
+ * backend, as Codex has them (`delegation.*`, `*_transcript.added`).
+ */
+export const LiveVoiceProtocol = Schema.Literals(["Live", "Codex"])
+export type LiveVoiceProtocol = typeof LiveVoiceProtocol.Type
+
 /** A live voice Model kndl knows how to talk to: its Provider, and its id there. */
 export interface LiveVoiceModelInfo {
   /** `<provider>/<id>`, as the setting names it. */
@@ -14,9 +22,28 @@ export interface LiveVoiceModelInfo {
   readonly provider: "openai"
   readonly id: string
   readonly label: string
+  /**
+   * How that Connected provider must be connected for it: GPT-Live's API takes a key alone, and a
+   * ChatGPT sign-in reaches GPT-Live only through ChatGPT's backend, as another Model.
+   */
+  readonly connection: "ApiKey" | "SignIn"
+  readonly protocol: LiveVoiceProtocol
   /** The voices it speaks with, the first its default. */
   readonly voices: ReadonlyArray<string>
 }
+
+/** GPT-Live's voices through ChatGPT, as Codex names them: its default first. */
+const gptLiveChatGptVoices = [
+  "cove",
+  "arbor",
+  "breeze",
+  "ember",
+  "juniper",
+  "maple",
+  "sol",
+  "spruce",
+  "vale",
+]
 
 /** GPT-Live's voices, as OpenAI names them: its default, then the English ones, then the rest. */
 const gptLiveVoices = [
@@ -45,27 +72,55 @@ const gptLiveVoices = [
 ]
 
 /**
- * Every live voice Model kndl talks to, the default first. One Provider's for now; another's, such
- * as xAI's, joins this list with its own way of starting a session (LiveVoiceRoutes.ts).
+ * Every live voice Model kndl talks to. One Provider's for now: GPT-Live, through ChatGPT for a
+ * sign-in and through OpenAI's API for a key. Another Provider's, such as xAI's, joins this list
+ * with its own way of starting a session (LiveVoiceRoutes.ts).
  */
 export const LiveVoiceModels: ReadonlyArray<LiveVoiceModelInfo> = [
+  {
+    name: "openai/gpt-live-1-codex",
+    provider: "openai",
+    id: "gpt-live-1-codex",
+    label: "GPT-Live 1 (ChatGPT)",
+    connection: "SignIn",
+    protocol: "Codex",
+    voices: gptLiveChatGptVoices,
+  },
   {
     name: "openai/gpt-live-1",
     provider: "openai",
     id: "gpt-live-1",
-    label: "GPT-Live 1",
+    label: "GPT-Live 1 (API key)",
+    connection: "ApiKey",
+    protocol: "Live",
     voices: gptLiveVoices,
   },
 ]
-
-/** The live voice Model a Member talks to until they choose one. */
-export const DefaultLiveVoiceModel = "openai/gpt-live-1"
 
 /** The live voice Model by its name, if kndl knows it. */
 export const liveVoiceModel = (name: string): LiveVoiceModelInfo | undefined =>
   LiveVoiceModels.find((model) => model.name === name)
 
-/** A Member's live voice setting: the Model they talk to, and its voice, else its default. */
+/**
+ * The live voice Model a Member talks to: the one they chose, else the first that runs on how
+ * they connected its Provider (`connection`), a ChatGPT sign-in or a key.
+ */
+export const liveVoiceModelFor = (
+  setting: LiveVoiceSetting | undefined,
+  connection: "ApiKey" | "SignIn" | undefined,
+): LiveVoiceModelInfo => {
+  const chosen = setting === undefined ? undefined : liveVoiceModel(setting.model)
+  if (chosen !== undefined) return chosen
+  return (
+    LiveVoiceModels.find((model) => model.connection === connection) ??
+    (LiveVoiceModels[0] as LiveVoiceModelInfo)
+  )
+}
+
+/**
+ * A Member's live voice setting: the Model they talk to, and its voice, else its default. Absent
+ * until they choose, when the Model is the one for how they connected (`liveVoiceModelFor`).
+ */
 export const LiveVoiceSetting = Schema.Struct({
   model: Schema.String.check(
     Schema.makeFilter((name) =>
@@ -76,16 +131,13 @@ export const LiveVoiceSetting = Schema.Struct({
 })
 export type LiveVoiceSetting = typeof LiveVoiceSetting.Type
 
-/** What a Member talks with before they choose. */
-export const defaultLiveVoice: LiveVoiceSetting = { model: DefaultLiveVoiceModel }
-
-/** The voice a setting speaks with: its own if its Model has it, else the Model's default. */
-export const liveVoiceOf = (setting: LiveVoiceSetting): string => {
-  const voices = liveVoiceModel(setting.model)?.voices ?? []
-  return setting.voice !== undefined && voices.includes(setting.voice)
+/** The voice to speak with on the Model: the setting's if the Model has it, else its default. */
+export const liveVoiceOf = (model: LiveVoiceModelInfo, setting?: LiveVoiceSetting): string =>
+  setting?.voice !== undefined &&
+  setting.model === model.name &&
+  model.voices.includes(setting.voice)
     ? setting.voice
-    : (voices[0] ?? "")
-}
+    : (model.voices[0] ?? "")
 
 /** Web to Hub: set the signed-in Member's live voice. Answered with ProvidersState. */
 export const SetLiveVoice = Schema.TaggedStruct("SetLiveVoice", {
@@ -109,5 +161,7 @@ export const LiveVoiceAnswer = Schema.Struct({
   sdp: Schema.NonEmptyString,
   model: Schema.String,
   voice: Schema.String,
+  /** The events to speak on its data channel. */
+  protocol: LiveVoiceProtocol,
 })
 export type LiveVoiceAnswer = typeof LiveVoiceAnswer.Type

@@ -483,8 +483,39 @@ export const reasonIn = (body: string) => {
 export const reasonOf = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, reasonLimit)
 
+/**
+ * The other origins a Provider's sign-in may be sent to, by an ApiCall's `signInOrigin`: ChatGPT's
+ * backend, which takes a ChatGPT sign-in for what the API takes only a key for, as GPT-Live's calls
+ * (ADR 0033). Never a key's.
+ */
+export const SignInOrigins: Partial<Record<ModelProvider, ReadonlyArray<string>>> = {
+  openai: ["https://chatgpt.com"],
+}
+
+/**
+ * The ChatGPT account a sign-in's access token is for, its `chatgpt_account_id` claim, which
+ * ChatGPT's backend takes in a `chatgpt-account-id` header. Read without checking the signature:
+ * the backend checks the token.
+ */
+export function chatgptAccountOf(access: string): string | undefined {
+  const payload = access.split(".")[1]
+  if (payload === undefined) return undefined
+  try {
+    const claims = record(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")))
+    const id = record(claims?.["https://api.openai.com/auth"])?.chatgpt_account_id
+    return typeof id === "string" && id !== "" ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A request to a Provider's API, without its credential, which goes in `keyHeader`. */
 export interface ApiCall {
+  /**
+   * For a sign-in alone: one of the Provider's {@link SignInOrigins} to send it to, in place of its
+   * API's. A key's call that names one isn't sent.
+   */
+  readonly signInOrigin?: string
   readonly method: string
   /** Below the origin of the Provider's API, with the query: `/v1/responses?stream=true`. */
   readonly path: string

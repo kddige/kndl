@@ -2,13 +2,12 @@
 // delegation, and the Session underneath, which does the work. Framework-free, so it can be tested
 // without a browser:
 //
-// - What the person says is heard as transcript deltas. When GPT-Live delegates, everything they
-//   said since the last delegation is the work: it becomes a prompt to the Session, from them, or
-//   their reply to its Open question while it asks one.
+// - What the person says is heard as transcript deltas. When GPT-Live delegates, the work it names,
+//   or else everything they said since the last delegation, becomes a prompt to the Session, from
+//   them, or their reply to its Open question while it asks one.
 // - Each delegation follows the Turn its prompt started. While it runs, GPT-Live is told quietly
-//   what the agent is doing (`session.thinking.append`), now and then; when it ends, it is told
-//   the agent's answer to say (`session.commentary.append`). A question the agent asks is put to
-//   GPT-Live to ask.
+//   what the agent is doing, now and then; when it ends, it is given the agent's answer to say.
+//   A question the agent asks is put to GPT-Live to ask.
 
 import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
 import type { Block, TurnView } from "../hub/transcript.ts"
@@ -19,11 +18,15 @@ export const MaxAppendChars = 1800
 /** How often GPT-Live is told what a working agent is doing, at most. */
 export const ProgressEveryMs = 20_000
 
-/** What the bridge sends GPT-Live on its data channel. */
+/**
+ * What the bridge tells GPT-Live, whatever its protocol (liveVoice.ts says it in GPT-Live's
+ * events): `quiet`, context it uses without saying; `say`, what it is to say.
+ */
 export interface VoiceEvent {
-  readonly type: "session.thinking.append" | "session.commentary.append"
-  readonly event_id: string
-  readonly delegation_id: string | null
+  readonly kind: "quiet" | "say"
+  readonly id: string
+  /** The delegation it is about; null for the session as a whole. */
+  readonly delegationId: string | null
   readonly content: string
 }
 
@@ -104,25 +107,24 @@ export class VoiceBridge {
     this.#heard += delta
   }
 
-  /** GPT-Live delegated: what the person said since the last one goes to the Session. */
-  delegated(delegationId: string): void {
-    const task = this.#heard.trim().replaceAll(/\s+/g, " ")
+  /**
+   * GPT-Live delegated: the work it names, if its protocol says (Codex's does), else what the
+   * person said since the last delegation, goes to the Session.
+   */
+  delegated(delegationId: string, asked?: string): void {
+    const heard = this.#heard
     this.#heard = ""
-    const say = (type: VoiceEvent["type"], content: string) =>
-      this.send({
-        type,
-        event_id: `kndl_${++this.#events}`,
-        delegation_id: delegationId,
-        content: clip(content),
-      })
+    const task = (asked?.trim() || heard.trim()).replaceAll(/\s+/g, " ")
+    const say = (kind: VoiceEvent["kind"], content: string) =>
+      this.#emit(kind, delegationId, content)
     if (task === "") {
-      say("session.thinking.append", "Nothing they said came through to pass on: ask them again.")
+      say("quiet", "Nothing they said came through to pass on: ask them again.")
       return
     }
     const question = this.#view?.summary.openQuestion
     if (question !== undefined) {
       if (!this.driver.reply(question, task)) {
-        say("session.commentary.append", "Their answer couldn't reach the agent just now.")
+        say("say", "Their answer couldn't reach the agent just now.")
         return
       }
       this.#delegations.push({
@@ -131,11 +133,11 @@ export class VoiceBridge {
         at: this.now(),
         progressAt: -Infinity,
       })
-      say("session.thinking.append", "Their answer went to the agent; it works on.")
+      say("quiet", "Their answer went to the agent; it works on.")
       return
     }
     if (!this.driver.sendPrompt(task)) {
-      say("session.commentary.append", "The Session can't take a prompt just now.")
+      say("say", "The Session can't take a prompt just now.")
       return
     }
     this.#delegations.push({
@@ -144,7 +146,7 @@ export class VoiceBridge {
       at: this.now(),
       progressAt: -Infinity,
     })
-    say("session.thinking.append", "Passed to the agent; it is working on it.")
+    say("quiet", "Passed to the agent; it is working on it.")
   }
 
   /** The Session changed: follow its Turns, and tell GPT-Live what it should know. */
@@ -154,7 +156,7 @@ export class VoiceBridge {
     const latest = this.#delegations.at(-1)
     if (question !== undefined && question.toolCallId !== this.#asked) {
       this.#asked = question.toolCallId
-      this.#emit("session.commentary.append", latest?.id ?? null, questionText(question))
+      this.#emit("say", latest?.id ?? null, questionText(question))
     }
     for (const delegation of this.#delegations) {
       if (delegation.turnId === undefined) {
@@ -174,7 +176,7 @@ export class VoiceBridge {
       if (turn.end !== null) {
         const answer = answerOf(turn.blocks)
         this.#emit(
-          "session.commentary.append",
+          "say",
           delegation.id,
           answer === ""
             ? "The agent finished without saying anything."
@@ -192,17 +194,12 @@ export class VoiceBridge {
       ) {
         delegation.progressAt = now
         delegation.lastProgress = progress
-        this.#emit("session.thinking.append", delegation.id, progress)
+        this.#emit("quiet", delegation.id, progress)
       }
     }
   }
 
-  #emit(type: VoiceEvent["type"], delegationId: string | null, content: string) {
-    this.send({
-      type,
-      event_id: `kndl_${++this.#events}`,
-      delegation_id: delegationId,
-      content: clip(content),
-    })
+  #emit(kind: VoiceEvent["kind"], delegationId: string | null, content: string) {
+    this.send({ kind, id: `kndl_${++this.#events}`, delegationId, content: clip(content) })
   }
 }

@@ -19,7 +19,6 @@
 //   Code unless they chose pi.
 
 import {
-  defaultLiveVoice,
   type Harness,
   InviteId,
   InviteLifetimeMs,
@@ -125,8 +124,8 @@ export class Members extends Context.Service<
      * their setup token, unless they chose pi.
      */
     readonly claudeHarness: (id: ParticipantId) => Effect.Effect<Harness, SqlError>
-    /** The live voice the Member talks to Sessions with (ADR 0033): the default until they set one. */
-    readonly liveVoice: (id: ParticipantId) => Effect.Effect<LiveVoiceSetting, SqlError>
+    /** The live voice the Member chose to talk to Sessions with (ADR 0033); none until they do. */
+    readonly liveVoice: (id: ParticipantId) => Effect.Effect<LiveVoiceSetting | undefined, SqlError>
     readonly setLiveVoice: (
       id: ParticipantId,
       setting: LiveVoiceSetting,
@@ -376,10 +375,8 @@ export class Members extends Context.Service<
           SELECT live_voice AS voice FROM participants WHERE id = ${id}
         `
         const stored = chosen[0]?.voice
-        // One kndl can't talk to any more is the default again.
-        return stored == null
-          ? defaultLiveVoice
-          : Option.getOrElse(decodeLiveVoice(stored), () => defaultLiveVoice)
+        // One kndl can't talk to any more is as none.
+        return stored == null ? undefined : Option.getOrUndefined(decodeLiveVoice(stored))
       })
 
       const setLiveVoice = Effect.fn("Members.setLiveVoice")(function* (
