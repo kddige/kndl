@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
 import type { TurnView } from "../src/hub/transcript.ts"
-import { heardEvent, wireEvent } from "../src/session/liveVoice.ts"
 import { ProgressEveryMs, VoiceBridge, type VoiceEvent } from "../src/session/voiceBridge.ts"
+import { heardEvent, wireEvent } from "../src/session/voiceProtocol.ts"
 
 const summary = (extra: Partial<SessionSummary> = {}) =>
   ({ id: "s1", currentTurn: null, ...extra }) as unknown as SessionSummary
@@ -175,4 +175,69 @@ test("GPT-Live's two protocols, each way", () => {
   expect(
     heardEvent("Codex", JSON.stringify({ type: "session.input_transcript.delta", delta: "x" })),
   ).toBeUndefined()
+})
+
+test("the Turn is followed by its prompt's id from the queue, whatever text it starts with", () => {
+  const { voice, sent } = bridge()
+  const creator = { id: "dev:alice", login: "alice", name: "Alice" }
+  const withCreator = summary({ creator } as never)
+  voice.observe({ summary: withCreator, turns: [] })
+  voice.heard("Fix the build")
+  voice.delegated("d1")
+  // Queued as Alice's, with its id.
+  voice.observe({
+    summary: withCreator,
+    turns: [],
+    queue: [{ id: "p1", text: "Fix the build", sender: creator, queuedAt: 1 } as never],
+  })
+  // Its Turn says something else, but carries the id.
+  voice.observe({
+    summary: withCreator,
+    turns: [
+      {
+        ...turn("[Alice] Fix the build, please", [text("Done.")], true),
+        turnId: "t-1",
+        promptId: "p1",
+      } as TurnView,
+    ],
+  })
+  expect(sent.at(-1)).toMatchObject({
+    kind: "say",
+    content: "The agent finished. Its answer: Done.",
+  })
+})
+
+test("a prompt riding in a background agent's notification is found by its text", () => {
+  const { voice, sent } = bridge()
+  voice.observe({ summary: summary(), turns: [] })
+  voice.heard("Run the tests")
+  voice.delegated("d1")
+  const notification = `<task-notification><task-id>a1</task-id></task-notification>\n\nRun the tests`
+  voice.observe({
+    summary: summary(),
+    turns: [{ ...turn(notification, [text("All pass.")], true), turnId: "t-2" } as TurnView],
+  })
+  expect(sent.at(-1)).toMatchObject({
+    kind: "say",
+    content: "The agent finished. Its answer: All pass.",
+  })
+})
+
+test("an older Turn with the same words isn't taken for the new one", () => {
+  const { voice, sent } = bridge()
+  const old = { ...turn("Run the tests", [text("Old answer.")], true), turnId: "t-old" } as TurnView
+  voice.observe({ summary: summary(), turns: [old] })
+  voice.heard("Run the tests")
+  voice.delegated("d1")
+  const before = sent.length
+  voice.observe({ summary: summary(), turns: [old] })
+  expect(sent).toHaveLength(before)
+  voice.observe({
+    summary: summary(),
+    turns: [
+      old,
+      { ...turn("Run the tests", [text("New answer.")], true), turnId: "t-new" } as TurnView,
+    ],
+  })
+  expect(sent.at(-1)).toMatchObject({ content: "The agent finished. Its answer: New answer." })
 })

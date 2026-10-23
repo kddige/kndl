@@ -15,6 +15,7 @@ import { useHub } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { toast } from "../ui/index.ts"
 import { VoiceBridge, type VoiceEvent } from "./voiceBridge.ts"
+import { heardEvent, wireEvent } from "./voiceProtocol.ts"
 
 export type LiveVoiceStatus =
   | { readonly phase: "off" }
@@ -30,101 +31,6 @@ export type LiveVoiceStatus =
   | { readonly phase: "failed"; readonly message: string }
 
 const decodeAnswer = Schema.decodeUnknownSync(LiveVoiceAnswer)
-
-/**
- * What the bridge tells GPT-Live, in the events of its protocol: the API's `session.thinking.append`
- * and `session.commentary.append`; through ChatGPT, Codex's `delegation.context.append` (or
- * `session.context.append`), quiet on its `commentary` channel and said on `speakable`.
- */
-export const wireEvent = (protocol: LiveVoiceProtocol, event: VoiceEvent): object =>
-  protocol === "Live"
-    ? {
-        type: event.kind === "say" ? "session.commentary.append" : "session.thinking.append",
-        event_id: event.id,
-        delegation_id: event.delegationId,
-        content: event.content,
-      }
-    : {
-        type: event.delegationId === null ? "session.context.append" : "delegation.context.append",
-        ...(event.delegationId !== null && { delegation_item_id: event.delegationId }),
-        channel: event.kind === "say" ? "speakable" : "commentary",
-        content: [{ type: "input_text", text: event.content }],
-      }
-
-/** What GPT-Live said on its data channel, as the call acts on it, in either protocol. */
-export type HeardEvent =
-  | { readonly kind: "heard"; readonly text: string }
-  | { readonly kind: "spoke"; readonly text: string }
-  | { readonly kind: "delegated"; readonly id: string; readonly asked?: string }
-  | { readonly kind: "closed"; readonly reason?: string }
-  | { readonly kind: "error"; readonly message: string }
-
-/** The value, if it is a string. */
-const stringOf = (value: unknown) => (typeof value === "string" ? value : undefined)
-
-/** One of GPT-Live's events, in `protocol`; undefined for one the call needn't act on. */
-export function heardEvent(protocol: LiveVoiceProtocol, data: string): HeardEvent | undefined {
-  let event: Record<string, unknown>
-  try {
-    event = JSON.parse(data) as Record<string, unknown>
-  } catch {
-    return undefined
-  }
-  const item = (event["item"] ?? {}) as Record<string, unknown>
-  switch (event["type"]) {
-    case "error": {
-      const error = (event["error"] ?? {}) as Record<string, unknown>
-      return { kind: "error", message: stringOf(error["message"]) ?? "GPT-Live reported an error." }
-    }
-    case "session.closed": {
-      const reason = stringOf(event["reason"])
-      return { kind: "closed", ...(reason !== undefined && { reason }) }
-    }
-  }
-  if (protocol === "Live") {
-    switch (event["type"]) {
-      case "session.input_transcript.delta": {
-        const delta = stringOf(event["delta"])
-        return delta === undefined ? undefined : { kind: "heard", text: delta }
-      }
-      case "session.output_transcript.delta": {
-        const delta = stringOf(event["delta"])
-        return delta === undefined ? undefined : { kind: "spoke", text: delta }
-      }
-      case "session.delegation.created": {
-        const delegation = (event["delegation"] ?? {}) as Record<string, unknown>
-        const id = stringOf(delegation["id"])
-        return id !== undefined && delegation["target"] === "client"
-          ? { kind: "delegated", id }
-          : undefined
-      }
-    }
-    return undefined
-  }
-  switch (event["type"]) {
-    // Whole pieces, not deltas: a space keeps them apart.
-    case "input_transcript.added": {
-      const said = stringOf(item["text"])
-      return said === undefined ? undefined : { kind: "heard", text: ` ${said}` }
-    }
-    case "output_transcript.added": {
-      const said = stringOf(item["text"])
-      return said === undefined ? undefined : { kind: "spoke", text: ` ${said}` }
-    }
-    case "delegation.created": {
-      const id = stringOf(item["id"])
-      if (id === undefined || item["target"] !== "client") return undefined
-      const parts = Array.isArray(item["content"]) ? (item["content"] as Array<unknown>) : []
-      const asked = parts
-        .map((part) => (part ?? {}) as Record<string, unknown>)
-        .filter((part) => part["type"] === "input_text")
-        .map((part) => stringOf(part["text"]) ?? "")
-        .join("")
-      return { kind: "delegated", id, ...(asked.trim() !== "" && { asked }) }
-    }
-  }
-  return undefined
-}
 
 /** One live voice conversation with a Session, from `start` until `stop`. */
 class LiveVoiceCall {
@@ -215,11 +121,14 @@ class LiveVoiceCall {
       const observe = () => {
         const state = this.hub.getState()
         const summary = state.sessions?.find((session) => session.id === this.sessionId)
-        const transcript = state.joined[this.sessionId]?.transcript
-        if (summary === undefined || transcript === undefined) return
+        const joined = state.joined[this.sessionId]
+        if (summary === undefined || joined === undefined) return
         this.#bridge.observe({
           summary,
-          turns: transcript.items.flatMap((item) => (item.kind === "turn" ? [item.turn] : [])),
+          turns: joined.transcript.items.flatMap((item) =>
+            item.kind === "turn" ? [item.turn] : [],
+          ),
+          queue: joined.queue,
         })
       }
       this.#unsubscribe = this.hub.subscribe(observe)
