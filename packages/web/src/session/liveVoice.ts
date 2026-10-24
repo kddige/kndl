@@ -6,6 +6,9 @@
 import {
   LiveVoiceAnswer,
   liveVoicePath,
+  LiveVoicePrompt,
+  type LiveVoicePromptAsk,
+  liveVoicePromptPath,
   type LiveVoiceMode,
   type LiveVoiceProtocol,
   type SessionId,
@@ -38,6 +41,35 @@ export type LiveVoiceStatus =
   | { readonly phase: "failed"; readonly message: string }
 
 const decodeAnswer = Schema.decodeUnknownSync(LiveVoiceAnswer)
+
+/** How long the browser waits for a prompt to be written before it sends what was said. */
+const PromptWriteMs = 12_000
+
+/**
+ * What was said, written by the Hub into the prompt the person means; undefined when it couldn't,
+ * as without an OpenAI connection, or not in time.
+ */
+async function writePrompt(sessionId: SessionId, ask: LiveVoicePromptAsk) {
+  try {
+    const response = await fetch(liveVoicePromptPath(sessionId), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(ask),
+      signal: AbortSignal.timeout(PromptWriteMs),
+    })
+    if (!response.ok) {
+      console.warn("Live voice: the prompt wasn't written:", await response.text())
+      return undefined
+    }
+    return decodePrompt(await response.json()).prompt
+  } catch (cause) {
+    console.warn("Live voice: the prompt wasn't written:", cause)
+    return undefined
+  }
+}
+
+const decodePrompt = Schema.decodeUnknownSync(LiveVoicePrompt)
 
 /** How long a delegation to the reasoning model may go with no sign of it, before it is said. */
 const ReasoningSilenceMs = 30_000
@@ -73,6 +105,7 @@ class LiveVoiceCall {
     this.#bridge = new VoiceBridge(
       {
         sendPrompt: (text) => this.#handedOff(text, false, hub.sendPrompt(sessionId, text)),
+        refine: (ask) => writePrompt(sessionId, ask),
         reply: (question, text) =>
           this.#handedOff(
             text,
@@ -273,6 +306,7 @@ class LiveVoiceCall {
       case "heard":
         return this.#bridge.heard(event.text)
       case "spoke":
+        this.#bridge.spoke(event.text)
         // The caption keeps the latest few hundred characters.
         this.#speaking = (this.#speaking + event.text).slice(-280)
         return this.#live()

@@ -9,7 +9,13 @@
 //   what the agent is doing, now and then; when it ends, it is given the agent's answer to say.
 //   A question the agent asks is put to GPT-Live to ask.
 
-import type { OpenQuestion, QueuedPrompt, SessionSummary } from "@kndl/protocol"
+import type {
+  LiveVoicePromptAsk,
+  OpenQuestion,
+  QueuedPrompt,
+  SessionSummary,
+  VoiceLine,
+} from "@kndl/protocol"
 import type { Block, TurnView } from "../hub/transcript.ts"
 
 /** The most characters the bridge tells GPT-Live at once: liveVoice.ts sends it in 500-byte appends. */
@@ -34,6 +40,11 @@ export interface VoiceEvent {
 export interface SessionDriver {
   readonly sendPrompt: (text: string) => boolean
   readonly reply: (question: OpenQuestion, text: string) => boolean
+  /**
+   * Writes what was said into the prompt the person means (liveVoice.ts asks the Hub); undefined,
+   * or a rejection, when it can't, and what was said goes as it is. Without it, it always does.
+   */
+  readonly refine?: (ask: LiveVoicePromptAsk) => Promise<string | undefined>
 }
 
 /** The Session as the bridge follows it: its summary, and its Turns, oldest first. */
@@ -84,6 +95,15 @@ const progressOf = (turn: TurnView): string | undefined => {
   return `The agent is working: ${tools.length} tool calls so far, the latest ${latest.tool} ${clip(latest.input, 160)}.`
 }
 
+/** An Open question's words, with its options: what an answer to it is written against. */
+const questionWords = (question: OpenQuestion): string =>
+  question.questions
+    .map((asked) => {
+      const options = asked.options.map((option) => option.label).join(", ")
+      return options === "" ? asked.question : `${asked.question} (options: ${options})`
+    })
+    .join(" ")
+
 /** An Open question, as GPT-Live is to put it to the person. */
 export const questionText = (question: OpenQuestion): string =>
   clip(
@@ -97,6 +117,8 @@ export const questionText = (question: OpenQuestion): string =>
 
 export class VoiceBridge {
   #heard = ""
+  /** Both sides of what was said since the last delegation, oldest first. */
+  #exchange: Array<{ role: VoiceLine["role"]; text: string }> = []
   #delegations: Array<Delegation> = []
   #asked: string | undefined
   #events = 0
@@ -134,25 +156,60 @@ export class VoiceBridge {
   /** A delta of what the person said. */
   heard(delta: string): void {
     this.#heard += delta
+    this.#line("user", delta)
+  }
+
+  /** A delta of what the voice said: what the person answers may build on it. */
+  spoke(delta: string): void {
+    this.#line("assistant", delta)
   }
 
   /**
-   * GPT-Live delegated: the work it names, if its protocol says (Codex's does), else what the
-   * person said since the last delegation, goes to the Session.
+   * GPT-Live delegated: what was said since the last delegation goes to the Session, written into
+   * the prompt the person means, if the driver can write it, else as it was said: the work GPT-Live
+   * names, if its protocol says (Codex's does), else the person's words. While the agent asks a
+   * question, it is their answer.
    */
   delegated(delegationId: string, asked?: string): void {
     const heard = this.#heard
     this.#heard = ""
-    const task = (asked?.trim() || heard.trim()).replaceAll(/\s+/g, " ")
-    const say = (kind: VoiceEvent["kind"], content: string) =>
-      this.#emit(kind, delegationId, content)
-    if (task === "") {
-      say("quiet", "Nothing they said came through to pass on: ask them again.")
+    const exchange = this.#exchange
+      .map((line) => ({ role: line.role, text: line.text.trim().replaceAll(/\s+/g, " ") }))
+      .filter((line) => line.text !== "")
+    this.#exchange = []
+    const said = (asked?.trim() || heard.trim()).replaceAll(/\s+/g, " ")
+    if (said === "") {
+      this.#emit("say", delegationId, "Nothing came through to pass on: ask them to say it again.")
       return
     }
     const question = this.#view?.summary.openQuestion
+    const { refine } = this.driver
+    if (refine === undefined) return this.#hand(delegationId, said, question, this.#turnIds())
+    const before = this.#turnIds()
+    const ask: LiveVoicePromptAsk = {
+      exchange: exchange.some((line) => line.role === "user")
+        ? exchange
+        : [...exchange, { role: "user", text: said }],
+      ...(asked !== undefined && asked.trim() !== "" && { asked: asked.trim() }),
+      ...(question !== undefined && { question: questionWords(question) }),
+    }
+    void refine(ask).then(
+      (written) => this.#hand(delegationId, written?.trim() || said, question, before),
+      () => this.#hand(delegationId, said, question, before),
+    )
+  }
+
+  /** Sends the Session `text`: the person's prompt, or their answer to `question`. */
+  #hand(
+    delegationId: string,
+    text: string,
+    question: OpenQuestion | undefined,
+    before: ReadonlySet<string>,
+  ) {
+    const say = (kind: VoiceEvent["kind"], content: string) =>
+      this.#emit(kind, delegationId, content)
     if (question !== undefined) {
-      if (!this.driver.reply(question, task)) {
+      if (!this.driver.reply(question, text)) {
         say("say", "Their answer couldn't reach the agent just now.")
         return
       }
@@ -160,24 +217,31 @@ export class VoiceBridge {
         id: delegationId,
         prompt: undefined,
         at: this.now(),
-        before: this.#turnIds(),
+        before,
         progressAt: -Infinity,
       })
       say("quiet", "Their answer went to the agent; it works on.")
       return
     }
-    if (!this.driver.sendPrompt(task)) {
+    if (!this.driver.sendPrompt(text)) {
       say("say", "The Session can't take a prompt just now.")
       return
     }
     this.#delegations.push({
       id: delegationId,
-      prompt: task,
+      prompt: text,
       at: this.now(),
-      before: this.#turnIds(),
+      before,
       progressAt: -Infinity,
     })
     say("quiet", "Passed to the agent; it is working on it.")
+  }
+
+  /** Adds to what was said since the last delegation, a line per turn of either side. */
+  #line(role: VoiceLine["role"], delta: string) {
+    const last = this.#exchange.at(-1)
+    if (last?.role === role) last.text += delta
+    else this.#exchange.push({ role, text: delta })
   }
 
   /** The Session changed: follow its Turns, and tell GPT-Live what it should know. */
