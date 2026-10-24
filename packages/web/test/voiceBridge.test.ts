@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { OpenQuestion, SessionSummary } from "@kndl/protocol"
+import type { LiveVoicePromptAsk, OpenQuestion, SessionSummary } from "@kndl/protocol"
 import type { TurnView } from "../src/hub/transcript.ts"
 import { ProgressEveryMs, VoiceBridge, type VoiceEvent } from "../src/session/voiceBridge.ts"
 import {
@@ -307,4 +307,95 @@ test("a delegation addressed anywhere but kndl is told apart, in both protocols"
       JSON.stringify({ type: "delegation.created", item: { id: "d2", target: "responses" } }),
     ),
   ).toEqual({ kind: "elsewhere", target: "responses" })
+})
+
+/** A bridge whose driver writes prompts with `refine`. */
+function refining(refine: (ask: LiveVoicePromptAsk) => Promise<string | undefined>) {
+  const sent: Array<VoiceEvent> = []
+  const prompts: Array<string> = []
+  const replies: Array<string> = []
+  const asks: Array<LiveVoicePromptAsk> = []
+  const voice = new VoiceBridge(
+    {
+      sendPrompt: (said) => (prompts.push(said), true),
+      reply: (_question, said) => (replies.push(said), true),
+      refine: (ask) => (asks.push(ask), refine(ask)),
+    },
+    (event) => sent.push(event),
+  )
+  return { voice, sent, prompts, replies, asks }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+test("the prompt sent is the one written from both sides of what was said", async () => {
+  const { voice, prompts, asks } = refining(
+    async () => "Check whether any tests are failing in the codebase.",
+  )
+  voice.spoke("What can I do for you?")
+  voice.heard("Uh, I'm just looking at this code and I was ")
+  voice.heard("wondering if uh if we had any failing tests perhaps.")
+  voice.delegated("d1")
+  await settle()
+  expect(asks).toEqual([
+    {
+      exchange: [
+        { role: "assistant", text: "What can I do for you?" },
+        {
+          role: "user",
+          text: "Uh, I'm just looking at this code and I was wondering if uh if we had any failing tests perhaps.",
+        },
+      ],
+    },
+  ])
+  expect(prompts).toEqual(["Check whether any tests are failing in the codebase."])
+  // The next hand-off starts afresh.
+  voice.heard("And the linter?")
+  voice.delegated("d2")
+  await settle()
+  expect(asks.at(-1)?.exchange).toEqual([{ role: "user", text: "And the linter?" }])
+})
+
+test("what was said goes as it is when the prompt can't be written", async () => {
+  for (const refine of [async () => undefined, async () => Promise.reject(new Error("down"))]) {
+    const { voice, prompts } = refining(refine)
+    voice.heard("run   the tests")
+    voice.delegated("d1")
+    await settle()
+    expect(prompts).toEqual(["run the tests"])
+  }
+})
+
+test("an answer to the agent's question is written against the question, and replies to it", async () => {
+  const { voice, replies, prompts, asks } = refining(async () => "Use SQLite.")
+  const question = {
+    turnId: "t",
+    toolCallId: "q1",
+    questions: [
+      {
+        question: "Which database?",
+        header: "DB",
+        options: [{ label: "Postgres" }, { label: "SQLite" }],
+        multiSelect: false,
+      },
+    ],
+    askedAt: 1,
+  } as unknown as OpenQuestion
+  voice.observe({ summary: summary({ openQuestion: question }), turns: [] })
+  voice.heard("yeah uh the second one I guess")
+  voice.delegated("d1")
+  await settle()
+  expect(asks[0]?.question).toBe("Which database? (options: Postgres, SQLite)")
+  expect(replies).toEqual(["Use SQLite."])
+  expect(prompts).toEqual([])
+})
+
+test("nothing heard is said out loud, for them to say it again", () => {
+  const { voice, sent, prompts } = bridge()
+  voice.delegated("d1")
+  expect(prompts).toEqual([])
+  expect(sent.at(-1)).toMatchObject({
+    kind: "say",
+    content: expect.stringContaining("say it again"),
+  })
 })

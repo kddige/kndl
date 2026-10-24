@@ -284,3 +284,33 @@ export const LiveVoiceAnswer = Schema.Struct({
   mode: Schema.optionalKey(Schema.Literals(["Reasoning", "Talk"])),
 })
 export type LiveVoiceAnswer = typeof LiveVoiceAnswer.Type
+
+// ── Clean prompts: `POST /sessions/<id>/voice/prompt` ────────────────────────
+
+/**
+ * Where the browser asks the Hub to write what was said into the prompt it means (ADR 0033), as a
+ * fast Model on the Creator's OpenAI connection writes it.
+ */
+export const liveVoicePromptPath = (sessionId: string) => `${liveVoicePath(sessionId)}/prompt`
+
+/** One thing said in the call: by the person, or by the voice. */
+export const VoiceLine = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String,
+})
+export type VoiceLine = typeof VoiceLine.Type
+
+/** What was said since the last hand-off, to write the prompt from. */
+export const LiveVoicePromptAsk = Schema.Struct({
+  /** Both sides, oldest first, as transcribed. */
+  exchange: Schema.Array(VoiceLine),
+  /** The task as GPT-Live named it when it handed off, if it did. */
+  asked: Schema.optionalKey(Schema.String),
+  /** The agent's question, when what was said answers it. */
+  question: Schema.optionalKey(Schema.String),
+})
+export type LiveVoicePromptAsk = typeof LiveVoicePromptAsk.Type
+
+/** The prompt the person means, ready to send. */
+export const LiveVoicePrompt = Schema.Struct({ prompt: Schema.NonEmptyString })
+export type LiveVoicePrompt = typeof LiveVoicePrompt.Type

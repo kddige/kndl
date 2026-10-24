@@ -4,9 +4,10 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import type { OAuthCredential } from "@earendil-works/pi-ai"
-import { liveVoicePath } from "@kndl/protocol"
+import { liveVoicePath, liveVoicePromptPath } from "@kndl/protocol"
 import { Option, Redacted } from "effect"
 import { ProviderApis } from "./ConnectedProviders.ts"
+import { promptModelOf, responseText } from "./LiveVoiceRoutes.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
   type Connection,
@@ -65,6 +66,8 @@ async function scene() {
   const fakes = {
     /** What the Codex backend answers a call with first: as the test says. */
     codexStatus: [] as Array<number>,
+    /** What OpenAI's Responses API answers a prompt's writing with: its stream, or a status. */
+    written: "Check whether any tests are failing in the codebase." as string | number,
     /** What the Codex sign-in was asked to choose, and answered. */
     chosen: [] as Array<string>,
     refreshes: 0,
@@ -94,6 +97,21 @@ async function scene() {
           return new Response("v=0 codex answer\r\na=ice-pwd:x\r\n", {
             status: 201,
             headers: { "content-type": "application/sdp", location: "/v1/live/rtc_1" },
+          })
+        }
+        // A prompt's writing, streamed as the Responses API streams it.
+        if (url.pathname === "/v1/responses") {
+          if (typeof fakes.written === "number")
+            return new Response("no", { status: fakes.written })
+          const words = fakes.written.split(" ")
+          const events = words.map((word, i) =>
+            JSON.stringify({
+              type: "response.output_text.delta",
+              delta: i === 0 ? word : ` ${word}`,
+            }),
+          )
+          return new Response(events.map((data) => `data: ${data}\n\n`).join(""), {
+            headers: { "content-type": "text/event-stream" },
           })
         }
         if (url.pathname === "/v1/live/sessions") {
@@ -146,6 +164,13 @@ const talk = (hub: TestHub, sessionId: string, cookie: string, origin = webOrigi
     method: "POST",
     headers: { cookie, origin, "content-type": "application/json" },
     body: JSON.stringify({ sdp: "v=0 offer" }),
+  })
+
+const write = (hub: TestHub, sessionId: string, cookie: string, said: unknown) =>
+  fetch(`${hub.url}${liveVoicePromptPath(sessionId)}`, {
+    method: "POST",
+    headers: { cookie, origin: webOrigin, "content-type": "application/json" },
+    body: JSON.stringify(said),
   })
 
 describe("live voice", () => {
@@ -318,6 +343,67 @@ describe("live voice", () => {
     expect(body.session.instructions).toContain("never make up what was done")
   })
 
+  test("writes what was said into the prompt the person means, on their OpenAI connection", async () => {
+    const { hub, web, start, seen } = await scene()
+    // kndl's own ChatGPT sign-in: it takes the Responses API, which the writing uses.
+    web.send({ _tag: "StartSignIn", requestId: `v-${++requests}`, provider: "openai" })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    const said = {
+      exchange: [
+        {
+          role: "user",
+          text: "Uh, I'm just looking at this code and I was wondering if uh if we had any failing tests perhaps.",
+        },
+      ],
+    }
+    const response = await write(hub, start.sessionId, web.cookie, said)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      prompt: "Check whether any tests are failing in the codebase.",
+    })
+    const sent = seen.find((request) => request.url.endsWith("/v1/responses"))
+    expect(sent?.headers.authorization).toBe("Bearer access-siwc")
+    const body = JSON.parse(sent?.body ?? "{}")
+    // As pi sends a ChatGPT sign-in's: streamed, not stored, none of the fields it refuses.
+    expect(body).toMatchObject({ model: "gpt-6-sol", stream: true, store: false })
+    expect(body).not.toHaveProperty("temperature")
+    expect(body).not.toHaveProperty("max_output_tokens")
+    expect(body.input[0].content).toContain("Person: Uh, I'm just looking at this code")
+    expect(body.instructions).toContain("Drop fillers")
+    expect(body.instructions).toContain("Add nothing they didn't ask for")
+    expect(body.instructions).toContain("on kddige/kndl")
+
+    // An answer to the agent's question is written as one.
+    seen.length = 0
+    await write(hub, start.sessionId, web.cookie, {
+      ...said,
+      question: "Which database? (options: Postgres, SQLite)",
+    })
+    const answering = JSON.parse(seen.find((r) => r.url.endsWith("/v1/responses"))?.body ?? "{}")
+    expect(answering.instructions).toContain(
+      'The agent asked them: "Which database? (options: Postgres, SQLite)"',
+    )
+  })
+
+  test("a prompt that can't be written is refused, for the browser to send what was said", async () => {
+    const { hub, web, start, fakes } = await scene()
+    const said = { exchange: [{ role: "user", text: "run the tests" }] }
+    // No OpenAI connection.
+    expect((await write(hub, start.sessionId, web.cookie, said)).status).toBe(409)
+    web.send({ _tag: "StartSignIn", requestId: `v-${++requests}`, provider: "openai" })
+    expect(await web.take("SignInEnded")).toMatchObject({ outcome: "Connected" })
+    // OpenAI refuses.
+    fakes.written = 500
+    expect((await write(hub, start.sessionId, web.cookie, said)).status).toBe(502)
+    // Nothing the person said.
+    fakes.written = "Run the tests."
+    const empty = { exchange: [{ role: "assistant", text: "Hi!" }] }
+    expect((await write(hub, start.sessionId, web.cookie, empty)).status).toBe(400)
+    // Only its Creator.
+    const bob = await openWeb(hub, "bob")
+    expect((await write(hub, start.sessionId, bob.cookie, said)).status).toBe(403)
+  })
+
   test("is the Creator's alone, and needs their OpenAI connection", async () => {
     const { hub, web, start } = await scene()
     // Not connected to OpenAI yet.
@@ -329,5 +415,56 @@ describe("live voice", () => {
     expect((await talk(hub, start.sessionId, bob.cookie)).status).toBe(403)
     // Only from the web UI.
     expect((await talk(hub, start.sessionId, web.cookie, "https://evil.test")).status).toBe(403)
+  })
+})
+
+/** A Responses API stream of `events`. */
+const stream = (events: Array<object>) =>
+  events.map((event) => `event: x\ndata: ${JSON.stringify(event)}\n\n`).join("") +
+  "data: [DONE]\n\n"
+
+/** A Model of the Provider's. */
+const model = (provider: string, id: string) =>
+  ({ provider, id, label: id, thinkingLevels: [] }) as never
+
+describe("writing a prompt", () => {
+  test("reads the Model's text from its stream, or its whole answer", () => {
+    expect(
+      responseText(
+        stream([
+          { type: "response.output_text.delta", delta: "Run" },
+          { type: "response.output_text.delta", delta: " the tests." },
+        ]),
+      ),
+    ).toBe("Run the tests.")
+    // A `.done` event has it whole.
+    expect(
+      responseText(
+        stream([
+          { type: "response.output_text.delta", delta: "Run" },
+          { type: "response.output_text.done", text: "Run the tests." },
+        ]),
+      ),
+    ).toBe("Run the tests.")
+    expect(
+      responseText(
+        JSON.stringify({
+          output: [{ type: "message", content: [{ type: "output_text", text: "Run the tests." }] }],
+        }),
+      ),
+    ).toBe("Run the tests.")
+    expect(responseText("")).toBeUndefined()
+  })
+
+  test("is done by the fastest-sounding OpenAI Model the person has", () => {
+    expect(
+      promptModelOf([
+        model("anthropic", "claude-mini"),
+        model("openai", "gpt-6-sol"),
+        model("openai", "gpt-6-mini"),
+      ])?.id,
+    ).toBe("gpt-6-mini")
+    expect(promptModelOf([model("openai", "gpt-6-sol")])?.id).toBe("gpt-6-sol")
+    expect(promptModelOf([model("xai", "grok-5")])).toBeUndefined()
   })
 })

@@ -29,6 +29,10 @@ import {
   type LiveVoiceProtocol,
   LiveVoiceAnswer,
   LiveVoiceOffer,
+  LiveVoicePrompt,
+  type LiveVoicePromptAsk,
+  LiveVoicePromptAsk as LiveVoicePromptAskSchema,
+  type ProviderModel,
   DefaultReasoningModel,
   LiveVoiceTools,
   liveVoiceModeOf,
@@ -40,7 +44,7 @@ import {
   type SessionSummary,
   sessionTitle,
 } from "@kndl/protocol"
-import { Effect, Schema } from "effect"
+import { Duration, Effect, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateParticipant, requireSameOrigin } from "./Auth.ts"
 import { ConnectedProviders, ProviderApis } from "./ConnectedProviders.ts"
@@ -48,6 +52,7 @@ import { historyPage } from "./Handoff.ts"
 import { LiveVoiceConnections } from "./LiveVoiceConnections.ts"
 import { Members } from "./Members.ts"
 import type { ApiCall } from "./PiProviders.ts"
+import { readAtMost } from "./ReadAtMost.ts"
 import { authorizeAccessFor } from "./SessionAccess.ts"
 import { SessionLog } from "./SessionLog.ts"
 
@@ -191,6 +196,141 @@ const providerReason = (status: number, text: string) => {
   return `it answered ${status}`
 }
 
+/**
+ * The Session in the path, and the person talking with it, if they may: its Creator, since what is
+ * said drives it (ADR 0026), from the web UI's origin, on a Session not archived; else the answer
+ * refusing them.
+ */
+const talkingTo = Effect.gen(function* () {
+  yield* requireSameOrigin
+  const you = yield* authenticateParticipant
+  const { sessionId } = yield* HttpRouter.params
+  const access = yield* authorizeAccessFor(you, SessionId.make(sessionId ?? "-")).pipe(
+    Effect.map((found) => ({ session: found.session })),
+    Effect.catchTag("SessionAccessRefused", (refusal) =>
+      Effect.succeed({
+        refused: errorResponse(refusal.reason === "AccessUnknown" ? 503 : 404, refusal.message),
+      }),
+    ),
+  )
+  if ("refused" in access) return access
+  const { session } = access
+  const notYours = driveRefusal(you, session.creator, session.harness)
+  if (notYours !== undefined) return { refused: errorResponse(403, notYours.refusal) }
+  if (session.state === "Archived") {
+    return { refused: errorResponse(409, "The Session is archived: restore it to talk with it.") }
+  }
+  return { you, session }
+})
+
+// ── Clean prompts ───────────────────────────────────────────────────────────
+
+/** How long the Hub waits for the prompt to be written: then the browser sends what was said. */
+const promptTimeout = Duration.seconds(10)
+
+/** The most of the Model's answer read. */
+const promptAnswerLimit = 256 * 1024
+
+/**
+ * The Model that writes prompts: the Creator's fastest-sounding OpenAI Model (a mini, nano or
+ * Luna), else their first. None without an OpenAI connection.
+ */
+export const promptModelOf = (models: ReadonlyArray<ProviderModel>): ProviderModel | undefined => {
+  const openai = models.filter((model) => model.provider === "openai")
+  return openai.find((model) => /mini|nano|luna/i.test(model.id)) ?? openai[0]
+}
+
+/** The least thinking the Model takes, as OpenAI's `reasoning.effort`; none for one that doesn't. */
+const leastEffort = (model: ProviderModel): string | undefined =>
+  model.thinkingLevels.find((level) => level === "minimal" || level === "low")
+
+/** What the Model is told it does, for the Session, and the question answered if there is one. */
+export const promptInstructions = (
+  session: SessionSummary,
+  turns: ReadonlyArray<HistoryTurn>,
+  question: string | undefined,
+): string =>
+  [
+    `You turn what a person said aloud into the prompt they mean a coding agent to get. The agent works on the code of a kndl Session, "${sessionTitle(session)}" on ${session.repo}. You get what was said in a voice call since the last prompt: the person's words, transcribed with fillers, false starts and mishearings, and the voice assistant's replies.`,
+    question === undefined
+      ? "Write the one prompt the person means: clear, direct and specific, in their language, as they would type it to the agent. A question stays a question."
+      : `The agent asked them: "${question}". Write their answer to it, as a short, clear reply to the agent, in their language.`,
+    'Keep every detail that matters: names, files, numbers, constraints. Drop fillers, hesitations and small talk. Add nothing they didn\'t ask for: no extra tasks, steps or assumptions. When they refer to something earlier ("that test", "it"), name it from the conversation or the Session\'s history if that is clear; else keep their words.',
+    "Reply with the prompt alone: no quotes, labels or preamble.",
+    background(turns),
+  ].join("\n\n")
+
+/** What was said, as the Model reads it. */
+export const exchangeText = (ask: LiveVoicePromptAsk): string =>
+  [
+    "What was said since the last prompt:",
+    ...ask.exchange
+      .filter((line) => line.text.trim() !== "")
+      .map((line) => `${line.role === "user" ? "Person" : "Voice"}: ${line.text.trim()}`),
+    ...(ask.asked !== undefined && ask.asked.trim() !== ""
+      ? [`The voice named the task as: ${ask.asked.trim()}`]
+      : []),
+  ].join("\n")
+
+/** JSON's object, or undefined for anything else. */
+const parseObject = (text: string): Record<string, unknown> | undefined => {
+  try {
+    const value: unknown = JSON.parse(text)
+    return typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The text a Responses API answer holds: from its stream's events (`response.output_text.delta`, or
+ * `.done` whole), or from a whole JSON answer's `output`. Undefined when there is none.
+ */
+export const responseText = (body: string): string | undefined => {
+  const events = body
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .filter((data) => data !== "" && data !== "[DONE]")
+  if (events.length > 0) {
+    let deltas = ""
+    for (const data of events) {
+      const event = parseObject(data)
+      if (event?.["type"] === "response.output_text.done" && typeof event["text"] === "string") {
+        return event["text"]
+      }
+      if (event?.["type"] === "response.output_text.delta" && typeof event["delta"] === "string") {
+        deltas += event["delta"]
+      }
+    }
+    return deltas === "" ? undefined : deltas
+  }
+  const whole = parseObject(body)
+  const output = Array.isArray(whole?.["output"]) ? (whole["output"] as Array<unknown>) : []
+  const texts = output.flatMap((item) => {
+    const content = (item as { content?: unknown }).content
+    return Array.isArray(content)
+      ? content.flatMap((part) => {
+          const { type, text } = part as { type?: unknown; text?: unknown }
+          return type === "output_text" && typeof text === "string" ? [text] : []
+        })
+      : []
+  })
+  return texts.length === 0 ? undefined : texts.join("")
+}
+
+/** The prompt as written, without quotes or a label a Model may add anyway. */
+const cleaned = (text: string) =>
+  text
+    .trim()
+    .replace(/^(prompt|reply)\s*:\s*/i, "")
+    .replace(/^["“”'](.*)["“”']$/s, "$1")
+    .trim()
+
+const decodePromptAsk = Schema.decodeUnknownOption(LiveVoicePromptAskSchema)
+
 export const LiveVoiceRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const providers = yield* ConnectedProviders
@@ -254,28 +394,9 @@ export const LiveVoiceRoutes = HttpRouter.use(
       "POST",
       "/sessions/:sessionId/voice",
       Effect.gen(function* () {
-        yield* requireSameOrigin
-        const you = yield* authenticateParticipant
-        const { sessionId } = yield* HttpRouter.params
-        const access = yield* authorizeAccessFor(you, SessionId.make(sessionId ?? "-")).pipe(
-          Effect.map((found) => ({ session: found.session })),
-          Effect.catchTag("SessionAccessRefused", (refusal) =>
-            Effect.succeed({
-              refused: errorResponse(
-                refusal.reason === "AccessUnknown" ? 503 : 404,
-                refusal.message,
-              ),
-            }),
-          ),
-        )
+        const access = yield* talkingTo
         if ("refused" in access) return access.refused
-        const { session } = access
-        // What is said drives the Session: its Creator's alone.
-        const notYours = driveRefusal(you, session.creator, session.harness)
-        if (notYours !== undefined) return errorResponse(403, notYours.refusal)
-        if (session.state === "Archived") {
-          return errorResponse(409, "The Session is archived: restore it to talk with it.")
-        }
+        const { you, session } = access
         const request = yield* HttpServerRequest.HttpServerRequest
         const offer = decodeOffer(yield* request.json.pipe(Effect.orElseSucceed(() => null)))
         if (offer._tag === "None") return errorResponse(400, "Expected a WebRTC offer, {sdp}.")
@@ -365,6 +486,83 @@ export const LiveVoiceRoutes = HttpRouter.use(
           { sdp, model: model.name, voice, protocol: model.protocol, mode },
           { status: 201 },
         )
+      }),
+    )
+
+    // What was said since the last hand-off, written into the prompt the person means, by a fast
+    // Model on their OpenAI connection, as they'd type it. A refusal leaves the browser to send
+    // what was said as it is.
+    yield* router.add(
+      "POST",
+      "/sessions/:sessionId/voice/prompt",
+      Effect.gen(function* () {
+        const access = yield* talkingTo
+        if ("refused" in access) return access.refused
+        const { you, session } = access
+        const request = yield* HttpServerRequest.HttpServerRequest
+        const ask = decodePromptAsk(yield* request.json.pipe(Effect.orElseSucceed(() => null)))
+        if (ask._tag === "None")
+          return errorResponse(400, "Expected {exchange, asked?, question?}.")
+        if (!ask.value.exchange.some((line) => line.role === "user" && line.text.trim() !== "")) {
+          return errorResponse(400, "Nothing the person said to write a prompt from.")
+        }
+        const model = promptModelOf(yield* providers.modelsFor(you.id))
+        if (model === undefined) {
+          return errorResponse(409, "Connect OpenAI to have the voice write clean prompts.")
+        }
+        const { entries, earlier } = yield* log
+          .lastTurns(session.id, { count: 3 })
+          .pipe(Effect.orDie)
+        const { turns } = historyPage(entries, { limit: 3, earlier })
+        const effort = leastEffort(model)
+        // As pi sends a ChatGPT sign-in's: streamed, not stored, with none of the fields it refuses.
+        const body = JSON.stringify({
+          model: model.id,
+          instructions: promptInstructions(session, turns, ask.value.question),
+          input: [{ role: "user", content: exchangeText(ask.value) }],
+          stream: true,
+          store: false,
+          ...(effort !== undefined && { reasoning: { effort } }),
+        })
+        const written = yield* providers
+          .call(you.id, "openai", {
+            method: "POST",
+            path: "/v1/responses",
+            headers: new Headers({
+              "content-type": "application/json",
+              accept: "text/event-stream",
+            }),
+            keyHeader: "authorization",
+            body: new TextEncoder().encode(body),
+          })
+          .pipe(
+            Effect.flatMap((called) =>
+              called._tag === "Answered" && called.response.ok
+                ? Effect.promise(() => readAtMost(called.response.body, promptAnswerLimit)).pipe(
+                    Effect.map((bytes) =>
+                      bytes === undefined
+                        ? undefined
+                        : responseText(new TextDecoder().decode(bytes)),
+                    ),
+                  )
+                : Effect.as(
+                    Effect.logWarning(
+                      `Writing a voice prompt: OpenAI ${called._tag === "Answered" ? `answered ${called.response.status}` : "couldn't be reached"}`,
+                    ),
+                    undefined,
+                  ),
+            ),
+            Effect.timeoutOption(promptTimeout),
+            Effect.result,
+          )
+        // Not written: refused, unreachable, too slow, or nothing in the answer.
+        const text = written._tag === "Success" ? Option.getOrUndefined(written.success) : undefined
+        const prompt = text === undefined ? "" : cleaned(text)
+        yield* Effect.logInfo(
+          `Live voice prompt on ${model.id}: ${prompt === "" ? "not written" : `${prompt.length} characters`}`,
+        ).pipe(Effect.annotateLogs({ sessionId: session.id, component: "LiveVoice" }))
+        if (prompt === "") return errorResponse(502, "The prompt couldn't be written just now.")
+        return yield* HttpServerResponse.schemaJson(LiveVoicePrompt)({ prompt })
       }),
     )
   }),
